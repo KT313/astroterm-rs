@@ -182,6 +182,8 @@ mod tests {
         unicode: false,
         braille: false,
         color: false,
+        constellations: true,
+        grid: false,
         magnitude_threshold: 5.0,
         label_threshold: 0.25,
     };

@@ -18,9 +18,9 @@ pub struct Config {
     pub start_julian_date: f64,
     pub view: View,
     pub render: RenderOptions,
-    pub constellations: bool,
-    pub grid: bool,
     pub metadata: bool,
+    /// Lift objects by atmospheric refraction.
+    pub refraction: bool,
     pub fps: u32,
     pub speed: f64,
     /// Cell height / width; detected from the terminal when `None`.
@@ -62,6 +62,8 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
         unicode: arguments.unicode,
         braille: arguments.braille,
         color: arguments.color,
+        constellations: arguments.constellations,
+        grid: arguments.grid,
         magnitude_threshold: arguments.threshold,
         label_threshold: arguments.label_threshold,
     };
@@ -70,9 +72,8 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
         start_julian_date,
         view,
         render,
-        constellations: arguments.constellations,
-        grid: arguments.grid,
         metadata: arguments.metadata,
+        refraction: arguments.refraction,
         fps,
         speed: arguments.speed,
         aspect_ratio,
@@ -207,7 +208,7 @@ mod tests {
             (5.0, 0.25)
         );
         assert_eq!((config.fps, config.speed, config.aspect_ratio), (24, 1.0, None));
-        assert!(!config.metadata);
+        assert!(!config.metadata && !config.refraction);
     }
 
     #[test]
@@ -223,10 +224,10 @@ mod tests {
 
     #[test]
     fn city_overrides_latitude_and_longitude() {
-        let config = config_from(&["-a", "10", "-i", "rio de janeiro", "-m"]).unwrap();
+        let config = config_from(&["-a", "10", "-i", "rio de janeiro", "-m", "-R"]).unwrap();
         assert!((config.observer.latitude - (-22.90642_f64).to_radians()).abs() < 1e-12);
         assert!((config.observer.longitude - (-43.18223_f64).to_radians()).abs() < 1e-12);
-        assert!(config.metadata);
+        assert!(config.metadata && config.refraction);
     }
 
     #[test]

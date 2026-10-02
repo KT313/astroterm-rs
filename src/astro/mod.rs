@@ -8,18 +8,21 @@
 mod coords;
 mod ephemeris;
 mod notation;
+mod precession;
 mod time;
 
 use std::f64::consts::TAU;
 
 pub use coords::{
-    correct_for_parallax, equatorial_to_horizontal, horizontal_to_spherical, offset_towards, rectangular_to_equatorial,
+    apply_refraction, correct_for_parallax, equatorial_to_horizontal, horizontal_to_spherical, offset_towards,
+    rectangular_to_equatorial,
 };
 pub use ephemeris::{
     MoonOrbit, MoonPhase, OrbitalElements, PerturbationTerms, PlanetOrbit, compute_moon_age, compute_moon_geocentric,
     compute_planet_heliocentric, compute_star_position, moon_age_to_phase,
 };
 pub use notation::{DegreesMinutesSeconds, ElapsedTime, ZodiacSign, azimuth_to_compass, compass_point_to_azimuth};
+pub use precession::{PrecessionMatrix, compute_precession_matrix};
 pub use time::{
     J2000, SimulationClock, current_julian_date, datetime_to_julian_date, earth_rotation_angle,
     greenwich_mean_sidereal_time, julian_date_to_utc, parse_utc_datetime,
@@ -72,6 +75,19 @@ impl Horizontal {
         Horizontal {
             azimuth: vector.x.atan2(vector.y).rem_euclid(TAU),
             altitude,
+        }
+    }
+}
+
+impl Equatorial {
+    /// Unit vector pointing at this position, with x towards the equinox, y at right ascension 90° and z North.
+    pub fn to_unit_vector(self) -> Vector3 {
+        let (sin_dec, cos_dec) = self.declination.sin_cos();
+        let (sin_ra, cos_ra) = self.right_ascension.sin_cos();
+        Vector3 {
+            x: cos_dec * cos_ra,
+            y: cos_dec * sin_ra,
+            z: sin_dec,
         }
     }
 }

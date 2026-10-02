@@ -1,10 +1,11 @@
-//! The sky model: every object that is drawn, and their apparent positions.
+//! The sky model: every object in the sky and its apparent position. It holds no rendering details, so any renderer
+//! can draw it.
 
 mod objects;
 mod positions;
 
-pub use objects::{Appearance, Constellation, Moon, Planet, Star, create_moon, create_planets};
-pub use positions::{update_moon, update_planet_positions, update_star_positions};
+pub use objects::{Constellation, Moon, Planet, PlanetKind, Star, create_moon, create_planets};
+pub use positions::{refract_sky_positions, update_moon, update_planet_positions, update_star_positions};
 
 use crate::catalog::Catalog;
 
@@ -13,7 +14,7 @@ use crate::catalog::Catalog;
 pub struct Sky {
     /// Indexed by `catalog_number - 1`.
     pub stars: Vec<Star>,
-    /// Indices of the stars that have catalog data, dimmest first, so brighter stars are drawn on top.
+    /// Indices of the stars that have catalog data, dimmest first, so renderers can draw brighter stars on top.
     pub stars_by_brightness: Vec<usize>,
     /// The Sun and planets, ordered from the Sun outwards.
     pub planets: Vec<Planet>,
@@ -72,7 +73,6 @@ fn sort_stars_dimmest_first(stars: &[Star]) -> Vec<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::canvas::Color;
     use crate::catalog::load_embedded_catalog;
 
     fn build_sky() -> Sky {
@@ -83,7 +83,7 @@ mod tests {
     fn stars_are_indexed_by_catalog_number() {
         let sky = build_sky();
         assert_eq!(sky.stars.len(), 9110);
-        assert_eq!(sky.stars[7000].appearance.label, Some("Vega"));
+        assert_eq!(sky.stars[7000].name, Some("Vega"));
         assert!(
             sky.stars
                 .iter()
@@ -108,19 +108,14 @@ mod tests {
     }
 
     #[test]
-    fn bright_stars_get_their_spectral_colors() {
+    fn stars_keep_their_names_and_spectral_types() {
         let sky = build_sky();
-        let star = |catalog_number: usize| &sky.stars[catalog_number - 1].appearance;
+        let star = |catalog_number: usize| &sky.stars[catalog_number - 1];
         assert_eq!(
-            (star(2061).label, star(2061).color),
-            (Some("Betelgeuse"), Some(Color::Red))
+            (star(2061).name, &star(2061).spectral_type),
+            (Some("Betelgeuse"), b"M1")
         );
-        assert_eq!((star(1713).label, star(1713).color), (Some("Rigel"), Some(Color::Cyan)));
-        assert_eq!(
-            (star(5340).label, star(5340).color),
-            (Some("Arcturus"), Some(Color::Yellow))
-        );
-        assert_eq!((star(7001).label, star(7001).color), (Some("Vega"), None));
+        assert_eq!((star(5340).name, &star(5340).spectral_type), (Some("Arcturus"), b"K1"));
     }
 
     #[test]

@@ -118,6 +118,10 @@ pub struct Arguments {
     )]
     pub aspect_ratio: Option<f64>,
 
+    /// Apply atmospheric refraction: objects near the horizon appear up to about 0.5° higher, as in the real sky
+    #[arg(short = 'R', long)]
+    pub refraction: bool,
+
     /// Print this help message
     #[arg(short = 'h', long, action = ArgAction::Help)]
     help: Option<bool>,

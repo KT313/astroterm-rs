@@ -63,7 +63,8 @@ pub enum MoonPhase {
 }
 
 impl MoonPhase {
-    const ALL: [MoonPhase; 8] = [
+    /// All phases, from New Moon through the waxing and waning phases.
+    pub const ALL: [MoonPhase; 8] = [
         MoonPhase::New,
         MoonPhase::WaxingCrescent,
         MoonPhase::FirstQuarter,
@@ -88,21 +89,9 @@ impl MoonPhase {
         ];
         NAMES[self as usize]
     }
-
-    /// Moon emoji for this phase, with the lit side on the right or the left (as seen on screen).
-    pub fn glyph(self, lit_on_right: bool) -> char {
-        let (right, left) = match self {
-            MoonPhase::New => ('🌑', '🌑'),
-            MoonPhase::Full => ('🌕', '🌕'),
-            MoonPhase::WaxingCrescent | MoonPhase::WaningCrescent => ('🌒', '🌘'),
-            MoonPhase::FirstQuarter | MoonPhase::LastQuarter => ('🌓', '🌗'),
-            MoonPhase::WaxingGibbous | MoonPhase::WaningGibbous => ('🌔', '🌖'),
-        };
-        if lit_on_right { right } else { left }
-    }
 }
 
-/// Apply proper motion (radians per year) to a J2000 catalog position.
+/// Apply proper motion (radians per year) to a J2000 catalog position. The result is still in the J2000 frame.
 pub fn compute_star_position(catalog: Equatorial, proper_motion: Equatorial, julian_date: f64) -> Equatorial {
     let years_since_j2000 = (julian_date - J2000) / 365.2425;
     Equatorial {
@@ -111,7 +100,7 @@ pub fn compute_star_position(catalog: Equatorial, proper_motion: Equatorial, jul
     }
 }
 
-/// Heliocentric ICRF position of a planet in rectangular equatorial coordinates (AU).
+/// Heliocentric position of a planet in rectangular J2000 equatorial coordinates (AU).
 ///
 /// Follows the Explanatory Supplement to the Astronomical Almanac, ch. 8, p. 340.
 pub fn compute_planet_heliocentric(orbit: &PlanetOrbit, julian_date: f64) -> Vector3 {
@@ -383,12 +372,8 @@ mod tests {
     }
 
     #[test]
-    fn moon_phase_names_and_glyphs() {
+    fn moon_phase_names() {
         assert_eq!(MoonPhase::WaxingGibbous.name(), "Waxing Gibbous");
-        let lit_right: String = MoonPhase::ALL.iter().map(|phase| phase.glyph(true)).collect();
-        let lit_left: String = MoonPhase::ALL.iter().map(|phase| phase.glyph(false)).collect();
-        assert_eq!(lit_right, "🌑🌒🌓🌔🌕🌔🌓🌒");
-        assert_eq!(lit_left, "🌑🌘🌗🌖🌕🌖🌗🌘");
     }
 
     #[test]

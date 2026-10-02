@@ -64,6 +64,20 @@ pub fn correct_for_parallax(position: Horizontal, distance: f64) -> Horizontal {
     }
 }
 
+/// Correct a geometric position for atmospheric refraction, which lifts objects near the horizon by about 0.5°.
+///
+/// Saemundsson's formula (Meeus, Astronomical Algorithms, eq. 16.4) for standard pressure and temperature. It diverges
+/// below about -5°, so positions under -1° get the lift at -1°, which keeps the mapping continuous and monotonic.
+pub fn apply_refraction(position: Horizontal) -> Horizontal {
+    let altitude_degrees = position.altitude.to_degrees().max(-1.0);
+    let refraction_arcmin = 1.02 / (altitude_degrees + 10.3 / (altitude_degrees + 5.11)).to_radians().tan();
+    let refraction = (refraction_arcmin / 60.0).to_radians().max(0.0); // slightly negative near the zenith
+    Horizontal {
+        altitude: position.altitude + refraction,
+        ..position
+    }
+}
+
 /// The point `angle` radians from `from` along the great circle towards `to`. If the two points coincide or are
 /// opposite, there is no unique direction and `from` is returned.
 pub fn offset_towards(from: Horizontal, to: Horizontal, angle: f64) -> Horizontal {
@@ -141,6 +155,35 @@ mod tests {
             60.0,
         );
         assert!((zenith.altitude - FRAC_PI_2).abs() < 1e-12);
+    }
+
+    #[test]
+    fn refraction_lifts_objects_near_the_horizon_most() {
+        let lift_at = |altitude_degrees: f64| {
+            let position = Horizontal {
+                azimuth: 1.0,
+                altitude: altitude_degrees * TO_RAD,
+            };
+            let refracted = apply_refraction(position);
+            assert_eq!(refracted.azimuth, 1.0);
+            (refracted.altitude - position.altitude) / TO_RAD * 60.0 // in arcminutes
+        };
+        assert!((lift_at(0.0) - 28.98).abs() < 0.05, "{}", lift_at(0.0));
+        assert!((lift_at(45.0) - 1.0).abs() < 0.05, "{}", lift_at(45.0));
+        assert_eq!(lift_at(90.0), 0.0);
+        assert!((lift_at(-10.0) - lift_at(-1.0)).abs() < 1e-9);
+
+        // higher true altitudes always appear higher
+        let apparent: Vec<f64> = (-100..=900)
+            .map(|tenth_degree| {
+                apply_refraction(Horizontal {
+                    azimuth: 0.0,
+                    altitude: f64::from(tenth_degree) / 10.0 * TO_RAD,
+                })
+            })
+            .map(|position| position.altitude)
+            .collect();
+        assert!(apparent.windows(2).all(|pair| pair[0] < pair[1]));
     }
 
     #[test]

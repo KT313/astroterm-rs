@@ -38,14 +38,14 @@ Each module only depends on the ones above it:
 | `canvas` | In-memory cell grid (clipping, wide glyphs, braille merging) and line drawing |
 | `projection` | Stereographic / equidistant projections and the `View` (zenith or facing, fov) |
 | `catalog` | Embedded BSC5 star catalog, star names, constellation figures, cities, orbital elements |
-| `sky` | Object model (`Sky`, `Star`, `Planet`, `Moon`) and position updates |
-| `scene` | Drawing the sky, orientation aids and the metadata panel onto canvases |
-| `terminal` | Raw-mode session guard, diffing presenter (crossterm), input |
+| `sky` | Object model (`Sky`, `Star`, `Planet`, `Moon`) and position updates, without any rendering details |
+| `scene` | Character-grid rendering: glyphs and colors, drawing the sky, orientation aids and the metadata panel |
+| `terminal` | `TerminalRenderer`, raw-mode session guard, diffing presenter (crossterm), input |
 | `controls` | Key bindings and their effect on the view and the simulation clock |
 | `cli` | Arguments, validated `Config`, bash completions |
 
 `src/main.rs` holds the processing flow: parse options → build the sky → per frame: poll input and apply controls,
-update positions, draw (sky and metadata panel), present.
+update positions, render. Rendering only reads the sky, so other renderers can be added beside `TerminalRenderer`.
 
 ## Differences from the C version
 
@@ -56,6 +56,9 @@ New:
 - The Moon includes the main perturbations by the Sun (about 0.1° instead of several degrees off), parallax, a
   phase computed from its actual elongation from the Sun, and an emoji lit on the side facing the Sun in the current
   view (the C version only mirrored it by hemisphere).
+- Star and planet positions are precessed from J2000 to the date, so they line up with the sidereal time of date
+  (the C version was about 0.35° off in 2025, growing by about 1.4° per century away from 2000).
+- Optional atmospheric refraction (`-R`/`--refraction`), which lifts objects near the horizon by up to about 0.5°.
 
 Fixed:
 

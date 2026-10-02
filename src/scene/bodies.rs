@@ -3,8 +3,9 @@
 use crate::astro::{Horizontal, offset_towards};
 use crate::canvas::{Canvas, draw_line_braille};
 use crate::projection::{Polar, View};
-use crate::sky::{Appearance, Planet, Sky};
+use crate::sky::{Planet, Sky};
 
+use super::appearance::{Appearance, select_moon_appearance, select_planet_appearance, select_star_appearance};
 use super::{RenderOptions, draw_line, polar_to_canvas_cell};
 
 /// Draw the stars bright enough for the threshold, dimmest first. Only the brightest stars get labels.
@@ -15,7 +16,14 @@ pub fn draw_stars(canvas: &mut Canvas, view: &View, options: &RenderOptions, sky
             continue;
         }
         let show_label = star.magnitude <= options.label_threshold;
-        draw_object(canvas, view, options, &star.appearance, star.position, show_label);
+        draw_object(
+            canvas,
+            view,
+            options,
+            &select_star_appearance(star),
+            star.position,
+            show_label,
+        );
     }
 }
 
@@ -35,7 +43,14 @@ pub fn draw_constellations(canvas: &mut Canvas, view: &View, options: &RenderOpt
 /// Draw the Sun and the planets, outermost first so the Sun ends up on top.
 pub fn draw_planets(canvas: &mut Canvas, view: &View, options: &RenderOptions, planets: &[Planet]) {
     for planet in planets.iter().rev() {
-        draw_object(canvas, view, options, &planet.appearance, planet.position, true);
+        draw_object(
+            canvas,
+            view,
+            options,
+            &select_planet_appearance(planet.kind),
+            planet.position,
+            true,
+        );
     }
 }
 
@@ -43,10 +58,7 @@ pub fn draw_planets(canvas: &mut Canvas, view: &View, options: &RenderOptions, p
 pub fn draw_moon(canvas: &mut Canvas, view: &View, options: &RenderOptions, sky: &Sky) {
     let moon = &sky.moon;
     let lit_on_right = is_lit_on_right(view, moon.position, sky.sun().position);
-    let appearance = Appearance {
-        unicode: moon.phase.glyph(lit_on_right),
-        ..moon.appearance
-    };
+    let appearance = select_moon_appearance(moon.phase, lit_on_right);
     draw_object(canvas, view, options, &appearance, moon.position, true);
 }
 
@@ -163,6 +175,8 @@ mod tests {
         unicode: false,
         braille: false,
         color: false,
+        constellations: true,
+        grid: false,
         magnitude_threshold: 5.0,
         label_threshold: 0.25,
     };
