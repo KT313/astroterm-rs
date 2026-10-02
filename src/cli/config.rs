@@ -1,6 +1,7 @@
 //! Validated settings, converted to the units used internally (radians, Julian dates).
 
 use std::fmt;
+use std::path::PathBuf;
 
 use crate::astro::{
     Observer, compass_point_to_azimuth, current_julian_date, datetime_to_julian_date, parse_utc_datetime,
@@ -22,6 +23,8 @@ pub struct Config {
     pub terminal: TerminalSettings,
     /// Frames per second.
     pub fps: u32,
+    /// Star dataset to load instead of the embedded catalog.
+    pub dataset: Option<PathBuf>,
 }
 
 /// What is simulated: where, from when, how fast, and with which corrections.
@@ -73,6 +76,7 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
         grid: arguments.grid,
         magnitude_threshold: arguments.threshold,
         label_threshold: arguments.label_threshold,
+        dynamic_names: !arguments.disable_dynamic_names,
     };
     let simulation = SimulationSettings {
         observer,
@@ -92,6 +96,7 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
         render,
         terminal,
         fps,
+        dataset: arguments.dataset,
     })
 }
 
@@ -226,7 +231,7 @@ mod tests {
             (24, 1.0, None)
         );
         assert!(!config.terminal.metadata_panel && !config.simulation.refraction && !config.terminal.quit_on_any_key);
-        assert!(!config.terminal.frame_times);
+        assert!(!config.terminal.frame_times && config.render.dynamic_names);
     }
 
     #[test]
@@ -260,6 +265,18 @@ mod tests {
         assert!(error_from(&["-d", "2025-01-01"]).starts_with("Unable to parse datetime string '2025-01-01'"));
         assert_eq!(error_from(&["-r", "0"]), "Aspect ratio must be greater than 0");
         assert_eq!(error_from(&["-i", "Atlantis"]), "Could not find city \"Atlantis\"");
+    }
+
+    #[test]
+    fn dataset_path_is_passed_through() {
+        assert_eq!(config_from(&[]).unwrap().dataset, None);
+        let config = config_from(&["--dataset", "datasets/athyg_40.csv.gz"]).unwrap();
+        assert_eq!(config.dataset, Some(PathBuf::from("datasets/athyg_40.csv.gz")));
+    }
+
+    #[test]
+    fn dynamic_names_can_be_disabled() {
+        assert!(!config_from(&["--disable-dynamic-names"]).unwrap().render.dynamic_names);
     }
 
     #[test]

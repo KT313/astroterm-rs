@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use clap::Parser;
 
 use astroterm::astro::SimulationClock;
-use astroterm::catalog::{load_embedded_catalog, load_embedded_cities};
+use astroterm::catalog::{load_athyg_catalog, load_embedded_catalog, load_embedded_cities};
 use astroterm::cli::{Arguments, Config, build_config, write_bash_completions};
 use astroterm::controls::{Control, apply_control};
 use astroterm::sky::{Sky, refract_sky_positions, update_sky_positions};
@@ -39,8 +39,12 @@ fn main() -> ExitCode {
         Err(error) => return report_failure(error),
     };
 
-    // build the sky from the embedded catalogs
-    let mut sky = match load_embedded_catalog() {
+    // build the sky from the embedded catalogs, or from a star dataset file
+    let catalog = match &config.dataset {
+        Some(path) => load_athyg_catalog(path),
+        None => load_embedded_catalog(),
+    };
+    let mut sky = match catalog {
         Ok(catalog) => Sky::from_catalog(&catalog),
         Err(error) => return report_failure(error),
     };

@@ -6,7 +6,9 @@ mod bodies;
 mod overlays;
 mod panel;
 
-pub use appearance::{Appearance, select_moon_appearance, select_planet_appearance, select_star_appearance};
+pub use appearance::{
+    Appearance, format_star_label, select_moon_appearance, select_planet_appearance, select_star_appearance,
+};
 pub use bodies::{draw_constellations, draw_moon, draw_planets, draw_stars};
 pub use overlays::{draw_azimuthal_grid, draw_cardinal_directions, draw_horizon_labels, draw_horizon_line};
 pub use panel::draw_metadata_panel;
@@ -35,6 +37,8 @@ pub struct RenderOptions {
     pub magnitude_threshold: f32,
     /// Only label stars at least this bright.
     pub label_threshold: f32,
+    /// Name the brightest stars in view too, until at least 5 objects in view have labels.
+    pub dynamic_names: bool,
 }
 
 impl RenderOptions {

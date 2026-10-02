@@ -1,5 +1,7 @@
 //! How objects look on the character grid: a glyph for each character set, an optional label and color.
 
+use std::borrow::Cow;
+
 use crate::astro::{MoonPhase, map_float_to_int_range};
 use crate::canvas::Color;
 use crate::sky::{PlanetKind, Star};
@@ -28,7 +30,17 @@ pub fn select_star_appearance(star: &Star) -> Appearance {
         ascii: STAR_GLYPHS_ASCII[glyph_index],
         unicode: STAR_GLYPHS_UNICODE[glyph_index],
         label: star.name,
-        color: select_star_color(star.spectral_type),
+        color: select_star_color(star.spectral_type, star.color_index),
+    }
+}
+
+/// A star's label: its proper name, or else its catalog designation (e.g. "α Vir" or "HR 1713"), with Greek letters
+/// if `unicode`.
+pub fn format_star_label(star: &Star, unicode: bool) -> Cow<'static, str> {
+    match (star.name, star.designation) {
+        (Some(name), _) => Cow::Borrowed(name),
+        (None, Some(designation)) => Cow::Owned(designation.format(unicode)),
+        (None, None) => Cow::Borrowed(""),
     }
 }
 
@@ -71,13 +83,28 @@ pub fn select_moon_appearance(phase: MoonPhase, lit_on_right: bool) -> Appearanc
 
 /// Approximate color of a star from its spectral class, within the 8 basic terminal colors: hot blue-white stars
 /// (O, B, Wolf-Rayet) are cyan, white to yellow-white stars (A, F, G) use the default color, orange K stars are yellow
-/// and cool red giants and carbon stars (M, C, S, N) are red.
-fn select_star_color(spectral_type: [u8; 2]) -> Option<Color> {
+/// and cool red giants and carbon stars (M, C, S, N) are red. Without a known class, the B-V color index decides.
+fn select_star_color(spectral_type: [u8; 2], color_index: Option<f32>) -> Option<Color> {
     match spectral_type[0] {
         b'O' | b'B' | b'W' => Some(Color::Cyan),
+        b'A' | b'F' | b'G' => None,
         b'K' => Some(Color::Yellow),
         b'M' | b'C' | b'S' | b'N' => Some(Color::Red),
-        _ => None,
+        _ => select_color_from_color_index(color_index?),
+    }
+}
+
+/// The color of the spectral class a B-V color index typically belongs to: below 0 for O/B stars, from 0.8 for K and
+/// from 1.4 for M stars.
+fn select_color_from_color_index(color_index: f32) -> Option<Color> {
+    if color_index < 0.0 {
+        Some(Color::Cyan)
+    } else if color_index >= 1.4 {
+        Some(Color::Red)
+    } else if color_index >= 0.8 {
+        Some(Color::Yellow)
+    } else {
+        None
     }
 }
 
@@ -102,13 +129,21 @@ mod tests {
 
     #[test]
     fn star_colors_follow_spectral_class() {
-        assert_eq!(select_star_color(*b"B8"), Some(Color::Cyan)); // Rigel
-        assert_eq!(select_star_color(*b"WN"), Some(Color::Cyan));
-        assert_eq!(select_star_color(*b"A0"), None); // Vega
-        assert_eq!(select_star_color(*b"G2"), None); // like the Sun
-        assert_eq!(select_star_color(*b"K1"), Some(Color::Yellow)); // Arcturus
-        assert_eq!(select_star_color(*b"M1"), Some(Color::Red)); // Betelgeuse
-        assert_eq!(select_star_color(*b"  "), None);
+        assert_eq!(select_star_color(*b"B8", None), Some(Color::Cyan)); // Rigel
+        assert_eq!(select_star_color(*b"WN", None), Some(Color::Cyan));
+        assert_eq!(select_star_color(*b"A0", Some(1.5)), None); // Vega; the class wins over the color index
+        assert_eq!(select_star_color(*b"G2", None), None); // like the Sun
+        assert_eq!(select_star_color(*b"K1", None), Some(Color::Yellow)); // Arcturus
+        assert_eq!(select_star_color(*b"M1", None), Some(Color::Red)); // Betelgeuse
+        assert_eq!(select_star_color(*b"  ", None), None);
+    }
+
+    #[test]
+    fn star_colors_fall_back_to_the_color_index() {
+        let color = |color_index| select_star_color(*b"  ", Some(color_index));
+        assert_eq!((color(-0.2), color(0.0), color(0.79)), (Some(Color::Cyan), None, None));
+        assert_eq!((color(0.8), color(1.39)), (Some(Color::Yellow), Some(Color::Yellow)));
+        assert_eq!(color(1.4), Some(Color::Red));
     }
 
     #[test]
@@ -133,6 +168,15 @@ mod tests {
             (Some("Arcturus"), Some(Color::Yellow))
         );
         assert_eq!((star(7001).label, star(7001).color), (Some("Vega"), None));
+    }
+
+    #[test]
+    fn stars_without_a_name_are_labelled_with_their_catalog_number() {
+        let sky = Sky::from_catalog(&load_embedded_catalog().expect("embedded catalog loads"));
+        assert_eq!(format_star_label(&sky.stars[7000], true), "Vega");
+        let unnamed = (sky.stars.iter().enumerate()).find(|(_, star)| star.has_data && star.name.is_none());
+        let (index, unnamed) = unnamed.unwrap();
+        assert_eq!(format_star_label(unnamed, false), format!("HR {}", index + 1));
     }
 
     #[test]

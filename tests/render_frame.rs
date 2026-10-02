@@ -18,6 +18,7 @@ const ASCII: RenderOptions = RenderOptions {
     grid: false,
     magnitude_threshold: 5.0,
     label_threshold: 0.25,
+    dynamic_names: false,
 };
 
 /// Build and position the sky at `datetime` (UTC) for an observer at the given latitude and longitude in degrees.
@@ -140,4 +141,35 @@ fn every_view_and_style_renders_within_bounds() {
             assert_eq!(canvas.to_lines().len(), height);
         }
     }
+}
+
+/// Labels on the canvas: words with a lowercase letter (names) and catalog numbers ("HR 1234"); compass letters are
+/// all uppercase and not counted.
+fn count_labels(canvas: &Canvas) -> usize {
+    let text = canvas.to_lines().join(" ");
+    let is_label = |word: &&str| word.chars().any(char::is_lowercase) || *word == "HR";
+    text.split_whitespace().filter(is_label).count()
+}
+
+#[test]
+fn dynamic_names_label_stars_in_a_zoomed_view() {
+    let sky = build_sky_at("2025-03-01T11:00:00", 35.69, 139.69); // Tokyo, 20:00 local time
+    let view = View {
+        center: ViewCenter::Facing {
+            azimuth: 225_f64.to_radians(),
+            tilt: 30_f64.to_radians(),
+        },
+        projection: ProjectionKind::Stereographic,
+        fov_degrees: 20.0,
+    };
+    let count_labels_with = |dynamic_names| {
+        let mut canvas = Canvas::new(41, 81);
+        draw_sky_scene(&mut canvas, &view, &RenderOptions { dynamic_names, ..ASCII }, &sky);
+        count_labels(&canvas)
+    };
+    let (without, with) = (count_labels_with(false), count_labels_with(true));
+    assert!(
+        with > without && with >= 3,
+        "labels without dynamic names: {without}, with: {with}"
+    );
 }

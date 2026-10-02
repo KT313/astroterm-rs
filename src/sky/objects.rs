@@ -2,23 +2,26 @@
 
 use crate::astro::{Equatorial, Horizontal, MoonOrbit, MoonPhase, PlanetOrbit};
 use crate::catalog::{
-    Bsc5Entry, JUPITER_ORBIT, MARS_ORBIT, MERCURY_ORBIT, MOON_ORBIT, NEPTUNE_ORBIT, SATURN_ORBIT, URANUS_ORBIT,
-    VENUS_ORBIT,
+    CatalogStar, Designation, JUPITER_ORBIT, MARS_ORBIT, MERCURY_ORBIT, MOON_ORBIT, NEPTUNE_ORBIT, SATURN_ORBIT,
+    URANUS_ORBIT, VENUS_ORBIT,
 };
 
 /// A catalog star.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Star {
-    pub catalog_number: u32,
     /// Proper name, for the brighter stars that have one.
     pub name: Option<&'static str>,
+    /// Catalog designation, e.g. a Bayer letter or an HR number, for labelling stars without a name.
+    pub designation: Option<Designation>,
     /// J2000 position.
     pub catalog_position: Equatorial,
     /// Radians per year.
     pub proper_motion: Equatorial,
     pub magnitude: f32,
-    /// Morgan-Keenan spectral class and subclass as in the catalog, e.g. `*b"K1"`.
+    /// Morgan-Keenan spectral class and subclass as in the catalog, e.g. `*b"K1"`; blank if unknown.
     pub spectral_type: [u8; 2],
+    /// B-V color index, if known.
+    pub color_index: Option<f32>,
     /// Whether the catalog has data for this star (a few catalog numbers are empty placeholders).
     pub has_data: bool,
     /// Apparent position, updated every frame.
@@ -26,11 +29,11 @@ pub struct Star {
 }
 
 impl Star {
-    /// A star from its catalog entry and proper name.
-    pub fn from_entry(entry: &Bsc5Entry, name: Option<&'static str>) -> Star {
+    /// A star from its catalog entry.
+    pub fn from_catalog_star(entry: &CatalogStar) -> Star {
         Star {
-            catalog_number: entry.catalog_number,
-            name,
+            name: entry.name,
+            designation: entry.designation,
             catalog_position: Equatorial {
                 right_ascension: entry.right_ascension,
                 declination: entry.declination,
@@ -41,7 +44,8 @@ impl Star {
             },
             magnitude: entry.magnitude,
             spectral_type: entry.spectral_type,
-            has_data: entry.has_data(),
+            color_index: entry.color_index,
+            has_data: entry.has_data,
             position: Horizontal::default(),
         }
     }

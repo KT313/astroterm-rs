@@ -1,30 +1,76 @@
 //! Drawing stars, constellation figures, planets and the Moon.
 
+use std::borrow::Cow;
+
 use crate::astro::{Horizontal, offset_towards};
 use crate::canvas::{Canvas, draw_line_braille};
 use crate::projection::{Polar, View};
 use crate::sky::{Planet, Sky};
 
-use super::appearance::{Appearance, select_moon_appearance, select_planet_appearance, select_star_appearance};
+use super::appearance::{
+    Appearance, format_star_label, select_moon_appearance, select_planet_appearance, select_star_appearance,
+};
 use super::{RenderOptions, draw_line, polar_to_canvas_cell};
 
-/// Draw the stars bright enough for the threshold, dimmest first. Only the brightest stars get labels.
+/// With dynamic names, the brightest stars in view are named until at least this many objects in view have labels.
+const DYNAMIC_NAME_COUNT: usize = 5;
+
+/// Draw the stars bright enough for the threshold, dimmest first. Named stars brighter than the label threshold get
+/// labels, and with dynamic names also the brightest stars in view when few objects in view have labels.
 pub fn draw_stars(canvas: &mut Canvas, view: &View, options: &RenderOptions, sky: &Sky) {
+    let dynamically_named = if options.dynamic_names {
+        select_dynamically_named_stars(view, options, sky)
+    } else {
+        Vec::new()
+    };
+
     for &index in &sky.stars_by_brightness {
         let star = &sky.stars[index];
         if star.magnitude > options.magnitude_threshold {
             continue;
         }
-        let show_label = star.magnitude <= options.label_threshold;
+        let label = if dynamically_named.contains(&index) {
+            Some(format_star_label(star, options.unicode))
+        } else if star.magnitude <= options.label_threshold {
+            star.name.map(Cow::Borrowed)
+        } else {
+            None
+        };
         draw_object(
             canvas,
             view,
             options,
             &select_star_appearance(star),
             star.position,
-            show_label,
+            label.as_deref(),
         );
     }
+}
+
+/// Indices of the stars to name in addition to the usual labels: the brightest drawn stars in view without a label,
+/// until at least [`DYNAMIC_NAME_COUNT`] objects in view (the Sun, planets, Moon and labelled stars) have labels.
+fn select_dynamically_named_stars(view: &View, options: &RenderOptions, sky: &Sky) -> Vec<usize> {
+    // the Sun, planets and Moon are always labelled
+    let in_view = |position| is_on_disk(view.project(position));
+    let planets_in_view = sky.planets.iter().filter(|planet| in_view(planet.position)).count();
+    let mut labelled = planets_in_view + usize::from(in_view(sky.moon.position));
+
+    // then stars, brightest first: ones labelled anyway only count, the others get a name
+    let mut selected = Vec::new();
+    for &index in sky.stars_by_brightness.iter().rev() {
+        let star = &sky.stars[index];
+        if labelled >= DYNAMIC_NAME_COUNT || star.magnitude > options.magnitude_threshold {
+            break; // enough labels, or this and all following stars are too dim to be drawn
+        }
+        if !in_view(star.position) {
+            continue;
+        }
+        if star.magnitude > options.label_threshold || star.name.is_none() {
+            selected.push(index);
+        }
+        labelled += 1;
+    }
+    selected
 }
 
 /// Draw the stick figures of all constellations whose stars are all bright enough for the threshold.
@@ -43,14 +89,8 @@ pub fn draw_constellations(canvas: &mut Canvas, view: &View, options: &RenderOpt
 /// Draw the Sun and the planets, outermost first so the Sun ends up on top.
 pub fn draw_planets(canvas: &mut Canvas, view: &View, options: &RenderOptions, planets: &[Planet]) {
     for planet in planets.iter().rev() {
-        draw_object(
-            canvas,
-            view,
-            options,
-            &select_planet_appearance(planet.kind),
-            planet.position,
-            true,
-        );
+        let appearance = select_planet_appearance(planet.kind);
+        draw_object(canvas, view, options, &appearance, planet.position, appearance.label);
     }
 }
 
@@ -59,7 +99,7 @@ pub fn draw_moon(canvas: &mut Canvas, view: &View, options: &RenderOptions, sky:
     let moon = &sky.moon;
     let lit_on_right = is_lit_on_right(view, moon.position, sky.sun().position);
     let appearance = select_moon_appearance(moon.phase, lit_on_right);
-    draw_object(canvas, view, options, &appearance, moon.position, true);
+    draw_object(canvas, view, options, &appearance, moon.position, appearance.label);
 }
 
 /// Whether, in this view, the direction from the Moon towards the Sun points to the right of the screen.
@@ -70,17 +110,22 @@ fn is_lit_on_right(view: &View, moon: Horizontal, sun: Horizontal) -> bool {
     towards_sun_x > moon_x
 }
 
-/// Draw an object's glyph, and its label up and to the right of it. Objects out of view are skipped.
+/// Whether a projected point is in view (on the unit disk).
+fn is_on_disk(polar: Polar) -> bool {
+    polar.radius.abs() <= 1.0
+}
+
+/// Draw an object's glyph, and its label (if any) up and to the right of it. Objects out of view are skipped.
 fn draw_object(
     canvas: &mut Canvas,
     view: &View,
     options: &RenderOptions,
     appearance: &Appearance,
     position: Horizontal,
-    show_label: bool,
+    label: Option<&str>,
 ) {
     let polar = view.project(position);
-    if polar.radius.abs() > 1.0 {
+    if !is_on_disk(polar) {
         return;
     }
     let (row, col) = polar_to_canvas_cell(canvas, polar);
@@ -92,7 +137,7 @@ fn draw_object(
         appearance.ascii
     };
     canvas.put_char(row, col, glyph, color);
-    if let (true, Some(label)) = (show_label, appearance.label) {
+    if let Some(label) = label {
         canvas.put_str_truncated(row - 1, col + 1, label, color);
     }
 }
@@ -142,6 +187,7 @@ mod tests {
     use std::f64::consts::{FRAC_PI_2, PI};
 
     use super::*;
+    use crate::catalog::load_embedded_catalog;
     use crate::projection::ViewCenter;
 
     #[test]
@@ -179,6 +225,7 @@ mod tests {
         grid: false,
         magnitude_threshold: 5.0,
         label_threshold: 0.25,
+        dynamic_names: false,
     };
 
     fn horizontal(azimuth_degrees: f64, altitude_degrees: f64) -> Horizontal {
@@ -252,5 +299,94 @@ mod tests {
             horizontal(190.0, -85.0),
         );
         assert_eq!(count_marks(&canvas), (0, 0));
+    }
+
+    const DYNAMIC: RenderOptions = RenderOptions {
+        dynamic_names: true,
+        ..ASCII
+    };
+
+    /// The real sky with every object at the nadir (out of the overhead view), except the given stars, which are placed
+    /// on a ring around the zenith.
+    fn place_in_view(visible: &[usize]) -> Sky {
+        let mut sky = Sky::from_catalog(&load_embedded_catalog().expect("embedded catalog loads"));
+        let nadir = horizontal(0.0, -90.0);
+        sky.stars.iter_mut().for_each(|star| star.position = nadir);
+        sky.planets.iter_mut().for_each(|planet| planet.position = nadir);
+        sky.moon.position = nadir;
+        for (step, &index) in visible.iter().enumerate() {
+            sky.stars[index].position = horizontal(step as f64 * 40.0, 60.0);
+        }
+        sky
+    }
+
+    /// Seven stars, brightest first, all dimmer than the label threshold; the brightest has no proper name.
+    fn pick_unlabelled_stars(sky: &Sky) -> Vec<usize> {
+        let brightest_first: Vec<usize> = sky.stars_by_brightness.iter().rev().copied().collect();
+        let unnamed = brightest_first
+            .iter()
+            .position(|&index| sky.stars[index].name.is_none() && sky.stars[index].magnitude > ASCII.label_threshold)
+            .unwrap();
+        brightest_first[unnamed..unnamed + 7].to_vec()
+    }
+
+    #[test]
+    fn dynamic_names_go_to_the_five_brightest_stars_in_view() {
+        let stars = pick_unlabelled_stars(&place_in_view(&[]));
+        let sky = place_in_view(&stars);
+        assert_eq!(
+            select_dynamically_named_stars(&View::default(), &DYNAMIC, &sky),
+            stars[..5]
+        );
+
+        // the unnamed one shows its catalog number
+        let mut canvas = Canvas::new(41, 81);
+        draw_stars(&mut canvas, &View::default(), &DYNAMIC, &sky);
+        let label = format!("HR {}", stars[0] + 1); // the embedded catalog is indexed by HR number
+        assert!(canvas.to_lines().iter().any(|line| line.contains(&label)), "{label}");
+    }
+
+    #[test]
+    fn planets_moon_and_labelled_stars_in_view_count_toward_the_five() {
+        let stars = pick_unlabelled_stars(&place_in_view(&[]));
+        let vega = 7000; // brighter than the label threshold, and named
+        let mut sky = place_in_view(&[&stars[..], &[vega]].concat());
+        sky.planets[3].position = horizontal(100.0, 70.0);
+        sky.moon.position = horizontal(200.0, 70.0);
+        assert_eq!(
+            select_dynamically_named_stars(&View::default(), &DYNAMIC, &sky),
+            stars[..2]
+        );
+    }
+
+    #[test]
+    fn stars_too_dim_to_be_drawn_are_never_named() {
+        let stars = pick_unlabelled_stars(&place_in_view(&[]));
+        let sky = place_in_view(&stars);
+        let options = RenderOptions {
+            magnitude_threshold: sky.stars[stars[2]].magnitude,
+            ..DYNAMIC
+        };
+        let drawn: Vec<usize> = stars
+            .iter()
+            .copied()
+            .filter(|&index| sky.stars[index].magnitude <= options.magnitude_threshold)
+            .collect();
+        assert!(drawn.len() >= 3 && drawn.len() < 5, "{drawn:?}");
+        assert_eq!(select_dynamically_named_stars(&View::default(), &options, &sky), drawn);
+    }
+
+    #[test]
+    fn without_dynamic_names_only_bright_named_stars_are_labelled() {
+        let stars = pick_unlabelled_stars(&place_in_view(&[]));
+        let sky = place_in_view(&stars);
+        let mut canvas = Canvas::new(41, 81);
+        draw_stars(&mut canvas, &View::default(), &ASCII, &sky);
+        let text = canvas.to_lines().concat();
+        assert!(
+            !text
+                .chars()
+                .any(|symbol| symbol.is_ascii_alphabetic() && symbol != 'O' && symbol != 'o')
+        );
     }
 }

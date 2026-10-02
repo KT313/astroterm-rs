@@ -61,6 +61,12 @@ New:
 - Star and planet positions are precessed from J2000 to the date, so they line up with the sidereal time of date
   (the C version was about 0.35° off in 2025, growing by about 1.4° per century away from 2000).
 - Optional atmospheric refraction (`-R`/`--refraction`), which lifts objects near the horizon by up to about 0.5°.
+- `--dataset <path>` loads stars from an AT-HYG file (`.csv` or `.csv.gz`, see Data Sources) instead of the embedded
+  Yale Bright Star Catalog; constellation figures are matched by HR number. Unnamed stars are labelled with their
+  Bayer, Flamsteed, HR, HIP, Tycho-2 or Gaia designation, and stars without a spectral type are colored by B-V.
+- Dynamic names: when fewer than 5 objects in view have labels (e.g. after zooming in), the brightest stars in view
+  are named too, with their catalog number (`HR 1234`) if they have no proper name. `--disable-dynamic-names` turns
+  this off.
 - `--debug-frametimes` shows how long each step of a frame takes (position calculation, drawing, writing to the
   terminal), as exponential moving averages below the metadata, to find what needs optimizing.
 
@@ -125,6 +131,14 @@ The files in `data/` are taken from the original astroterm repository:
 - Cities: [GeoNames](https://download.geonames.org/) (filtered and condensed using astroterm's
   [filter_cities.py](https://github.com/da-luce/astroterm/blob/main/scripts/filter_cities.py))
 - Planet orbital elements: [NASA Jet Propulsion Laboratory](https://ssd.jpl.nasa.gov/planets/approx_pos.html)
+
+Optional, not distributed with this repository:
+
+- Larger star dataset for `--dataset`: [AT-HYG](https://codeberg.org/astronexus/athyg) (Augmented Tycho-HYG) by
+  David Nash / astronexus, about 2.5 million stars from Tycho-2, Gaia DR3 and HYG, licensed
+  [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). Download `data/athyg_40.csv.gz` from that
+  repository (it is stored with Git LFS: `https://codeberg.org/astronexus/athyg/media/branch/main/data/athyg_40.csv.gz`)
+  into `datasets/`, which is ignored by git.
 
 ## License
 

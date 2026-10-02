@@ -95,7 +95,7 @@ mod tests {
 
     use super::*;
     use crate::astro::MoonPhase;
-    use crate::catalog::load_embedded_catalog;
+    use crate::catalog::{Designation, load_embedded_catalog};
     use crate::sky::{PlanetKind, Sky};
 
     const STAR_EPSILON: f64 = 0.01;
@@ -136,7 +136,10 @@ mod tests {
     fn star_positions_match_reference() {
         let sky = update_boston_sky();
         let vega = &sky.stars[7000];
-        assert_eq!((vega.catalog_number, vega.name), (7001, Some("Vega")));
+        assert_eq!(
+            (vega.designation, vega.name),
+            (Some(Designation::Hr(7001)), Some("Vega"))
+        );
         assert_position(vega.position, 0.547246, 0.0, STAR_EPSILON);
 
         let arcturus = &sky.stars[5339];

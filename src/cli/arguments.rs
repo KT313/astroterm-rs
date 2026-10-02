@@ -1,5 +1,7 @@
 //! Command line arguments, as given by the user. Options and help texts follow the original astroterm.
 
+use std::path::PathBuf;
+
 use clap::{ArgAction, Parser};
 
 use crate::terminal::format_key_bindings_help;
@@ -121,6 +123,16 @@ pub struct Arguments {
     /// Apply atmospheric refraction: objects near the horizon appear up to about 0.5° higher, as in the real sky
     #[arg(short = 'R', long)]
     pub refraction: bool,
+
+    /// Load stars from an AT-HYG CSV file (.csv or .csv.gz) instead of the built-in Yale Bright Star Catalog.
+    /// Constellation figures are matched by HR number
+    #[arg(long, value_name = "path")]
+    pub dataset: Option<PathBuf>,
+
+    /// Don't name extra stars when zooming in. By default, if fewer than 5 objects in view have names, the brightest
+    /// visible stars are named too (with their catalog number if they have no proper name)
+    #[arg(long = "disable-dynamic-names")]
+    pub disable_dynamic_names: bool,
 
     /// Show how long each step of the per-frame calculation and rendering takes (smoothed), below the metadata.
     /// Turns on --metadata

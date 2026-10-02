@@ -1,14 +1,19 @@
-//! Star, constellation, city and orbit data embedded into the binary at compile time.
+//! Star, constellation, city and orbit data embedded into the binary at compile time, and star datasets loaded from
+//! files (AT-HYG) instead of the embedded star catalog.
 
+mod athyg;
 mod bsc5;
 mod cities;
+mod designation;
 mod orbits;
 mod tables;
 
 use std::fmt;
 
+pub use athyg::load_athyg_catalog;
 pub use bsc5::{Bsc5Entry, parse_bsc5};
 pub use cities::{City, find_city, parse_cities};
+pub use designation::Designation;
 pub use orbits::{
     EARTH_ORBIT, JUPITER_ORBIT, MARS_ORBIT, MERCURY_ORBIT, MOON_ORBIT, NEPTUNE_ORBIT, SATURN_ORBIT, URANUS_ORBIT,
     VENUS_ORBIT,
@@ -20,14 +25,37 @@ const STAR_NAMES_TEXT: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "
 const CONSTELLATIONS_TEXT: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/data/bsc5_constellations.txt"));
 const CITIES_TEXT: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/data/cities.csv"));
 
-/// The parsed star catalog with names and constellation figures.
+/// A star catalog, whichever dataset it comes from, with the constellation figures.
 #[derive(Clone, Debug)]
 pub struct Catalog {
-    /// BSC5 entries; entry `i` has catalog number `i + 1`.
-    pub stars: Vec<Bsc5Entry>,
-    /// Proper names, indexed like `stars`.
-    pub star_names: Vec<Option<&'static str>>,
+    /// For the embedded catalog, star `i` has HR number `i + 1`; other datasets are in their own order.
+    pub stars: Vec<CatalogStar>,
+    /// Figures refer to stars by HR number.
     pub constellations: Vec<ConstellationFigure>,
+}
+
+/// A star as any dataset describes it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CatalogStar {
+    /// Harvard Revised / Yale Bright Star Catalogue number, which the constellation figures refer to.
+    pub hr: Option<u32>,
+    /// Proper name, for the stars that have one.
+    pub name: Option<&'static str>,
+    /// The best catalog designation, used as a label for stars without a name.
+    pub designation: Option<Designation>,
+    /// J2000 position in radians.
+    pub right_ascension: f64,
+    pub declination: f64,
+    /// Proper motion of the right ascension and declination themselves, in radians per year.
+    pub ra_motion: f64,
+    pub dec_motion: f64,
+    pub magnitude: f32,
+    /// Morgan-Keenan spectral class and subclass, e.g. `*b"K1"`; blank if unknown.
+    pub spectral_type: [u8; 2],
+    /// B-V color index, if known.
+    pub color_index: Option<f32>,
+    /// Whether the catalog has data for this star (BSC5 keeps a few catalog numbers as empty placeholders).
+    pub has_data: bool,
 }
 
 /// Malformed embedded data.
@@ -45,6 +73,15 @@ pub enum CatalogError {
     },
     MalformedCity {
         line: usize,
+    },
+    /// A dataset file can't be read.
+    Io(String),
+    /// A dataset lacks a required column.
+    MissingColumn(&'static str),
+    /// A dataset row has a value that can't be parsed.
+    MalformedDatasetRow {
+        line: u64,
+        column: &'static str,
     },
 }
 
@@ -64,22 +101,52 @@ impl fmt::Display for CatalogError {
                 write!(f, "malformed constellation on line {line}")
             }
             CatalogError::MalformedCity { line } => write!(f, "malformed city on line {line}"),
+            CatalogError::Io(message) => f.write_str(message),
+            CatalogError::MissingColumn(column) => write!(f, "dataset has no `{column}` column"),
+            CatalogError::MalformedDatasetRow { line, column } => {
+                write!(f, "malformed `{column}` value on line {line} of the dataset")
+            }
         }
     }
 }
 
 impl std::error::Error for CatalogError {}
 
-/// Parse the catalogs embedded in the binary.
+/// Parse the catalogs embedded in the binary: the Yale Bright Star Catalog with its star names.
 pub fn load_embedded_catalog() -> Result<Catalog, CatalogError> {
-    let stars = parse_bsc5(BSC5_DATA)?;
-    let star_names = parse_star_names(STAR_NAMES_TEXT, stars.len())?;
-    let constellations = parse_constellation_figures(CONSTELLATIONS_TEXT)?;
+    let entries = parse_bsc5(BSC5_DATA)?;
+    let star_names = parse_star_names(STAR_NAMES_TEXT, entries.len())?;
+    let stars = entries
+        .iter()
+        .zip(star_names)
+        .map(|(entry, name)| convert_bsc5_entry(entry, name))
+        .collect();
     Ok(Catalog {
         stars,
-        star_names,
-        constellations,
+        constellations: load_constellation_figures()?,
     })
+}
+
+/// The constellation figures embedded in the binary, by HR number.
+pub fn load_constellation_figures() -> Result<Vec<ConstellationFigure>, CatalogError> {
+    parse_constellation_figures(CONSTELLATIONS_TEXT)
+}
+
+/// A BSC5 entry as a catalog star, designated by its HR number.
+fn convert_bsc5_entry(entry: &Bsc5Entry, name: Option<&'static str>) -> CatalogStar {
+    CatalogStar {
+        hr: Some(entry.catalog_number),
+        name,
+        designation: Some(Designation::Hr(entry.catalog_number)),
+        right_ascension: entry.right_ascension,
+        declination: entry.declination,
+        ra_motion: entry.ra_motion,
+        dec_motion: entry.dec_motion,
+        magnitude: entry.magnitude,
+        spectral_type: entry.spectral_type,
+        color_index: None,
+        has_data: entry.has_data(),
+    }
 }
 
 /// Parse the city table embedded in the binary.
@@ -94,7 +161,15 @@ mod tests {
     #[test]
     fn embedded_catalog_is_consistent() {
         let catalog = load_embedded_catalog().expect("embedded catalog loads");
-        assert_eq!(catalog.star_names.len(), catalog.stars.len());
+        assert_eq!(catalog.stars.len(), 9110);
+        assert!(
+            catalog
+                .stars
+                .iter()
+                .enumerate()
+                .all(|(index, star)| star.hr == Some(index as u32 + 1))
+        );
+        assert_eq!(catalog.stars[7000].name, Some("Vega"));
 
         let star_exists = |number: u32| (1..=catalog.stars.len() as u32).contains(&number);
         let all_segments = catalog
