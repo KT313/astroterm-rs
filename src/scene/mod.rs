@@ -3,17 +3,16 @@
 
 mod appearance;
 mod bodies;
-mod local_time;
-mod metadata;
 mod overlays;
+mod panel;
 
 pub use appearance::{Appearance, select_moon_appearance, select_planet_appearance, select_star_appearance};
 pub use bodies::{draw_constellations, draw_moon, draw_planets, draw_stars};
-pub use metadata::draw_metadata;
 pub use overlays::{draw_azimuthal_grid, draw_cardinal_directions, draw_horizon_labels, draw_horizon_line};
+pub use panel::draw_metadata_panel;
 
 use crate::canvas::{Canvas, Color, draw_line_ascii, draw_line_smooth};
-use crate::projection::{Polar, View, polar_to_cell};
+use crate::projection::{Polar, View};
 use crate::sky::Sky;
 
 /// Slack for points on the edge of the unit circle (rounding error).
@@ -72,9 +71,18 @@ pub fn draw_sky_scene(canvas: &mut Canvas, view: &View, options: &RenderOptions,
     }
 }
 
-/// The canvas cell of a point on the view plane.
+/// The (row, column) canvas cell of a point on the unit disk of the view plane. Row 0 is the top.
 fn polar_to_canvas_cell(canvas: &Canvas, polar: Polar) -> (i32, i32) {
-    polar_to_cell(polar, canvas.height(), canvas.width())
+    let radius_y = (canvas.height() as f64 - 1.0) / 2.0;
+    let radius_x = (canvas.width() as f64 - 1.0) / 2.0;
+
+    // sin(π) and cos(π/2) aren't exactly 0: snap them so both sides of an axis round the same way
+    let snap = |value: f64| if value.abs() < 1e-12 { 0.0 } else { value };
+    let (sin_theta, cos_theta) = (snap(polar.theta.sin()), snap(polar.theta.cos()));
+
+    let row = polar.radius * -radius_y * sin_theta + radius_y; // y-axis is flipped in screen space
+    let col = polar.radius * radius_x * cos_theta + radius_x;
+    (row.round() as i32, col.round() as i32)
 }
 
 /// Draw a line in the style of the options (smooth Unicode or ASCII).
@@ -83,5 +91,33 @@ fn draw_line(canvas: &mut Canvas, options: &RenderOptions, start: (i32, i32), en
         draw_line_smooth(canvas, start.0, start.1, end.0, end.1);
     } else {
         draw_line_ascii(canvas, start.0, start.1, end.0, end.1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::f64::consts::{FRAC_PI_2, PI};
+
+    use super::*;
+
+    #[test]
+    fn polar_to_canvas_cell_maps_disk_to_grid() {
+        let canvas = Canvas::new(100, 100);
+        let cell = |radius, theta| polar_to_canvas_cell(&canvas, Polar { radius, theta });
+        assert_eq!(cell(0.0, 0.0), (50, 50));
+        assert_eq!(cell(1.0, FRAC_PI_2), (0, 50));
+        assert_eq!(cell(1.0, -FRAC_PI_2), (99, 50));
+
+        // even height: left and right edges land on the same row
+        let canvas = Canvas::new(40, 90);
+        let (row_left, _) = polar_to_canvas_cell(&canvas, Polar { radius: 1.0, theta: PI });
+        let (row_right, _) = polar_to_canvas_cell(
+            &canvas,
+            Polar {
+                radius: 1.0,
+                theta: 0.0,
+            },
+        );
+        assert_eq!(row_left, row_right);
     }
 }

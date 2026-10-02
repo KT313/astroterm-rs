@@ -5,7 +5,7 @@ mod objects;
 mod positions;
 
 pub use objects::{Constellation, Moon, Planet, PlanetKind, Star, create_moon, create_planets};
-pub use positions::{refract_sky_positions, update_moon, update_planet_positions, update_star_positions};
+pub use positions::{refract_sky_positions, update_sky_positions};
 
 use crate::catalog::Catalog;
 

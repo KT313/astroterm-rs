@@ -34,15 +34,16 @@ Each module only depends on the ones above it:
 
 | Module | Responsibility |
 |---|---|
-| `astro` | Julian dates, sidereal time, coordinate conversions, star/planet/Moon positions |
+| `astro` | Julian dates, sidereal time, precession, coordinate conversions, star/planet/Moon positions |
 | `canvas` | In-memory cell grid (clipping, wide glyphs, braille merging) and line drawing |
-| `projection` | Stereographic / equidistant projections and the `View` (zenith or facing, fov) |
+| `projection` | Stereographic / equidistant projections onto the unit disk and the `View` (zenith or facing, fov) |
 | `catalog` | Embedded BSC5 star catalog, star names, constellation figures, cities, orbital elements |
-| `sky` | Object model (`Sky`, `Star`, `Planet`, `Moon`) and position updates, without any rendering details |
-| `scene` | Character-grid rendering: glyphs and colors, drawing the sky, orientation aids and the metadata panel |
-| `terminal` | `TerminalRenderer`, raw-mode session guard, diffing presenter (crossterm), input |
-| `controls` | Key bindings and their effect on the view and the simulation clock |
-| `cli` | Arguments, validated `Config`, bash completions |
+| `sky` | Object model (`Sky`, `Star`, `Planet`, `Moon`) and the per-frame position update, without rendering details |
+| `controls` | Actions the user can trigger (`Control`) and their effect on the view and the simulation clock |
+| `metadata` | What the metadata panel shows (date, zodiac, Moon phase, location, time, speed, view), as fields |
+| `scene` | Character-grid rendering: glyphs and colors, drawing the sky and orientation aids, the panel layout |
+| `terminal` | `TerminalRenderer`, key bindings, input, raw-mode session guard, diffing presenter (crossterm) |
+| `cli` | Arguments, validated `Config` (simulation, view, render and terminal settings), bash completions |
 
 `src/main.rs` holds the processing flow: parse options → build the sky → per frame: poll input and apply controls,
 update positions, render. Rendering only reads the sky, so other renderers can be added beside `TerminalRenderer`.

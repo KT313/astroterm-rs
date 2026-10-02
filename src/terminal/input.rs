@@ -1,19 +1,21 @@
-//! Keyboard and resize events between frames. What keys do (other than quitting) is up to the caller.
+//! Keyboard and resize events between frames, with keys turned into controls.
 
 use std::io;
 use std::time::Duration;
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{self, Event, KeyEventKind};
+
+use crate::controls::Control;
+
+use super::keys::key_to_control;
 
 /// What happened since the last frame.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FrameInput {
-    /// A quit key was pressed.
-    pub quit: bool,
+    /// Controls triggered by key presses (including auto-repeats), in order. A quit is always last.
+    pub controls: Vec<Control>,
     /// The terminal was resized.
     pub resized: bool,
-    /// Other key presses (including auto-repeats), in order.
-    pub keys: Vec<KeyEvent>,
 }
 
 /// Drain pending terminal events without blocking. Keys after a quit key are dropped.
@@ -21,35 +23,17 @@ pub fn poll_frame_input(quit_on_any_key: bool) -> io::Result<FrameInput> {
     let mut input = FrameInput::default();
     while event::poll(Duration::ZERO)? {
         match event::read()? {
-            Event::Key(key) if key.kind == KeyEventKind::Press && is_quit_key(&key, quit_on_any_key) => {
-                input.quit = true;
-                return Ok(input);
-            }
-            Event::Key(key) if key.kind != KeyEventKind::Release => input.keys.push(key),
+            Event::Key(key) if key.kind != KeyEventKind::Release => match key_to_control(&key, quit_on_any_key) {
+                Some(Control::Quit) if key.kind == KeyEventKind::Press => {
+                    input.controls.push(Control::Quit);
+                    return Ok(input);
+                }
+                Some(Control::Quit) | None => {} // holding a quit key down doesn't quit
+                Some(control) => input.controls.push(control),
+            },
             Event::Resize(..) => input.resized = true,
             _ => {}
         }
     }
     Ok(input)
-}
-
-/// `q`, Esc and Ctrl-C quit (raw mode turns Ctrl-C into a key press), or any key with `quit_on_any_key`.
-fn is_quit_key(key: &KeyEvent, quit_on_any_key: bool) -> bool {
-    let ctrl_c = key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL);
-    quit_on_any_key || ctrl_c || matches!(key.code, KeyCode::Char('q') | KeyCode::Esc)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn quit_keys() {
-        let key = |code, modifiers| KeyEvent::new(code, modifiers);
-        assert!(is_quit_key(&key(KeyCode::Char('q'), KeyModifiers::NONE), false));
-        assert!(is_quit_key(&key(KeyCode::Esc, KeyModifiers::NONE), false));
-        assert!(is_quit_key(&key(KeyCode::Char('c'), KeyModifiers::CONTROL), false));
-        assert!(!is_quit_key(&key(KeyCode::Char('c'), KeyModifiers::NONE), false));
-        assert!(is_quit_key(&key(KeyCode::Char('x'), KeyModifiers::NONE), true));
-    }
 }

@@ -2,14 +2,12 @@
 
 use std::f64::consts::PI;
 
-use astroterm::astro::{
-    Observer, compute_precession_matrix, datetime_to_julian_date, greenwich_mean_sidereal_time, parse_utc_datetime,
-};
+use astroterm::astro::{Observer, datetime_to_julian_date, parse_utc_datetime};
 use astroterm::canvas::Canvas;
 use astroterm::catalog::load_embedded_catalog;
 use astroterm::projection::{ProjectionKind, View, ViewCenter};
 use astroterm::scene::{RenderOptions, draw_sky_scene, draw_stars, select_star_appearance};
-use astroterm::sky::{Sky, update_moon, update_planet_positions, update_star_positions};
+use astroterm::sky::{Sky, update_sky_positions};
 
 const ASCII: RenderOptions = RenderOptions {
     unicode: false,
@@ -28,13 +26,8 @@ fn build_sky_at(datetime: &str, latitude: f64, longitude: f64) -> Sky {
         latitude: latitude * PI / 180.0,
         longitude: longitude * PI / 180.0,
     };
-    let sidereal_time = greenwich_mean_sidereal_time(julian_date);
-    let precession = compute_precession_matrix(julian_date);
-
     let mut sky = Sky::from_catalog(&load_embedded_catalog().expect("embedded catalog loads"));
-    update_star_positions(&mut sky.stars, julian_date, sidereal_time, &precession, &observer);
-    update_planet_positions(&mut sky.planets, julian_date, sidereal_time, &precession, &observer);
-    update_moon(&mut sky.moon, julian_date, sidereal_time, &observer);
+    update_sky_positions(&mut sky, julian_date, &observer);
     sky
 }
 

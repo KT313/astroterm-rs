@@ -1,4 +1,4 @@
-//! Azimuthal map projections onto the unit disk, and the mapping from the disk to screen cells.
+//! Azimuthal map projections onto the unit disk.
 //!
 //! Reference: John P. Snyder, Map Projections - A Working Manual (<https://pubs.usgs.gov/pp/1395/report.pdf>).
 
@@ -62,20 +62,6 @@ pub fn project_equidistant_horizontal(position: Horizontal, center: Horizontal) 
     let directly_behind = cos_c < 0.0 && x.hypot(y) < 1e-12;
     let theta = if directly_behind { FRAC_PI_2 } else { y.atan2(x) };
     Polar { radius, theta }
-}
-
-/// Map a point on the unit disk to a (row, column) cell of a `height` x `width` grid. Row 0 is the top.
-pub fn polar_to_cell(polar: Polar, height: usize, width: usize) -> (i32, i32) {
-    let radius_y = (height as f64 - 1.0) / 2.0;
-    let radius_x = (width as f64 - 1.0) / 2.0;
-
-    // sin(π) and cos(π/2) aren't exactly 0: snap them so both sides of an axis round the same way
-    let snap = |value: f64| if value.abs() < 1e-12 { 0.0 } else { value };
-    let (sin_theta, cos_theta) = (snap(polar.theta.sin()), snap(polar.theta.cos()));
-
-    let row = polar.radius * -radius_y * sin_theta + radius_y; // y-axis is flipped in screen space
-    let col = polar.radius * radius_x * cos_theta + radius_x;
-    (row.round() as i32, col.round() as i32)
 }
 
 /// cos of the angular distance from `center` to `position` (Snyder eq. 5-3), and the direction terms of eq. 21-2/3.
@@ -275,54 +261,5 @@ mod tests {
 
         let almost_behind = project_equidistant_horizontal(horizontal(center.azimuth + PI - 0.01, 0.0), center);
         assert!(almost_behind.radius < 2.0 && almost_behind.theta.abs() < 1e-6);
-    }
-
-    #[test]
-    fn polar_to_cell_maps_disk_to_grid() {
-        assert_eq!(
-            polar_to_cell(
-                Polar {
-                    radius: 0.0,
-                    theta: 0.0
-                },
-                100,
-                100
-            ),
-            (50, 50)
-        );
-        assert_eq!(
-            polar_to_cell(
-                Polar {
-                    radius: 1.0,
-                    theta: FRAC_PI_2
-                },
-                100,
-                100
-            ),
-            (0, 50)
-        );
-        assert_eq!(
-            polar_to_cell(
-                Polar {
-                    radius: 1.0,
-                    theta: -FRAC_PI_2
-                },
-                100,
-                100
-            ),
-            (99, 50)
-        );
-
-        // even height: left and right edges land on the same row
-        let (row_left, _) = polar_to_cell(Polar { radius: 1.0, theta: PI }, 40, 90);
-        let (row_right, _) = polar_to_cell(
-            Polar {
-                radius: 1.0,
-                theta: 0.0,
-            },
-            40,
-            90,
-        );
-        assert_eq!(row_left, row_right);
     }
 }

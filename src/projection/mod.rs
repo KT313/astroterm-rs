@@ -6,9 +6,7 @@ use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 use crate::astro::{Horizontal, horizontal_to_spherical};
 
-pub use maps::{
-    Polar, polar_to_cell, project_equidistant_horizontal, project_stereographic_horizontal, project_stereographic_north,
-};
+pub use maps::{Polar, project_equidistant_horizontal, project_stereographic_horizontal, project_stereographic_north};
 
 /// Field of view that maps exactly onto the unit circle without scaling.
 const DEFAULT_FOV_DEGREES: f64 = 180.0;

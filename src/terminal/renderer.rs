@@ -3,44 +3,51 @@
 use std::io;
 
 use crate::astro::{Observer, SimulationClock};
+use crate::metadata::collect_metadata_fields;
 use crate::projection::View;
-use crate::scene::{RenderOptions, draw_metadata, draw_sky_scene};
+use crate::scene::{RenderOptions, draw_metadata_panel, draw_sky_scene};
 use crate::sky::Sky;
 
 use super::present::Frame;
 use super::session::{TerminalSession, open_terminal_session};
+
+/// Settings of the terminal itself, as opposed to what is drawn.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TerminalSettings {
+    /// Cell height / width; detected from the terminal when `None`.
+    pub aspect_ratio: Option<f64>,
+    /// Show the metadata panel in the top left corner.
+    pub metadata_panel: bool,
+    /// Quit on any key instead of only `q`, Esc and Ctrl-C.
+    pub quit_on_any_key: bool,
+}
 
 /// Renders frames into the terminal for as long as it exists. The terminal is restored when it is dropped.
 pub struct TerminalRenderer {
     session: TerminalSession,
     frame: Frame,
     options: RenderOptions,
-    /// Cell height / width; detected from the terminal when `None`.
-    aspect_ratio: Option<f64>,
-    with_panel: bool,
+    settings: TerminalSettings,
 }
 
-/// Take over the terminal and size the canvases to it. `with_panel` adds the metadata panel.
-pub fn open_terminal_renderer(
-    options: RenderOptions,
-    aspect_ratio: Option<f64>,
-    with_panel: bool,
-) -> io::Result<TerminalRenderer> {
+/// Take over the terminal and size the canvases to it.
+pub fn open_terminal_renderer(options: RenderOptions, settings: TerminalSettings) -> io::Result<TerminalRenderer> {
     let mut session = open_terminal_session()?;
-    let frame = session.fit_frame(aspect_ratio, with_panel)?;
+    let frame = session.fit_frame(settings.aspect_ratio, settings.metadata_panel)?;
     Ok(TerminalRenderer {
         session,
         frame,
         options,
-        aspect_ratio,
-        with_panel,
+        settings,
     })
 }
 
 impl TerminalRenderer {
     /// Resize the canvases to the terminal, after it was resized. The next frame is drawn in full.
     pub fn fit_to_terminal(&mut self) -> io::Result<()> {
-        self.frame = self.session.fit_frame(self.aspect_ratio, self.with_panel)?;
+        self.frame = self
+            .session
+            .fit_frame(self.settings.aspect_ratio, self.settings.metadata_panel)?;
         Ok(())
     }
 
@@ -56,15 +63,9 @@ impl TerminalRenderer {
     ) -> io::Result<()> {
         draw_sky_scene(&mut self.frame.sky, view, &self.options, sky);
         if let Some(panel) = &mut self.frame.panel {
-            draw_metadata(
-                panel,
-                julian_date,
-                clock,
-                sky.moon.phase,
-                observer,
-                view,
-                self.options.unicode,
-            );
+            let fields =
+                collect_metadata_fields(julian_date, clock, sky.moon.phase, observer, view, self.options.unicode);
+            draw_metadata_panel(panel, &fields);
         }
         self.session.present(&self.frame)
     }

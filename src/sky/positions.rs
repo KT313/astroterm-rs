@@ -2,16 +2,28 @@
 
 use crate::astro::{
     Observer, PrecessionMatrix, apply_refraction, compute_moon_age, compute_moon_geocentric,
-    compute_planet_heliocentric, compute_star_position, correct_for_parallax, equatorial_to_horizontal,
-    moon_age_to_phase, rectangular_to_equatorial,
+    compute_planet_heliocentric, compute_precession_matrix, compute_star_position, correct_for_parallax,
+    equatorial_to_horizontal, greenwich_mean_sidereal_time, moon_age_to_phase, rectangular_to_equatorial,
 };
 use crate::catalog::EARTH_ORBIT;
 
 use super::{Moon, Planet, Sky, Star};
 
+/// Move every object to its apparent position for the observer at `julian_date`.
+pub fn update_sky_positions(sky: &mut Sky, julian_date: f64, observer: &Observer) {
+    // Earth's orientation at the date: its rotation, and how far its axis has precessed since J2000
+    let sidereal_time = greenwich_mean_sidereal_time(julian_date);
+    let precession = compute_precession_matrix(julian_date);
+
+    // positions of all objects
+    update_star_positions(&mut sky.stars, julian_date, sidereal_time, &precession, observer);
+    update_planet_positions(&mut sky.planets, julian_date, sidereal_time, &precession, observer);
+    update_moon(&mut sky.moon, julian_date, sidereal_time, observer);
+}
+
 /// Move every star to its apparent position, including proper motion since J2000. `precession` rotates the J2000
 /// catalog positions to the date.
-pub fn update_star_positions(
+fn update_star_positions(
     stars: &mut [Star],
     julian_date: f64,
     sidereal_time: f64,
@@ -27,7 +39,7 @@ pub fn update_star_positions(
 
 /// Move the Sun and the planets to their apparent positions, seen from the Earth. `precession` rotates their J2000
 /// positions to the date.
-pub fn update_planet_positions(
+fn update_planet_positions(
     planets: &mut [Planet],
     julian_date: f64,
     sidereal_time: f64,
@@ -47,7 +59,7 @@ pub fn update_planet_positions(
 
 /// Move the Moon to its apparent position, as seen from the Earth's surface, and update its phase. Its elements are
 /// already referred to the equinox of date, so it needs no precession.
-pub fn update_moon(moon: &mut Moon, julian_date: f64, sidereal_time: f64, observer: &Observer) {
+fn update_moon(moon: &mut Moon, julian_date: f64, sidereal_time: f64, observer: &Observer) {
     // position, corrected for the observer being on the surface rather than at the center of the Earth
     let geocentric = compute_moon_geocentric(moon.orbit, julian_date);
     let position = equatorial_to_horizontal(rectangular_to_equatorial(geocentric), sidereal_time, observer);
@@ -74,7 +86,7 @@ mod tests {
     use std::f64::consts::PI;
 
     use super::*;
-    use crate::astro::{MoonPhase, compute_precession_matrix, greenwich_mean_sidereal_time};
+    use crate::astro::MoonPhase;
     use crate::catalog::load_embedded_catalog;
     use crate::sky::{PlanetKind, Sky};
 
@@ -89,13 +101,8 @@ mod tests {
             latitude: 42.3601 * PI / 180.0,
             longitude: -71.0589 * PI / 180.0,
         };
-        let sidereal_time = greenwich_mean_sidereal_time(julian_date);
-        let precession = compute_precession_matrix(julian_date);
-
         let mut sky = Sky::from_catalog(&load_embedded_catalog().expect("embedded catalog loads"));
-        update_star_positions(&mut sky.stars, julian_date, sidereal_time, &precession, &boston);
-        update_planet_positions(&mut sky.planets, julian_date, sidereal_time, &precession, &boston);
-        update_moon(&mut sky.moon, julian_date, sidereal_time, &boston);
+        update_sky_positions(&mut sky, julian_date, &boston);
         sky
     }
 

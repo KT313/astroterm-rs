@@ -1,6 +1,5 @@
-//! Interactive controls: which keys do what, and their effect on the view and the simulation clock.
-
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+//! Interactive controls and their effect on the view and the simulation clock. Which keys or other input trigger
+//! them is up to the backend (see `terminal::keys`).
 
 use crate::astro::SimulationClock;
 use crate::projection::View;
@@ -14,18 +13,7 @@ const ZOOM_FACTOR: f64 = 1.25;
 /// Speed change of one speed step.
 const SPEED_FACTOR: f64 = 10.0;
 
-/// Key bindings, for the help text.
-pub const KEY_BINDINGS_HELP: &str = "\
-Keys while running:
-  arrows, h j k l   Look around (turns the overhead view into a facing view)
-  + -               Zoom in / out
-  space             Pause / resume time
-  ] [               Speed time up / slow it down (10x)
-  r                 Reverse time
-  0                 Reset the view
-  q, Esc, Ctrl-C    Quit";
-
-/// An action triggered by a key.
+/// An action the user can trigger while the sky is shown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Control {
     PanLeft,
@@ -39,28 +27,7 @@ pub enum Control {
     SlowDown,
     ReverseTime,
     ResetView,
-}
-
-/// The control bound to a key, if any.
-pub fn key_to_control(key: &KeyEvent) -> Option<Control> {
-    if key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) {
-        return None;
-    }
-    let control = match key.code {
-        KeyCode::Left | KeyCode::Char('h') => Control::PanLeft,
-        KeyCode::Right | KeyCode::Char('l') => Control::PanRight,
-        KeyCode::Up | KeyCode::Char('k') => Control::PanUp,
-        KeyCode::Down | KeyCode::Char('j') => Control::PanDown,
-        KeyCode::Char('+' | '=') => Control::ZoomIn,
-        KeyCode::Char('-' | '_') => Control::ZoomOut,
-        KeyCode::Char(' ') => Control::TogglePause,
-        KeyCode::Char(']') => Control::SpeedUp,
-        KeyCode::Char('[') => Control::SlowDown,
-        KeyCode::Char('r') => Control::ReverseTime,
-        KeyCode::Char('0') => Control::ResetView,
-        _ => return None,
-    };
-    Some(control)
+    Quit,
 }
 
 /// Apply a control to the view or the clock. `initial_view` is the view to reset to.
@@ -78,6 +45,7 @@ pub fn apply_control(control: Control, view: &mut View, clock: &mut SimulationCl
         Control::SlowDown => clock.set_speed(clock.speed() / SPEED_FACTOR),
         Control::ReverseTime => clock.set_speed(-clock.speed()),
         Control::ResetView => *view = *initial_view,
+        Control::Quit => {} // handled by the frame loop
     }
 }
 
@@ -86,23 +54,6 @@ mod tests {
     use super::*;
     use crate::astro::J2000;
     use crate::projection::ViewCenter;
-
-    fn key(code: KeyCode) -> KeyEvent {
-        KeyEvent::new(code, KeyModifiers::NONE)
-    }
-
-    #[test]
-    fn keys_map_to_controls() {
-        assert_eq!(key_to_control(&key(KeyCode::Left)), Some(Control::PanLeft));
-        assert_eq!(key_to_control(&key(KeyCode::Char('k'))), Some(Control::PanUp));
-        assert_eq!(key_to_control(&key(KeyCode::Char('='))), Some(Control::ZoomIn));
-        assert_eq!(key_to_control(&key(KeyCode::Char(' '))), Some(Control::TogglePause));
-        assert_eq!(key_to_control(&key(KeyCode::Char('x'))), None);
-        assert_eq!(
-            key_to_control(&KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL)),
-            None
-        );
-    }
 
     #[test]
     fn controls_change_view_and_clock() {

@@ -8,24 +8,31 @@ use crate::astro::{
 use crate::catalog::{City, find_city};
 use crate::projection::{ProjectionKind, View, ViewCenter};
 use crate::scene::RenderOptions;
+use crate::terminal::TerminalSettings;
 
 use super::Arguments;
 
 /// Everything the application needs to run.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Config {
-    pub observer: Observer,
-    pub start_julian_date: f64,
+    pub simulation: SimulationSettings,
+    /// The view to start with, and to reset to.
     pub view: View,
     pub render: RenderOptions,
-    pub metadata: bool,
+    pub terminal: TerminalSettings,
+    /// Frames per second.
+    pub fps: u32,
+}
+
+/// What is simulated: where, from when, how fast, and with which corrections.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SimulationSettings {
+    pub observer: Observer,
+    pub start_julian_date: f64,
+    /// Simulated days per real day.
+    pub speed: f64,
     /// Lift objects by atmospheric refraction.
     pub refraction: bool,
-    pub fps: u32,
-    pub speed: f64,
-    /// Cell height / width; detected from the terminal when `None`.
-    pub aspect_ratio: Option<f64>,
-    pub quit_on_any_key: bool,
 }
 
 /// An invalid argument, with a message for the user.
@@ -67,17 +74,23 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
         magnitude_threshold: arguments.threshold,
         label_threshold: arguments.label_threshold,
     };
-    Ok(Config {
+    let simulation = SimulationSettings {
         observer,
         start_julian_date,
+        speed: arguments.speed,
+        refraction: arguments.refraction,
+    };
+    let terminal = TerminalSettings {
+        aspect_ratio,
+        metadata_panel: arguments.metadata,
+        quit_on_any_key: arguments.quit_on_any,
+    };
+    Ok(Config {
+        simulation,
         view,
         render,
-        metadata: arguments.metadata,
-        refraction: arguments.refraction,
+        terminal,
         fps,
-        speed: arguments.speed,
-        aspect_ratio,
-        quit_on_any_key: arguments.quit_on_any,
     })
 }
 
@@ -195,27 +208,30 @@ mod tests {
     fn defaults_match_the_original() {
         let config = config_from(&["-d", "2000-01-01T12:00:00"]).unwrap();
         assert_eq!(
-            config.observer,
+            config.simulation.observer,
             Observer {
                 latitude: 0.0,
                 longitude: 0.0
             }
         );
-        assert_eq!(config.start_julian_date, 2451545.0);
+        assert_eq!(config.simulation.start_julian_date, 2451545.0);
         assert_eq!(config.view, View::default());
         assert_eq!(
             (config.render.magnitude_threshold, config.render.label_threshold),
             (5.0, 0.25)
         );
-        assert_eq!((config.fps, config.speed, config.aspect_ratio), (24, 1.0, None));
-        assert!(!config.metadata && !config.refraction);
+        assert_eq!(
+            (config.fps, config.simulation.speed, config.terminal.aspect_ratio),
+            (24, 1.0, None)
+        );
+        assert!(!config.terminal.metadata_panel && !config.simulation.refraction && !config.terminal.quit_on_any_key);
     }
 
     #[test]
     fn converts_degrees_to_radians() {
         let config = config_from(&["-a", "-33.87", "-o", "151.21", "-F", "NNW", "-T", "20"]).unwrap();
-        assert!((config.observer.latitude + 33.87 * PI / 180.0).abs() < 1e-12);
-        assert!((config.observer.longitude - 151.21 * PI / 180.0).abs() < 1e-12);
+        assert!((config.simulation.observer.latitude + 33.87 * PI / 180.0).abs() < 1e-12);
+        assert!((config.simulation.observer.longitude - 151.21 * PI / 180.0).abs() < 1e-12);
         let ViewCenter::Facing { azimuth, tilt } = config.view.center else {
             panic!("facing view expected")
         };
@@ -225,9 +241,9 @@ mod tests {
     #[test]
     fn city_overrides_latitude_and_longitude() {
         let config = config_from(&["-a", "10", "-i", "rio de janeiro", "-m", "-R"]).unwrap();
-        assert!((config.observer.latitude - (-22.90642_f64).to_radians()).abs() < 1e-12);
-        assert!((config.observer.longitude - (-43.18223_f64).to_radians()).abs() < 1e-12);
-        assert!(config.metadata && config.refraction);
+        assert!((config.simulation.observer.latitude - (-22.90642_f64).to_radians()).abs() < 1e-12);
+        assert!((config.simulation.observer.longitude - (-43.18223_f64).to_radians()).abs() < 1e-12);
+        assert!(config.terminal.metadata_panel && config.simulation.refraction);
     }
 
     #[test]

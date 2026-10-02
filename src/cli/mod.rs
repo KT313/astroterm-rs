@@ -6,4 +6,4 @@ mod config;
 
 pub use arguments::Arguments;
 pub use completions::write_bash_completions;
-pub use config::{Config, ConfigError, build_config, parse_azimuth};
+pub use config::{Config, ConfigError, SimulationSettings, build_config, parse_azimuth};

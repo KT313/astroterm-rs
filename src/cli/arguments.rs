@@ -2,11 +2,11 @@
 
 use clap::{ArgAction, Parser};
 
-use crate::controls::KEY_BINDINGS_HELP;
+use crate::terminal::format_key_bindings_help;
 
 /// View stars, planets, and more, right in your terminal! ✨🪐
 #[derive(Clone, Debug, Parser)]
-#[command(name = "astroterm", version, override_usage = "astroterm [OPTION]...", after_help = KEY_BINDINGS_HELP)]
+#[command(name = "astroterm", version, override_usage = "astroterm [OPTION]...", after_help = format_key_bindings_help())]
 #[command(disable_help_flag = true, disable_version_flag = true)]
 pub struct Arguments {
     /// Observer latitude [-90°, 90°] (default: 0.0)
