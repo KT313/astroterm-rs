@@ -10,24 +10,25 @@
 //! All physical calculations currently use f64 (catalog magnitudes/colors use f32). TT is currently approximated
 //! by UT1, itself approximated by UTC/UT input. `astro/time.rs` documents the calendar and time-scale contract.
 //!
-//! | Quantity / future owner | Native origin and frame | Units / epoch | Current corrections and stage |
+//! | Quantity / owner | Native origin and frame | Units / epoch | Current corrections and stage |
 //! |---|---|---|---|
-//! | Catalog stars / stellar model | Barycentric direction, J2000 mean equator/equinox | Radians, radians/year at J2000 | Linear RA/Dec motion (365.2425 days/year for legacy compatibility), then precession and observation |
-//! | Planets and Sun / planetary model | Heliocentric equatorial J2000 | AU; TT Julian centuries from J2000 | Earth subtraction, precession, horizon rotation; no light-time or aberration |
-//! | Moon / lunar model | Geocentric mean-of-date ecliptic, converted with fixed J2000 obliquity (approximation) | Earth radii; TT days from JD 2451543.5 | Solar perturbations, horizon rotation, approximate altitude-only parallax; no additional precession |
-//! | Precession and Earth rotation / orientation model | Mean J2000 to mean-of-date, then local horizon | Radians; precession TT, ERA UT1 | IAU 2006 precession and consistent GMST |
+//! | Catalog stars / `models::stars` | Barycentric direction, J2000 mean equator/equinox | Radians, radians/year at J2000 | Linear RA/Dec motion (365.2425 days/year for legacy compatibility), then precession and observation |
+//! | Planets and Sun / `models::planets` | Heliocentric equatorial J2000 | AU; TT Julian centuries from J2000 | Earth subtraction, precession, horizon rotation; no light-time or aberration |
+//! | Moon / `models::moons` | Geocentric mean-of-date ecliptic, converted with fixed J2000 obliquity (approximation) | Earth radii; TT days from JD 2451543.5 | Solar perturbations; inverse source precession to J2000, Earth-relative AU sample; observer rotation and altitude parallax |
+//! | Precession and Earth rotation / `models::orientation` | Mean J2000 to mean-of-date, then local horizon | Radians; precession TT, ERA UT1 | Cached C = R3(−EO) P; exact per-frame ERA, then site horizon rotation |
 //! | Horizontal / observation | Observer sky: azimuth E of N, altitude from horizon | Radians | Optional refraction applied once after position update |
 //!
 //! The current positions are approximations to apparent places, not complete apparent-place solutions. Geometric
 //! means before light-time/aberration; geocentric is relative to Earth's center; topocentric is relative to a surface
 //! site; refracted includes the atmosphere. Coordinate origin and apparent/geometric status are separate properties.
-//! Future family adapters must declare both, their dependencies and error/precision policy; see [`crate::sky`].
+//! Family adapters declare both, their dependencies and error/precision policy; see [`crate::sky`].
 
 pub mod accuracy;
 mod coords;
-mod ephemeris;
+mod matrix;
+pub mod models;
 mod notation;
-mod precession;
+mod orbital;
 mod time;
 
 use std::f64::consts::TAU;
@@ -40,12 +41,13 @@ pub use coords::{
     apply_refraction, correct_for_parallax, equatorial_to_horizontal, horizontal_to_spherical, offset_towards,
     rectangular_to_equatorial,
 };
-pub use ephemeris::{
-    MoonOrbit, MoonPhase, OrbitalElements, PerturbationTerms, PlanetOrbit, compute_moon_age, compute_moon_geocentric,
-    compute_planet_heliocentric, compute_star_position, moon_age_to_phase,
-};
+pub use matrix::Matrix3;
+pub use models::moons::{MoonOrbit, MoonPhase, compute_moon_age, compute_moon_geocentric, moon_age_to_phase};
+pub use models::orientation::{PrecessionMatrix, compute_precession_matrix};
+pub use models::planets::{PerturbationTerms, PlanetOrbit, compute_planet_heliocentric};
+pub use models::stars::compute_star_position;
 pub use notation::{DegreesMinutesSeconds, ElapsedTime, ZodiacSign, azimuth_to_compass, compass_point_to_azimuth};
-pub use precession::{PrecessionMatrix, compute_precession_matrix};
+pub use orbital::OrbitalElements;
 pub use time::{
     J2000, SimulationClock, current_julian_date, datetime_to_julian_date, earth_rotation_angle,
     greenwich_mean_sidereal_time, julian_date_to_utc, parse_utc_datetime,
@@ -119,6 +121,14 @@ impl Vector3 {
     /// Euclidean length.
     pub fn length(self) -> f64 {
         (self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
+    }
+
+    pub fn cross(self, other: Vector3) -> Vector3 {
+        Vector3 {
+            x: self.y * other.z - self.z * other.y,
+            y: self.z * other.x - self.x * other.z,
+            z: self.x * other.y - self.y * other.x,
+        }
     }
 
     pub fn dot(self, other: Vector3) -> f64 {

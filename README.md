@@ -59,6 +59,11 @@ update positions, render. Rendering only reads the sky, so other renderers can b
 
 New:
 
+- Simulation, observation, camera projection and rendering are separate stages. Planetary, lunar and orientation
+  models have independent caches; Earth rotation and observer corrections run every frame, so panning while paused
+  does not trigger an ephemeris update.
+- Moon illumination uses Sun/Moon vectors relative to the observer in one frame, with a continuous illuminated
+  fraction and phase angle. Full Moon is recognized on both sides of opposition within the phase band.
 - Interactive controls (see [Keys](#keys)); the metadata panel shows the simulation speed and whether time is paused.
 - With `--color`, stars are colored by spectral class (blue-white O/B in cyan, orange K in yellow, red M in red).
 - The Moon includes the main perturbations by the Sun (about 0.1° instead of several degrees off), parallax, a
@@ -77,7 +82,7 @@ New:
   are named too, with their catalog number (`HR 1234`) if they have no proper name. `--disable-dynamic-names` turns
   this off.
 - `--debug-frametimes` shows how long each step of a frame takes (position calculation, drawing, writing to the
-  terminal), as exponential moving averages below the metadata, to find what needs optimizing.
+  terminal), including Simulation, Observation and Projection with per-family sub-steps, as exponential moving averages below the metadata, to find what needs optimizing.
 
 Fixed:
 
@@ -116,6 +121,23 @@ cargo fmt --check && cargo clippy --all-targets && cargo test
 Offline scene snapshots include colors and wide-glyph occupancy. Independent astronomy fixtures and the Boston
 reference audit are described in [scripts/reference/README.md](scripts/reference/README.md). Reproducible
 benchmarks and PTY checks are described in [scripts/checks/README.md](scripts/checks/README.md).
+
+The four-stage implementation lives in `sky/simulation.rs`, `sky/observation.rs`, `projection/sky.rs`, and `scene/`.
+Pure formulas and coefficients live in `astro/models/{stars,planets,moons,orientation}`. Body identity is independent
+of the formula used. Star inputs are shared across observers; projected output borrows the immutable observed sky.
+The legacy `update_sky_positions` API remains a direct, uncached reference convenience; the application uses the
+explicit stages in `main.rs`.
+
+Current cache half-intervals are 5 simulated minutes for the planetary batch, 2 minutes for the Moon, and 6 hours
+for slow Earth orientation, forwards or backwards. Observation evaluates all samples at one requested epoch;
+parent-relative lunar states are composed with Earth at that same epoch. Bounded additional samples cover
+explicit per-body emission-time queries, although light-time correction itself remains unimplemented. Missing coverage is an
+error returned to the coordinator. Outside the computational interval, caches use direct evaluation only.
+
+The cache interpolation budget is 1″ (0.3″ planetary direction, 0.4″ lunar direction, 0.2″ orientation, 0.1″ velocity
+expressed as aberration). This is measured **against the current models**, not an astronomical accuracy claim.
+The underlying Kepler/Schlyter models, zero ΔT and altitude-only lunar parallax remain approximations. The Sun is
+still the heliocentric origin; observer site displacement remains zero until the exact-site model is added.
 
 `make build-aggressive` builds a faster binary for the current machine into `target/aggressive-pgo/astroterm`:
 fat LTO, one codegen unit, `panic = "abort"`, `-C target-cpu=native`, then profile-guided optimization and BOLT,

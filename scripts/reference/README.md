@@ -63,11 +63,24 @@ The precession-only IAU 2006 versus Vondrák rotation differences are 0.0591′ 
 (9026), 11.9655′ (12026), and 45.8624′ (15026). ERFA frame bias is removed for this comparison. These reproduce
 the roadmap's rounded table and do not imply the current model meets the future 0.01″ target.
 
-The current-model probe also quantifies lunar phase frame mixing. Precessing the Sun into the Moon's nominal
+The phase-0 probe also quantified lunar phase frame mixing. Precessing the Sun into the Moon's nominal
 of-date frame changes the elongation by −0.290711° in Boston and −0.351563° at the 2025 fixture, zero at J2000.
 This measures the isolated frame correction while retaining the current fixed-obliquity helper. It is not the
-final observer-dependent illuminated fraction; that model change remains in phase 2.
+final observer-dependent illuminated fraction. Phase 2 now computes that fraction from common-frame vectors.
 
 Sources: [Horizons API parameters](https://ssd-api.jpl.nasa.gov/doc/horizons.html),
 [ERFA source/documentation](https://github.com/liberfa/erfa/tree/master/src), and the neighboring C project's
 `test/core_test.c` for the inherited fixtures. No online data is consulted by `cargo test`.
+
+
+Phase-2 lunar illumination uses a separate replayable fixture, preserving the original audit files:
+
+```sh
+/tmp/astroterm-reference/bin/python scripts/reference/moon_phase.py --fetch  # explicit network refresh
+/tmp/astroterm-reference/bin/python scripts/reference/moon_phase.py          # offline replay
+```
+
+`moon_phase_geocentric.request.json` and `.response.json` retain the full Horizons query/response; `moon_phase.json`
+records the generator and response hashes. Query dates are TT Julian dates, observer Earth center, quantity 10
+(illuminated percent). The geometric model is compared with Horizons apparent illumination at four dates; the
+0.001 fraction envelope is a model comparison, not the 1″ cache interpolation budget.

@@ -14,11 +14,7 @@ pub use overlays::{draw_azimuthal_grid, draw_cardinal_directions, draw_horizon_l
 pub use panel::draw_metadata_panel;
 
 use crate::canvas::{Canvas, Color, draw_line_ascii, draw_line_smooth};
-use crate::projection::{Polar, View};
-use crate::sky::Sky;
-
-/// Slack for points on the edge of the unit circle (rounding error).
-const EDGE_TOLERANCE: f64 = 1e-6;
+use crate::projection::ProjectedSky;
 
 /// Rendering choices that apply to the whole scene.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -49,44 +45,30 @@ impl RenderOptions {
 }
 
 /// Draw the sky as seen in `view` onto the canvas, back to front.
-pub fn draw_sky_scene(canvas: &mut Canvas, view: &View, options: &RenderOptions, sky: &Sky) {
+pub fn draw_sky_scene(canvas: &mut Canvas, options: &RenderOptions, sky: &ProjectedSky<'_>) {
     canvas.clear();
 
     // the horizon first in the facing view, so objects are drawn on top of it
-    if view.is_facing() {
-        draw_horizon_line(canvas, view, options);
+    if sky.facing {
+        draw_horizon_line(canvas, options, &sky.horizon);
     }
 
     // celestial objects
-    draw_stars(canvas, view, options, sky);
+    draw_stars(canvas, options, sky);
     if options.constellations {
-        draw_constellations(canvas, view, options, sky);
+        draw_constellations(canvas, options, sky);
     }
-    draw_planets(canvas, view, options, &sky.planets);
-    draw_moon(canvas, view, options, sky);
+    draw_planets(canvas, options, &sky.planets);
+    draw_moon(canvas, options, sky);
 
     // orientation aids
-    if view.is_facing() {
-        draw_horizon_labels(canvas, view, options);
+    if sky.facing {
+        draw_horizon_labels(canvas, options, &sky.horizon_labels);
     } else if options.grid {
         draw_azimuthal_grid(canvas, options);
     } else {
         draw_cardinal_directions(canvas, options);
     }
-}
-
-/// The (row, column) canvas cell of a point on the unit disk of the view plane. Row 0 is the top.
-fn polar_to_canvas_cell(canvas: &Canvas, polar: Polar) -> (i32, i32) {
-    let radius_y = (canvas.height() as f64 - 1.0) / 2.0;
-    let radius_x = (canvas.width() as f64 - 1.0) / 2.0;
-
-    // sin(π) and cos(π/2) aren't exactly 0: snap them so both sides of an axis round the same way
-    let snap = |value: f64| if value.abs() < 1e-12 { 0.0 } else { value };
-    let (sin_theta, cos_theta) = (snap(polar.theta.sin()), snap(polar.theta.cos()));
-
-    let row = polar.radius * -radius_y * sin_theta + radius_y; // y-axis is flipped in screen space
-    let col = polar.radius * radius_x * cos_theta + radius_x;
-    (row.round() as i32, col.round() as i32)
 }
 
 /// Draw a line in the style of the options (smooth Unicode or ASCII).
@@ -103,6 +85,14 @@ mod tests {
     use std::f64::consts::{FRAC_PI_2, PI};
 
     use super::*;
+    use crate::projection::{Polar, Viewport};
+    fn polar_to_canvas_cell(canvas: &Canvas, polar: Polar) -> (i32, i32) {
+        Viewport {
+            height: canvas.height(),
+            width: canvas.width(),
+        }
+        .to_cell(polar)
+    }
 
     #[test]
     fn polar_to_canvas_cell_maps_disk_to_grid() {

@@ -2,43 +2,43 @@
 
 use std::borrow::Cow;
 
-use crate::astro::{Horizontal, offset_towards};
 use crate::canvas::{Canvas, draw_line_braille};
-use crate::projection::{Polar, View};
-use crate::sky::{Planet, Sky};
+use crate::projection::{ProjectedArc, ProjectedPlanet, ProjectedSky};
 
 use super::appearance::{
     Appearance, format_star_label, select_moon_appearance, select_planet_appearance, select_star_appearance,
 };
-use super::{RenderOptions, draw_line, polar_to_canvas_cell};
+use super::{RenderOptions, draw_line};
 
 /// With dynamic names, the brightest stars in view are named until at least this many objects in view have labels.
 const DYNAMIC_NAME_COUNT: usize = 5;
 
 /// Draw the stars bright enough for the threshold, dimmest first. Named stars brighter than the label threshold get
 /// labels, and with dynamic names also the brightest stars in view when few objects in view have labels.
-pub fn draw_stars(canvas: &mut Canvas, view: &View, options: &RenderOptions, sky: &Sky) {
+pub fn draw_stars(canvas: &mut Canvas, options: &RenderOptions, sky: &ProjectedSky<'_>) {
     let dynamically_named = if options.dynamic_names {
-        select_dynamically_named_stars(view, options, sky)
+        select_dynamically_named_stars(options, sky)
     } else {
         Vec::new()
     };
 
-    let count = sky.count_bright_stars(options.magnitude_threshold);
-    for (index, star) in sky.stars[..count].iter().enumerate().rev() {
+    let count = sky
+        .stars
+        .partition_point(|entry| entry.star.magnitude <= options.magnitude_threshold);
+    for (index, entry) in sky.stars[..count].iter().enumerate().rev() {
+        let star = entry.star;
         let label = if dynamically_named.contains(&index) {
-            Some(format_star_label(star, &sky.names, options.unicode))
+            Some(format_star_label(star, sky.names, options.unicode))
         } else if star.magnitude <= options.label_threshold {
-            sky.star_name(star).map(Cow::Borrowed)
+            sky.names.get(star.name).map(Cow::Borrowed)
         } else {
             None
         };
         draw_object(
             canvas,
-            view,
             options,
-            &select_star_appearance(star, &sky.names),
-            star.position,
+            &select_star_appearance(star, sky.names),
+            entry.cell,
             label.as_deref(),
         );
     }
@@ -46,19 +46,19 @@ pub fn draw_stars(canvas: &mut Canvas, view: &View, options: &RenderOptions, sky
 
 /// Indices of the stars to name in addition to the usual labels: the brightest drawn stars in view without a label,
 /// until at least [`DYNAMIC_NAME_COUNT`] objects in view (the Sun, planets, Moon and labelled stars) have labels.
-fn select_dynamically_named_stars(view: &View, options: &RenderOptions, sky: &Sky) -> Vec<usize> {
+fn select_dynamically_named_stars(options: &RenderOptions, sky: &ProjectedSky<'_>) -> Vec<usize> {
     // the Sun, planets and Moon are always labelled
-    let in_view = |position| is_on_disk(view.project(position));
-    let planets_in_view = sky.planets.iter().filter(|planet| in_view(planet.position)).count();
-    let mut labelled = planets_in_view + usize::from(in_view(sky.moon.position));
+    let planets_in_view = sky.planets.iter().filter(|planet| planet.cell.is_some()).count();
+    let mut labelled = planets_in_view + usize::from(sky.moon.cell.is_some());
 
     // then stars, brightest first: ones labelled anyway only count, the others get a name
     let mut selected = Vec::new();
-    for (index, star) in sky.stars.iter().enumerate() {
+    for (index, entry) in sky.stars.iter().enumerate() {
+        let star = entry.star;
         if labelled >= DYNAMIC_NAME_COUNT || star.magnitude > options.magnitude_threshold {
             break; // enough labels, or this and all following stars are too dim to be drawn
         }
-        if !in_view(star.position) {
+        if entry.cell.is_none() {
             continue;
         }
         if star.magnitude > options.label_threshold || star.name.is_none() {
@@ -70,61 +70,43 @@ fn select_dynamically_named_stars(view: &View, options: &RenderOptions, sky: &Sk
 }
 
 /// Draw the stick figures of all constellations whose stars are all bright enough for the threshold.
-pub fn draw_constellations(canvas: &mut Canvas, view: &View, options: &RenderOptions, sky: &Sky) {
+pub fn draw_constellations(canvas: &mut Canvas, options: &RenderOptions, sky: &ProjectedSky<'_>) {
     for constellation in &sky.constellations {
-        let mut star_indices = constellation.segments.iter().flatten();
-        if star_indices.any(|&index| sky.stars[index].magnitude > options.magnitude_threshold) {
+        if constellation.maximum_magnitude > options.magnitude_threshold {
             continue;
         }
-        for &[a, b] in &constellation.segments {
-            draw_constellation_segment(canvas, view, options, sky.stars[a].position, sky.stars[b].position);
+        for arc in &constellation.arcs {
+            draw_constellation_arc(canvas, options, arc);
         }
     }
 }
 
 /// Draw the Sun and the planets, outermost first so the Sun ends up on top.
-pub fn draw_planets(canvas: &mut Canvas, view: &View, options: &RenderOptions, planets: &[Planet]) {
+pub fn draw_planets(canvas: &mut Canvas, options: &RenderOptions, planets: &[ProjectedPlanet]) {
     for planet in planets.iter().rev() {
         let appearance = select_planet_appearance(planet.kind);
-        draw_object(canvas, view, options, &appearance, planet.position, appearance.label);
+        draw_object(canvas, options, &appearance, planet.cell, appearance.label);
     }
 }
 
 /// Draw the Moon. Its Unicode glyph shows its phase, lit from the side the Sun is on as seen in this view.
-pub fn draw_moon(canvas: &mut Canvas, view: &View, options: &RenderOptions, sky: &Sky) {
+pub fn draw_moon(canvas: &mut Canvas, options: &RenderOptions, sky: &ProjectedSky<'_>) {
     let moon = &sky.moon;
-    let lit_on_right = is_lit_on_right(view, moon.position, sky.sun().position);
-    let appearance = select_moon_appearance(moon.phase, lit_on_right);
-    draw_object(canvas, view, options, &appearance, moon.position, appearance.label);
-}
-
-/// Whether, in this view, the direction from the Moon towards the Sun points to the right of the screen.
-fn is_lit_on_right(view: &View, moon: Horizontal, sun: Horizontal) -> bool {
-    let towards_sun = offset_towards(moon, sun, 1_f64.to_radians());
-    let (moon_x, _) = view.project(moon).to_cartesian();
-    let (towards_sun_x, _) = view.project(towards_sun).to_cartesian();
-    towards_sun_x > moon_x
-}
-
-/// Whether a projected point is in view (on the unit disk).
-fn is_on_disk(polar: Polar) -> bool {
-    polar.radius.abs() <= 1.0
+    let appearance = select_moon_appearance(moon.phase, moon.lit_on_right);
+    draw_object(canvas, options, &appearance, moon.cell, appearance.label);
 }
 
 /// Draw an object's glyph, and its label (if any) up and to the right of it. Objects out of view are skipped.
 fn draw_object(
     canvas: &mut Canvas,
-    view: &View,
     options: &RenderOptions,
     appearance: &Appearance,
-    position: Horizontal,
+    cell: Option<(i32, i32)>,
     label: Option<&str>,
 ) {
-    let polar = view.project(position);
-    if !is_on_disk(polar) {
+    let Some((row, col)) = cell else {
         return;
-    }
-    let (row, col) = polar_to_canvas_cell(canvas, polar);
+    };
     let color = options.select_color(appearance.color);
 
     let glyph = if options.unicode {
@@ -138,51 +120,55 @@ fn draw_object(
     }
 }
 
-/// Draw the visible parts of the great-circle arc between two stars, each as a straight line between where it enters
-/// and leaves the view, with markers on the stars that are in view.
-fn draw_constellation_segment(
-    canvas: &mut Canvas,
-    view: &View,
-    options: &RenderOptions,
-    from: Horizontal,
-    to: Horizontal,
-) {
-    let marker = if options.unicode { '○' } else { '+' };
-    for part in view.find_visible_arc_parts(from, to) {
-        // ends of the visible part, pulled onto the edge where rounding puts them just outside
-        let project_on_arc = |angle: f64| {
-            let polar = view.project(offset_towards(from, to, angle));
-            polar_to_canvas_cell(
-                canvas,
-                Polar {
-                    radius: polar.radius.min(1.0),
-                    ..polar
-                },
-            )
-        };
-        let (start_cell, end_cell) = (project_on_arc(part.start), project_on_arc(part.end));
-
-        // the line
-        if options.unicode && options.braille {
-            draw_line_braille(canvas, start_cell.0, start_cell.1, end_cell.0, end_cell.1);
-        } else {
-            draw_line(canvas, options, start_cell, end_cell);
-        }
-
-        // markers on the stars themselves, not on the edge of the view
-        for (cell, is_star) in [(start_cell, part.includes_start), (end_cell, part.includes_end)] {
-            if is_star {
-                canvas.put_char(cell.0, cell.1, marker, None);
-            }
+fn draw_constellation_arc(canvas: &mut Canvas, options: &RenderOptions, arc: &ProjectedArc) {
+    let (start, end) = (arc.start, arc.end);
+    if options.unicode && options.braille {
+        draw_line_braille(canvas, start.0, start.1, end.0, end.1);
+    } else {
+        draw_line(canvas, options, start, end);
+    }
+    for (cell, is_star) in [(start, arc.includes_start), (end, arc.includes_end)] {
+        if is_star {
+            canvas.put_char(cell.0, cell.1, if options.unicode { '○' } else { '+' }, None);
         }
     }
 }
-
 #[cfg(test)]
 mod tests {
     use std::f64::consts::{FRAC_PI_2, PI};
 
     use super::*;
+    use crate::astro::{Horizontal, offset_towards};
+    use crate::projection::{View, Viewport, project_constellation_segment, project_sky};
+    use crate::sky::Sky;
+    fn viewport(canvas: &Canvas) -> Viewport {
+        Viewport {
+            height: canvas.height(),
+            width: canvas.width(),
+        }
+    }
+    fn draw_stars(canvas: &mut Canvas, view: &View, options: &RenderOptions, sky: &Sky) {
+        super::draw_stars(canvas, options, &project_sky(sky, view, viewport(canvas)));
+    }
+    fn select_dynamically_named_stars(view: &View, options: &RenderOptions, sky: &Sky) -> Vec<usize> {
+        super::select_dynamically_named_stars(options, &project_sky(sky, view, Viewport { height: 41, width: 81 }))
+    }
+    fn draw_constellation_segment(
+        canvas: &mut Canvas,
+        view: &View,
+        options: &RenderOptions,
+        from: Horizontal,
+        to: Horizontal,
+    ) {
+        for arc in project_constellation_segment(view, viewport(canvas), from, to) {
+            draw_constellation_arc(canvas, options, &arc);
+        }
+    }
+    fn is_lit_on_right(view: &View, moon: Horizontal, sun: Horizontal) -> bool {
+        let offset = offset_towards(moon, sun, 1_f64.to_radians());
+        view.project(offset).to_cartesian().0 > view.project(moon).to_cartesian().0
+    }
+
     use crate::catalog::load_embedded_catalog;
     use crate::projection::ViewCenter;
 

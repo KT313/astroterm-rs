@@ -2,13 +2,10 @@
 //! the facing view.
 
 use std::cmp::Reverse;
-use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
-use crate::astro::Horizontal;
 use crate::canvas::{Canvas, Color};
-use crate::projection::{Polar, View, ViewCenter};
 
-use super::{EDGE_TOLERANCE, RenderOptions, draw_line, polar_to_canvas_cell};
+use super::{RenderOptions, draw_line};
 
 /// Draw spokes from the center to the edge every few degrees of azimuth, labelled with their angle. The spacing
 /// adapts to the canvas size.
@@ -55,76 +52,18 @@ pub fn draw_cardinal_directions(canvas: &mut Canvas, options: &RenderOptions) {
     canvas.put_char(half_rows, 0, 'E', color);
 }
 
-/// Trace the visible part of the horizon in the facing view.
-pub fn draw_horizon_line(canvas: &mut Canvas, view: &View, options: &RenderOptions) {
-    let ViewCenter::Facing {
-        azimuth: facing_azimuth,
-        tilt,
-    } = view.center
-    else {
-        return;
-    };
-    let Some(half_range) = compute_visible_horizon_half_range(view.fov_degrees, tilt) else {
-        return;
-    };
-
-    // sample the horizon at 4 points per column (empirical)
-    let sample_count = 4 * canvas.width() as i32;
-    let start_azimuth = facing_azimuth - half_range;
-    let step = 2.0 * half_range / f64::from(sample_count);
-    let project_horizon = |azimuth: f64| view.project(Horizontal { azimuth, altitude: 0.0 });
-
-    // join samples into segments once they are 4 columns or 2 rows apart (empirical), since the line functions can't
-    // draw the slope of tiny segments
-    let mut previous = project_horizon(start_azimuth);
-    let mut segment_start: Option<(i32, i32)> = None;
-    for index in 1..=sample_count {
-        let current = project_horizon(start_azimuth + f64::from(index) * step);
-        let previous_visible = previous.radius <= 1.0 + EDGE_TOLERANCE;
-        let visible = current.radius <= 1.0 + EDGE_TOLERANCE;
-
-        if previous_visible || visible {
-            let start = *segment_start.get_or_insert_with(|| polar_to_canvas_cell(canvas, clamp_to_edge(previous)));
-            let end = polar_to_canvas_cell(canvas, clamp_to_edge(current));
-            let far_enough = (end.1 - start.1).abs() >= 4 || (end.0 - start.0).abs() >= 2;
-            if !visible || index == sample_count || far_enough {
-                if end != start {
-                    draw_line(canvas, options, start, end); // the line functions skip zero-length segments
-                }
-                segment_start = visible.then_some(end);
-            }
-        }
-        previous = current;
+/// Draw the prepared horizon behind celestial objects.
+pub fn draw_horizon_line(canvas: &mut Canvas, options: &RenderOptions, lines: &[[(i32, i32); 2]]) {
+    for &[start, end] in lines {
+        draw_line(canvas, options, start, end);
     }
 }
 
-/// Label the compass directions on the horizon, and the zenith and nadir, where they are in view.
-pub fn draw_horizon_labels(canvas: &mut Canvas, view: &View, options: &RenderOptions) {
-    const DIRECTIONS: [&str; 8] = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+/// Draw prepared compass and vertical labels.
+pub fn draw_horizon_labels(canvas: &mut Canvas, options: &RenderOptions, labels: &[((i32, i32), &'static str)]) {
     let color = options.select_color(Some(Color::Blue));
-
-    // the 8 main directions, except on the very edge where labels get cut off
-    for (index, label) in DIRECTIONS.iter().enumerate() {
-        let azimuth = index as f64 * TAU / DIRECTIONS.len() as f64;
-        let polar = view.project(Horizontal { azimuth, altitude: 0.0 });
-        if polar.radius >= 1.0 - EDGE_TOLERANCE {
-            continue;
-        }
-        let (row, col) = polar_to_canvas_cell(canvas, polar);
-        canvas.put_str_truncated(row, col - (label.len() as i32 - 1) / 2, label, color);
-    }
-
-    // zenith and nadir, edge included
-    for (label, altitude) in [("Zenith", FRAC_PI_2), ("Nadir", -FRAC_PI_2)] {
-        if (altitude + view.tilt()).abs() < EDGE_TOLERANCE {
-            continue; // directly behind the view (tilt ±90° at fov 360°), it would sit on an arbitrary edge point
-        }
-        let polar = view.project(Horizontal { azimuth: 0.0, altitude });
-        if polar.radius > 1.0 + EDGE_TOLERANCE {
-            continue;
-        }
-        let (row, col) = polar_to_canvas_cell(canvas, clamp_to_edge(polar));
-        canvas.put_str_truncated(row, col - label.len() as i32 / 2, label, color);
+    for &((row, col), label) in labels {
+        canvas.put_str_truncated(row, col, label, color);
     }
 }
 
@@ -140,32 +79,6 @@ fn select_grid_step(radius_rows: i32) -> i32 {
         .unwrap_or(90)
 }
 
-/// Half the azimuth range of the horizon that is in view, or `None` if the horizon is out of view.
-///
-/// A horizon point at azimuth offset Δ is c away from the view center, with cos(c) = cos(tilt)·cos(Δ). It is in view
-/// while c <= fov/2.
-fn compute_visible_horizon_half_range(fov_degrees: f64, tilt: f64) -> Option<f64> {
-    let cos_half_fov = (fov_degrees.to_radians() / 2.0).cos();
-    let cos_tilt = tilt.cos();
-    if cos_tilt < 1e-9 {
-        return Some(PI); // looking straight up or down: the horizon is a circle around the center
-    }
-    if cos_half_fov >= cos_tilt {
-        return None;
-    }
-    // pad 5% so the line reaches the edge; clamped since cos(fov/2) < 0 above 180°, and kept off the point directly
-    // behind, which has an arbitrary direction in the equidistant projection
-    Some((PI - 1e-6).min((cos_half_fov / cos_tilt).max(-1.0).acos() * 1.05))
-}
-
-/// Pull points just outside the unit circle back onto it.
-fn clamp_to_edge(polar: Polar) -> Polar {
-    Polar {
-        radius: polar.radius.min(1.0),
-        ..polar
-    }
-}
-
 fn greatest_common_divisor(mut a: i32, mut b: i32) -> i32 {
     while b != 0 {
         (a, b) = (b, a % b);
@@ -176,6 +89,32 @@ fn greatest_common_divisor(mut a: i32, mut b: i32) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::projection::{View, ViewCenter, Viewport, project_horizon_labels, project_horizon_line};
+    use std::f64::consts::{FRAC_PI_2, PI};
+    fn draw_horizon_line(canvas: &mut Canvas, view: &View, options: &RenderOptions) {
+        let lines = project_horizon_line(
+            view,
+            Viewport {
+                height: canvas.height(),
+                width: canvas.width(),
+            },
+        );
+        super::draw_horizon_line(canvas, options, &lines);
+    }
+    fn draw_horizon_labels(canvas: &mut Canvas, view: &View, options: &RenderOptions) {
+        let labels = project_horizon_labels(
+            view,
+            Viewport {
+                height: canvas.height(),
+                width: canvas.width(),
+            },
+        );
+        super::draw_horizon_labels(canvas, options, &labels);
+    }
+    fn compute_visible_horizon_half_range(fov: f64, tilt: f64) -> Option<f64> {
+        crate::projection::compute_visible_horizon_half_range(fov, tilt)
+    }
+
     use crate::projection::ProjectionKind;
 
     const OPTIONS: RenderOptions = RenderOptions {

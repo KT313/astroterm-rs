@@ -12,7 +12,7 @@
 //! Calendar input and display use proleptic Gregorian dates and astronomical year numbering: 0 = 1 BC,
 //! -1 = 2 BC. Signed years are required outside 0000–9999. No Julian-calendar switch occurs in 1582.
 
-use std::f64::consts::{PI, TAU};
+use std::f64::consts::TAU;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use chrono::{DateTime, Datelike, NaiveDateTime, Timelike, Utc};
@@ -136,16 +136,10 @@ pub fn earth_rotation_angle(julian_date_ut1: f64) -> f64 {
 
 /// Greenwich mean sidereal time in radians: rotation from UT1, mean precession from TT (Capitaine et al. eq. 42).
 pub fn greenwich_mean_sidereal_time(julian_date_ut1: f64, julian_date_tt: f64) -> f64 {
-    // accumulated precession in arcseconds, from Julian centuries since J2000
-    let t = (julian_date_tt - J2000) / 36525.0;
-    let precession_arcsec = -0.014506 - 4612.156534 * t - 1.3915817 * t.powi(2)
-        + 0.00000044 * t.powi(3)
-        + 0.000029956 * t.powi(4)
-        + 0.0000000368 * t.powi(5);
-
-    // subtract it from the Earth rotation angle
-    let precession = precession_arcsec / 3600.0 * PI / 180.0;
-    normalize_radians(earth_rotation_angle(julian_date_ut1) - precession)
+    normalize_radians(
+        earth_rotation_angle(julian_date_ut1)
+            - super::models::orientation::compute_mean_equation_of_origins(julian_date_tt),
+    )
 }
 
 #[cfg(test)]

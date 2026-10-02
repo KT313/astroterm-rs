@@ -1,6 +1,12 @@
 //! The view onto the sky: where it is centered, which projection is used, and how much of the sky it shows.
 
 mod maps;
+mod sky;
+pub use sky::{ProjectedArc, ProjectedMoon, ProjectedPlanet, ProjectedSky, ProjectedStar, Viewport, project_sky};
+#[cfg(test)]
+pub(crate) use sky::{
+    compute_visible_horizon_half_range, project_constellation_segment, project_horizon_labels, project_horizon_line,
+};
 
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 

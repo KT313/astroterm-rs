@@ -25,8 +25,6 @@ pub struct Star {
     pub color_index: Option<f32>,
     /// Whether the catalog has data for this star (a few catalog numbers are empty placeholders).
     pub has_data: bool,
-    /// Apparent position, updated only when bright enough for the current threshold.
-    pub position: Horizontal,
 }
 
 impl Star {
@@ -48,7 +46,33 @@ impl Star {
             spectral_type: entry.spectral_type,
             color_index: entry.color_index,
             has_data: entry.has_data,
-            position: Horizontal::default(),
+        }
+    }
+}
+
+/// Per-frame stellar output. Only drawable candidates are materialized; immutable model inputs stay in SkyCatalog.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ObservedStar {
+    pub id: StarId,
+    pub name: Option<NameId>,
+    pub designation: Option<Designation>,
+    pub magnitude: f32,
+    pub spectral_type: [u8; 2],
+    pub color_index: Option<f32>,
+    pub has_data: bool,
+    pub position: Horizontal,
+}
+impl ObservedStar {
+    pub fn from_star(star: &Star, position: Horizontal) -> Self {
+        Self {
+            id: star.id,
+            name: star.name,
+            designation: star.designation,
+            magnitude: star.magnitude,
+            spectral_type: star.spectral_type,
+            color_index: star.color_index,
+            has_data: star.has_data,
+            position,
         }
     }
 }
@@ -114,6 +138,7 @@ pub struct Planet {
 pub struct Moon {
     pub orbit: &'static MoonOrbit,
     pub phase: MoonPhase,
+    pub illumination: super::MoonIllumination,
     pub position: Horizontal,
 }
 
@@ -140,6 +165,7 @@ pub fn create_moon() -> Moon {
     Moon {
         orbit: &MOON_ORBIT,
         phase: MoonPhase::New,
+        illumination: super::MoonIllumination::default(),
         position: Horizontal::default(),
     }
 }

@@ -27,6 +27,14 @@ impl StepTimes {
         result
     }
 
+    /// Measure a stage that also records its own sub-steps.
+    pub fn measure_steps<T>(&mut self, name: &'static str, run: impl FnOnce(&mut Self) -> T) -> T {
+        let start = Instant::now();
+        let result = run(self);
+        self.record(name, start.elapsed().as_secs_f64());
+        result
+    }
+
     /// The steps measured so far, with their averages.
     pub fn steps(&self) -> &[StepTime] {
         &self.steps

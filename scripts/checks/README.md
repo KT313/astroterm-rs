@@ -24,8 +24,9 @@ PTY resize tests; report the execution environment with the result.
 Criterion uses the embedded catalog and fixed-seed 100k/2.5M synthetic catalogs. Synthetic catalogs preserve the
 embedded bright stars and constellation endpoints and add a faint tail concentrated at magnitudes 9–13. Their
 directions are uniformly distributed, so they are reproducible stress workloads, not substitutes for the real
-Milky Way distribution. Setup/sorting is outside the measured loop. Updates are measured with/without refraction at thresholds 5/12 and with all stars;
-drawing uses 41×81 cells, 180°/10° facing views, thresholds 5/12, and constellations on/off. Sample size is 10,
+Milky Way distribution. Setup/sorting is outside the measured loop. Updates use independent model caches and
+advance by 1/24 simulated second per iteration, with/without refraction at thresholds 5/12 and with all stars.
+The `project_draw` cases measure camera projection plus rendering of the threshold-selected prefix; they use 41×81 cells, 180°/10° facing views, thresholds 5/12, and constellations on/off. Sample size is 10,
 warm-up one second, measurement two seconds (Criterion extends slow workloads). Results go to `target/criterion`.
 
 For a real-catalog release measurement of loading, updates at `-t 5`, and update plus drawing (41×81, zenith,
@@ -37,3 +38,17 @@ cargo run --release --locked --example catalog_probe -- datasets/athyg_40.csv.gz
 
 The probe reports loading separately from sky construction, excludes setup from per-frame measurements, and does
 not include terminal presentation or drop the filesystem cache. Run it on an otherwise idle machine.
+
+Per-family refresh costs and cheap cached state evaluation have separate `models/` Criterion cases. For a focused
+phase-2 measurement and the broader interpolation qualification sweep:
+
+```sh
+cargo bench --bench frame --locked -- '(embedded/update_geometric_t5|models/)' --noplot
+cargo test --release --test simulation_pipeline --locked qualify_cache_intervals -- --ignored --nocapture
+cargo test --release --test simulation_pipeline --locked cadence_tracks -- --nocapture
+```
+
+The sweep samples 12,000 epochs (including contemporary lunar cycles), both interval ends and both playback
+directions. It checks angular and absolute position/velocity errors against direct evaluation, not a more accurate
+physical ephemeris. Normal tests cover emission-time samples, tick transitions, independent refreshes, synthetic
+anchors, model substitution, multiple observers/views and paused camera changes.

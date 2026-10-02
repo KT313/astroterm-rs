@@ -1,0 +1,37 @@
+{
+  "generator": "scripts/reference/moon_phase.py",
+  "generator_version": 1,
+  "generator_sha256": "b397d2c29c51ca47dcfa73177cb61cf9eda9c2d41abdcdbd5c1474257e1ab7da",
+  "response_sha256": "cd5d242018238c9e7964ce8399caa829c64ff49f1a6e89b93caee40cd43826f4",
+  "conventions": "Horizons geocentric Earth observer, TT Julian dates, quantity 10 Illu% / 100; includes apparent-place effects absent from the current geometric model",
+  "rows": [
+    {
+      "Date_________JDTT": "2451545.000000000",
+      "Illu%": "23.01237",
+      "phi": "122.6668",
+      "PAB-LON": "161.6982",
+      "PAB-LAT": "5.4052"
+    },
+    {
+      "Date_________JDTT": "2451550.259700000",
+      "Illu%": "0.02024",
+      "phi": "178.3696",
+      "PAB-LON": "105.6809",
+      "PAB-LAT": "89.1892"
+    },
+    {
+      "Date_________JDTT": "2459146.000000000",
+      "Illu%": "49.51945",
+      "phi": "90.5507",
+      "PAB-LON": "344.8741",
+      "PAB-LAT": "-2.2791"
+    },
+    {
+      "Date_________JDTT": "2460736.958333333",
+      "Illu%": "8.30545",
+      "phi": "146.5005",
+      "PAB-LON": "88.4535",
+      "PAB-LAT": "2.8525"
+    }
+  ]
+}

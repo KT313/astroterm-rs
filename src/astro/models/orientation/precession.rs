@@ -5,7 +5,7 @@
 
 use std::f64::consts::PI;
 
-use super::{Equatorial, J2000, Vector3, rectangular_to_equatorial};
+use crate::astro::{Equatorial, J2000, Vector3, rectangular_to_equatorial};
 
 /// Rotation from the mean equator and equinox of J2000 to those of a date.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -48,6 +48,10 @@ pub fn compute_precession_matrix(julian_date_tt: f64) -> PrecessionMatrix {
 }
 
 impl PrecessionMatrix {
+    pub fn matrix(self) -> crate::astro::Matrix3 {
+        crate::astro::Matrix3(self.0)
+    }
+
     /// Rotate rectangular J2000 equatorial coordinates to the equator and equinox of date.
     pub fn apply(&self, position: Vector3) -> Vector3 {
         let [x, y, z] = self

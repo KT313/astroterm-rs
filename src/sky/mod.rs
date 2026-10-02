@@ -1,67 +1,39 @@
-//! The sky model: every object in the sky and its apparent position. It holds no rendering details, so any renderer
-//! can draw it.
-//!
-//! # Stage contract (target architecture; implementation follows in phase 2)
-//!
-//! `simulation state -> observed sky -> camera projection -> rendering`.
-//! The current [`update_sky_positions`] still combines simulation and observation. No new runtime stages or model
-//! families are introduced by documenting this contract.
-//!
-//! - Simulation owns geometric body states in a common barycentric, equatorial J2000 frame (AU, AU/day, f64),
-//!   including Sun, Earth and Moon. Until barycentric ephemerides arrive, the heliocentric origin is a documented
-//!   approximation. Each evaluator has its own sample epoch, validity interval, precision/error policy and version.
-//! - Observation evaluates prepared model samples at one requested frame time, composes parent-relative states at
-//!   matching epochs, constructs the full observer position/velocity, and applies light-time, aberration, horizon
-//!   rotation and refraction exactly once. Emission-time queries are explicit. Missing cache coverage is reported
-//!   to the coordinator; it is not hidden in rendering. Fast body spin and cheap stellar motion run on demand.
-//! - Camera projection maps read-only observed directions into screen coordinates and decides visibility. An optional
-//!   region restricts which objects are observed, never their values. Multiple cameras can share an observed sky.
-//! - Rendering chooses glyphs/pixels, colors, labels and layout from projected output. The frame loop stays visible
-//!   in `main.rs`; ordinary functions and concrete state types are sufficient.
-//!
-//! # Model-family ownership
-//!
-//! Future `astro/models/{stars,planets,moons,orientation}` files/folders own their formulas, coefficients and local
-//! reference tests. Stellar motion includes distance-dependent magnitude and bounds; planetary models can batch
-//! bodies; lunar models declare parent dependencies; orientation owns pole/spin/shape/site geometry. Shared orbital
-//! math stays in a common lower module. No model imports catalog I/O, sky orchestration, CLI or renderers.
-//! Catalog parsing supplies typed inputs, stable star IDs and compact arrays. A body's stable identity and parent
-//! link are independent of the theory selected to compute it. Common observation corrections have one implementation.
-//!
-//! A family adapter declares native origin/frame, units, time scale, precision, supported dates and errors, then
-//! returns common-frame geometric states or the stellar direction/distance representation. Per-family samples may
-//! have different ages, but their evaluated results must refer to the same requested epoch before composition.
-//! Refreshing the Moon does not invalidate a still-valid planetary sample. A model change invalidates only its own
-//! and dependent results. Tests independently cover model outputs, shared observation and camera/render integration.
-//! Earth is the only supported anchor initially; other sites/bodies remain future work.
+//! Four-stage pipeline: immutable catalog and independently cached geometric simulation -> observer-relative sky
+//! -> camera projection -> rendering. Astronomy families live in astro::models; no camera enters observation.
+//! Common states use f64 J2000 equatorial AU/AU-day, currently with a heliocentric origin. Earth is the only real
+//! anchor. Its site vector remains zero; the legacy Moon altitude parallax is applied in observation exactly once.
 
+mod illumination;
 mod objects;
+pub use illumination::{MoonIllumination, compute_moon_illumination};
+mod observation;
 mod positions;
+pub mod simulation;
+pub use observation::{Anchor, ObserverState, observe_sky, prepare_observer};
+pub use simulation::{
+    FrameTime, ModelFamily, RefreshCounts, SimulationError, SimulationState, StateRequest, update_simulation,
+};
 
-pub use objects::{Constellation, Moon, Planet, PlanetKind, Star, create_moon, create_planets};
+pub use objects::{Constellation, Moon, ObservedStar, Planet, PlanetKind, Star, create_moon, create_planets};
 pub use positions::{refract_sky_positions, update_sky_positions};
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::catalog::{Catalog, ConstellationFigure, StarNames};
 
-/// All objects in the sky.
-#[derive(Clone, Debug)]
-pub struct Sky {
+/// Immutable model inputs and display metadata, shared by all observed skies.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SkyCatalog {
     /// Brightest first; equal magnitudes by descending stable ID. Placeholders are omitted.
     pub stars: Vec<Star>,
     pub names: StarNames,
-    /// Prefix updated at the current epoch, also used by refraction.
-    pub(crate) updated_stars: usize,
-    /// The Sun and planets, ordered from the Sun outwards.
-    pub planets: Vec<Planet>,
-    pub moon: Moon,
     pub constellations: Vec<Constellation>,
 }
 
-impl Sky {
-    /// Build the sky from the parsed catalogs. Positions are zero until updated.
-    pub fn from_catalog(catalog: &Catalog) -> Sky {
+impl SkyCatalog {
+    /// Prepare a sorted immutable catalog and resolve constellation endpoints.
+    pub fn from_catalog(catalog: &Catalog) -> SkyCatalog {
         // compact and sort drawable stars, preserving the old drawing and label tie order
         let mut stars: Vec<Star> = catalog
             .stars
@@ -84,12 +56,9 @@ impl Sky {
             .filter_map(|figure| resolve_constellation_figure(figure, &index_by_hr))
             .collect();
 
-        Sky {
+        SkyCatalog {
             stars,
             names: catalog.names.clone(),
-            updated_stars: 0,
-            planets: create_planets(),
-            moon: create_moon(),
             constellations,
         }
     }
@@ -103,8 +72,52 @@ impl Sky {
     pub fn star_name(&self, star: &Star) -> Option<&str> {
         self.names.get(star.name)
     }
+}
 
-    /// The Sun, which is the first entry of `planets`.
+/// Read-only output of observation, independent of a view. Shares immutable catalog data across sites and frames.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ObservedSky {
+    pub catalog: Arc<SkyCatalog>,
+    pub stars: Vec<ObservedStar>,
+    pub planets: Vec<Planet>,
+    pub moon: Moon,
+    pub names: crate::catalog::StarNames,
+    pub constellations: Vec<Constellation>,
+    pub(crate) refracted: bool,
+}
+/// Compatibility name for the observed sky; simulation caches are a separate type.
+pub type Sky = ObservedSky;
+
+impl ObservedSky {
+    pub fn new(catalog: Arc<SkyCatalog>) -> Self {
+        Self {
+            names: catalog.names.clone(),
+            constellations: catalog.constellations.clone(),
+            catalog,
+            stars: Vec::new(),
+            planets: create_planets(),
+            moon: create_moon(),
+            refracted: false,
+        }
+    }
+    /// Build a fixture with zero positions. Runtime callers should construct SkyCatalog once and call observe_sky.
+    pub fn from_catalog(catalog: &Catalog) -> Self {
+        let catalog = Arc::new(SkyCatalog::from_catalog(catalog));
+        let mut sky = Self::new(catalog);
+        sky.stars = sky
+            .catalog
+            .stars
+            .iter()
+            .map(|star| ObservedStar::from_star(star, crate::astro::Horizontal::default()))
+            .collect();
+        sky
+    }
+    pub fn count_bright_stars(&self, threshold: f32) -> usize {
+        self.stars.partition_point(|star| star.magnitude <= threshold)
+    }
+    pub fn star_name(&self, star: &ObservedStar) -> Option<&str> {
+        self.names.get(star.name)
+    }
     pub fn sun(&self) -> &Planet {
         &self.planets[0]
     }

@@ -4,9 +4,8 @@ use std::io;
 
 use crate::astro::{Observer, SimulationClock};
 use crate::metadata::{ObserverTimeZone, collect_metadata_fields, format_step_time_fields};
-use crate::projection::View;
+use crate::projection::{ProjectedSky, View, Viewport};
 use crate::scene::{RenderOptions, draw_metadata_panel, draw_sky_scene};
-use crate::sky::Sky;
 use crate::timing::StepTimes;
 
 use super::present::Frame;
@@ -48,6 +47,13 @@ pub fn open_terminal_renderer(options: RenderOptions, settings: TerminalSettings
 }
 
 impl TerminalRenderer {
+    pub fn viewport(&self) -> Viewport {
+        Viewport {
+            height: self.frame.sky.height(),
+            width: self.frame.sky.width(),
+        }
+    }
+
     /// Resize the canvases to the terminal, after it was resized. The next frame is drawn in full.
     pub fn fit_to_terminal(&mut self) -> io::Result<()> {
         self.frame = self
@@ -61,7 +67,7 @@ impl TerminalRenderer {
     /// the panel shows them as of the previous frame.
     pub fn render_frame(
         &mut self,
-        sky: &Sky,
+        sky: &ProjectedSky<'_>,
         view: &View,
         julian_date_utc: f64,
         clock: &SimulationClock,
@@ -81,7 +87,7 @@ impl TerminalRenderer {
 
         // draw the sky and the panel, then write the changes to the terminal
         step_times.measure("Draw", || {
-            draw_sky_scene(&mut self.frame.sky, view, &self.options, sky);
+            draw_sky_scene(&mut self.frame.sky, &self.options, sky);
             if let Some(panel) = &mut self.frame.panel {
                 let mut fields = collect_metadata_fields(
                     julian_date_utc,

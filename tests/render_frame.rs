@@ -2,13 +2,16 @@
 
 use std::f64::consts::PI;
 
+#[path = "support/frame.rs"]
+mod frame;
 use astroterm::astro::{Observer, datetime_to_julian_date, parse_utc_datetime};
 use astroterm::canvas::Canvas;
 use astroterm::catalog::load_embedded_catalog;
 use astroterm::projection::{ProjectionKind, View, ViewCenter};
-use astroterm::scene::{RenderOptions, draw_sky_scene, draw_stars, select_star_appearance};
+use astroterm::scene::{RenderOptions, select_star_appearance};
 use astroterm::sky::{Sky, update_sky_positions};
 use astroterm::timing::StepTimes;
+use frame::draw_sky_scene;
 
 const ASCII: RenderOptions = RenderOptions {
     unicode: false,
@@ -63,7 +66,15 @@ fn polaris_is_near_the_center_at_the_north_pole() {
         magnitude_threshold: 2.1,
         ..ASCII
     }; // Polaris and brighter
-    draw_stars(&mut canvas, &View::default(), &options, &sky);
+    let projected = astroterm::projection::project_sky(
+        &sky,
+        &View::default(),
+        astroterm::projection::Viewport {
+            height: canvas.height(),
+            width: canvas.width(),
+        },
+    );
+    astroterm::scene::draw_stars(&mut canvas, &options, &projected);
     let near_center = (18..=22).flat_map(|row| (37..=43).map(move |col| (row, col)));
     let glyphs: String = near_center
         .filter_map(|(row, col)| canvas.cell(row, col))

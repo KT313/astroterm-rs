@@ -6,9 +6,11 @@ use std::time::Duration;
 use astroterm::astro::{J2000, Observer};
 use astroterm::canvas::Canvas;
 use astroterm::catalog::{Catalog, CatalogStar, load_embedded_catalog};
-use astroterm::projection::{View, ViewCenter};
+use astroterm::projection::{View, ViewCenter, Viewport, project_sky};
 use astroterm::scene::{RenderOptions, draw_sky_scene};
-use astroterm::sky::{Sky, refract_sky_positions, update_sky_positions};
+use astroterm::sky::{
+    FrameTime, SimulationState, Sky, observe_sky, prepare_observer, update_simulation, update_sky_positions,
+};
 use astroterm::timing::StepTimes;
 use criterion::{Criterion, SamplingMode, criterion_group, criterion_main};
 
@@ -76,12 +78,23 @@ fn benchmark_frames(criterion: &mut Criterion) {
         for threshold in [5.0, 12.0, f32::INFINITY] {
             for refracted in [false, true] {
                 let correction = if refracted { "refracted" } else { "geometric" };
+                let mut simulation = SimulationState::default();
+                let mut frame = 0_u64;
                 group.bench_function(format!("update_{correction}_t{threshold}"), |bencher| {
                     bencher.iter(|| {
-                        update_sky_positions(black_box(&mut sky), black_box(date), &observer, threshold, &mut timing);
-                        if refracted {
-                            refract_sky_positions(&mut sky);
-                        }
+                        let time = FrameTime::from_utc(date + frame as f64 / (24.0 * 86400.0));
+                        frame += 1;
+                        update_simulation(&mut simulation, time, &[], &mut timing).unwrap();
+                        let observer_state = prepare_observer(&simulation, time, observer).unwrap();
+                        observe_sky(
+                            &simulation,
+                            &observer_state,
+                            threshold,
+                            refracted,
+                            black_box(&mut sky),
+                            &mut timing,
+                        )
+                        .unwrap();
                         black_box(&sky);
                     });
                 });
@@ -110,11 +123,20 @@ fn benchmark_frames(criterion: &mut Criterion) {
                         label_threshold: 0.25,
                         dynamic_names: true,
                     };
+                    update_sky_positions(&mut sky, date, &observer, threshold, &mut timing);
                     group.bench_function(
-                        format!("draw_{view_name}_t{threshold}_constellations_{constellations}"),
+                        format!("project_draw_{view_name}_t{threshold}_constellations_{constellations}"),
                         |bencher| {
                             bencher.iter(|| {
-                                draw_sky_scene(&mut canvas, &view, &options, black_box(&sky));
+                                let projected = project_sky(
+                                    black_box(&sky),
+                                    &view,
+                                    Viewport {
+                                        height: canvas.height(),
+                                        width: canvas.width(),
+                                    },
+                                );
+                                draw_sky_scene(&mut canvas, &options, &projected);
                                 black_box(&canvas);
                             });
                         },
@@ -126,5 +148,45 @@ fn benchmark_frames(criterion: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, benchmark_frames);
+fn benchmark_model_families(criterion: &mut Criterion) {
+    use astroterm::astro::models::{
+        BodyId, moons::evaluate_moon, orientation::compute_slow_orientation, planets::evaluate_planets,
+    };
+    let mut group = criterion.benchmark_group("models");
+    group
+        .sample_size(10)
+        .warm_up_time(Duration::from_secs(1))
+        .measurement_time(Duration::from_secs(2));
+    group.bench_function("planet_refresh", |b| {
+        b.iter(|| black_box(evaluate_planets(black_box(J2000))))
+    });
+    group.bench_function("lunar_refresh", |b| {
+        b.iter(|| black_box(evaluate_moon(black_box(J2000))))
+    });
+    group.bench_function("orientation_refresh", |b| {
+        b.iter(|| black_box(compute_slow_orientation(black_box(J2000))))
+    });
+    let mut simulation = SimulationState::default();
+    update_simulation(
+        &mut simulation,
+        FrameTime::from_utc(J2000),
+        &[],
+        &mut StepTimes::default(),
+    )
+    .unwrap();
+    group.bench_function("cached_bodies", |b| {
+        b.iter(|| {
+            for body in BodyId::PLANETS.into_iter().chain([BodyId::Moon]) {
+                black_box(
+                    simulation
+                        .evaluate_body(body, black_box(J2000 + 1.0 / 86400.0))
+                        .unwrap(),
+                );
+            }
+        })
+    });
+    group.finish();
+}
+
+criterion_group!(benches, benchmark_frames, benchmark_model_families);
 criterion_main!(benches);

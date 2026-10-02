@@ -1,14 +1,16 @@
 //! astroterm: a terminal star map.
 //!
-//! The crate is layered bottom-up, one folder per group: [`timing`] (frame step durations), [`astro`] (time,
-//! coordinates, ephemeris) and [`canvas`] (cell grid, line drawing) are the foundations; [`projection`] and [`catalog`] build on them; [`sky`] holds the
-//! object model and updates its positions; [`controls`] (user actions) and [`metadata`] (panel content) are shared by
-//! all renderers; [`scene`] draws the sky onto a canvas; [`terminal`] and [`cli`] connect it to the user.
+//! The frame loop is visible in `main.rs`: independently refresh [`sky::SimulationState`], observe it at the current
+//! epoch and site into [`sky::ObservedSky`], project it with [`projection::project_sky`], then draw prepared screen
+//! geometry with [`scene`]. The character [`terminal::TerminalRenderer`] presents changed cells and metadata.
 //!
-//! Computing the sky and rendering it are separate: [`sky`] only knows what the objects are and where they are, and a
-//! renderer reads it each frame to show it. The one renderer so far is [`terminal::TerminalRenderer`], which draws
-//! characters with [`scene`]; glyphs, labels and colors are its choice ([`scene::Appearance`]). Input is backend
-//! specific too: the terminal maps its keys to [`controls::Control`]s.
+//! [`astro::models`] separates stars, planets, moons and orientation, including their coefficients and reference
+//! tests. Shared time, coordinate and orbital math remain in [`astro`]; model code never imports catalog I/O,
+//! observers or renderers. [`catalog`] parses inputs; [`sky::SkyCatalog`] owns immutable star data. [`controls`]
+//! changes views and the simulation clock without invalidating geometric caches. [`timing`] records stage costs.
+//!
+//! Earth is the only production anchor. Common f64 states use equatorial J2000 axes, AU and AU/day, currently with
+//! a heliocentric origin. [`sky`] documents the approximation and the remaining observer-site correction.
 
 pub mod astro;
 pub mod canvas;

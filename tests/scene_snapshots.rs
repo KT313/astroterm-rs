@@ -3,13 +3,16 @@
 #[path = "support/canvas.rs"]
 mod canvas_snapshot;
 
+#[path = "support/frame.rs"]
+mod frame;
 use astroterm::astro::{Observer, datetime_to_julian_date, parse_utc_datetime};
 use astroterm::canvas::Canvas;
 use astroterm::catalog::load_embedded_catalog;
 use astroterm::projection::{ProjectionKind, View, ViewCenter};
-use astroterm::scene::{RenderOptions, draw_sky_scene};
+use astroterm::scene::RenderOptions;
 use astroterm::sky::{Sky, refract_sky_positions, update_sky_positions};
 use astroterm::timing::StepTimes;
+use frame::draw_sky_scene;
 
 #[test]
 fn scenes_preserve_glyphs_colors_and_wide_cell_occupancy() {

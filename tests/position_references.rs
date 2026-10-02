@@ -52,7 +52,7 @@ fn selected_positions_preserve_the_current_model_at_three_epochs() {
     for &(date, name, azimuth, altitude) in baseline::POSITIONS {
         let actual = find_position(&boston_sky(date), name);
         let error = separation_arcseconds(actual, Horizontal { azimuth, altitude });
-        assert!(error <= 0.1, "{date} {name}: {error} arcsec");
+        assert!(error <= 0.01, "{date} {name}: {error} arcsec");
     }
 }
 

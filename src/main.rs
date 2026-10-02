@@ -3,6 +3,7 @@
 use std::fmt::Display;
 use std::io;
 use std::process::ExitCode;
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -12,7 +13,8 @@ use astroterm::astro::SimulationClock;
 use astroterm::catalog::{load_athyg_catalog, load_embedded_catalog, load_embedded_cities};
 use astroterm::cli::{Arguments, Config, build_config, write_bash_completions};
 use astroterm::controls::{Control, apply_control};
-use astroterm::sky::{Sky, refract_sky_positions, update_sky_positions};
+use astroterm::projection::project_sky;
+use astroterm::sky::{FrameTime, SimulationState, Sky, SkyCatalog, observe_sky, prepare_observer, update_simulation};
 use astroterm::terminal::{TerminalRenderer, open_terminal_renderer, poll_frame_input};
 use astroterm::timing::StepTimes;
 
@@ -45,7 +47,7 @@ fn main() -> ExitCode {
         None => load_embedded_catalog(),
     };
     let mut sky = match catalog {
-        Ok(catalog) => Sky::from_catalog(&catalog),
+        Ok(catalog) => Sky::new(Arc::new(SkyCatalog::from_catalog(&catalog))),
         Err(error) => return report_failure(error),
     };
 
@@ -67,6 +69,8 @@ fn run_render_loop(config: &Config, sky: &mut Sky, renderer: &mut TerminalRender
     let mut clock = SimulationClock::start(simulation.start_julian_date, simulation.speed);
     let mut step_times = StepTimes::default(); // how long each step of a frame takes, for --debug-frametimes
 
+    let mut simulation_state = SimulationState::default();
+
     loop {
         let frame_start = Instant::now();
 
@@ -82,21 +86,39 @@ fn run_render_loop(config: &Config, sky: &mut Sky, renderer: &mut TerminalRender
             apply_control(control, &mut view, &mut clock, &config.view);
         }
 
-        // move the sky to the current simulation time
-        let julian_date = clock.julian_date();
-        update_sky_positions(
-            sky,
-            julian_date,
-            &simulation.observer,
-            config.render.magnitude_threshold,
-            &mut step_times,
-        );
-        if simulation.refraction {
-            step_times.measure("Refraction", || refract_sky_positions(sky));
-        }
+        // refresh only model samples whose validity no longer covers this frame
+        let time = FrameTime::from_utc(clock.julian_date());
+        step_times
+            .measure_steps("Simulation", |steps| {
+                update_simulation(&mut simulation_state, time, &[], steps)
+            })
+            .map_err(io::Error::other)?;
 
-        // render it
-        renderer.render_frame(sky, &view, julian_date, &clock, &simulation.observer, &mut step_times)?;
+        // observe at the current epoch, with exact body spin and observer corrections
+        step_times
+            .measure_steps("Observation", |steps| {
+                let observer = prepare_observer(&simulation_state, time, simulation.observer)?;
+                observe_sky(
+                    &simulation_state,
+                    &observer,
+                    config.render.magnitude_threshold,
+                    simulation.refraction,
+                    sky,
+                    steps,
+                )
+            })
+            .map_err(io::Error::other)?;
+
+        // project the immutable observed sky for this camera, then render prepared screen geometry
+        let projected = step_times.measure("Projection", || project_sky(sky, &view, renderer.viewport()));
+        renderer.render_frame(
+            &projected,
+            &view,
+            time.utc,
+            &clock,
+            &simulation.observer,
+            &mut step_times,
+        )?;
 
         thread::sleep(frame_duration.saturating_sub(frame_start.elapsed())); // wait for the rest of the frame
     }

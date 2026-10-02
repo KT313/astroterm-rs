@@ -1,47 +1,9 @@
-//! Positions of stars, planets and the Moon from catalog data and Keplerian orbital elements.
-//!
-//! References: Explanatory Supplement to the Astronomical Almanac, ch. 8; NASA JPL "Approximate Positions of the
-//! Planets" (<https://ssd.jpl.nasa.gov/planets/approx_pos.html>); Paul Schlyter, "How to compute planetary positions"
-//! (<https://stjarnhimlen.se/comp/ppcomp.html>).
-
+//! Schlyter lunar model, geometric Earth-relative mean-of-date equatorial coordinates in Earth radii, TT, f64.
+//! Native conversion retains fixed J2000 obliquity. The common-frame adapter removes only source precession, then
+//! converts to AU. Parent Earth is composed at the requested epoch by sky::simulation, never at a stale sample time.
+use crate::astro::Vector3;
+use crate::astro::orbital::*;
 use std::f64::consts::{PI, TAU};
-
-use super::{Equatorial, J2000, Vector3};
-
-const TO_RAD: f64 = PI / 180.0;
-
-/// Obliquity of the ecliptic at J2000 in radians.
-const OBLIQUITY_J2000: f64 = 84381.448 / 3600.0 * TO_RAD;
-
-/// Keplerian orbital elements, or their rates of change. Angles in degrees, semi-major axis in AU (Earth radii for
-/// the Moon).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct OrbitalElements {
-    pub semi_major_axis: f64,
-    pub eccentricity: f64,
-    pub inclination: f64,
-    pub mean_anomaly: f64,
-    pub argument_of_periapsis: f64,
-    pub ascending_node: f64,
-}
-
-/// Extra mean anomaly terms for Jupiter through Neptune (JPL approximate positions, table 2b).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct PerturbationTerms {
-    pub b: f64,
-    pub c: f64,
-    pub s: f64,
-    pub f: f64,
-}
-
-/// Heliocentric orbit of a planet. Rates are per Julian century since J2000.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct PlanetOrbit {
-    pub elements: OrbitalElements,
-    pub rates: OrbitalElements,
-    pub perturbations: Option<PerturbationTerms>,
-}
-
 /// Geocentric orbit of the Moon. Rates are per day since 1999-12-31T00:00 (Schlyter's epoch).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MoonOrbit {
@@ -91,49 +53,6 @@ impl MoonPhase {
     }
 }
 
-/// Apply proper motion (radians per year) to a J2000 catalog position. The result is still in the J2000 frame.
-/// Time is TT; the legacy 365.2425-day motion year is retained until the stellar-model replacement.
-pub fn compute_star_position(catalog: Equatorial, proper_motion: Equatorial, julian_date_tt: f64) -> Equatorial {
-    let years_since_j2000 = (julian_date_tt - J2000) / 365.2425;
-    Equatorial {
-        right_ascension: catalog.right_ascension + proper_motion.right_ascension * years_since_j2000,
-        declination: catalog.declination + proper_motion.declination * years_since_j2000,
-    }
-}
-
-/// Heliocentric position of a planet in rectangular J2000 equatorial coordinates (AU).
-/// Time is TT. The result is geometric: no observer subtraction, light-time or aberration.
-///
-/// Follows the Explanatory Supplement to the Astronomical Almanac, ch. 8, p. 340.
-pub fn compute_planet_heliocentric(orbit: &PlanetOrbit, julian_date_tt: f64) -> Vector3 {
-    // 1. propagate the elements to the date
-    let centuries = (julian_date_tt - J2000) / 36525.0;
-    let elements = propagate_elements(&orbit.elements, &orbit.rates, centuries);
-    let OrbitalElements {
-        semi_major_axis,
-        eccentricity,
-        ..
-    } = elements;
-    let mean_longitude = elements.mean_anomaly + elements.argument_of_periapsis + elements.ascending_node;
-    let periapsis_longitude = elements.argument_of_periapsis + elements.ascending_node;
-
-    // 2. mean anomaly, including the extra terms of the outer planets
-    let mut mean_anomaly = elements.mean_anomaly;
-    if let Some(PerturbationTerms { b, c, s, f }) = orbit.perturbations {
-        let ft = f * centuries * TO_RAD;
-        mean_anomaly = mean_longitude - periapsis_longitude + b * centuries * centuries + c * ft.cos() + s * ft.sin();
-    }
-
-    // 3. solve Kepler's equation
-    let mean_anomaly = wrap_degrees_signed(mean_anomaly);
-    let initial_guess = mean_anomaly + 180.0 / PI * eccentricity * (mean_anomaly * TO_RAD).sin();
-    let eccentric_anomaly = solve_eccentric_anomaly(mean_anomaly, eccentricity, initial_guess);
-
-    // 4. & 5. & 6. position in the orbital plane, rotated to ecliptic then equatorial coordinates
-    let (xp, yp) = compute_orbital_plane_position(semi_major_axis, eccentricity, eccentric_anomaly);
-    ecliptic_to_equatorial(rotate_orbital_plane_to_ecliptic(xp, yp, &elements))
-}
-
 /// Geocentric position of the Moon in rectangular equatorial coordinates (Earth radii).
 /// Time is TT. The native ecliptic coordinates are mean of date; conversion currently uses fixed J2000 obliquity
 /// as an approximation. No observer parallax or refraction is included here.
@@ -165,12 +84,14 @@ pub fn compute_moon_geocentric(orbit: &MoonOrbit, julian_date_tt: f64) -> Vector
     ecliptic_to_equatorial(perturbed)
 }
 
+/// Legacy planar elongation helper retained for historical audit fixtures; runtime phase uses continuous geometry.
 /// Age of the Moon within the synodic month in [0, 1): 0 is a New Moon and 0.5 a Full Moon. It is the elongation of
 /// the Moon from the Sun along the ecliptic, as a fraction of a full turn, given their geocentric equatorial positions.
 pub fn compute_moon_age(moon_geocentric: Vector3, sun_geocentric: Vector3) -> f64 {
-    let elongation =
-        equatorial_to_ecliptic_longitude(moon_geocentric) - equatorial_to_ecliptic_longitude(sun_geocentric);
-    (elongation / TAU).rem_euclid(1.0)
+    let north = super::orientation::j2000_ecliptic_north();
+    let cosine = moon_geocentric.dot(sun_geocentric) - moon_geocentric.dot(north) * sun_geocentric.dot(north);
+    let sine = sun_geocentric.cross(moon_geocentric).dot(north);
+    (sine.atan2(cosine) / TAU).rem_euclid(1.0)
 }
 
 /// Named phase for a Moon age in [0, 1).
@@ -231,82 +152,31 @@ fn apply_lunar_perturbations(ecliptic: Vector3, elements: &OrbitalElements, days
     }
 }
 
-/// Elements at `time` units after their epoch, given their rates per unit.
-fn propagate_elements(elements: &OrbitalElements, rates: &OrbitalElements, time: f64) -> OrbitalElements {
-    OrbitalElements {
-        semi_major_axis: elements.semi_major_axis + rates.semi_major_axis * time,
-        eccentricity: elements.eccentricity + rates.eccentricity * time,
-        inclination: elements.inclination + rates.inclination * time,
-        mean_anomaly: elements.mean_anomaly + rates.mean_anomaly * time,
-        argument_of_periapsis: elements.argument_of_periapsis + rates.argument_of_periapsis * time,
-        ascending_node: elements.ascending_node + rates.ascending_node * time,
-    }
-}
+pub const MOON_ORBIT: MoonOrbit = MoonOrbit {
+    elements: elements(60.2666, 0.054900, 5.1454, 115.3654, 318.0634, 125.1228),
+    rates: elements(0.0, 0.0, 0.0, 13.0649929509, 0.1643573223, -0.0529538083),
+};
 
-/// Wrap an angle in degrees into [-180, 180).
-fn wrap_degrees_signed(degrees: f64) -> f64 {
-    (degrees + 180.0).rem_euclid(360.0) - 180.0
-}
+/// Preserve the legacy Earth-radius scale (6378.14 km); the exact site model is a later change.
+pub const EARTH_RADIUS_AU: f64 = 6378.14 / 149597870.7;
 
-/// Solve Kepler's equation `M = E - e·sin(E)` (degrees) with Newton's method, at most 10 iterations.
-fn solve_eccentric_anomaly(mean_anomaly: f64, eccentricity: f64, initial_guess: f64) -> f64 {
-    let mut eccentric_anomaly = initial_guess;
-    for _ in 0..10 {
-        let mean_anomaly_error =
-            mean_anomaly - (eccentric_anomaly - eccentricity / TO_RAD * (eccentric_anomaly * TO_RAD).sin());
-        let correction = mean_anomaly_error / (1.0 - eccentricity * (eccentric_anomaly * TO_RAD).cos());
-        eccentric_anomaly += correction;
-        if correction.abs() <= 1e-6 {
-            break;
-        }
-    }
-    eccentric_anomaly
-}
-
-/// Position in the orbital plane, with the x-axis pointing at the periapsis.
-fn compute_orbital_plane_position(semi_major_axis: f64, eccentricity: f64, eccentric_anomaly: f64) -> (f64, f64) {
-    let e = eccentric_anomaly * TO_RAD;
-    let xp = semi_major_axis * (e.cos() - eccentricity);
-    let yp = semi_major_axis * (1.0 - eccentricity * eccentricity).sqrt() * e.sin();
-    (xp, yp)
-}
-
-/// Rotate an orbital plane position to ecliptic coordinates.
-fn rotate_orbital_plane_to_ecliptic(xp: f64, yp: f64, elements: &OrbitalElements) -> Vector3 {
-    let (w, node, inclination) = (
-        elements.argument_of_periapsis * TO_RAD,
-        elements.ascending_node * TO_RAD,
-        elements.inclination * TO_RAD,
-    );
-    let (sin_w, cos_w, sin_node, cos_node) = (w.sin(), w.cos(), node.sin(), node.cos());
-    let (sin_i, cos_i) = (inclination.sin(), inclination.cos());
-    Vector3 {
-        x: (cos_w * cos_node - sin_w * sin_node * cos_i) * xp + (-sin_w * cos_node - cos_w * sin_node * cos_i) * yp,
-        y: (cos_w * sin_node + sin_w * cos_node * cos_i) * xp + (-sin_w * sin_node + cos_w * cos_node * cos_i) * yp,
-        z: (sin_w * sin_i) * xp + (cos_w * sin_i) * yp,
-    }
-}
-
-/// Rotate ecliptic coordinates to equatorial coordinates at J2000.
-fn ecliptic_to_equatorial(ecliptic: Vector3) -> Vector3 {
-    let (sin_eps, cos_eps) = (OBLIQUITY_J2000.sin(), OBLIQUITY_J2000.cos());
-    Vector3 {
-        x: ecliptic.x,
-        y: cos_eps * ecliptic.y - sin_eps * ecliptic.z,
-        z: sin_eps * ecliptic.y + cos_eps * ecliptic.z,
-    }
-}
-
-/// Ecliptic longitude in radians of a position in equatorial coordinates at J2000.
-fn equatorial_to_ecliptic_longitude(equatorial: Vector3) -> f64 {
-    let (sin_eps, cos_eps) = (OBLIQUITY_J2000.sin(), OBLIQUITY_J2000.cos());
-    (cos_eps * equatorial.y + sin_eps * equatorial.z).atan2(equatorial.x)
+/// Parent-relative common-frame lunar state. Its only frame dependency is the source precession evaluated at
+/// each finite-difference epoch; Earth's translation is composed at the requested epoch by the coordinator.
+pub fn evaluate_moon(julian_date_tt: f64) -> super::BodyState {
+    super::state::evaluate_with_velocity(julian_date_tt, |t| {
+        let native = compute_moon_geocentric(&MOON_ORBIT, t);
+        super::orientation::compute_precession_matrix(t)
+            .matrix()
+            .transpose()
+            .apply(native)
+            * EARTH_RADIUS_AU
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::catalog::{EARTH_ORBIT, MOON_ORBIT};
+    use crate::astro::models::planets::{EARTH_ORBIT, compute_planet_heliocentric};
 
     fn circular_distance(a: f64, b: f64) -> f64 {
         let difference = (a - b).abs();
@@ -346,7 +216,10 @@ mod tests {
         let moon = compute_moon_geocentric(&MOON_ORBIT, 2448724.5);
         let (sin_eps, cos_eps) = (OBLIQUITY_J2000.sin(), OBLIQUITY_J2000.cos());
         let distance = (moon.x * moon.x + moon.y * moon.y + moon.z * moon.z).sqrt();
-        let longitude = equatorial_to_ecliptic_longitude(moon).to_degrees().rem_euclid(360.0);
+        let longitude = (cos_eps * moon.y + sin_eps * moon.z)
+            .atan2(moon.x)
+            .to_degrees()
+            .rem_euclid(360.0);
         let latitude = ((-sin_eps * moon.y + cos_eps * moon.z) / distance).asin().to_degrees();
 
         assert!((longitude - (133.162655 - 0.11)).abs() < 0.1, "longitude {longitude}");
@@ -378,20 +251,5 @@ mod tests {
     #[test]
     fn moon_phase_names() {
         assert_eq!(MoonPhase::WaxingGibbous.name(), "Waxing Gibbous");
-    }
-
-    #[test]
-    fn wrap_degrees_signed_handles_large_negative_angles() {
-        assert!((wrap_degrees_signed(-1000.0) - 80.0).abs() < 1e-9);
-        assert!((wrap_degrees_signed(190.0) + 170.0).abs() < 1e-9);
-        assert!((wrap_degrees_signed(45.0) - 45.0).abs() < 1e-9);
-    }
-
-    #[test]
-    fn solve_eccentric_anomaly_satisfies_keplers_equation() {
-        let (mean_anomaly, eccentricity) = (40.0, 0.2);
-        let solution = solve_eccentric_anomaly(mean_anomaly, eccentricity, mean_anomaly);
-        let residual = solution - eccentricity / TO_RAD * (solution * TO_RAD).sin() - mean_anomaly;
-        assert!(residual.abs() < 1e-6);
     }
 }

@@ -5,7 +5,7 @@ use std::borrow::Cow;
 use crate::astro::{MoonPhase, map_float_to_int_range};
 use crate::canvas::Color;
 use crate::catalog::StarNames;
-use crate::sky::{PlanetKind, Star};
+use crate::sky::{ObservedStar as Star, PlanetKind};
 
 /// Brightest and dimmest magnitudes in the star catalog, used to pick star glyphs.
 const BRIGHTEST_STAR_MAGNITUDE: f64 = -1.46;

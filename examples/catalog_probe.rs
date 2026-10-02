@@ -6,9 +6,9 @@ use astroterm::{
     astro::Observer,
     canvas::Canvas,
     catalog::load_athyg_catalog,
-    projection::View,
+    projection::{View, Viewport, project_sky},
     scene::{RenderOptions, draw_sky_scene},
-    sky::{Sky, update_sky_positions},
+    sky::{FrameTime, SimulationState, Sky, SkyCatalog, observe_sky, prepare_observer, update_simulation},
     timing::StepTimes,
 };
 
@@ -24,7 +24,7 @@ fn main() {
     );
 
     // prepare the fixed rendering workload
-    let mut sky = Sky::from_catalog(&catalog);
+    let mut sky = Sky::new(std::sync::Arc::new(SkyCatalog::from_catalog(&catalog)));
     drop(catalog);
     let mut canvas = Canvas::new(41, 81);
     let view = View::default();
@@ -43,29 +43,34 @@ fn main() {
         longitude: 139.69_f64.to_radians(),
     };
 
+    let mut simulation = SimulationState::default();
+    let time = FrameTime::from_utc(2460736.9583333335);
+    let mut timing = StepTimes::default();
+    let mut update = |sky: &mut Sky| {
+        update_simulation(&mut simulation, time, &[], &mut timing).unwrap();
+        let site = prepare_observer(&simulation, time, observer).unwrap();
+        observe_sky(&simulation, &site, 5.0, false, sky, &mut timing).unwrap();
+    };
+
     // time position updates, then complete headless frames
     let start = Instant::now();
     for _ in 0..20 {
-        update_sky_positions(
-            black_box(&mut sky),
-            2460736.9583333335,
-            &observer,
-            5.0,
-            &mut StepTimes::default(),
-        );
+        update(black_box(&mut sky));
     }
     println!("update_ms={:.3}", start.elapsed().as_secs_f64() * 1000.0 / 20.0);
 
     let start = Instant::now();
     for _ in 0..100 {
-        update_sky_positions(
-            black_box(&mut sky),
-            2460736.9583333335,
-            &observer,
-            5.0,
-            &mut StepTimes::default(),
+        update(black_box(&mut sky));
+        let projected = project_sky(
+            &sky,
+            &view,
+            Viewport {
+                height: canvas.height(),
+                width: canvas.width(),
+            },
         );
-        draw_sky_scene(black_box(&mut canvas), &view, &options, &sky);
+        draw_sky_scene(black_box(&mut canvas), &options, &projected);
     }
     println!(
         "update_draw_ms={:.3} candidates={}",
