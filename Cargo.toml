@@ -1,0 +1,23 @@
+[package]
+name = "astroterm-rs"
+version = "0.1.0"
+edition = "2024"
+description = "A terminal-based star map (Rust port of astroterm)"
+license = "MIT"
+
+[lib]
+name = "astroterm"
+path = "src/lib.rs"
+
+[[bin]]
+name = "astroterm"
+path = "src/main.rs"
+
+[dependencies]
+chrono = "0.4.45"
+clap = { version = "4.6.7", features = ["derive", "wrap_help"] }
+crossterm = "0.29.0"
+unicode-width = "0.2.2"
+
+[target.'cfg(unix)'.dependencies]
+tz-rs = "0.7.3"
