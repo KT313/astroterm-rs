@@ -1,56 +1,60 @@
-//! Converting the simulation time to the observer's local time, labelled with the timezone abbreviation.
-//!
-//! On Unix, the system timezone database (`TZ`, `/etc/localtime`) provides the abbreviation in effect at the given
-//! time, e.g. "CET" or "CEST". Elsewhere, or if the database is unavailable, the UTC offset is shown instead.
+//! Observer-local civil time. Geographic boundaries are bundled; Unix zone rules come from the system IANA
+//! database. Missing boundaries or rules fall back to labelled UTC, never the machine's local zone.
 
-use chrono::{DateTime, FixedOffset, Local, Utc};
+use crate::astro::Observer;
+use chrono::{DateTime, FixedOffset, Utc};
 
 /// A local date and time, and the name of its timezone.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LocalTime {
     pub time: DateTime<FixedOffset>,
-    /// Abbreviation such as "JST", or the UTC offset such as "+09:00".
     pub zone: String,
 }
 
-/// The local time at `utc`.
-pub fn convert_to_local_time(utc: DateTime<Utc>) -> LocalTime {
-    if let Some((offset, zone)) = find_system_zone(utc.timestamp()) {
-        return LocalTime {
-            time: utc.with_timezone(&offset),
-            zone,
-        };
-    }
-    let time = utc.with_timezone(&Local).fixed_offset();
-    LocalTime {
-        time,
-        zone: time.offset().to_string(),
-    }
+/// Zone rules loaded once for a fixed observer. Historical/future rules are those provided by the IANA database.
+pub struct ObserverTimeZone {
+    #[cfg(unix)]
+    zone: Option<tz::TimeZone>,
 }
 
-/// UTC offset and abbreviation of the system timezone at `unix_time`. The timezone is loaded once.
-#[cfg(unix)]
-fn find_system_zone(unix_time: i64) -> Option<(FixedOffset, String)> {
-    use std::sync::OnceLock;
-
-    static SYSTEM_ZONE: OnceLock<Option<tz::TimeZone>> = OnceLock::new();
-    let zone = SYSTEM_ZONE.get_or_init(load_system_zone).as_ref()?;
-    describe_zone_at(zone, unix_time)
-}
-
-/// The timezone named by `TZ` (a zone name such as `Europe/Berlin`, a file, or a POSIX rule), or `/etc/localtime`
-/// if `TZ` is unset or empty, as the C library resolves it.
-#[cfg(unix)]
-fn load_system_zone() -> Option<tz::TimeZone> {
-    match std::env::var("TZ") {
-        Ok(tz_string) if !tz_string.is_empty() => tz::TimeZone::from_posix_tz(&tz_string).ok(),
-        _ => tz::TimeZone::local().ok(),
+impl ObserverTimeZone {
+    pub fn new(observer: &Observer) -> Self {
+        #[cfg(unix)]
+        {
+            use std::sync::LazyLock;
+            static FINDER: LazyLock<tzf_rs::EmbeddedFinder> = LazyLock::new(tzf_rs::EmbeddedFinder::new);
+            let name = FINDER.get_tz_name(observer.longitude.to_degrees(), observer.latitude.to_degrees());
+            let zone = if name.is_empty() {
+                None
+            } else {
+                tz::TimeZone::from_posix_tz(name).ok()
+            };
+            Self { zone }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = observer;
+            Self {}
+        }
     }
-}
 
-#[cfg(not(unix))]
-fn find_system_zone(_unix_time: i64) -> Option<(FixedOffset, String)> {
-    None
+    pub fn convert(&self, utc: DateTime<Utc>) -> LocalTime {
+        #[cfg(unix)]
+        if let Some((offset, zone)) = self
+            .zone
+            .as_ref()
+            .and_then(|zone| describe_zone_at(zone, utc.timestamp()))
+        {
+            return LocalTime {
+                time: utc.with_timezone(&offset),
+                zone,
+            };
+        }
+        LocalTime {
+            time: utc.fixed_offset(),
+            zone: "UTC (no timezone found)".to_string(),
+        }
+    }
 }
 
 /// UTC offset and abbreviation of `zone` at `unix_time`, falling back to the offset if the zone has no abbreviation.
@@ -70,6 +74,51 @@ fn describe_zone_at(zone: &tz::TimeZone, unix_time: i64) -> Option<(FixedOffset,
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn observer_zones_follow_geography_and_season() {
+        let utc = DateTime::parse_from_rfc3339("2025-07-02T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        for (latitude, longitude, zone, seconds) in
+            [(35.69_f64, 139.69_f64, "JST", 32400), (52.52, 13.405, "CEST", 7200)]
+        {
+            let observer = Observer {
+                latitude: latitude.to_radians(),
+                longitude: longitude.to_radians(),
+            };
+            let local = ObserverTimeZone::new(&observer).convert(utc);
+            assert_eq!(local.zone, zone);
+            assert_eq!(local.time.offset().local_minus_utc(), seconds);
+        }
+    }
+
+    #[test]
+    fn missing_zone_rules_use_explicit_utc_fallback() {
+        let utc = DateTime::parse_from_rfc3339("2025-07-02T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let local = ObserverTimeZone { zone: None }.convert(utc);
+        assert_eq!(local.zone, "UTC (no timezone found)");
+        assert_eq!(local.time, utc.fixed_offset());
+    }
+
+    #[test]
+    fn mid_ocean_uses_the_geographic_offset_or_explicit_fallback() {
+        let observer = Observer {
+            latitude: 0.0,
+            longitude: -140_f64.to_radians(),
+        };
+        let utc = DateTime::parse_from_rfc3339("2025-07-02T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let local = ObserverTimeZone::new(&observer).convert(utc);
+        // tzf's ocean polygons assign nautical Etc/GMT zones; a missing system rule must instead be labelled UTC.
+        assert!(
+            local.time.offset().local_minus_utc() == -9 * 3600 || local.zone == "UTC (no timezone found)",
+            "{local:?}"
+        );
+    }
 
     fn unix_time(rfc3339: &str) -> i64 {
         DateTime::parse_from_rfc3339(rfc3339).unwrap().timestamp()

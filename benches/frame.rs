@@ -36,6 +36,8 @@ fn build_catalog(count: usize) -> Catalog {
             11.0 + 2.0 * uniform()
         };
         catalog.stars.push(CatalogStar {
+            id: astroterm::catalog::StarId(catalog.stars.len() as u64 + 1),
+            space_motion: None,
             hr: None,
             name: None,
             designation: None,
@@ -71,25 +73,21 @@ fn benchmark_frames(criterion: &mut Criterion) {
             .warm_up_time(Duration::from_secs(1))
             .measurement_time(Duration::from_secs(2))
             .sampling_mode(SamplingMode::Flat);
-        for refracted in [false, true] {
-            group.bench_function(
-                if refracted {
-                    "update_refracted"
-                } else {
-                    "update_geometric"
-                },
-                |bencher| {
+        for threshold in [5.0, 12.0, f32::INFINITY] {
+            for refracted in [false, true] {
+                let correction = if refracted { "refracted" } else { "geometric" };
+                group.bench_function(format!("update_{correction}_t{threshold}"), |bencher| {
                     bencher.iter(|| {
-                        update_sky_positions(black_box(&mut sky), black_box(date), &observer, &mut timing);
+                        update_sky_positions(black_box(&mut sky), black_box(date), &observer, threshold, &mut timing);
                         if refracted {
                             refract_sky_positions(&mut sky);
                         }
                         black_box(&sky);
                     });
-                },
-            );
+                });
+            }
         }
-        update_sky_positions(&mut sky, date, &observer, &mut timing);
+        update_sky_positions(&mut sky, date, &observer, f32::INFINITY, &mut timing);
         let mut canvas = Canvas::new(41, 81);
         for (view_name, fov) in [("wide", 180.0), ("narrow", 10.0)] {
             let view = View {

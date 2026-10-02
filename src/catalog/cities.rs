@@ -52,6 +52,24 @@ fn normalize_city_name(name: &str) -> String {
     name.trim().to_lowercase()
 }
 
+/// Up to three distinct spelling suggestions, ranked by normalized edit similarity (at least 0.7).
+pub fn suggest_cities(cities: &[City], name: &str) -> Vec<&'static str> {
+    let wanted = normalize_city_name(name);
+    if wanted.is_empty() {
+        return Vec::new();
+    }
+    let mut matches: Vec<_> = cities
+        .iter()
+        .filter_map(|city| {
+            let score = strsim::normalized_levenshtein(&wanted, &normalize_city_name(city.name));
+            (score >= 0.7).then_some((city.name, score))
+        })
+        .collect();
+    matches.sort_unstable_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+    matches.dedup_by_key(|entry| entry.0);
+    matches.into_iter().take(3).map(|(name, _)| name).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -63,6 +81,20 @@ mod tests {
 
     fn location_of(cities: &[City], name: &str) -> Option<(&'static str, f64, f64)> {
         find_city(cities, name).map(|city| (city.name, city.latitude, city.longitude))
+    }
+
+    #[test]
+    fn suggestions_are_distinct_ranked_and_limited() {
+        let mut cities = embedded_cities();
+        cities.extend(cities.clone());
+        let suggestions = suggest_cities(&cities, "Tokio");
+        assert_eq!(suggestions[0], "Tokyo");
+        assert!(suggestions.len() <= 3);
+        assert_eq!(
+            suggestions.iter().collect::<std::collections::HashSet<_>>().len(),
+            suggestions.len()
+        );
+        assert!(suggest_cities(&cities, "").is_empty());
     }
 
     #[test]

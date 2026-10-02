@@ -2,15 +2,16 @@
 
 use crate::astro::{Equatorial, Horizontal, MoonOrbit, MoonPhase, PlanetOrbit};
 use crate::catalog::{
-    CatalogStar, Designation, JUPITER_ORBIT, MARS_ORBIT, MERCURY_ORBIT, MOON_ORBIT, NEPTUNE_ORBIT, SATURN_ORBIT,
-    URANUS_ORBIT, VENUS_ORBIT,
+    CatalogStar, Designation, JUPITER_ORBIT, MARS_ORBIT, MERCURY_ORBIT, MOON_ORBIT, NEPTUNE_ORBIT, NameId,
+    SATURN_ORBIT, StarId, URANUS_ORBIT, VENUS_ORBIT,
 };
 
 /// A catalog star.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Star {
+    pub id: StarId,
     /// Proper name, for the brighter stars that have one.
-    pub name: Option<&'static str>,
+    pub name: Option<NameId>,
     /// Catalog designation, e.g. a Bayer letter or an HR number, for labelling stars without a name.
     pub designation: Option<Designation>,
     /// J2000 position.
@@ -24,7 +25,7 @@ pub struct Star {
     pub color_index: Option<f32>,
     /// Whether the catalog has data for this star (a few catalog numbers are empty placeholders).
     pub has_data: bool,
-    /// Apparent position, updated every frame.
+    /// Apparent position, updated only when bright enough for the current threshold.
     pub position: Horizontal,
 }
 
@@ -32,6 +33,7 @@ impl Star {
     /// A star from its catalog entry.
     pub fn from_catalog_star(entry: &CatalogStar) -> Star {
         Star {
+            id: entry.id,
             name: entry.name,
             designation: entry.designation,
             catalog_position: Equatorial {

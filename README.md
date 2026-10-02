@@ -70,6 +70,9 @@ New:
 - `--dataset <path>` loads stars from an AT-HYG file (`.csv` or `.csv.gz`, see Data Sources) instead of the embedded
   Yale Bright Star Catalog; constellation figures are matched by HR number. Unnamed stars are labelled with their
   Bayer, Flamsteed, HR, HIP, Tycho-2 or Gaia designation, and stars without a spectral type are colored by B-V.
+  For duplicate HR numbers, the brightest original catalog entry (earliest source row on a tie) represents the HR
+  in constellation figures and receives its BSC5 magnitude; other components keep their catalog magnitudes.
+  Only stars bright enough for the threshold are updated and drawn.
 - Dynamic names: when fewer than 5 objects in view have labels (e.g. after zooming in), the brightest stars in view
   are named too, with their catalog number (`HR 1234`) if they have no proper name. `--disable-dynamic-names` turns
   this off.
@@ -90,10 +93,19 @@ Fixed:
 - The point directly behind an equidistant view has a fixed direction instead of a random one.
 - The 14 BSC5 placeholder entries (no data) are no longer drawn as a bright star at RA 0 / Dec 0.
 - Grid spokes are sorted with a valid comparator; Ctrl-C quits cleanly; the terminal is restored on panic.
-- Metadata: the timezone abbreviation is the one in effect at the simulated date (from the system timezone database
-  on Unix; elsewhere the UTC offset is shown); negative coordinates between 0° and -1° keep their sign
-  (`-0° 30' 0.00"`).
-- City lookup also ignores the case of non-ASCII letters.
+- Metadata uses the **observer's** geographic time zone, found offline with `tzf-rs`, and the abbreviation in effect
+  at the simulated date (system IANA rules via `tz-rs` on Unix). Ocean polygons may assign nautical `Etc/GMT` zones.
+  Missing zones or unavailable rules (including non-Unix platforms) show UTC with "(no timezone found)".
+  Negative coordinates between 0° and -1° keep their sign (`-0° 30' 0.00").
+- City lookup also ignores the case of non-ASCII letters and suggests up to three similar names for misspellings.
+
+AT-HYG numeric inputs must be finite, with RA in [0, 24) hours and declination in [−90, 90] degrees; malformed
+values report the source line. Rows missing RA, declination or magnitude are skipped. Incomplete Cartesian triples
+are treated as missing. Distance must be positive, below 100,000 pc and, when a full position triple exists, agree
+with its length within 1%; otherwise the star uses angular proper motion only. Valid distance with missing position
+uses RA/Dec; missing velocity uses tangential proper motion plus radial velocity (zero if absent). These validated
+3D inputs are retained for a later motion model; rendering still uses angular proper motion and constant magnitude.
+Names are catalog-owned, and stable IDs preserve source identity through sorting.
 
 ## Development
 
@@ -142,6 +154,9 @@ The files in `data/` are taken from the original astroterm repository:
   [convert_constellations.py](https://github.com/da-luce/astroterm/blob/main/scripts/convert_constellations.py))
 - Cities: [GeoNames](https://download.geonames.org/) (filtered and condensed using astroterm's
   [filter_cities.py](https://github.com/da-luce/astroterm/blob/main/scripts/filter_cities.py))
+- Time-zone boundaries: [timezone-boundary-builder](https://github.com/evansiroky/timezone-boundary-builder),
+  derived from © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright), distributed through
+  [tzf-dist](https://github.com/ringsaturn/tzf-dist) under the [ODbL 1.0](https://opendatacommons.org/licenses/odbl/1-0/).
 - Planet orbital elements: [NASA Jet Propulsion Laboratory](https://ssd.jpl.nasa.gov/planets/approx_pos.html)
 
 Optional, not distributed with this repository:

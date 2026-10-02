@@ -84,7 +84,13 @@ fn run_render_loop(config: &Config, sky: &mut Sky, renderer: &mut TerminalRender
 
         // move the sky to the current simulation time
         let julian_date = clock.julian_date();
-        update_sky_positions(sky, julian_date, &simulation.observer, &mut step_times);
+        update_sky_positions(
+            sky,
+            julian_date,
+            &simulation.observer,
+            config.render.magnitude_threshold,
+            &mut step_times,
+        );
         if simulation.refraction {
             step_times.measure("Refraction", || refract_sky_positions(sky));
         }

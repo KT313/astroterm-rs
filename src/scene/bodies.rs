@@ -24,15 +24,12 @@ pub fn draw_stars(canvas: &mut Canvas, view: &View, options: &RenderOptions, sky
         Vec::new()
     };
 
-    for &index in &sky.stars_by_brightness {
-        let star = &sky.stars[index];
-        if star.magnitude > options.magnitude_threshold {
-            continue;
-        }
+    let count = sky.count_bright_stars(options.magnitude_threshold);
+    for (index, star) in sky.stars[..count].iter().enumerate().rev() {
         let label = if dynamically_named.contains(&index) {
-            Some(format_star_label(star, options.unicode))
+            Some(format_star_label(star, &sky.names, options.unicode))
         } else if star.magnitude <= options.label_threshold {
-            star.name.map(Cow::Borrowed)
+            sky.star_name(star).map(Cow::Borrowed)
         } else {
             None
         };
@@ -40,7 +37,7 @@ pub fn draw_stars(canvas: &mut Canvas, view: &View, options: &RenderOptions, sky
             canvas,
             view,
             options,
-            &select_star_appearance(star),
+            &select_star_appearance(star, &sky.names),
             star.position,
             label.as_deref(),
         );
@@ -57,8 +54,7 @@ fn select_dynamically_named_stars(view: &View, options: &RenderOptions, sky: &Sk
 
     // then stars, brightest first: ones labelled anyway only count, the others get a name
     let mut selected = Vec::new();
-    for &index in sky.stars_by_brightness.iter().rev() {
-        let star = &sky.stars[index];
+    for (index, star) in sky.stars.iter().enumerate() {
         if labelled >= DYNAMIC_NAME_COUNT || star.magnitude > options.magnitude_threshold {
             break; // enough labels, or this and all following stars are too dim to be drawn
         }
@@ -322,7 +318,7 @@ mod tests {
 
     /// Seven stars, brightest first, all dimmer than the label threshold; the brightest has no proper name.
     fn pick_unlabelled_stars(sky: &Sky) -> Vec<usize> {
-        let brightest_first: Vec<usize> = sky.stars_by_brightness.iter().rev().copied().collect();
+        let brightest_first: Vec<usize> = (0..sky.stars.len()).collect();
         let unnamed = brightest_first
             .iter()
             .position(|&index| sky.stars[index].name.is_none() && sky.stars[index].magnitude > ASCII.label_threshold)
@@ -342,14 +338,18 @@ mod tests {
         // the unnamed one shows its catalog number
         let mut canvas = Canvas::new(41, 81);
         draw_stars(&mut canvas, &View::default(), &DYNAMIC, &sky);
-        let label = format!("HR {}", stars[0] + 1); // the embedded catalog is indexed by HR number
+        let label = format!("HR {}", sky.stars[stars[0]].id.0);
         assert!(canvas.to_lines().iter().any(|line| line.contains(&label)), "{label}");
     }
 
     #[test]
     fn planets_moon_and_labelled_stars_in_view_count_toward_the_five() {
         let stars = pick_unlabelled_stars(&place_in_view(&[]));
-        let vega = 7000; // brighter than the label threshold, and named
+        let vega = place_in_view(&[])
+            .stars
+            .iter()
+            .position(|star| star.id.0 == 7001)
+            .unwrap(); // brighter than the label threshold, and named
         let mut sky = place_in_view(&[&stars[..], &[vega]].concat());
         sky.planets[3].position = horizontal(100.0, 70.0);
         sky.moon.position = horizontal(200.0, 70.0);

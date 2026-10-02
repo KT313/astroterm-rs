@@ -43,15 +43,16 @@ pub use positions::{refract_sky_positions, update_sky_positions};
 
 use std::collections::HashMap;
 
-use crate::catalog::{Catalog, ConstellationFigure};
+use crate::catalog::{Catalog, ConstellationFigure, StarNames};
 
 /// All objects in the sky.
 #[derive(Clone, Debug)]
 pub struct Sky {
-    /// In catalog order; for the embedded catalog, star `i` has HR number `i + 1`.
+    /// Brightest first; equal magnitudes by descending stable ID. Placeholders are omitted.
     pub stars: Vec<Star>,
-    /// Indices of the stars that have catalog data, dimmest first, so renderers can draw brighter stars on top.
-    pub stars_by_brightness: Vec<usize>,
+    pub names: StarNames,
+    /// Prefix updated at the current epoch, also used by refraction.
+    pub(crate) updated_stars: usize,
     /// The Sun and planets, ordered from the Sun outwards.
     pub planets: Vec<Planet>,
     pub moon: Moon,
@@ -61,13 +62,21 @@ pub struct Sky {
 impl Sky {
     /// Build the sky from the parsed catalogs. Positions are zero until updated.
     pub fn from_catalog(catalog: &Catalog) -> Sky {
-        // stars, and the order to draw them in
-        let stars: Vec<Star> = catalog.stars.iter().map(Star::from_catalog_star).collect();
-        let stars_by_brightness = sort_stars_dimmest_first(&stars);
+        // compact and sort drawable stars, preserving the old drawing and label tie order
+        let mut stars: Vec<Star> = catalog
+            .stars
+            .iter()
+            .filter(|star| star.has_data)
+            .map(Star::from_catalog_star)
+            .collect();
+        stars.sort_unstable_by(|a, b| a.magnitude.total_cmp(&b.magnitude).then_with(|| b.id.cmp(&a.id)));
 
-        // constellation figures, with their HR numbers resolved to star indices
-        let index_by_hr: HashMap<u32, usize> = (catalog.stars.iter().enumerate())
-            .filter_map(|(index, star)| Some((star.hr?, index)))
+        // resolve representatives after sorting, without changing the choice made before overrides
+        let hr_by_id: HashMap<_, _> = catalog.hr_representatives.iter().map(|(&hr, &id)| (id, hr)).collect();
+        let index_by_hr: HashMap<u32, usize> = stars
+            .iter()
+            .enumerate()
+            .filter_map(|(index, star)| Some((*hr_by_id.get(&star.id)?, index)))
             .collect();
         let constellations = catalog
             .constellations
@@ -77,11 +86,22 @@ impl Sky {
 
         Sky {
             stars,
-            stars_by_brightness,
+            names: catalog.names.clone(),
+            updated_stars: 0,
             planets: create_planets(),
             moon: create_moon(),
             constellations,
         }
+    }
+
+    /// Length of the drawable prefix for an inclusive magnitude threshold.
+    pub fn count_bright_stars(&self, threshold: f32) -> usize {
+        self.stars.partition_point(|star| star.magnitude <= threshold)
+    }
+
+    /// Resolve a star's name from the sky-owned string block.
+    pub fn star_name(&self, star: &Star) -> Option<&str> {
+        self.names.get(star.name)
     }
 
     /// The Sun, which is the first entry of `planets`.
@@ -107,13 +127,6 @@ fn resolve_constellation_figure(
     })
 }
 
-/// Indices of the stars with data, sorted by decreasing magnitude (dimmest first).
-fn sort_stars_dimmest_first(stars: &[Star]) -> Vec<usize> {
-    let mut indices: Vec<usize> = (0..stars.len()).filter(|&index| stars[index].has_data).collect();
-    indices.sort_by(|&a, &b| stars[b].magnitude.total_cmp(&stars[a].magnitude));
-    indices
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -124,25 +137,29 @@ mod tests {
     }
 
     #[test]
-    fn stars_are_indexed_by_catalog_number() {
+    fn ids_survive_compaction_and_brightness_sorting() {
         let sky = build_sky();
-        assert_eq!(sky.stars.len(), 9110);
-        assert_eq!(sky.stars[7000].name, Some("Vega"));
-        let is_hr = |index: usize, star: &Star| star.designation == Some(Designation::Hr(index as u32 + 1));
-        assert!(sky.stars.iter().enumerate().all(|(index, star)| is_hr(index, star)));
+        assert_eq!(sky.stars.len(), 9110 - 14);
+        assert_eq!(
+            sky.star_name(sky.stars.iter().find(|star| star.id.0 == 7001).unwrap()),
+            Some("Vega")
+        );
+        assert!(
+            sky.stars
+                .iter()
+                .all(|star| star.designation == Some(Designation::Hr(star.id.0 as u32)))
+        );
+        assert!(sky.stars.windows(2).all(|pair| pair[0].magnitude < pair[1].magnitude
+            || (pair[0].magnitude == pair[1].magnitude && pair[0].id > pair[1].id)));
     }
 
     #[test]
     fn stars_are_drawn_dimmest_first() {
         let sky = build_sky();
-        let catalog_number = |index: usize| sky.stars_by_brightness[index] + 1; // HR number
-        let last = sky.stars_by_brightness.len() - 1;
+        let drawn: Vec<_> = sky.stars.iter().rev().map(|star| star.id.0).collect();
+        assert_eq!(&drawn[..3], &[1894, 365, 3313]);
         assert_eq!(
-            [catalog_number(0), catalog_number(1), catalog_number(2)],
-            [1894, 365, 3313]
-        );
-        assert_eq!(
-            [catalog_number(last), catalog_number(last - 1), catalog_number(last - 2)],
+            sky.stars[..3].iter().map(|star| star.id.0).collect::<Vec<_>>(),
             [2491, 2326, 5340]
         );
     }
@@ -150,24 +167,29 @@ mod tests {
     #[test]
     fn stars_keep_their_names_and_spectral_types() {
         let sky = build_sky();
-        let star = |catalog_number: usize| &sky.stars[catalog_number - 1];
+        let star = |id| sky.stars.iter().find(|star| star.id.0 == id).unwrap();
         assert_eq!(
-            (star(2061).name, &star(2061).spectral_type),
+            (sky.star_name(star(2061)), &star(2061).spectral_type),
             (Some("Betelgeuse"), b"M1")
         );
-        assert_eq!((star(5340).name, &star(5340).spectral_type), (Some("Arcturus"), b"K1"));
+        assert_eq!(
+            (sky.star_name(star(5340)), &star(5340).spectral_type),
+            (Some("Arcturus"), b"K1")
+        );
     }
 
     #[test]
     fn placeholder_stars_are_never_drawn() {
         let sky = build_sky();
-        assert_eq!(sky.stars_by_brightness.len(), 9110 - 14);
-        assert!(!sky.stars_by_brightness.contains(&91)); // HR 92 has no data
+        assert_eq!(sky.stars.len(), 9110 - 14);
+        assert!(!sky.stars.iter().any(|star| star.id.0 == 92)); // HR 92 has no data
     }
 
     #[test]
     fn constellations_are_matched_by_hr_number_in_any_dataset() {
-        let star = |hr| CatalogStar {
+        let star = |hr: Option<u32>| CatalogStar {
+            id: crate::catalog::StarId(u64::from(hr.unwrap_or(100))),
+            space_motion: None,
             hr,
             name: None,
             designation: None,
@@ -181,22 +203,25 @@ mod tests {
             has_data: true,
         };
         let figure = |abbreviation, segments| ConstellationFigure { abbreviation, segments };
-        let catalog = Catalog {
-            stars: vec![star(Some(30)), star(None), star(Some(10)), star(Some(20))],
-            constellations: vec![
+        let catalog = Catalog::new(
+            vec![star(Some(30)), star(None), star(Some(10)), star(Some(20))],
+            StarNames::default(),
+            vec![
                 figure("Abc", vec![[10, 20], [20, 99]]), // HR 99 isn't in the dataset
                 figure("Def", vec![[98, 99]]),
             ],
-        };
+        );
         let sky = Sky::from_catalog(&catalog);
         assert_eq!(sky.constellations.len(), 1);
-        assert_eq!(sky.constellations[0].segments, [[2, 3]]);
+        let [a, b] = sky.constellations[0].segments[0];
+        assert_eq!((sky.stars[a].id.0, sky.stars[b].id.0), (10, 20));
     }
 
     #[test]
     fn constellations_reference_star_indices() {
         let sky = build_sky();
         assert_eq!(sky.constellations.len(), 88);
-        assert_eq!(sky.constellations[19].segments, [[4784, 4914]]);
+        let [a, b] = sky.constellations[19].segments[0];
+        assert_eq!((sky.stars[a].id.0, sky.stars[b].id.0), (4785, 4915));
     }
 }

@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use crate::astro::{
     Observer, compass_point_to_azimuth, current_julian_date, datetime_to_julian_date, parse_utc_datetime,
 };
-use crate::catalog::{City, find_city};
+use crate::catalog::{City, find_city, suggest_cities};
 use crate::projection::{ProjectionKind, View, ViewCenter};
 use crate::scene::RenderOptions;
 use crate::terminal::TerminalSettings;
@@ -136,7 +136,14 @@ fn validate_observer(latitude: f64, longitude: f64) -> Result<Observer, ConfigEr
 }
 
 fn locate_city(cities: &[City], name: &str) -> Result<Observer, ConfigError> {
-    let city = find_city(cities, name).ok_or_else(|| ConfigError(format!("Could not find city \"{name}\"")))?;
+    let city = find_city(cities, name).ok_or_else(|| {
+        let suggestions = suggest_cities(cities, name);
+        let mut message = format!("Could not find city \"{name}\"");
+        if !suggestions.is_empty() {
+            message.push_str(&format!(". Did you mean {}?", suggestions.join(", ")));
+        }
+        ConfigError(message)
+    })?;
     Ok(Observer {
         latitude: city.latitude.to_radians(),
         longitude: city.longitude.to_radians(),
@@ -224,6 +231,12 @@ mod tests {
     }
 
     #[test]
+    fn misspelled_city_gets_suggestions() {
+        assert!(error_from(&["-i", "Tokio"]).contains("Tokyo"));
+        assert!(error_from(&["-i", "zzzzzzzzzz"]).ends_with("\"zzzzzzzzzz\""));
+    }
+
+    #[test]
     fn defaults_match_the_original() {
         let config = config_from(&["-d", "2000-01-01T12:00:00"]).unwrap();
         assert_eq!(
@@ -277,7 +290,7 @@ mod tests {
         assert!(error_from(&["-z", "360"]).starts_with("Field of view out of range"));
         assert!(error_from(&["-d", "2025-01-01"]).starts_with("Unable to parse datetime string '2025-01-01'"));
         assert_eq!(error_from(&["-r", "0"]), "Aspect ratio must be greater than 0");
-        assert_eq!(error_from(&["-i", "Atlantis"]), "Could not find city \"Atlantis\"");
+        assert!(error_from(&["-i", "Atlantis"]).starts_with("Could not find city \"Atlantis\""));
     }
 
     #[test]

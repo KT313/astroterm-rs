@@ -19,7 +19,7 @@ fn scenes_preserve_glyphs_colors_and_wide_cell_occupancy() {
         longitude: 139.69_f64.to_radians(),
     }; // Tokyo
     let mut sky = Sky::from_catalog(&load_embedded_catalog().unwrap());
-    update_sky_positions(&mut sky, date, &observer, &mut StepTimes::default());
+    update_sky_positions(&mut sky, date, &observer, 5.0, &mut StepTimes::default());
     let defaults = RenderOptions {
         unicode: false,
         braille: false,
@@ -105,4 +105,41 @@ fn snapshot_format_distinguishes_color_and_continuation() {
     assert!(snapshot.contains("|.YY.|"));
     assert!(snapshot.contains("|..>.|"));
     insta::assert_snapshot!("wide_glyph", snapshot);
+}
+
+#[test]
+fn filtered_updates_match_full_updates_across_threshold_changes() {
+    let catalog = load_embedded_catalog().unwrap();
+    let mut filtered = Sky::from_catalog(&catalog);
+    let mut full = filtered.clone();
+    let observer = Observer {
+        latitude: 0.6,
+        longitude: 2.4,
+    };
+    let view = View::default();
+    let mut filtered_canvas = Canvas::new(41, 81);
+    let mut full_canvas = Canvas::new(41, 81);
+    for (step, threshold) in [-2.0, 5.0, 8.0, 0.0, 5.0].into_iter().enumerate() {
+        let date = 2451545.0 + step as f64 * 1000.0;
+        update_sky_positions(&mut filtered, date, &observer, threshold, &mut StepTimes::default());
+        update_sky_positions(&mut full, date, &observer, f32::INFINITY, &mut StepTimes::default());
+        refract_sky_positions(&mut filtered);
+        refract_sky_positions(&mut full);
+        let options = RenderOptions {
+            unicode: true,
+            braille: true,
+            color: true,
+            constellations: true,
+            grid: false,
+            magnitude_threshold: threshold,
+            label_threshold: 0.25,
+            dynamic_names: true,
+        };
+        draw_sky_scene(&mut filtered_canvas, &view, &options, &filtered);
+        draw_sky_scene(&mut full_canvas, &view, &options, &full);
+        assert_eq!(
+            canvas_snapshot::describe_canvas(&filtered_canvas),
+            canvas_snapshot::describe_canvas(&full_canvas)
+        );
+    }
 }

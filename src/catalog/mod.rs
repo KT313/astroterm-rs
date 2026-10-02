@@ -5,19 +5,24 @@ mod athyg;
 mod bsc5;
 mod cities;
 mod designation;
+mod names;
 mod orbits;
+mod space_motion;
 mod tables;
 
+use std::collections::HashMap;
 use std::fmt;
 
 pub use athyg::load_athyg_catalog;
 pub use bsc5::{Bsc5Entry, parse_bsc5};
-pub use cities::{City, find_city, parse_cities};
+pub use cities::{City, find_city, parse_cities, suggest_cities};
 pub use designation::Designation;
+pub use names::{NameId, StarNames};
 pub use orbits::{
     EARTH_ORBIT, JUPITER_ORBIT, MARS_ORBIT, MERCURY_ORBIT, MOON_ORBIT, NEPTUNE_ORBIT, SATURN_ORBIT, URANUS_ORBIT,
     VENUS_ORBIT,
 };
+pub use space_motion::SpaceMotion;
 pub use tables::{ConstellationFigure, parse_constellation_figures, parse_star_names};
 
 const BSC5_DATA: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/data/bsc5"));
@@ -26,21 +31,55 @@ const CONSTELLATIONS_TEXT: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"
 const CITIES_TEXT: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/data/cities.csv"));
 
 /// A star catalog, whichever dataset it comes from, with the constellation figures.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Catalog {
     /// For the embedded catalog, star `i` has HR number `i + 1`; other datasets are in their own order.
     pub stars: Vec<CatalogStar>,
+    pub names: StarNames,
+    /// HR to stable ID, selected before magnitude overrides.
+    pub hr_representatives: HashMap<u32, StarId>,
     /// Figures refer to stars by HR number.
     pub constellations: Vec<ConstellationFigure>,
+}
+
+/// Identity within a catalog: BSC5 HR number, or zero-based AT-HYG data-row index (including skipped rows).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct StarId(pub u64);
+
+impl Catalog {
+    /// Choose each HR representative by original magnitude, then lowest stable ID.
+    pub fn new(stars: Vec<CatalogStar>, names: StarNames, constellations: Vec<ConstellationFigure>) -> Self {
+        let mut representatives: HashMap<u32, &CatalogStar> = HashMap::new();
+        for star in stars.iter().filter(|star| star.has_data) {
+            if let Some(hr) = star.hr {
+                let previous = representatives.entry(hr).or_insert(star);
+                if star.magnitude < previous.magnitude
+                    || (star.magnitude == previous.magnitude && star.id < previous.id)
+                {
+                    *previous = star;
+                }
+            }
+        }
+        let hr_representatives = representatives.into_iter().map(|(hr, star)| (hr, star.id)).collect();
+        Self {
+            stars,
+            names,
+            hr_representatives,
+            constellations,
+        }
+    }
 }
 
 /// A star as any dataset describes it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CatalogStar {
+    pub id: StarId,
+    /// Validated 3D inputs, reserved for the future space-motion model.
+    pub space_motion: Option<SpaceMotion>,
     /// Harvard Revised / Yale Bright Star Catalogue number, which the constellation figures refer to.
     pub hr: Option<u32>,
     /// Proper name, for the stars that have one.
-    pub name: Option<&'static str>,
+    pub name: Option<NameId>,
     /// The best catalog designation, used as a label for stars without a name.
     pub designation: Option<Designation>,
     /// J2000 position in radians.
@@ -116,15 +155,13 @@ impl std::error::Error for CatalogError {}
 pub fn load_embedded_catalog() -> Result<Catalog, CatalogError> {
     let entries = parse_bsc5(BSC5_DATA)?;
     let star_names = parse_star_names(STAR_NAMES_TEXT, entries.len())?;
+    let mut names = StarNames::default();
     let stars = entries
         .iter()
         .zip(star_names)
-        .map(|(entry, name)| convert_bsc5_entry(entry, name))
+        .map(|(entry, name)| convert_bsc5_entry(entry, name.map(|name| names.insert(name))))
         .collect();
-    Ok(Catalog {
-        stars,
-        constellations: load_constellation_figures()?,
-    })
+    Ok(Catalog::new(stars, names, load_constellation_figures()?))
 }
 
 /// The constellation figures embedded in the binary, by HR number.
@@ -133,8 +170,10 @@ pub fn load_constellation_figures() -> Result<Vec<ConstellationFigure>, CatalogE
 }
 
 /// A BSC5 entry as a catalog star, designated by its HR number.
-fn convert_bsc5_entry(entry: &Bsc5Entry, name: Option<&'static str>) -> CatalogStar {
+fn convert_bsc5_entry(entry: &Bsc5Entry, name: Option<NameId>) -> CatalogStar {
     CatalogStar {
+        id: StarId(u64::from(entry.catalog_number)),
+        space_motion: None,
         hr: Some(entry.catalog_number),
         name,
         designation: Some(Designation::Hr(entry.catalog_number)),
@@ -169,7 +208,7 @@ mod tests {
                 .enumerate()
                 .all(|(index, star)| star.hr == Some(index as u32 + 1))
         );
-        assert_eq!(catalog.stars[7000].name, Some("Vega"));
+        assert_eq!(catalog.names.get(catalog.stars[7000].name), Some("Vega"));
 
         let star_exists = |number: u32| (1..=catalog.stars.len() as u32).contains(&number);
         let all_segments = catalog

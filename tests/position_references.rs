@@ -15,7 +15,13 @@ fn boston_sky(julian_date_ut1: f64) -> Sky {
         latitude: 42.3601_f64.to_radians(),
         longitude: -71.0589_f64.to_radians(),
     };
-    update_sky_positions(&mut sky, julian_date_ut1, &observer, &mut StepTimes::default());
+    update_sky_positions(
+        &mut sky,
+        julian_date_ut1,
+        &observer,
+        f32::INFINITY,
+        &mut StepTimes::default(),
+    );
     sky
 }
 
@@ -26,7 +32,11 @@ fn find_position(sky: &Sky, name: &str) -> Horizontal {
     if let Some(planet) = sky.planets.iter().find(|planet| planet.kind.name() == name) {
         return planet.position;
     }
-    sky.stars.iter().find(|star| star.name == Some(name)).unwrap().position
+    sky.stars
+        .iter()
+        .find(|star| sky.star_name(star) == Some(name))
+        .unwrap()
+        .position
 }
 
 /// atan2 of cross-product length and dot product remains stable near zero and across azimuth wrap.

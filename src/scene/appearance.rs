@@ -4,6 +4,7 @@ use std::borrow::Cow;
 
 use crate::astro::{MoonPhase, map_float_to_int_range};
 use crate::canvas::Color;
+use crate::catalog::StarNames;
 use crate::sky::{PlanetKind, Star};
 
 /// Brightest and dimmest magnitudes in the star catalog, used to pick star glyphs.
@@ -16,28 +17,28 @@ const STAR_GLYPHS_ASCII: [char; 10] = ['0', '0', 'O', 'O', 'o', 'o', '.', '.', '
 
 /// How an object is drawn: a glyph for each character set, an optional label next to it, and an optional color.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Appearance {
+pub struct Appearance<'a> {
     pub ascii: char,
     pub unicode: char,
-    pub label: Option<&'static str>,
+    pub label: Option<&'a str>,
     pub color: Option<Color>,
 }
 
 /// A star's look: a bigger glyph the brighter it is, its name, and a color from its spectral class.
-pub fn select_star_appearance(star: &Star) -> Appearance {
+pub fn select_star_appearance<'a>(star: &Star, names: &'a StarNames) -> Appearance<'a> {
     let glyph_index = select_star_glyph_index(star.magnitude);
     Appearance {
         ascii: STAR_GLYPHS_ASCII[glyph_index],
         unicode: STAR_GLYPHS_UNICODE[glyph_index],
-        label: star.name,
+        label: names.get(star.name),
         color: select_star_color(star.spectral_type, star.color_index),
     }
 }
 
 /// A star's label: its proper name, or else its catalog designation (e.g. "α Vir" or "HR 1713"), with Greek letters
 /// if `unicode`.
-pub fn format_star_label(star: &Star, unicode: bool) -> Cow<'static, str> {
-    match (star.name, star.designation) {
+pub fn format_star_label<'a>(star: &Star, names: &'a StarNames, unicode: bool) -> Cow<'a, str> {
+    match (names.get(star.name), star.designation) {
         (Some(name), _) => Cow::Borrowed(name),
         (None, Some(designation)) => Cow::Owned(designation.format(unicode)),
         (None, None) => Cow::Borrowed(""),
@@ -45,7 +46,7 @@ pub fn format_star_label(star: &Star, unicode: bool) -> Cow<'static, str> {
 }
 
 /// The look of the Sun or a planet: its astronomical symbol and name.
-pub fn select_planet_appearance(kind: PlanetKind) -> Appearance {
+pub fn select_planet_appearance(kind: PlanetKind) -> Appearance<'static> {
     let (ascii, unicode, color) = match kind {
         PlanetKind::Sun => ('@', '☉', Color::Yellow),
         PlanetKind::Mercury => ('*', '☿', Color::White),
@@ -65,7 +66,7 @@ pub fn select_planet_appearance(kind: PlanetKind) -> Appearance {
 }
 
 /// The Moon's look: an emoji of its phase, lit on the right or the left side as seen on screen.
-pub fn select_moon_appearance(phase: MoonPhase, lit_on_right: bool) -> Appearance {
+pub fn select_moon_appearance(phase: MoonPhase, lit_on_right: bool) -> Appearance<'static> {
     let (right, left) = match phase {
         MoonPhase::New => ('🌑', '🌑'),
         MoonPhase::Full => ('🌕', '🌕'),
@@ -157,7 +158,15 @@ mod tests {
     #[test]
     fn bright_stars_get_their_names_and_spectral_colors() {
         let sky = Sky::from_catalog(&load_embedded_catalog().expect("embedded catalog loads"));
-        let star = |catalog_number: usize| select_star_appearance(&sky.stars[catalog_number - 1]);
+        let star = |catalog_number: usize| {
+            select_star_appearance(
+                sky.stars
+                    .iter()
+                    .find(|star| star.id.0 == catalog_number as u64)
+                    .unwrap(),
+                &sky.names,
+            )
+        };
         assert_eq!(
             (star(2061).label, star(2061).color),
             (Some("Betelgeuse"), Some(Color::Red))
@@ -173,10 +182,20 @@ mod tests {
     #[test]
     fn stars_without_a_name_are_labelled_with_their_catalog_number() {
         let sky = Sky::from_catalog(&load_embedded_catalog().expect("embedded catalog loads"));
-        assert_eq!(format_star_label(&sky.stars[7000], true), "Vega");
+        assert_eq!(
+            format_star_label(
+                sky.stars.iter().find(|star| star.id.0 == 7001).unwrap(),
+                &sky.names,
+                true
+            ),
+            "Vega"
+        );
         let unnamed = (sky.stars.iter().enumerate()).find(|(_, star)| star.has_data && star.name.is_none());
-        let (index, unnamed) = unnamed.unwrap();
-        assert_eq!(format_star_label(unnamed, false), format!("HR {}", index + 1));
+        let (_, unnamed) = unnamed.unwrap();
+        assert_eq!(
+            format_star_label(unnamed, &sky.names, false),
+            format!("HR {}", unnamed.id.0)
+        );
     }
 
     #[test]

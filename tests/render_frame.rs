@@ -29,7 +29,13 @@ fn build_sky_at(datetime: &str, latitude: f64, longitude: f64) -> Sky {
         longitude: longitude * PI / 180.0,
     };
     let mut sky = Sky::from_catalog(&load_embedded_catalog().expect("embedded catalog loads"));
-    update_sky_positions(&mut sky, julian_date, &observer, &mut StepTimes::default());
+    update_sky_positions(
+        &mut sky,
+        julian_date,
+        &observer,
+        f32::INFINITY,
+        &mut StepTimes::default(),
+    );
     sky
 }
 
@@ -48,7 +54,7 @@ fn polaris_is_near_the_center_at_the_north_pole() {
     let polaris = sky
         .stars
         .iter()
-        .find(|star| star.name == Some("Polaris"))
+        .find(|star| sky.star_name(star) == Some("Polaris"))
         .expect("Polaris is named");
     assert!(polaris.position.altitude > 89.0 * PI / 180.0);
 
@@ -64,7 +70,7 @@ fn polaris_is_near_the_center_at_the_north_pole() {
         .map(|cell| cell.symbol)
         .collect();
     assert!(
-        glyphs.contains(select_star_appearance(polaris).ascii),
+        glyphs.contains(select_star_appearance(polaris, &sky.names).ascii),
         "Polaris glyph near the center: {glyphs:?}"
     );
 }

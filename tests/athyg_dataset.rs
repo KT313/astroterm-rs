@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use astroterm::catalog::{CatalogStar, load_athyg_catalog, load_embedded_catalog};
+use astroterm::catalog::{Catalog, CatalogStar, load_athyg_catalog, load_embedded_catalog};
 use astroterm::sky::Sky;
 
 const DATASET: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/datasets/athyg_40.csv.gz");
@@ -24,15 +24,28 @@ fn athyg_matches_the_embedded_catalog() {
 
     // bright stars are where the Yale catalog has them
     for name in ["Vega", "Sirius", "Polaris", "Arcturus", "Canopus"] {
-        let find = |stars: &[CatalogStar]| stars.iter().find(|star| star.name == Some(name)).cloned();
-        let (from_athyg, from_embedded) = (find(&athyg.stars).expect(name), find(&embedded.stars).expect(name));
+        let find = |catalog: &Catalog| {
+            catalog
+                .stars
+                .iter()
+                .find(|star| catalog.names.get(star.name) == Some(name))
+                .cloned()
+        };
+        let (from_athyg, from_embedded) = (find(&athyg).expect(name), find(&embedded).expect(name));
         let separation = separation_degrees(&from_athyg, &from_embedded);
         assert!(separation < 0.05, "{name} is {separation}° off");
         let magnitude_difference = (from_athyg.magnitude - from_embedded.magnitude).abs();
-        assert!(magnitude_difference < 0.5, "{name} magnitude"); // Tycho photometry is rough for the brightest stars
+        assert!(magnitude_difference < 0.05, "{name} magnitude");
     }
 
     // nearly all constellation figures find their stars
     let sky = Sky::from_catalog(&athyg);
-    assert!(sky.constellations.len() >= 85, "{} figures", sky.constellations.len());
+    assert_eq!(sky.constellations.len(), 88);
+    assert_eq!(
+        sky.constellations
+            .iter()
+            .map(|figure| figure.segments.len())
+            .sum::<usize>(),
+        676
+    );
 }

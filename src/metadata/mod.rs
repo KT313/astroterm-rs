@@ -12,7 +12,8 @@ use crate::astro::{
 use crate::projection::{ProjectionKind, View, ViewCenter};
 use crate::timing::StepTime;
 
-use local_time::{LocalTime, convert_to_local_time};
+use local_time::LocalTime;
+pub use local_time::ObserverTimeZone;
 
 /// One line of metadata, e.g. label "Lunar Phase" and value "Waxing Crescent".
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,8 +30,9 @@ pub fn collect_metadata_fields(
     observer: &Observer,
     view: &View,
     unicode: bool,
+    time_zone: &ObserverTimeZone,
 ) -> Vec<MetadataField> {
-    let local_time = julian_date_to_utc(julian_date_utc).map(convert_to_local_time);
+    let local_time = julian_date_to_utc(julian_date_utc).map(|utc| time_zone.convert(utc));
     format_metadata_fields(local_time, julian_date_utc, clock, moon_phase, observer, view, unicode)
 }
 
@@ -265,7 +267,16 @@ mod tests {
     fn default_view_settings_are_left_out() {
         let clock = SimulationClock::start(2460678.25, 1.0);
         let fields = |view: &View| {
-            collect_metadata_fields(2460678.25, &clock, MoonPhase::Full, &Observer::default(), view, false).len()
+            collect_metadata_fields(
+                2460678.25,
+                &clock,
+                MoonPhase::Full,
+                &Observer::default(),
+                view,
+                false,
+                &ObserverTimeZone::new(&Observer::default()),
+            )
+            .len()
         };
         assert_eq!(fields(&View::default()), 7);
         let facing = View {

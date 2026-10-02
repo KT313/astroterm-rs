@@ -12,8 +12,16 @@ use super::{Moon, Planet, Sky, Star};
 
 /// Move objects to their approximate apparent horizontal positions at `julian_date_ut1` (UTC ≈ UT1, TT ≈ UT1
 /// for now). The Moon includes approximate parallax; stars/planets remain geocentric before horizon rotation.
-/// Refraction is a separate pass. The duration of each step is added to `step_times`.
-pub fn update_sky_positions(sky: &mut Sky, julian_date_ut1: f64, observer: &Observer, step_times: &mut StepTimes) {
+/// Stars with magnitude <= `magnitude_threshold` are updated; dimmer entries retain stale positions and must not
+/// be drawn. Use infinity to update every star. Refraction visits the same prefix in a separate pass. The duration
+/// of each step is added to `step_times`.
+pub fn update_sky_positions(
+    sky: &mut Sky,
+    julian_date_ut1: f64,
+    observer: &Observer,
+    magnitude_threshold: f32,
+    step_times: &mut StepTimes,
+) {
     let julian_date_tt = julian_date_ut1; // ΔT = 0 until the time-scale correction is implemented
 
     // Earth's orientation at the date: its rotation, and how far its axis has precessed since J2000
@@ -22,9 +30,16 @@ pub fn update_sky_positions(sky: &mut Sky, julian_date_ut1: f64, observer: &Obse
     });
     let precession = step_times.measure("Precession", || compute_precession_matrix(julian_date_tt));
 
-    // positions of all objects
+    // only drawable stars need positions; planets and Moon remain independent of the threshold
+    sky.updated_stars = sky.count_bright_stars(magnitude_threshold);
     step_times.measure("Stars", || {
-        update_star_positions(&mut sky.stars, julian_date_tt, sidereal_time, &precession, observer)
+        update_star_positions(
+            &mut sky.stars[..sky.updated_stars],
+            julian_date_tt,
+            sidereal_time,
+            &precession,
+            observer,
+        )
     });
     step_times.measure("Planets", || {
         update_planet_positions(&mut sky.planets, julian_date_tt, sidereal_time, &precession, observer)
@@ -85,7 +100,7 @@ fn update_moon(moon: &mut Moon, julian_date_tt: f64, sidereal_time: f64, observe
 
 /// Lift every object by atmospheric refraction, as seen through the air. Run after the positions are updated.
 pub fn refract_sky_positions(sky: &mut Sky) {
-    for star in &mut sky.stars {
+    for star in &mut sky.stars[..sky.updated_stars] {
         star.position = apply_refraction(star.position);
     }
     for planet in &mut sky.planets {
@@ -103,6 +118,31 @@ mod tests {
     use crate::catalog::{Designation, load_embedded_catalog};
     use crate::sky::{PlanetKind, Sky};
 
+    #[test]
+    fn only_the_inclusive_brightness_prefix_is_updated_and_refracted() {
+        let mut sky = Sky::from_catalog(&load_embedded_catalog().unwrap());
+        let threshold = 5.0;
+        let count = sky.count_bright_stars(threshold);
+        let sentinel = crate::astro::Horizontal {
+            azimuth: 123.0,
+            altitude: -123.0,
+        };
+        for star in &mut sky.stars {
+            star.position = sentinel;
+        }
+        update_sky_positions(
+            &mut sky,
+            2451545.0,
+            &Observer::default(),
+            threshold,
+            &mut StepTimes::default(),
+        );
+        refract_sky_positions(&mut sky);
+        assert!(sky.stars[..count].iter().all(|s| s.position != sentinel));
+        assert!(sky.stars[count..].iter().all(|s| s.position == sentinel));
+        assert_eq!(sky.stars[count - 1].magnitude, threshold);
+    }
+
     const STAR_EPSILON: f64 = 0.01;
     const PLANET_EPSILON: f64 = 0.02;
     const MOON_EPSILON: f64 = 0.06;
@@ -115,7 +155,7 @@ mod tests {
             longitude: -71.0589 * PI / 180.0,
         };
         let mut sky = Sky::from_catalog(&load_embedded_catalog().expect("embedded catalog loads"));
-        update_sky_positions(&mut sky, julian_date, &boston, &mut StepTimes::default());
+        update_sky_positions(&mut sky, julian_date, &boston, f32::INFINITY, &mut StepTimes::default());
         sky
     }
 
@@ -143,15 +183,15 @@ mod tests {
         // apparent, -0.366° mean); the original exact 0.0 altitude has no reproducible correction settings.
         // See tests/position_references.rs and scripts/reference/README.md for the airless audit.
         let sky = update_boston_sky();
-        let vega = &sky.stars[7000];
+        let vega = sky.stars.iter().find(|star| star.id.0 == 7001).unwrap();
         assert_eq!(
-            (vega.designation, vega.name),
+            (vega.designation, sky.star_name(vega)),
             (Some(Designation::Hr(7001)), Some("Vega"))
         );
         assert_position(vega.position, 0.547246, 0.0, STAR_EPSILON);
 
-        let arcturus = &sky.stars[5339];
-        assert_eq!(arcturus.name, Some("Arcturus"));
+        let arcturus = sky.stars.iter().find(|star| star.id.0 == 5340).unwrap();
+        assert_eq!(sky.star_name(arcturus), Some("Arcturus"));
         assert_position(arcturus.position, 1.511414, 0.440355, STAR_EPSILON);
     }
 
@@ -172,7 +212,10 @@ mod tests {
         let mut refracted = update_boston_sky();
         refract_sky_positions(&mut refracted);
         let geometric = update_boston_sky();
-        let arcturus = (geometric.stars[5339].position, refracted.stars[5339].position);
+        let arcturus = (
+            geometric.stars.iter().find(|s| s.id.0 == 5340).unwrap().position,
+            refracted.stars.iter().find(|s| s.id.0 == 5340).unwrap().position,
+        );
         assert!(arcturus.1.altitude > arcturus.0.altitude && arcturus.1.azimuth == arcturus.0.azimuth);
         assert!(refracted.planets[0].position.altitude > geometric.planets[0].position.altitude);
         assert!(refracted.moon.position.altitude > geometric.moon.position.altitude);

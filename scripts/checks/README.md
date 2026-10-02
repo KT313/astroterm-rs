@@ -24,6 +24,16 @@ PTY resize tests; report the execution environment with the result.
 Criterion uses the embedded catalog and fixed-seed 100k/2.5M synthetic catalogs. Synthetic catalogs preserve the
 embedded bright stars and constellation endpoints and add a faint tail concentrated at magnitudes 9–13. Their
 directions are uniformly distributed, so they are reproducible stress workloads, not substitutes for the real
-Milky Way distribution. Setup/sorting is outside the measured loop. Updates are measured with/without refraction;
+Milky Way distribution. Setup/sorting is outside the measured loop. Updates are measured with/without refraction at thresholds 5/12 and with all stars;
 drawing uses 41×81 cells, 180°/10° facing views, thresholds 5/12, and constellations on/off. Sample size is 10,
 warm-up one second, measurement two seconds (Criterion extends slow workloads). Results go to `target/criterion`.
+
+For a real-catalog release measurement of loading, updates at `-t 5`, and update plus drawing (41×81, zenith,
+Unicode/braille/color with constellations and dynamic names), run:
+
+```sh
+cargo run --release --locked --example catalog_probe -- datasets/athyg_40.csv.gz
+```
+
+The probe reports loading separately from sky construction, excludes setup from per-frame measurements, and does
+not include terminal presentation or drop the filesystem cache. Run it on an otherwise idle machine.

@@ -4,7 +4,8 @@
 //! Columns are found by their header names, so their order doesn't matter. Used here: `ra` (hours) and `dec` (degrees),
 //! epoch and equinox J2000; `mag` (V); `pmra` (multiplied by cos dec) and `pmdec` in milliarcseconds per year; `ci`
 //! (B-V); `spect`; `proper`; and `bayer`, `flam`, `con`, `hr`, `hip`, `tyc`, `gaia` for designations. Missing values
-//! are empty fields.
+//! are empty fields. `dist` and `x0/y0/z0` are parsecs; `vx/vy/vz` and `rv` are km/s. Validated space-motion
+//! inputs are retained separately; the current sky still uses angular proper motion.
 
 use std::f64::consts::PI;
 use std::fs::File;
@@ -15,7 +16,12 @@ use std::str::FromStr;
 use csv::{ByteRecord, StringRecord};
 use flate2::read::MultiGzDecoder;
 
-use super::{Catalog, CatalogError, CatalogStar, Designation, load_constellation_figures};
+use super::space_motion::prepare_space_motion;
+use super::{
+    Catalog, CatalogError, CatalogStar, Designation, StarId, StarNames, load_constellation_figures,
+    load_embedded_catalog,
+};
+use crate::astro::{Equatorial, Vector3};
 
 /// First bytes of a gzip file.
 const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
@@ -30,6 +36,14 @@ struct Columns {
     ra: usize,
     dec: usize,
     mag: usize,
+    dist: Option<usize>,
+    x0: Option<usize>,
+    y0: Option<usize>,
+    z0: Option<usize>,
+    vx: Option<usize>,
+    vy: Option<usize>,
+    vz: Option<usize>,
+    rv: Option<usize>,
     pmra: Option<usize>,
     pmdec: Option<usize>,
     ci: Option<usize>,
@@ -57,32 +71,34 @@ pub fn load_athyg_catalog(path: &Path) -> Result<Catalog, CatalogError> {
         Box::new(file)
     };
 
-    Ok(Catalog {
-        stars: parse_athyg(reader).map_err(|error| match error {
-            CatalogError::Io(message) => CatalogError::Io(format!("cannot read {}: {message}", path.display())),
-            other => other,
-        })?,
-        constellations: load_constellation_figures()?,
+    parse_athyg(reader).map_err(|error| match error {
+        CatalogError::Io(message) => CatalogError::Io(format!("cannot read {}: {message}", path.display())),
+        other => other,
     })
 }
 
 /// Parse the stars of AT-HYG CSV data.
-fn parse_athyg(reader: impl Read) -> Result<Vec<CatalogStar>, CatalogError> {
+fn parse_athyg(reader: impl Read) -> Result<Catalog, CatalogError> {
     let mut csv = csv::Reader::from_reader(reader);
     let columns = find_columns(csv.headers().map_err(|error| CatalogError::Io(error.to_string()))?)?;
 
     let mut stars = Vec::new();
+    let mut names = StarNames::default();
+    let mut row = 0;
     let mut record = ByteRecord::new();
     while csv
         .read_byte_record(&mut record)
         .map_err(|error| CatalogError::Io(error.to_string()))?
     {
         let line = record.position().map_or(0, |position| position.line());
-        if let Some(star) = parse_star(&record, &columns, line)? {
+        if let Some(star) = parse_star(&record, &columns, line, StarId(row), &mut names)? {
             stars.push(star);
         }
+        row += 1;
     }
-    Ok(stars)
+    let mut catalog = Catalog::new(stars, names, load_constellation_figures()?);
+    apply_bsc5_magnitudes(&mut catalog)?;
+    Ok(catalog)
 }
 
 /// Locate the columns by their header names. Older versions name the proper motion columns `pm_ra` and `pm_dec`.
@@ -93,6 +109,14 @@ fn find_columns(headers: &StringRecord) -> Result<Columns, CatalogError> {
         ra: require("ra")?,
         dec: require("dec")?,
         mag: require("mag")?,
+        dist: find("dist"),
+        x0: find("x0"),
+        y0: find("y0"),
+        z0: find("z0"),
+        vx: find("vx"),
+        vy: find("vy"),
+        vz: find("vz"),
+        rv: find("rv"),
         pmra: find("pmra").or_else(|| find("pm_ra")),
         pmdec: find("pmdec").or_else(|| find("pm_dec")),
         ci: find("ci"),
@@ -109,16 +133,48 @@ fn find_columns(headers: &StringRecord) -> Result<Columns, CatalogError> {
 }
 
 /// One row as a star, converted to radians. `None` for rows without position or magnitude, and for the Sun.
-fn parse_star(record: &ByteRecord, columns: &Columns, line: u64) -> Result<Option<CatalogStar>, CatalogError> {
+fn parse_star(
+    record: &ByteRecord,
+    columns: &Columns,
+    line: u64,
+    id: StarId,
+    names: &mut StarNames,
+) -> Result<Option<CatalogStar>, CatalogError> {
     let text = |column: Option<usize>| read_text(record, column);
-    let number = |column: Option<usize>, name: &'static str| parse_number::<f64>(record, column, name, line);
+    let number = |column: Option<usize>, name: &'static str| parse_finite_number(record, column, name, line);
+
+    // validate every numeric input even in skipped rows and incomplete triples
+    let ra = number(Some(columns.ra), "ra")?;
+    let dec = number(Some(columns.dec), "dec")?;
+    let magnitude = parse_finite_f32(record, Some(columns.mag), "mag", line)?;
+    let color_index = parse_finite_f32(record, columns.ci, "ci", line)?;
+    let pm_ra = number(columns.pmra, "pmra")?.unwrap_or(0.0) * MILLIARCSECONDS_TO_RADIANS;
+    let pm_dec = number(columns.pmdec, "pmdec")?.unwrap_or(0.0) * MILLIARCSECONDS_TO_RADIANS;
+    let distance = number(columns.dist, "dist")?;
+    let position = read_triple([
+        number(columns.x0, "x0")?,
+        number(columns.y0, "y0")?,
+        number(columns.z0, "z0")?,
+    ]);
+    let velocity = read_triple([
+        number(columns.vx, "vx")?,
+        number(columns.vy, "vy")?,
+        number(columns.vz, "vz")?,
+    ]);
+    let radial_velocity = number(columns.rv, "rv")?;
+    let hr = parse_number::<u32>(record, columns.hr, "hr", line)?;
+    let hip = parse_number::<u32>(record, columns.hip, "hip", line)?;
+    let gaia = parse_number::<u64>(record, columns.gaia, "gaia", line)?;
+    parse_number::<u16>(record, columns.flam, "flam", line)?; // validate even when Bayer is preferred
+    if ra.is_some_and(|value| !(0.0..24.0).contains(&value)) {
+        return Err(CatalogError::MalformedDatasetRow { line, column: "ra" });
+    }
+    if dec.is_some_and(|value| !(-90.0..=90.0).contains(&value)) {
+        return Err(CatalogError::MalformedDatasetRow { line, column: "dec" });
+    }
 
     // position and brightness, without which a star can't be drawn
-    let (Some(ra_hours), Some(dec_degrees), Some(magnitude)) = (
-        number(Some(columns.ra), "ra")?,
-        number(Some(columns.dec), "dec")?,
-        parse_number::<f32>(record, Some(columns.mag), "mag", line)?,
-    ) else {
+    let (Some(ra_hours), Some(dec_degrees), Some(magnitude)) = (ra, dec, magnitude) else {
         return Ok(None);
     };
     if magnitude < SUN_MAGNITUDE_LIMIT {
@@ -127,8 +183,6 @@ fn parse_star(record: &ByteRecord, columns: &Columns, line: u64) -> Result<Optio
     let declination = dec_degrees.to_radians();
 
     // proper motion; pmra is the motion on the sky, so divide by cos(dec) to get the change of the right ascension
-    let pm_ra = number(columns.pmra, "pmra")?.unwrap_or(0.0) * MILLIARCSECONDS_TO_RADIANS;
-    let pm_dec = number(columns.pmdec, "pmdec")?.unwrap_or(0.0) * MILLIARCSECONDS_TO_RADIANS;
     let cos_dec = declination.cos();
     let ra_motion = if cos_dec.abs() < 1e-9 { 0.0 } else { pm_ra / cos_dec };
 
@@ -138,11 +192,26 @@ fn parse_star(record: &ByteRecord, columns: &Columns, line: u64) -> Result<Optio
         Some([class]) => [*class, b' '],
         _ => *b"  ",
     };
-    let name = text(columns.proper).map(|name| &*Box::leak(name.to_owned().into_boxed_str())); // lives for the run
-    let hr = parse_number::<u32>(record, columns.hr, "hr", line)?;
-    let designation = select_designation(record, columns, hr, line)?;
+    let name = text(columns.proper).map(|name| names.insert(name));
+    let designation = select_designation(record, columns, hr, hip, gaia);
 
+    let space_motion = prepare_space_motion(
+        distance,
+        position,
+        velocity,
+        Equatorial {
+            right_ascension: (ra_hours * 15.0).to_radians(),
+            declination,
+        },
+        Equatorial {
+            right_ascension: pm_ra,
+            declination: pm_dec,
+        },
+        radial_velocity,
+    );
     Ok(Some(CatalogStar {
+        id,
+        space_motion,
         hr,
         name,
         designation,
@@ -152,7 +221,7 @@ fn parse_star(record: &ByteRecord, columns: &Columns, line: u64) -> Result<Optio
         dec_motion: pm_dec,
         magnitude,
         spectral_type,
-        color_index: parse_number::<f32>(record, columns.ci, "ci", line)?,
+        color_index,
         has_data: true,
     }))
 }
@@ -162,29 +231,85 @@ fn select_designation(
     record: &ByteRecord,
     columns: &Columns,
     hr: Option<u32>,
-    line: u64,
-) -> Result<Option<Designation>, CatalogError> {
+    hip: Option<u32>,
+    gaia: Option<u64>,
+) -> Option<Designation> {
     let text = |column: Option<usize>| read_text(record, column);
     let constellation = text(columns.con).unwrap_or("");
 
     let bayer = text(columns.bayer).and_then(|letter| Designation::parse_bayer(letter, constellation));
     let flamsteed = || text(columns.flam).and_then(|number| Designation::parse_flamsteed(number, constellation));
-    let catalog_number = || -> Result<Option<Designation>, CatalogError> {
+    let catalog_number = || -> Option<Designation> {
         if let Some(hr) = hr {
-            return Ok(Some(Designation::Hr(hr)));
+            return Some(Designation::Hr(hr));
         }
-        if let Some(hip) = parse_number::<u32>(record, columns.hip, "hip", line)? {
-            return Ok(Some(Designation::Hip(hip)));
+        if let Some(hip) = hip {
+            return Some(Designation::Hip(hip));
         }
         if let Some(tycho) = text(columns.tyc).and_then(Designation::parse_tycho) {
-            return Ok(Some(tycho));
+            return Some(tycho);
         }
-        Ok(parse_number::<u64>(record, columns.gaia, "gaia", line)?.map(Designation::Gaia))
+        gaia.map(Designation::Gaia)
     };
     match bayer.or_else(flamsteed) {
-        Some(designation) => Ok(Some(designation)),
+        Some(designation) => Some(designation),
         None => catalog_number(),
     }
+}
+
+/// Override only the previously selected representative; BSC5 placeholders contribute nothing.
+fn apply_bsc5_magnitudes(catalog: &mut Catalog) -> Result<(), CatalogError> {
+    let bsc5 = load_embedded_catalog()?;
+    for star in &mut catalog.stars {
+        let Some(hr) = star.hr else {
+            continue;
+        };
+        if catalog.hr_representatives.get(&hr) != Some(&star.id) {
+            continue;
+        }
+        if let Some(reference) = hr
+            .checked_sub(1)
+            .and_then(|index| bsc5.stars.get(index as usize))
+            .filter(|s| s.has_data)
+        {
+            star.magnitude = reference.magnitude;
+        }
+    }
+    Ok(())
+}
+
+fn read_triple(values: [Option<f64>; 3]) -> Option<Vector3> {
+    Some(Vector3 {
+        x: values[0]?,
+        y: values[1]?,
+        z: values[2]?,
+    })
+}
+
+fn parse_finite_number(
+    record: &ByteRecord,
+    column: Option<usize>,
+    name: &'static str,
+    line: u64,
+) -> Result<Option<f64>, CatalogError> {
+    let value = parse_number::<f64>(record, column, name, line)?;
+    if value.is_some_and(|number| !number.is_finite()) {
+        return Err(CatalogError::MalformedDatasetRow { line, column: name });
+    }
+    Ok(value)
+}
+
+fn parse_finite_f32(
+    record: &ByteRecord,
+    column: Option<usize>,
+    name: &'static str,
+    line: u64,
+) -> Result<Option<f32>, CatalogError> {
+    let value = parse_finite_number(record, column, name, line)?.map(|number| number as f32);
+    if value.is_some_and(|number| !number.is_finite()) {
+        return Err(CatalogError::MalformedDatasetRow { line, column: name });
+    }
+    Ok(value)
 }
 
 /// The text of a field, `None` if the column is absent or the field empty (or not UTF-8).
@@ -200,12 +325,15 @@ fn parse_number<T: FromStr>(
     name: &'static str,
     line: u64,
 ) -> Result<Option<T>, CatalogError> {
-    read_text(record, column)
-        .map(|text| {
-            text.parse()
-                .map_err(|_| CatalogError::MalformedDatasetRow { line, column: name })
-        })
-        .transpose()
+    let Some(bytes) = column
+        .and_then(|column| record.get(column))
+        .filter(|bytes| !bytes.is_empty())
+    else {
+        return Ok(None);
+    };
+    let malformed = || CatalogError::MalformedDatasetRow { line, column: name };
+    let text = std::str::from_utf8(bytes).map_err(|_| malformed())?;
+    text.parse().map(Some).map_err(|_| malformed())
 }
 
 #[cfg(test)]
@@ -217,6 +345,125 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn all_used_numeric_fields_reject_non_finite_values_with_line_numbers() {
+        for column in [
+            "ra", "dec", "mag", "pmra", "pmdec", "ci", "dist", "x0", "y0", "z0", "vx", "vy", "vz", "rv", "hr", "hip",
+            "gaia", "flam",
+        ] {
+            for bad in ["NaN", "inf", "-inf", "broken"] {
+                let csv = if ["ra", "dec", "mag"].contains(&column) {
+                    let fields = ["ra", "dec", "mag"].map(|name| if name == column { bad } else { "1" });
+                    format!("ra,dec,mag\n{}\n", fields.join(","))
+                } else {
+                    format!("ra,dec,mag,{column}\n1,2,3,{bad}\n")
+                };
+                assert_eq!(
+                    parse_athyg(csv.as_bytes()).unwrap_err(),
+                    CatalogError::MalformedDatasetRow { line: 2, column }
+                );
+            }
+        }
+        for column in ["mag", "ci"] {
+            let csv = if column == "mag" {
+                "ra,dec,mag\n1,2,1e100\n".to_owned()
+            } else {
+                "ra,dec,mag,ci\n1,2,3,1e100\n".to_owned()
+            };
+            assert!(parse_athyg(csv.as_bytes()).is_err());
+        }
+    }
+
+    #[test]
+    fn coordinate_ranges_and_missing_required_values() {
+        for (ra, dec, column) in [
+            ("24", "0", "ra"),
+            ("-0.1", "0", "ra"),
+            ("0", "90.1", "dec"),
+            ("0", "-90.1", "dec"),
+        ] {
+            let csv = format!("ra,dec,mag\n{ra},{dec},1\n");
+            assert_eq!(
+                parse_athyg(csv.as_bytes()).unwrap_err(),
+                CatalogError::MalformedDatasetRow { line: 2, column }
+            );
+        }
+        let catalog = parse_athyg(b"ra,dec,mag\n0,-90,1\n23.99,90,1\n,0,1\n0,,1\n0,0,\n".as_slice()).unwrap();
+        assert_eq!(catalog.stars.len(), 2);
+        assert!(
+            catalog
+                .stars
+                .iter()
+                .all(|star| star.ra_motion == 0.0 && star.dec_motion == 0.0)
+        );
+        assert!(parse_athyg(b"ra,dec,mag,vx\n,,1,NaN\n".as_slice()).is_err());
+    }
+
+    fn parse_motion_row(row: &str) -> CatalogStar {
+        let csv = format!("ra,dec,mag,dist,x0,y0,z0,vx,vy,vz,pmra,pmdec,rv\n{row}\n");
+        parse_athyg(csv.as_bytes()).unwrap().stars.remove(0)
+    }
+
+    #[test]
+    fn unreliable_distances_use_only_angular_motion() {
+        for distance in ["", "0", "-1", "100000", "100001", "10.2"] {
+            let star = parse_motion_row(&format!("0,0,1,{distance},10,0,0,1,2,3,4,5,6"));
+            assert!(star.space_motion.is_none(), "distance {distance}");
+            assert!(star.ra_motion > 0.0 && star.dec_motion > 0.0);
+        }
+        assert!(parse_motion_row("0,0,1,10,10.09,0,0,,,,,,").space_motion.is_some());
+    }
+
+    #[test]
+    fn incomplete_triples_use_distance_direction_and_motion_fallbacks() {
+        let star = parse_motion_row("0,0,1,10,99,,99,999,,999,1000,2000,30");
+        let motion = star.space_motion.unwrap();
+        assert_eq!(
+            motion.position,
+            Vector3 {
+                x: 10.0,
+                y: 0.0,
+                z: 0.0
+            }
+        );
+        let km_s = 365.25 * 86400.0 / 3.085677581491367e13;
+        assert!((motion.velocity.x - 30.0 * km_s).abs() < 1e-15);
+        assert!((motion.velocity.y - 10_000.0 * MILLIARCSECONDS_TO_RADIANS).abs() < 1e-15);
+        assert!((motion.velocity.z - 20_000.0 * MILLIARCSECONDS_TO_RADIANS).abs() < 1e-15);
+        let no_rv = parse_motion_row("0,0,1,10,,,,,,,1000,,").space_motion.unwrap();
+        assert_eq!(no_rv.velocity.x, 0.0);
+        assert_eq!(no_rv.velocity.z, 0.0);
+        let supplied = parse_motion_row("0,0,1,10,10,0,0,1,2,3,999,999,999")
+            .space_motion
+            .unwrap();
+        assert!((supplied.velocity.z - 3.0 * km_s).abs() < 1e-15);
+    }
+
+    #[test]
+    fn hr_representatives_are_fixed_before_bsc5_overrides() {
+        // Real AT-HYG duplicates can be separate components sharing an HR; keep every component.
+        let mut catalog = parse_athyg(b"ra,dec,mag,hr,proper\n0,0,1,2491,First\n0,0,-3,2491,Bright\n0,0,-3,2491,Tie\n0,0,5,92,Placeholder\n0,0,,7001,Skipped\n0,0,4,99999,Unknown\n".as_slice()).unwrap();
+        assert_eq!(catalog.stars.len(), 5);
+        assert_eq!(catalog.hr_representatives[&2491], StarId(1));
+        assert_eq!(
+            catalog.stars.iter().map(|s| s.magnitude).collect::<Vec<_>>(),
+            [1.0, -1.46, -3.0, 5.0, 4.0]
+        );
+        assert_eq!(catalog.stars[4].id, StarId(5));
+        catalog.constellations = vec![super::super::ConstellationFigure {
+            abbreviation: "Test",
+            segments: vec![[2491, 99999]],
+        }];
+        let sky = crate::sky::Sky::from_catalog(&catalog);
+        drop(catalog);
+        let bright = sky.stars.iter().find(|star| star.id == StarId(1)).unwrap();
+        assert_eq!(sky.star_name(bright), Some("Bright"));
+        assert_eq!(sky.stars[0].id, StarId(2)); // override made the original representative dimmer than its companion
+        assert_eq!(sky.constellations.len(), 1);
+        let [a, b] = sky.constellations[0].segments[0];
+        assert_eq!((sky.stars[a].id, sky.stars[b].id), (StarId(1), StarId(5)));
+    }
+
     /// A few rows in the AT-HYG v4 layout (shortened to the columns used plus a few others).
     const SAMPLE: &str = "\
 id,tyc,gaia,hip,hr,bayer,flam,con,proper,ra,dec,dist,mag,ci,pmra,pmdec,spect
@@ -227,32 +474,36 @@ id,tyc,gaia,hip,hr,bayer,flam,con,proper,ra,dec,dist,mag,ci,pmra,pmdec,spect
 5,,,,,,,,,1.0,2.0,,,,,,
 ";
 
-    fn parse_sample() -> Vec<CatalogStar> {
+    fn parse_sample() -> Catalog {
         parse_athyg(SAMPLE.as_bytes()).expect("sample parses")
     }
 
     #[test]
     fn rows_without_magnitude_and_the_sun_are_skipped() {
-        assert_eq!(parse_sample().len(), 3);
+        assert_eq!(parse_sample().stars.len(), 3);
     }
 
     #[test]
     fn values_are_converted_to_radians_per_year() {
-        let arcturus = &parse_sample()[0];
-        assert_eq!((arcturus.name, arcturus.hr), (Some("Arcturus"), Some(5340)));
+        let catalog = parse_sample();
+        let arcturus = &catalog.stars[0];
+        assert_eq!(
+            (catalog.names.get(arcturus.name), arcturus.hr),
+            (Some("Arcturus"), Some(5340))
+        );
         assert!((arcturus.right_ascension - (14.26103 * 15.0_f64).to_radians()).abs() < 1e-12);
         assert!((arcturus.declination - 19.18241_f64.to_radians()).abs() < 1e-12);
         let mas = MILLIARCSECONDS_TO_RADIANS;
         let expected_ra_motion = -1093.39 * mas / 19.18241_f64.to_radians().cos();
         assert!((arcturus.ra_motion - expected_ra_motion).abs() < 1e-15);
         assert!((arcturus.dec_motion - -2000.06 * mas).abs() < 1e-15);
-        assert_eq!((arcturus.magnitude, arcturus.color_index), (-0.05, Some(1.239)));
+        assert_eq!((arcturus.magnitude, arcturus.color_index), (-0.04, Some(1.239)));
         assert_eq!(&arcturus.spectral_type, b"K1");
     }
 
     #[test]
     fn designations_prefer_bayer_then_flamsteed_then_catalog_numbers() {
-        let stars = parse_sample();
+        let stars = parse_sample().stars;
         let designations: Vec<String> = stars
             .iter()
             .map(|star| star.designation.unwrap().format(false))

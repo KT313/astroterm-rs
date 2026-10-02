@@ -3,7 +3,7 @@
 use std::io;
 
 use crate::astro::{Observer, SimulationClock};
-use crate::metadata::{collect_metadata_fields, format_step_time_fields};
+use crate::metadata::{ObserverTimeZone, collect_metadata_fields, format_step_time_fields};
 use crate::projection::View;
 use crate::scene::{RenderOptions, draw_metadata_panel, draw_sky_scene};
 use crate::sky::Sky;
@@ -31,6 +31,7 @@ pub struct TerminalRenderer {
     frame: Frame,
     options: RenderOptions,
     settings: TerminalSettings,
+    time_zone: Option<(Observer, ObserverTimeZone)>,
 }
 
 /// Take over the terminal and size the canvases to it.
@@ -42,6 +43,7 @@ pub fn open_terminal_renderer(options: RenderOptions, settings: TerminalSettings
         frame,
         options,
         settings,
+        time_zone: None,
     })
 }
 
@@ -66,6 +68,11 @@ impl TerminalRenderer {
         observer: &Observer,
         step_times: &mut StepTimes,
     ) -> io::Result<()> {
+        // resolve geographic zone rules only when a panel needs them and the observer changes
+        if self.frame.panel.is_some() && self.time_zone.as_ref().is_none_or(|(site, _)| site != observer) {
+            self.time_zone = Some((*observer, ObserverTimeZone::new(observer)));
+        }
+
         // the step durations so far, read before this frame's drawing is measured
         let step_time_fields = self
             .settings
@@ -83,6 +90,7 @@ impl TerminalRenderer {
                     observer,
                     view,
                     self.options.unicode,
+                    &self.time_zone.as_ref().expect("panel zone initialized").1,
                 );
                 fields.extend(step_time_fields.into_iter().flatten());
                 draw_metadata_panel(panel, &fields);
