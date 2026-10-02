@@ -102,7 +102,10 @@ fn format_metadata_lines(
     );
     lines.push(format_field("Elapsed Time: ", &elapsed_text));
     let pause_note = if clock.is_paused() { " (paused)" } else { "" };
-    lines.push(format_field("Speed: ", &format!("{}x{pause_note}", clock.speed())));
+    lines.push(format_field(
+        "Speed: ",
+        &format!("{}x{pause_note}", format_speed(clock.speed())),
+    ));
 
     // view settings that differ from the default
     if let ViewCenter::Facing { azimuth, tilt } = view.center {
@@ -121,6 +124,21 @@ fn format_metadata_lines(
         lines.push(format_field("Projection: ", "equidistant"));
     }
     lines
+}
+
+/// A speed multiplier rounded to 6 significant digits without trailing zeros, so repeated speed changes don't show
+/// floating-point noise (e.g. `7` rather than `7.000000000000001`).
+fn format_speed(speed: f64) -> String {
+    if speed == 0.0 || !speed.is_finite() {
+        return speed.to_string();
+    }
+    let decimals = (5 - speed.abs().log10().floor() as i32).max(0) as usize;
+    let rounded = format!("{speed:.decimals$}");
+    if rounded.contains('.') {
+        rounded.trim_end_matches('0').trim_end_matches('.').to_string()
+    } else {
+        rounded
+    }
 }
 
 /// `label` followed by a tab (expanded to the next tab stop, at least the value column) and `value`.
@@ -204,6 +222,17 @@ mod tests {
         assert_eq!(lines[8], "Field of View:  120.0°");
         assert_eq!(lines[9], "Projection:     equidistant");
         assert!(lines.iter().all(|line| line.chars().count() <= PANEL_WIDTH));
+    }
+
+    #[test]
+    fn speeds_are_shown_without_floating_point_noise() {
+        assert_eq!(format_speed(0.7 * 10.0), "7");
+        assert_eq!(format_speed(0.1 * 3.0), "0.3");
+        assert_eq!(format_speed(-100.0), "-100");
+        assert_eq!(format_speed(2.5), "2.5");
+        assert_eq!(format_speed(0.001), "0.001");
+        assert_eq!(format_speed(123456789.0), "123456789");
+        assert_eq!(format_speed(0.0), "0");
     }
 
     #[test]
