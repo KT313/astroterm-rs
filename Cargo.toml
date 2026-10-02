@@ -21,3 +21,12 @@ unicode-width = "0.2.2"
 
 [target.'cfg(unix)'.dependencies]
 tz-rs = "0.7.3"
+
+# `make build-aggressive`: the release profile plus whole-program optimization. On top of this, the Makefile adds
+# `-C target-cpu=native`, PGO and BOLT. None of it changes behavior; panics abort, but the panic hook still restores
+# the terminal first.
+[profile.aggressive]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+panic = "abort"

@@ -87,6 +87,12 @@ Fixed:
 cargo fmt --check && cargo clippy --all-targets && cargo test
 ```
 
+`make build-aggressive` builds a faster binary for the current machine into `target/aggressive-pgo/astroterm`:
+fat LTO, one codegen unit, `panic = "abort"`, `-C target-cpu=native`, then profile-guided optimization and BOLT,
+trained by running typical workloads in a pseudo-terminal (`scripts/pgo-training.sh`). Behavior is the same as the
+release build. It needs `cargo install cargo-pgo`, `rustup component add llvm-tools-preview` and BOLT (on Ubuntu
+`sudo apt install bolt-18`).
+
 ## Citations
 
 Resources used by the original astroterm and this port:
