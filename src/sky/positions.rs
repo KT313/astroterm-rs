@@ -6,19 +6,27 @@ use crate::astro::{
     equatorial_to_horizontal, greenwich_mean_sidereal_time, moon_age_to_phase, rectangular_to_equatorial,
 };
 use crate::catalog::EARTH_ORBIT;
+use crate::timing::StepTimes;
 
 use super::{Moon, Planet, Sky, Star};
 
-/// Move every object to its apparent position for the observer at `julian_date`.
-pub fn update_sky_positions(sky: &mut Sky, julian_date: f64, observer: &Observer) {
+/// Move every object to its apparent position for the observer at `julian_date`. The duration of each step is added
+/// to `step_times`.
+pub fn update_sky_positions(sky: &mut Sky, julian_date: f64, observer: &Observer, step_times: &mut StepTimes) {
     // Earth's orientation at the date: its rotation, and how far its axis has precessed since J2000
-    let sidereal_time = greenwich_mean_sidereal_time(julian_date);
-    let precession = compute_precession_matrix(julian_date);
+    let sidereal_time = step_times.measure("Sidereal", || greenwich_mean_sidereal_time(julian_date));
+    let precession = step_times.measure("Precession", || compute_precession_matrix(julian_date));
 
     // positions of all objects
-    update_star_positions(&mut sky.stars, julian_date, sidereal_time, &precession, observer);
-    update_planet_positions(&mut sky.planets, julian_date, sidereal_time, &precession, observer);
-    update_moon(&mut sky.moon, julian_date, sidereal_time, observer);
+    step_times.measure("Stars", || {
+        update_star_positions(&mut sky.stars, julian_date, sidereal_time, &precession, observer)
+    });
+    step_times.measure("Planets", || {
+        update_planet_positions(&mut sky.planets, julian_date, sidereal_time, &precession, observer)
+    });
+    step_times.measure("Moon", || {
+        update_moon(&mut sky.moon, julian_date, sidereal_time, observer)
+    });
 }
 
 /// Move every star to its apparent position, including proper motion since J2000. `precession` rotates the J2000
@@ -102,7 +110,7 @@ mod tests {
             longitude: -71.0589 * PI / 180.0,
         };
         let mut sky = Sky::from_catalog(&load_embedded_catalog().expect("embedded catalog loads"));
-        update_sky_positions(&mut sky, julian_date, &boston);
+        update_sky_positions(&mut sky, julian_date, &boston, &mut StepTimes::default());
         sky
     }
 

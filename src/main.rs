@@ -14,6 +14,7 @@ use astroterm::cli::{Arguments, Config, build_config, write_bash_completions};
 use astroterm::controls::{Control, apply_control};
 use astroterm::sky::{Sky, refract_sky_positions, update_sky_positions};
 use astroterm::terminal::{TerminalRenderer, open_terminal_renderer, poll_frame_input};
+use astroterm::timing::StepTimes;
 
 /// Parse options, build the sky, and render it until the user quits.
 fn main() -> ExitCode {
@@ -60,6 +61,7 @@ fn run_render_loop(config: &Config, sky: &mut Sky, renderer: &mut TerminalRender
     let mut view = config.view;
     let simulation = &config.simulation;
     let mut clock = SimulationClock::start(simulation.start_julian_date, simulation.speed);
+    let mut step_times = StepTimes::default(); // how long each step of a frame takes, for --debug-frametimes
 
     loop {
         let frame_start = Instant::now();
@@ -78,13 +80,13 @@ fn run_render_loop(config: &Config, sky: &mut Sky, renderer: &mut TerminalRender
 
         // move the sky to the current simulation time
         let julian_date = clock.julian_date();
-        update_sky_positions(sky, julian_date, &simulation.observer);
+        update_sky_positions(sky, julian_date, &simulation.observer, &mut step_times);
         if simulation.refraction {
-            refract_sky_positions(sky);
+            step_times.measure("Refraction", || refract_sky_positions(sky));
         }
 
         // render it
-        renderer.render_frame(sky, &view, julian_date, &clock, &simulation.observer)?;
+        renderer.render_frame(sky, &view, julian_date, &clock, &simulation.observer, &mut step_times)?;
 
         thread::sleep(frame_duration.saturating_sub(frame_start.elapsed())); // wait for the rest of the frame
     }

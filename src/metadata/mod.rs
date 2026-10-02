@@ -10,6 +10,7 @@ use crate::astro::{
     julian_date_to_utc,
 };
 use crate::projection::{ProjectionKind, View, ViewCenter};
+use crate::timing::StepTime;
 
 use local_time::{LocalTime, convert_to_local_time};
 
@@ -113,6 +114,20 @@ fn format_metadata_fields(
     fields
 }
 
+/// Fields for the smoothed frame step durations: their total, then each step (indented), in milliseconds.
+pub fn format_step_time_fields(steps: &[StepTime]) -> Vec<MetadataField> {
+    let format_ms = |seconds: f64| format!("{:.3} ms", seconds * 1000.0);
+    let total = steps.iter().map(|step| step.average_seconds).sum();
+    let mut fields = vec![create_field("Frame Time", format_ms(total))];
+    for step in steps {
+        fields.push(create_field(
+            format!("  {}", step.name),
+            format_ms(step.average_seconds),
+        ));
+    }
+    fields
+}
+
 fn create_field(label: impl Into<String>, value: impl Into<String>) -> MetadataField {
     MetadataField {
         label: label.into(),
@@ -208,6 +223,33 @@ mod tests {
             ..View::default()
         };
         assert_eq!(fields(&facing), 8);
+    }
+
+    #[test]
+    fn step_times_are_listed_below_their_total() {
+        let steps = [
+            StepTime {
+                name: "Stars",
+                average_seconds: 0.000512,
+            },
+            StepTime {
+                name: "Draw",
+                average_seconds: 0.0012,
+            },
+        ];
+        let fields = format_step_time_fields(&steps);
+        let pairs: Vec<(&str, &str)> = fields
+            .iter()
+            .map(|field| (field.label.as_str(), field.value.as_str()))
+            .collect();
+        assert_eq!(
+            pairs,
+            [
+                ("Frame Time", "1.712 ms"),
+                ("  Stars", "0.512 ms"),
+                ("  Draw", "1.200 ms")
+            ]
+        );
     }
 
     #[test]

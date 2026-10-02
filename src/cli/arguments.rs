@@ -122,6 +122,11 @@ pub struct Arguments {
     #[arg(short = 'R', long)]
     pub refraction: bool,
 
+    /// Show how long each step of the per-frame calculation and rendering takes (smoothed), below the metadata.
+    /// Turns on --metadata
+    #[arg(long = "debug-frametimes")]
+    pub debug_frametimes: bool,
+
     /// Print this help message
     #[arg(short = 'h', long, action = ArgAction::Help)]
     help: Option<bool>,

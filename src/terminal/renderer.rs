@@ -3,10 +3,11 @@
 use std::io;
 
 use crate::astro::{Observer, SimulationClock};
-use crate::metadata::collect_metadata_fields;
+use crate::metadata::{collect_metadata_fields, format_step_time_fields};
 use crate::projection::View;
 use crate::scene::{RenderOptions, draw_metadata_panel, draw_sky_scene};
 use crate::sky::Sky;
+use crate::timing::StepTimes;
 
 use super::present::Frame;
 use super::session::{TerminalSession, open_terminal_session};
@@ -20,6 +21,8 @@ pub struct TerminalSettings {
     pub metadata_panel: bool,
     /// Quit on any key instead of only `q`, Esc and Ctrl-C.
     pub quit_on_any_key: bool,
+    /// Show the frame step durations below the metadata.
+    pub frame_times: bool,
 }
 
 /// Renders frames into the terminal for as long as it exists. The terminal is restored when it is dropped.
@@ -52,7 +55,8 @@ impl TerminalRenderer {
     }
 
     /// Draw the sky as seen in `view`, with the metadata panel on top, and show it. `julian_date` is the simulation
-    /// time the sky's positions were computed for.
+    /// time the sky's positions were computed for. The durations of drawing and presenting are added to `step_times`;
+    /// the panel shows them as of the previous frame.
     pub fn render_frame(
         &mut self,
         sky: &Sky,
@@ -60,13 +64,24 @@ impl TerminalRenderer {
         julian_date: f64,
         clock: &SimulationClock,
         observer: &Observer,
+        step_times: &mut StepTimes,
     ) -> io::Result<()> {
-        draw_sky_scene(&mut self.frame.sky, view, &self.options, sky);
-        if let Some(panel) = &mut self.frame.panel {
-            let fields =
-                collect_metadata_fields(julian_date, clock, sky.moon.phase, observer, view, self.options.unicode);
-            draw_metadata_panel(panel, &fields);
-        }
-        self.session.present(&self.frame)
+        // the step durations so far, read before this frame's drawing is measured
+        let step_time_fields = self
+            .settings
+            .frame_times
+            .then(|| format_step_time_fields(step_times.steps()));
+
+        // draw the sky and the panel, then write the changes to the terminal
+        step_times.measure("Draw", || {
+            draw_sky_scene(&mut self.frame.sky, view, &self.options, sky);
+            if let Some(panel) = &mut self.frame.panel {
+                let mut fields =
+                    collect_metadata_fields(julian_date, clock, sky.moon.phase, observer, view, self.options.unicode);
+                fields.extend(step_time_fields.into_iter().flatten());
+                draw_metadata_panel(panel, &fields);
+            }
+        });
+        step_times.measure("Present", || self.session.present(&self.frame))
     }
 }

@@ -82,8 +82,9 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
     };
     let terminal = TerminalSettings {
         aspect_ratio,
-        metadata_panel: arguments.metadata,
+        metadata_panel: arguments.metadata || arguments.debug_frametimes,
         quit_on_any_key: arguments.quit_on_any,
+        frame_times: arguments.debug_frametimes,
     };
     Ok(Config {
         simulation,
@@ -225,6 +226,7 @@ mod tests {
             (24, 1.0, None)
         );
         assert!(!config.terminal.metadata_panel && !config.simulation.refraction && !config.terminal.quit_on_any_key);
+        assert!(!config.terminal.frame_times);
     }
 
     #[test]
@@ -258,6 +260,12 @@ mod tests {
         assert!(error_from(&["-d", "2025-01-01"]).starts_with("Unable to parse datetime string '2025-01-01'"));
         assert_eq!(error_from(&["-r", "0"]), "Aspect ratio must be greater than 0");
         assert_eq!(error_from(&["-i", "Atlantis"]), "Could not find city \"Atlantis\"");
+    }
+
+    #[test]
+    fn debug_frametimes_turns_on_the_metadata_panel() {
+        let config = config_from(&["--debug-frametimes"]).unwrap();
+        assert!(config.terminal.frame_times && config.terminal.metadata_panel);
     }
 
     #[test]

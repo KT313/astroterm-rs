@@ -1,7 +1,7 @@
 //! astroterm: a terminal star map.
 //!
-//! The crate is layered bottom-up, one folder per group: [`astro`] (time, coordinates, ephemeris) and [`canvas`]
-//! (cell grid, line drawing) are the foundations; [`projection`] and [`catalog`] build on them; [`sky`] holds the
+//! The crate is layered bottom-up, one folder per group: [`timing`] (frame step durations), [`astro`] (time,
+//! coordinates, ephemeris) and [`canvas`] (cell grid, line drawing) are the foundations; [`projection`] and [`catalog`] build on them; [`sky`] holds the
 //! object model and updates its positions; [`controls`] (user actions) and [`metadata`] (panel content) are shared by
 //! all renderers; [`scene`] draws the sky onto a canvas; [`terminal`] and [`cli`] connect it to the user.
 //!
@@ -20,3 +20,4 @@ pub mod projection;
 pub mod scene;
 pub mod sky;
 pub mod terminal;
+pub mod timing;

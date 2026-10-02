@@ -34,6 +34,7 @@ Each module only depends on the ones above it:
 
 | Module | Responsibility |
 |---|---|
+| `timing` | Smoothed durations of the steps of each frame (`--debug-frametimes`) |
 | `astro` | Julian dates, sidereal time, precession, coordinate conversions, star/planet/Moon positions |
 | `canvas` | In-memory cell grid (clipping, wide glyphs, braille merging) and line drawing |
 | `projection` | Stereographic / equidistant projections onto the unit disk and the `View` (zenith or facing, fov) |
@@ -60,6 +61,8 @@ New:
 - Star and planet positions are precessed from J2000 to the date, so they line up with the sidereal time of date
   (the C version was about 0.35° off in 2025, growing by about 1.4° per century away from 2000).
 - Optional atmospheric refraction (`-R`/`--refraction`), which lifts objects near the horizon by up to about 0.5°.
+- `--debug-frametimes` shows how long each step of a frame takes (position calculation, drawing, writing to the
+  terminal), as exponential moving averages below the metadata, to find what needs optimizing.
 
 Fixed:
 

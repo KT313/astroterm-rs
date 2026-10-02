@@ -8,6 +8,7 @@ use astroterm::catalog::load_embedded_catalog;
 use astroterm::projection::{ProjectionKind, View, ViewCenter};
 use astroterm::scene::{RenderOptions, draw_sky_scene, draw_stars, select_star_appearance};
 use astroterm::sky::{Sky, update_sky_positions};
+use astroterm::timing::StepTimes;
 
 const ASCII: RenderOptions = RenderOptions {
     unicode: false,
@@ -27,7 +28,7 @@ fn build_sky_at(datetime: &str, latitude: f64, longitude: f64) -> Sky {
         longitude: longitude * PI / 180.0,
     };
     let mut sky = Sky::from_catalog(&load_embedded_catalog().expect("embedded catalog loads"));
-    update_sky_positions(&mut sky, julian_date, &observer);
+    update_sky_positions(&mut sky, julian_date, &observer, &mut StepTimes::default());
     sky
 }
 
