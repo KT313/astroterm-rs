@@ -7,10 +7,6 @@ use crate::sky::{Appearance, Planet, Sky};
 
 use super::{RenderOptions, draw_line, polar_to_canvas_cell};
 
-/// Radius that stands in for points projected to infinity (directly behind a stereographic view), so clipping math
-/// stays finite.
-const MAX_CLIP_RADIUS: f64 = 1e6;
-
 /// Draw the stars bright enough for the threshold, dimmest first. Only the brightest stars get labels.
 pub fn draw_stars(canvas: &mut Canvas, view: &View, options: &RenderOptions, sky: &Sky) {
     for &index in &sky.stars_by_brightness {
@@ -31,9 +27,7 @@ pub fn draw_constellations(canvas: &mut Canvas, view: &View, options: &RenderOpt
             continue;
         }
         for &[a, b] in &constellation.segments {
-            let start = view.project(sky.stars[a].position);
-            let end = view.project(sky.stars[b].position);
-            draw_constellation_segment(canvas, options, start, end);
+            draw_constellation_segment(canvas, view, options, sky.stars[a].position, sky.stars[b].position);
         }
     }
 }
@@ -91,83 +85,44 @@ fn draw_object(
     }
 }
 
-/// Draw the visible part of a segment between two projected stars, with markers on the stars that are in view.
-fn draw_constellation_segment(canvas: &mut Canvas, options: &RenderOptions, start: Polar, end: Polar) {
-    let Some(clipped) = clip_segment_to_unit_disk(start, end) else {
-        return;
-    };
-    let start_cell = polar_to_canvas_cell(canvas, clipped.start);
-    let end_cell = polar_to_canvas_cell(canvas, clipped.end);
-
-    // the line
-    if options.unicode && options.braille {
-        draw_line_braille(canvas, start_cell.0, start_cell.1, end_cell.0, end_cell.1);
-    } else {
-        draw_line(canvas, options, start_cell, end_cell);
-    }
-
-    // markers on the stars themselves, not on the edge of the view
+/// Draw the visible parts of the great-circle arc between two stars, each as a straight line between where it enters
+/// and leaves the view, with markers on the stars that are in view.
+fn draw_constellation_segment(
+    canvas: &mut Canvas,
+    view: &View,
+    options: &RenderOptions,
+    from: Horizontal,
+    to: Horizontal,
+) {
     let marker = if options.unicode { '○' } else { '+' };
-    for (cell, clipped) in [(start_cell, clipped.start_clipped), (end_cell, clipped.end_clipped)] {
-        if !clipped {
-            canvas.put_char(cell.0, cell.1, marker, None);
+    for part in view.find_visible_arc_parts(from, to) {
+        // ends of the visible part, pulled onto the edge where rounding puts them just outside
+        let project_on_arc = |angle: f64| {
+            let polar = view.project(offset_towards(from, to, angle));
+            polar_to_canvas_cell(
+                canvas,
+                Polar {
+                    radius: polar.radius.min(1.0),
+                    ..polar
+                },
+            )
+        };
+        let (start_cell, end_cell) = (project_on_arc(part.start), project_on_arc(part.end));
+
+        // the line
+        if options.unicode && options.braille {
+            draw_line_braille(canvas, start_cell.0, start_cell.1, end_cell.0, end_cell.1);
+        } else {
+            draw_line(canvas, options, start_cell, end_cell);
+        }
+
+        // markers on the stars themselves, not on the edge of the view
+        for (cell, is_star) in [(start_cell, part.includes_start), (end_cell, part.includes_end)] {
+            if is_star {
+                canvas.put_char(cell.0, cell.1, marker, None);
+            }
         }
     }
-}
-
-/// The part of a segment inside the unit disk, and which of its ends were cut off.
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct ClippedSegment {
-    start: Polar,
-    end: Polar,
-    start_clipped: bool,
-    end_clipped: bool,
-}
-
-/// Clip the straight segment between two points of the view plane to the unit disk. `None` if it misses the disk.
-fn clip_segment_to_unit_disk(start: Polar, end: Polar) -> Option<ClippedSegment> {
-    // segments fully in view are kept as they are
-    if start.radius.abs() <= 1.0 && end.radius.abs() <= 1.0 {
-        return Some(ClippedSegment {
-            start,
-            end,
-            start_clipped: false,
-            end_clipped: false,
-        });
-    }
-
-    // intersect P(t) = A + t·(B - A), t in [0, 1], with |P| <= 1
-    let capped = |polar: Polar| {
-        Polar {
-            radius: polar.radius.min(MAX_CLIP_RADIUS),
-            ..polar
-        }
-        .to_cartesian()
-    };
-    let ((ax, ay), (bx, by)) = (capped(start), capped(end));
-    let (dx, dy) = (bx - ax, by - ay);
-    let a = dx * dx + dy * dy;
-    let b = 2.0 * (ax * dx + ay * dy);
-    let c = ax * ax + ay * ay - 1.0;
-    let discriminant = b * b - 4.0 * a * c;
-    if a == 0.0 || discriminant.is_nan() || discriminant < 0.0 {
-        return None; // degenerate, missing the disk, or not finite
-    }
-
-    // the visible parameter range
-    let root = discriminant.sqrt();
-    let t_start = ((-b - root) / (2.0 * a)).max(0.0);
-    let t_end = ((-b + root) / (2.0 * a)).min(1.0);
-    if t_start > t_end {
-        return None;
-    }
-    let point_at = |t: f64| Polar::from_cartesian(ax + t * dx, ay + t * dy);
-    Some(ClippedSegment {
-        start: point_at(t_start),
-        end: point_at(t_end),
-        start_clipped: t_start > 0.0,
-        end_clipped: t_end < 1.0,
-    })
 }
 
 #[cfg(test)]
@@ -176,18 +131,6 @@ mod tests {
 
     use super::*;
     use crate::projection::ViewCenter;
-
-    fn polar_at(x: f64, y: f64) -> Polar {
-        Polar::from_cartesian(x, y)
-    }
-
-    fn assert_near(polar: Polar, x: f64, y: f64) {
-        let (px, py) = polar.to_cartesian();
-        assert!(
-            (px - x).abs() < 1e-9 && (py - y).abs() < 1e-9,
-            "({px}, {py}) vs ({x}, {y})"
-        );
-    }
 
     #[test]
     fn lit_side_follows_the_sun_on_screen() {
@@ -216,48 +159,84 @@ mod tests {
         assert!(!is_lit_on_right(&facing_north, moon, sun_in_the_west)); // ... but on the left looking up, facing North
     }
 
-    #[test]
-    fn segment_inside_is_unchanged() {
-        let (start, end) = (polar_at(0.1, 0.2), polar_at(-0.5, 0.3));
-        let clipped = clip_segment_to_unit_disk(start, end).unwrap();
-        assert_eq!((clipped.start, clipped.end), (start, end));
-        assert!(!clipped.start_clipped && !clipped.end_clipped);
+    const ASCII: RenderOptions = RenderOptions {
+        unicode: false,
+        braille: false,
+        color: false,
+        magnitude_threshold: 5.0,
+        label_threshold: 0.25,
+    };
+
+    fn horizontal(azimuth_degrees: f64, altitude_degrees: f64) -> Horizontal {
+        Horizontal {
+            azimuth: azimuth_degrees.to_radians(),
+            altitude: altitude_degrees.to_radians(),
+        }
+    }
+
+    fn count_marks(canvas: &Canvas) -> (usize, usize) {
+        let text: String = canvas.to_lines().concat();
+        (
+            text.chars().filter(|&symbol| symbol == '+').count(),
+            text.chars().filter(|&symbol| symbol != ' ').count(),
+        )
     }
 
     #[test]
-    fn segment_leaving_the_disk_is_cut_where_it_crosses_the_edge() {
-        // the C version clipped radially, moving the outside end to (1, 1)/√2 instead of the crossing point
-        let clipped = clip_segment_to_unit_disk(polar_at(0.0, 0.5), polar_at(3.0, 0.5)).unwrap();
-        assert_near(clipped.start, 0.0, 0.5);
-        assert_near(clipped.end, 0.75_f64.sqrt(), 0.5);
-        assert!(!clipped.start_clipped && clipped.end_clipped);
-
-        // either end may be the one outside
-        let reversed = clip_segment_to_unit_disk(polar_at(3.0, 0.5), polar_at(0.0, 0.5)).unwrap();
-        assert!(reversed.start_clipped && !reversed.end_clipped);
-    }
-
-    #[test]
-    fn segment_crossing_the_disk_with_both_ends_outside_keeps_the_chord() {
-        let clipped = clip_segment_to_unit_disk(polar_at(-2.0, 0.0), polar_at(2.0, 0.0)).unwrap();
-        assert_near(clipped.start, -1.0, 0.0);
-        assert_near(clipped.end, 1.0, 0.0);
-        assert!(clipped.start_clipped && clipped.end_clipped);
-    }
-
-    #[test]
-    fn segment_missing_the_disk_is_dropped() {
-        assert!(clip_segment_to_unit_disk(polar_at(-2.0, 1.5), polar_at(2.0, 1.5)).is_none());
-        assert!(clip_segment_to_unit_disk(polar_at(1.5, 0.0), polar_at(3.0, 0.0)).is_none());
-    }
-
-    #[test]
-    fn point_at_infinity_still_clips() {
-        let infinite = Polar {
-            radius: f64::INFINITY,
-            theta: FRAC_PI_2,
+    fn segment_in_view_has_markers_on_both_stars() {
+        let view = View {
+            center: ViewCenter::Facing {
+                azimuth: 0.0,
+                tilt: 0.0,
+            },
+            fov_degrees: 90.0,
+            ..View::default()
         };
-        let clipped = clip_segment_to_unit_disk(Polar { radius: 0.0, theta: PI }, infinite).unwrap();
-        assert_near(clipped.end, 0.0, 1.0);
+        let mut canvas = Canvas::new(21, 41);
+        draw_constellation_segment(
+            &mut canvas,
+            &view,
+            &ASCII,
+            horizontal(-20.0, 5.0),
+            horizontal(20.0, -5.0),
+        );
+        let (markers, marks) = count_marks(&canvas);
+        assert_eq!(markers, 2);
+        assert!(marks > 10);
+    }
+
+    #[test]
+    fn segment_leaving_the_view_has_one_marker_and_reaches_the_edge() {
+        let view = View {
+            center: ViewCenter::Facing {
+                azimuth: 0.0,
+                tilt: 0.0,
+            },
+            fov_degrees: 90.0,
+            ..View::default()
+        };
+        let mut canvas = Canvas::new(21, 41);
+        draw_constellation_segment(&mut canvas, &view, &ASCII, horizontal(0.0, 0.0), horizontal(90.0, 0.0));
+        assert_eq!(count_marks(&canvas).0, 1);
+        assert_ne!(canvas.cell(10, 40).map(|cell| cell.symbol), Some(' ')); // the right edge on the horizon
+    }
+
+    #[test]
+    fn segment_hidden_behind_a_wide_view_draws_nothing() {
+        // the reported artifact: two stars on opposite sides of the nadir project far outside the circle on opposite
+        // sides, and a straight line between them crossed the whole display
+        let view = View {
+            fov_degrees: 270.0,
+            ..View::default()
+        };
+        let mut canvas = Canvas::new(21, 41);
+        draw_constellation_segment(
+            &mut canvas,
+            &view,
+            &ASCII,
+            horizontal(10.0, -85.0),
+            horizontal(190.0, -85.0),
+        );
+        assert_eq!(count_marks(&canvas), (0, 0));
     }
 }

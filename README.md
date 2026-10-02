@@ -61,7 +61,8 @@ Fixed:
 
 - Star labels are chosen at draw time instead of being erased from the star table while rendering.
 - Braille constellation lines merge within canvas cells; no global 1024x1024 buffer.
-- Constellation segments are clipped where they cross the edge of the view (both ends, also chords).
+- Constellation lines are clipped exactly as great-circle arcs against the view, so only the parts actually in view
+  are drawn. Straight lines between projected stars could cut across the whole display in views wider than 180°.
 - Simulation time follows the wall clock (no drift when frames are slow).
 - Datetimes are parsed as UTC without `mktime`, so local DST no longer shifts them.
 - Mean anomalies wrap correctly for large negative values.

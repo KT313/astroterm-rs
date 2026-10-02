@@ -43,6 +43,15 @@ impl ProjectionKind {
     }
 }
 
+/// A visible part of a great-circle arc: angles (radians) from the arc's start, and whether it reaches the arc's ends.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ArcPart {
+    pub start: f64,
+    pub end: f64,
+    pub includes_start: bool,
+    pub includes_end: bool,
+}
+
 /// A view of the sky. Projected points with radius > 1 are out of view.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct View {
@@ -74,6 +83,79 @@ impl View {
             ViewCenter::Zenith => FRAC_PI_2,
             ViewCenter::Facing { tilt, .. } => tilt,
         }
+    }
+
+    /// The direction the center of the view points at.
+    pub fn center_direction(&self) -> Horizontal {
+        match self.center {
+            ViewCenter::Zenith => Horizontal {
+                azimuth: PI,
+                altitude: FRAC_PI_2,
+            },
+            ViewCenter::Facing { azimuth, tilt } => Horizontal {
+                azimuth,
+                altitude: tilt,
+            },
+        }
+    }
+
+    /// The parts of the shorter great-circle arc from `from` to `to` that are in view (at most fov/2 from the center).
+    ///
+    /// Solved exactly: along the arc, the cosine of the distance to the center is `R·cos(t - φ)`, so each full turn
+    /// has one visible window `|t - φ| <= acos(cos(fov/2) / R)`. Within an arc that is at most two parts, e.g. when
+    /// the arc dips into the hidden cap behind a view wider than 180°.
+    pub fn find_visible_arc_parts(&self, from: Horizontal, to: Horizontal) -> Vec<ArcPart> {
+        // the arc as p(t) = a·cos(t) + u·sin(t), t in [0, length]
+        let (a, b) = (from.to_unit_vector(), to.to_unit_vector());
+        let length = a.dot(b).clamp(-1.0, 1.0).acos();
+        let tangent = b - a * a.dot(b);
+        let (center, cos_half_fov) = (
+            self.center_direction().to_unit_vector(),
+            (self.fov_degrees.to_radians() / 2.0).cos(),
+        );
+        if tangent.length() < 1e-12 {
+            let visible = a.dot(center) >= cos_half_fov; // a point (or a degenerate arc)
+            return if visible {
+                vec![ArcPart {
+                    start: 0.0,
+                    end: length,
+                    includes_start: true,
+                    includes_end: true,
+                }]
+            } else {
+                vec![]
+            };
+        }
+        let u = tangent * (1.0 / tangent.length());
+
+        // the visible window of angles, repeated every full turn
+        let (p, q) = (a.dot(center), u.dot(center));
+        let amplitude = p.hypot(q);
+        let ratio = cos_half_fov / amplitude;
+        let (phase, half_width) = match ratio {
+            r if r <= -1.0 => (0.0, PI), // the whole great circle is in view
+            r if r > 1.0 => return vec![],
+            r => (q.atan2(p), r.acos()),
+        };
+
+        // intersect the windows with the arc
+        let mut parts = Vec::new();
+        for turn in [-TAU, 0.0, TAU] {
+            let start = (phase - half_width + turn).max(0.0);
+            let end = (phase + half_width + turn).min(length);
+            if start <= end {
+                parts.push(ArcPart {
+                    start,
+                    end,
+                    includes_start: start == 0.0,
+                    includes_end: end == length,
+                });
+            }
+        }
+        if half_width >= PI {
+            parts.truncate(1); // the windows of neighboring turns touch; one part covers the arc
+        }
+        parts
     }
 
     /// Turn the view right by `azimuth_delta` and up by `tilt_delta` (radians), keeping the tilt within [-90°, 90°].
@@ -162,6 +244,85 @@ mod tests {
             altitude: altitude_degrees * TO_RAD,
         })
         .radius
+    }
+
+    fn horizontal(azimuth_degrees: f64, altitude_degrees: f64) -> Horizontal {
+        Horizontal {
+            azimuth: azimuth_degrees.to_radians(),
+            altitude: altitude_degrees.to_radians(),
+        }
+    }
+
+    fn degrees(part: &ArcPart) -> (f64, f64) {
+        (
+            (part.start.to_degrees() * 1e6).round() / 1e6,
+            (part.end.to_degrees() * 1e6).round() / 1e6,
+        )
+    }
+
+    #[test]
+    fn arc_fully_in_view_is_one_part_with_both_ends() {
+        let view = facing(0.0, 0.0, ProjectionKind::Stereographic, 90.0);
+        let parts = view.find_visible_arc_parts(horizontal(-10.0, 0.0), horizontal(20.0, 0.0));
+        assert_eq!(parts.len(), 1);
+        assert_eq!(degrees(&parts[0]), (0.0, 30.0));
+        assert!(parts[0].includes_start && parts[0].includes_end);
+    }
+
+    #[test]
+    fn arc_leaving_the_view_is_cut_at_the_edge() {
+        let view = facing(0.0, 0.0, ProjectionKind::Stereographic, 90.0);
+        let parts = view.find_visible_arc_parts(horizontal(0.0, 0.0), horizontal(90.0, 0.0));
+        assert_eq!(parts.len(), 1);
+        assert_eq!(degrees(&parts[0]), (0.0, 45.0));
+        assert!(parts[0].includes_start && !parts[0].includes_end);
+    }
+
+    #[test]
+    fn arc_crossing_the_view_keeps_the_middle() {
+        let view = facing(0.0, 0.0, ProjectionKind::Stereographic, 90.0);
+        let parts = view.find_visible_arc_parts(horizontal(-60.0, 0.0), horizontal(60.0, 0.0));
+        assert_eq!(parts.len(), 1);
+        assert_eq!(degrees(&parts[0]), (15.0, 105.0));
+        assert!(!parts[0].includes_start && !parts[0].includes_end);
+    }
+
+    #[test]
+    fn arc_inside_the_hidden_cap_of_a_wide_view_is_invisible() {
+        // overhead at 270°, the 45° cap around the nadir is hidden; this arc straddles the nadir
+        let view = View {
+            fov_degrees: 270.0,
+            ..View::default()
+        };
+        assert!(
+            view.find_visible_arc_parts(horizontal(0.0, -85.0), horizontal(180.0, -85.0))
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn arc_dipping_into_the_hidden_cap_has_two_parts() {
+        let view = View {
+            fov_degrees: 270.0,
+            ..View::default()
+        };
+        let parts = view.find_visible_arc_parts(horizontal(0.0, -40.0), horizontal(180.0, -40.0));
+        let ranges: Vec<_> = parts.iter().map(degrees).collect();
+        assert_eq!(ranges, [(0.0, 5.0), (95.0, 100.0)]);
+        assert!(parts[0].includes_start && !parts[0].includes_end);
+        assert!(!parts[1].includes_start && parts[1].includes_end);
+    }
+
+    #[test]
+    fn arc_in_a_full_360_view_is_whole() {
+        let view = View {
+            projection: ProjectionKind::Equidistant,
+            fov_degrees: 360.0,
+            ..View::default()
+        };
+        let parts = view.find_visible_arc_parts(horizontal(0.0, -40.0), horizontal(180.0, -40.0));
+        assert_eq!(parts.len(), 1);
+        assert_eq!(degrees(&parts[0]), (0.0, 100.0));
     }
 
     #[test]

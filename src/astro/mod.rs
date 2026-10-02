@@ -54,10 +54,60 @@ pub struct Vector3 {
     pub z: f64,
 }
 
+impl Horizontal {
+    /// Unit vector pointing at this position, with x East, y North and z up.
+    pub fn to_unit_vector(self) -> Vector3 {
+        let (sin_alt, cos_alt) = self.altitude.sin_cos();
+        let (sin_az, cos_az) = self.azimuth.sin_cos();
+        Vector3 {
+            x: cos_alt * sin_az,
+            y: cos_alt * cos_az,
+            z: sin_alt,
+        }
+    }
+
+    /// Position a vector (x East, y North, z up) points at.
+    pub fn from_vector(vector: Vector3) -> Horizontal {
+        let altitude = (vector.z / vector.length()).clamp(-1.0, 1.0).asin();
+        Horizontal {
+            azimuth: vector.x.atan2(vector.y).rem_euclid(TAU),
+            altitude,
+        }
+    }
+}
+
 impl Vector3 {
     /// Euclidean length.
     pub fn length(self) -> f64 {
         (self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
+    }
+
+    pub fn dot(self, other: Vector3) -> f64 {
+        self.x * other.x + self.y * other.y + self.z * other.z
+    }
+}
+
+impl std::ops::Add for Vector3 {
+    type Output = Vector3;
+
+    fn add(self, other: Vector3) -> Vector3 {
+        Vector3 {
+            x: self.x + other.x,
+            y: self.y + other.y,
+            z: self.z + other.z,
+        }
+    }
+}
+
+impl std::ops::Mul<f64> for Vector3 {
+    type Output = Vector3;
+
+    fn mul(self, factor: f64) -> Vector3 {
+        Vector3 {
+            x: self.x * factor,
+            y: self.y * factor,
+            z: self.z * factor,
+        }
     }
 }
 

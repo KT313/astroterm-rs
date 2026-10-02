@@ -67,33 +67,17 @@ pub fn correct_for_parallax(position: Horizontal, distance: f64) -> Horizontal {
 /// The point `angle` radians from `from` along the great circle towards `to`. If the two points coincide or are
 /// opposite, there is no unique direction and `from` is returned.
 pub fn offset_towards(from: Horizontal, to: Horizontal, angle: f64) -> Horizontal {
-    // unit vectors (x East, y North, z up), and the tangent at `from` pointing towards `to`
-    let a = horizontal_to_unit_vector(from);
-    let b = horizontal_to_unit_vector(to);
-    let along = a.0 * b.0 + a.1 * b.1 + a.2 * b.2;
-    let tangent = (b.0 - along * a.0, b.1 - along * a.1, b.2 - along * a.2);
-    let tangent_length = (tangent.0 * tangent.0 + tangent.1 * tangent.1 + tangent.2 * tangent.2).sqrt();
+    // the tangent at `from` pointing towards `to`
+    let (a, b) = (from.to_unit_vector(), to.to_unit_vector());
+    let tangent = b - a * a.dot(b);
+    let tangent_length = tangent.length();
     if tangent_length < 1e-12 {
         return from;
     }
 
     // rotate along the great circle
     let (sin, cos) = angle.sin_cos();
-    let point = (
-        cos * a.0 + sin * tangent.0 / tangent_length,
-        cos * a.1 + sin * tangent.1 / tangent_length,
-        cos * a.2 + sin * tangent.2 / tangent_length,
-    );
-    Horizontal {
-        azimuth: point.0.atan2(point.1).rem_euclid(TAU),
-        altitude: point.2.clamp(-1.0, 1.0).asin(),
-    }
-}
-
-fn horizontal_to_unit_vector(position: Horizontal) -> (f64, f64, f64) {
-    let (sin_alt, cos_alt) = position.altitude.sin_cos();
-    let (sin_az, cos_az) = position.azimuth.sin_cos();
-    (cos_alt * sin_az, cos_alt * cos_az, sin_alt)
+    Horizontal::from_vector(a * cos + tangent * (sin / tangent_length))
 }
 
 #[cfg(test)]
