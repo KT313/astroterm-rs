@@ -2,6 +2,15 @@
 //!
 //! References: IERS Technical Note No. 32, and Capitaine, Wallace & Chapront, "Expressions for IAU 2000 precession
 //! quantities".
+//!
+//! Input, display and [`SimulationClock`] use UTC, interpreted as UT1 without Earth-orientation data. Dates before
+//! UTC existed (1960) use UT. This is an application approximation, not a prediction of future UTC or DUT1.
+//! Ephemerides and precession take TT; currently the caller approximates TT = UT1 (ΔT = 0). ERA takes UT1, while
+//! GMST takes UT1 for rotation and TT for precession. Eventually TT = UT1 + ΔT. The equation of the origins is
+//! EO = ERA - GAST and already includes the equation of the equinoxes; do not add that correction twice.
+//!
+//! Calendar input and display use proleptic Gregorian dates and astronomical year numbering: 0 = 1 BC,
+//! -1 = 2 BC. Signed years are required outside 0000–9999. No Julian-calendar switch occurs in 1582.
 
 use std::f64::consts::{PI, TAU};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -33,11 +42,11 @@ pub struct SimulationClock {
 }
 
 impl SimulationClock {
-    /// A running clock showing `start_julian_date` now.
-    pub fn start(start_julian_date: f64, speed: f64) -> SimulationClock {
+    /// A running clock showing the UTC/UT date `start_julian_date_utc` now.
+    pub fn start(start_julian_date_utc: f64, speed: f64) -> SimulationClock {
         SimulationClock {
-            start_julian_date,
-            anchor_julian_date: start_julian_date,
+            start_julian_date: start_julian_date_utc,
+            anchor_julian_date: start_julian_date_utc,
             anchor_instant: Instant::now(),
             speed,
             paused: false,
@@ -85,25 +94,11 @@ impl SimulationClock {
     }
 }
 
-/// Julian date of a UTC calendar datetime.
-///
-/// Uses the integer algorithm from <https://orbital-mechanics.space/reference/julian-date.html> (eq. 436 & 437), so
-/// integer divisions truncate towards zero.
+/// Julian date of a proleptic Gregorian UTC/UT calendar datetime, at whole-second precision.
 pub fn datetime_to_julian_date(datetime: &NaiveDateTime) -> f64 {
-    // calendar fields
-    let (year, month, day) = (
-        i64::from(datetime.year()),
-        i64::from(datetime.month()),
-        i64::from(datetime.day()),
-    );
+    // chrono's day count remains correct before -4800, where the old truncating-division formula failed
+    let julian_day_number = i64::from(datetime.num_days_from_ce()) + 1721425;
     let (hour, minute, second) = (datetime.hour(), datetime.minute(), datetime.second());
-
-    // whole Julian day number at noon of the calendar day
-    let a = (month - 14) / 12;
-    let b = 1461 * (year + 4800 + a);
-    let c = 367 * (month - 2 - 12 * a);
-    let e = (year + 4900 + a) / 100;
-    let julian_day_number = b / 4 + c / 12 - (3 * e) / 4 + day - 32075;
 
     // fraction of the day relative to noon
     let day_fraction =
@@ -112,8 +107,8 @@ pub fn datetime_to_julian_date(datetime: &NaiveDateTime) -> f64 {
 }
 
 /// UTC datetime of a Julian date, truncated to whole seconds. `None` outside the range chrono can represent.
-pub fn julian_date_to_utc(julian_date: f64) -> Option<DateTime<Utc>> {
-    let unix_seconds = ((julian_date - UNIX_EPOCH_JULIAN_DATE) * SECONDS_PER_DAY).floor();
+pub fn julian_date_to_utc(julian_date_utc: f64) -> Option<DateTime<Utc>> {
+    let unix_seconds = ((julian_date_utc - UNIX_EPOCH_JULIAN_DATE) * SECONDS_PER_DAY).floor();
     if !unix_seconds.is_finite() || unix_seconds.abs() > i64::MAX as f64 {
         return None;
     }
@@ -131,17 +126,18 @@ pub fn parse_utc_datetime(text: &str) -> Option<NaiveDateTime> {
     NaiveDateTime::parse_from_str(text, "%Y-%m-%dT%H:%M:%S").ok()
 }
 
-/// Earth rotation angle in radians, the modern replacement for Greenwich sidereal time (IERS TN 32, 5.4.4 eq. 14).
-pub fn earth_rotation_angle(julian_date: f64) -> f64 {
-    let days_since_j2000 = julian_date - J2000;
-    let day_fraction = julian_date - julian_date.floor();
+/// Earth rotation angle from UT1, in radians, the modern replacement for Greenwich sidereal time
+/// (IERS TN 32, 5.4.4 eq. 14).
+pub fn earth_rotation_angle(julian_date_ut1: f64) -> f64 {
+    let days_since_j2000 = julian_date_ut1 - J2000;
+    let day_fraction = julian_date_ut1 - julian_date_ut1.floor();
     normalize_radians(TAU * (day_fraction + 0.7790572732640 + 0.00273781191135448 * days_since_j2000))
 }
 
-/// Greenwich mean sidereal time in radians (Capitaine et al. eq. 42).
-pub fn greenwich_mean_sidereal_time(julian_date: f64) -> f64 {
+/// Greenwich mean sidereal time in radians: rotation from UT1, mean precession from TT (Capitaine et al. eq. 42).
+pub fn greenwich_mean_sidereal_time(julian_date_ut1: f64, julian_date_tt: f64) -> f64 {
     // accumulated precession in arcseconds, from Julian centuries since J2000
-    let t = (julian_date - J2000) / 36525.0;
+    let t = (julian_date_tt - J2000) / 36525.0;
     let precession_arcsec = -0.014506 - 4612.156534 * t - 1.3915817 * t.powi(2)
         + 0.00000044 * t.powi(3)
         + 0.000029956 * t.powi(4)
@@ -149,7 +145,7 @@ pub fn greenwich_mean_sidereal_time(julian_date: f64) -> f64 {
 
     // subtract it from the Earth rotation angle
     let precession = precession_arcsec / 3600.0 * PI / 180.0;
-    normalize_radians(earth_rotation_angle(julian_date) - precession)
+    normalize_radians(earth_rotation_angle(julian_date_ut1) - precession)
 }
 
 #[cfg(test)]
@@ -209,7 +205,50 @@ mod tests {
 
     #[test]
     fn greenwich_mean_sidereal_time_matches_reference() {
-        assert!((greenwich_mean_sidereal_time(J2000) - 4.89496121282306).abs() < EPSILON);
+        assert!((greenwich_mean_sidereal_time(J2000, J2000) - 4.89496121282306).abs() < EPSILON);
+    }
+
+    #[test]
+    fn gregorian_calendar_round_trips_across_the_computational_interval() {
+        for (year, month, day, hour) in [
+            (-7974, 1, 1, 0),
+            (-4801, 1, 1, 0),
+            (-4800, 2, 29, 12),
+            (-1, 1, 1, 0),
+            (0, 2, 29, 12),
+            (1, 1, 1, 0),
+            (1582, 10, 15, 0),
+            (2000, 1, 1, 12),
+            (12026, 12, 31, 0),
+            (12027, 1, 1, 0),
+        ] {
+            let date = chrono::NaiveDate::from_ymd_opt(year, month, day)
+                .unwrap()
+                .and_hms_opt(hour, 0, 0)
+                .unwrap();
+            let text = date.format("%Y-%m-%dT%H:%M:%S").to_string();
+            assert_eq!(parse_utc_datetime(&text), Some(date), "{text}");
+            assert_eq!(
+                julian_date_to_utc(datetime_to_julian_date(&date)).unwrap().naive_utc(),
+                date,
+                "{text}"
+            );
+        }
+        assert_eq!(julian_date_of("-4713-11-24T12:00:00"), 0.0);
+        assert_eq!(julian_date_of("2000-01-01T12:00:00"), J2000);
+        assert_eq!(
+            julian_date_of("1582-10-15T00:00:00") - julian_date_of("1582-10-04T00:00:00"),
+            11.0
+        );
+    }
+
+    #[test]
+    fn sidereal_rotation_and_precession_use_separate_time_scales() {
+        let (ut1, tt) = (J2000 + 100.0, J2000 + 100.001);
+        let changed_tt = greenwich_mean_sidereal_time(ut1, tt) - greenwich_mean_sidereal_time(ut1, ut1);
+        assert!(changed_tt > 0.0 && changed_tt < 1e-8);
+        let changed_ut = greenwich_mean_sidereal_time(ut1 + 0.001, tt) - greenwich_mean_sidereal_time(ut1, tt);
+        assert!((changed_ut - 0.00630038748675).abs() < 1e-8);
     }
 
     #[test]

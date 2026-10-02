@@ -11,10 +11,10 @@ use super::{Equatorial, J2000, Vector3, rectangular_to_equatorial};
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PrecessionMatrix([[f64; 3]; 3]);
 
-/// The precession rotation from J2000 to `julian_date`.
-pub fn compute_precession_matrix(julian_date: f64) -> PrecessionMatrix {
+/// The precession rotation from J2000 to `julian_date_tt`.
+pub fn compute_precession_matrix(julian_date_tt: f64) -> PrecessionMatrix {
     // precession angles ζ, z and θ in arcseconds, from Julian centuries since J2000
-    let t = (julian_date - J2000) / 36525.0;
+    let t = (julian_date_tt - J2000) / 36525.0;
     let zeta = 2.650545 + 2306.083227 * t + 0.2988499 * t.powi(2) + 0.01801828 * t.powi(3)
         - 0.000005971 * t.powi(4)
         - 0.0000003173 * t.powi(5);

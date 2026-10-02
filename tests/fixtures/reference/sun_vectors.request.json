@@ -1,0 +1,19 @@
+{
+  "url": "https://ssd.jpl.nasa.gov/api/horizons.api",
+  "parameters": {
+    "format": "json",
+    "COMMAND": "'10'",
+    "MAKE_EPHEM": "'YES'",
+    "EPHEM_TYPE": "'VECTORS'",
+    "CENTER": "'500@0'",
+    "REF_PLANE": "'FRAME'",
+    "REF_SYSTEM": "'ICRF'",
+    "OUT_UNITS": "'AU-D'",
+    "VEC_TABLE": "'2'",
+    "VEC_CORR": "'NONE'",
+    "TLIST": "'2461041.5 3191541.5 4652541.5'",
+    "TLIST_TYPE": "'JD'",
+    "TIME_TYPE": "'TDB'",
+    "CSV_FORMAT": "'YES'"
+  }
+}

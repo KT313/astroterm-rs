@@ -33,8 +33,9 @@ pub struct Arguments {
     )]
     pub longitude: f64,
 
-    /// Observation datetime in UTC
-    #[arg(short = 'd', long, value_name = "yyyy-mm-ddThh:mm:ss")]
+    /// Observation datetime in UTC/UT, proleptic Gregorian calendar. Astronomical years: 0 = 1 BC; use a sign
+    /// outside 0000–9999, e.g. -7974-01-01T00:00:00 or +12026-01-01T00:00:00
+    #[arg(short = 'd', long, value_name = "yyyy-mm-ddThh:mm:ss", allow_hyphen_values = true)]
     pub datetime: Option<String>,
 
     /// Only render stars brighter than this magnitude (default: 5.0)
@@ -149,7 +150,7 @@ pub struct Arguments {
 
     /// Use the latitude and longitude of the provided city. If the name contains multiple words, enclose the name in
     /// single or double quotes. For a list of available cities, see:
-    /// https://github.com/da-luce/astroterm/blob/main/data/cities.csv
+    /// <https://github.com/da-luce/astroterm/blob/main/data/cities.csv>
     #[arg(short = 'i', long, value_name = "city_name")]
     pub city: Option<String>,
 

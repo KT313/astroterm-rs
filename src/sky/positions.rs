@@ -10,22 +10,27 @@ use crate::timing::StepTimes;
 
 use super::{Moon, Planet, Sky, Star};
 
-/// Move every object to its apparent position for the observer at `julian_date`. The duration of each step is added
-/// to `step_times`.
-pub fn update_sky_positions(sky: &mut Sky, julian_date: f64, observer: &Observer, step_times: &mut StepTimes) {
+/// Move objects to their approximate apparent horizontal positions at `julian_date_ut1` (UTC ≈ UT1, TT ≈ UT1
+/// for now). The Moon includes approximate parallax; stars/planets remain geocentric before horizon rotation.
+/// Refraction is a separate pass. The duration of each step is added to `step_times`.
+pub fn update_sky_positions(sky: &mut Sky, julian_date_ut1: f64, observer: &Observer, step_times: &mut StepTimes) {
+    let julian_date_tt = julian_date_ut1; // ΔT = 0 until the time-scale correction is implemented
+
     // Earth's orientation at the date: its rotation, and how far its axis has precessed since J2000
-    let sidereal_time = step_times.measure("Sidereal", || greenwich_mean_sidereal_time(julian_date));
-    let precession = step_times.measure("Precession", || compute_precession_matrix(julian_date));
+    let sidereal_time = step_times.measure("Sidereal", || {
+        greenwich_mean_sidereal_time(julian_date_ut1, julian_date_tt)
+    });
+    let precession = step_times.measure("Precession", || compute_precession_matrix(julian_date_tt));
 
     // positions of all objects
     step_times.measure("Stars", || {
-        update_star_positions(&mut sky.stars, julian_date, sidereal_time, &precession, observer)
+        update_star_positions(&mut sky.stars, julian_date_tt, sidereal_time, &precession, observer)
     });
     step_times.measure("Planets", || {
-        update_planet_positions(&mut sky.planets, julian_date, sidereal_time, &precession, observer)
+        update_planet_positions(&mut sky.planets, julian_date_tt, sidereal_time, &precession, observer)
     });
     step_times.measure("Moon", || {
-        update_moon(&mut sky.moon, julian_date, sidereal_time, observer)
+        update_moon(&mut sky.moon, julian_date_tt, sidereal_time, observer)
     });
 }
 
@@ -33,13 +38,13 @@ pub fn update_sky_positions(sky: &mut Sky, julian_date: f64, observer: &Observer
 /// catalog positions to the date.
 fn update_star_positions(
     stars: &mut [Star],
-    julian_date: f64,
+    julian_date_tt: f64,
     sidereal_time: f64,
     precession: &PrecessionMatrix,
     observer: &Observer,
 ) {
     for star in stars {
-        let equatorial = compute_star_position(star.catalog_position, star.proper_motion, julian_date);
+        let equatorial = compute_star_position(star.catalog_position, star.proper_motion, julian_date_tt);
         let equatorial = precession.apply_to_equatorial(equatorial);
         star.position = equatorial_to_horizontal(equatorial, sidereal_time, observer);
     }
@@ -49,15 +54,15 @@ fn update_star_positions(
 /// positions to the date.
 fn update_planet_positions(
     planets: &mut [Planet],
-    julian_date: f64,
+    julian_date_tt: f64,
     sidereal_time: f64,
     precession: &PrecessionMatrix,
     observer: &Observer,
 ) {
-    let earth = compute_planet_heliocentric(&EARTH_ORBIT, julian_date);
+    let earth = compute_planet_heliocentric(&EARTH_ORBIT, julian_date_tt);
     for planet in planets {
         let geocentric = match planet.kind.orbit() {
-            Some(orbit) => compute_planet_heliocentric(orbit, julian_date) - earth,
+            Some(orbit) => compute_planet_heliocentric(orbit, julian_date_tt) - earth,
             None => -earth, // the Sun is (roughly) the origin of the heliocentric frame
         };
         let equatorial = rectangular_to_equatorial(precession.apply(geocentric));
@@ -67,14 +72,14 @@ fn update_planet_positions(
 
 /// Move the Moon to its apparent position, as seen from the Earth's surface, and update its phase. Its elements are
 /// already referred to the equinox of date, so it needs no precession.
-fn update_moon(moon: &mut Moon, julian_date: f64, sidereal_time: f64, observer: &Observer) {
+fn update_moon(moon: &mut Moon, julian_date_tt: f64, sidereal_time: f64, observer: &Observer) {
     // position, corrected for the observer being on the surface rather than at the center of the Earth
-    let geocentric = compute_moon_geocentric(moon.orbit, julian_date);
+    let geocentric = compute_moon_geocentric(moon.orbit, julian_date_tt);
     let position = equatorial_to_horizontal(rectangular_to_equatorial(geocentric), sidereal_time, observer);
     moon.position = correct_for_parallax(position, geocentric.length());
 
     // phase, from the elongation from the Sun
-    let sun = -compute_planet_heliocentric(&EARTH_ORBIT, julian_date);
+    let sun = -compute_planet_heliocentric(&EARTH_ORBIT, julian_date_tt);
     moon.phase = moon_age_to_phase(compute_moon_age(geocentric, sun));
 }
 
@@ -134,6 +139,9 @@ mod tests {
 
     #[test]
     fn star_positions_match_reference() {
+        // Historical C fixtures retained. Independent phase-0 ERFA checks put Vega below the horizon (-0.362°
+        // apparent, -0.366° mean); the original exact 0.0 altitude has no reproducible correction settings.
+        // See tests/position_references.rs and scripts/reference/README.md for the airless audit.
         let sky = update_boston_sky();
         let vega = &sky.stars[7000];
         assert_eq!(
@@ -149,6 +157,9 @@ mod tests {
 
     #[test]
     fn planet_positions_match_reference() {
+        // Historical C fixtures retained: their Mars/Neptune altitudes differ from fresh airless Horizons queries
+        // by about 0.82°/0.66°. Our differences from those queries are only about 0.06°/0.02°; the larger old
+        // deviations are not evidence of similarly large current model errors. Historical refraction is unknown.
         let sky = update_boston_sky();
         let find = |kind| sky.planets.iter().find(|planet| planet.kind == kind).unwrap();
         assert_position(find(PlanetKind::Sun).position, 1.993463, 0.145643, STAR_EPSILON);
@@ -169,6 +180,8 @@ mod tests {
 
     #[test]
     fn moon_position_matches_reference() {
+        // Historical C fixture retained. Horizons now gives -65.8892° airless topocentric altitude; our -65.9220°
+        // is much closer than the old -64.1082° value. Its original settings cannot be reconstructed reliably.
         let sky = update_boston_sky();
         assert_position(sky.moon.position, 0.7817126, -1.118899, MOON_EPSILON);
         let first_quarter_soon = [MoonPhase::WaxingCrescent, MoonPhase::FirstQuarter]; // first quarter was at 13:23

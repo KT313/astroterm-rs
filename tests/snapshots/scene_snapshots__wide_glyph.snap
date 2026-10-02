@@ -1,0 +1,11 @@
+---
+source: tests/scene_snapshots.rs
+expression: snapshot
+---
+1 rows x 4 columns
+glyphs:
+| 🌕 |
+colors (. default; K R G Y B M C W):
+|.YY.|
+continuations (> continuation, . ordinary cell):
+|..>.|

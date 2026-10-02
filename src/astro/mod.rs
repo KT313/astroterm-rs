@@ -4,7 +4,26 @@
 //! - Azimuth is measured East of North, altitude from the horizon towards the zenith.
 //! - Right ascension is measured East of the vernal equinox, declination North of the celestial equator.
 //! - Longitude is positive East of the prime meridian, latitude positive North of the equator.
+//!
+//! # Current model conventions
+//!
+//! All physical calculations currently use f64 (catalog magnitudes/colors use f32). TT is currently approximated
+//! by UT1, itself approximated by UTC/UT input. `astro/time.rs` documents the calendar and time-scale contract.
+//!
+//! | Quantity / future owner | Native origin and frame | Units / epoch | Current corrections and stage |
+//! |---|---|---|---|
+//! | Catalog stars / stellar model | Barycentric direction, J2000 mean equator/equinox | Radians, radians/year at J2000 | Linear RA/Dec motion (365.2425 days/year for legacy compatibility), then precession and observation |
+//! | Planets and Sun / planetary model | Heliocentric equatorial J2000 | AU; TT Julian centuries from J2000 | Earth subtraction, precession, horizon rotation; no light-time or aberration |
+//! | Moon / lunar model | Geocentric mean-of-date ecliptic, converted with fixed J2000 obliquity (approximation) | Earth radii; TT days from JD 2451543.5 | Solar perturbations, horizon rotation, approximate altitude-only parallax; no additional precession |
+//! | Precession and Earth rotation / orientation model | Mean J2000 to mean-of-date, then local horizon | Radians; precession TT, ERA UT1 | IAU 2006 precession and consistent GMST |
+//! | Horizontal / observation | Observer sky: azimuth E of N, altitude from horizon | Radians | Optional refraction applied once after position update |
+//!
+//! The current positions are approximations to apparent places, not complete apparent-place solutions. Geometric
+//! means before light-time/aberration; geocentric is relative to Earth's center; topocentric is relative to a surface
+//! site; refracted includes the atmosphere. Coordinate origin and apparent/geometric status are separate properties.
+//! Future family adapters must declare both, their dependencies and error/precision policy; see [`crate::sky`].
 
+pub mod accuracy;
 mod coords;
 mod ephemeris;
 mod notation;
@@ -13,6 +32,10 @@ mod time;
 
 use std::f64::consts::TAU;
 
+pub use accuracy::{
+    COMPUTATIONAL_INTERVAL, JULIAN_YEAR_DAYS, JulianDateInterval, MOON_VALIDATED_INTERVAL, ObjectClass,
+    PLANET_VALIDATED_INTERVAL, PRECESSION_TARGET_ARCSECONDS, STAR_VALIDATED_INTERVAL, accuracy_target_arcseconds,
+};
 pub use coords::{
     apply_refraction, correct_for_parallax, equatorial_to_horizontal, horizontal_to_spherical, offset_towards,
     rectangular_to_equatorial,
@@ -165,6 +188,16 @@ pub fn map_float_to_int_range(min_float: f64, max_float: f64, min_int: i32, max_
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn normalized_finite_angles_stay_in_one_turn(angle in -1e12_f64..1e12_f64) {
+            let wrapped = normalize_radians(angle);
+            prop_assert!((0.0..TAU).contains(&wrapped));
+            prop_assert_eq!(normalize_radians(wrapped), wrapped);
+        }
+    }
 
     #[test]
     fn normalize_radians_wraps_into_one_turn() {

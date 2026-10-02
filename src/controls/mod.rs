@@ -13,6 +13,9 @@ const ZOOM_FACTOR: f64 = 1.25;
 /// Speed change of one speed step.
 const SPEED_FACTOR: f64 = 10.0;
 
+/// Interactive speed changes saturate here, preventing overflow after repeated key presses.
+pub const MAX_INTERACTIVE_SPEED: f64 = 1e12;
+
 /// An action the user can trigger while the sky is shown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Control {
@@ -41,8 +44,12 @@ pub fn apply_control(control: Control, view: &mut View, clock: &mut SimulationCl
         Control::ZoomIn => view.zoom(ZOOM_FACTOR),
         Control::ZoomOut => view.zoom(1.0 / ZOOM_FACTOR),
         Control::TogglePause => clock.toggle_pause(),
-        Control::SpeedUp => clock.set_speed(clock.speed() * SPEED_FACTOR),
-        Control::SlowDown => clock.set_speed(clock.speed() / SPEED_FACTOR),
+        Control::SpeedUp => {
+            clock.set_speed((clock.speed() * SPEED_FACTOR).clamp(-MAX_INTERACTIVE_SPEED, MAX_INTERACTIVE_SPEED))
+        }
+        Control::SlowDown => {
+            clock.set_speed((clock.speed() / SPEED_FACTOR).clamp(-MAX_INTERACTIVE_SPEED, MAX_INTERACTIVE_SPEED))
+        }
         Control::ReverseTime => clock.set_speed(-clock.speed()),
         Control::ResetView => *view = *initial_view,
         Control::Quit => {} // handled by the frame loop
@@ -76,5 +83,32 @@ mod tests {
 
         apply_control(Control::ResetView, &mut view, &mut clock, &initial_view);
         assert_eq!(view, initial_view);
+    }
+
+    #[test]
+    fn repeated_speed_changes_saturate_and_preserve_pause_and_direction() {
+        for speed in [1.0, -1.0, f64::MAX, -f64::MAX, 0.0] {
+            let initial_view = View::default();
+            let mut view = initial_view;
+            let mut clock = SimulationClock::start(J2000, 0.0);
+            clock.toggle_pause();
+            clock.set_speed(speed);
+            for _ in 0..400 {
+                apply_control(Control::SpeedUp, &mut view, &mut clock, &initial_view);
+                assert!(clock.speed().is_finite() && clock.speed().abs() <= MAX_INTERACTIVE_SPEED);
+            }
+            assert_eq!(
+                clock.speed(),
+                if speed == 0.0 {
+                    0.0
+                } else {
+                    speed.signum() * MAX_INTERACTIVE_SPEED
+                }
+            );
+            apply_control(Control::SlowDown, &mut view, &mut clock, &initial_view);
+            assert!(clock.speed().abs() <= MAX_INTERACTIVE_SPEED / SPEED_FACTOR);
+            assert!(clock.is_paused());
+            assert_eq!(clock.julian_date(), J2000);
+        }
     }
 }

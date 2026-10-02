@@ -52,6 +52,19 @@ impl std::error::Error for ConfigError {}
 
 /// Validate the arguments and convert them to a [`Config`]. `cities` resolves `--city`.
 pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, ConfigError> {
+    // reject non-finite values even when a city overrides the supplied coordinates
+    for (value, name) in [
+        (arguments.speed, "Speed"),
+        (f64::from(arguments.threshold), "Magnitude threshold"),
+        (f64::from(arguments.label_threshold), "Label threshold"),
+        (arguments.latitude, "Latitude"),
+        (arguments.longitude, "Longitude"),
+    ] {
+        if !value.is_finite() {
+            return Err(ConfigError(format!("{name} must be finite")));
+        }
+    }
+
     // observer location (a city overrides latitude and longitude) and time
     let observer = match &arguments.city {
         Some(name) => locate_city(cities, name)?,
@@ -272,6 +285,34 @@ mod tests {
         assert_eq!(config_from(&[]).unwrap().dataset, None);
         let config = config_from(&["--dataset", "datasets/athyg_40.csv.gz"]).unwrap();
         assert_eq!(config.dataset, Some(PathBuf::from("datasets/athyg_40.csv.gz")));
+    }
+
+    #[test]
+    fn rejects_non_finite_values_before_starting_the_terminal() {
+        for flag in [
+            "--speed",
+            "--threshold",
+            "--label-thresh",
+            "--latitude",
+            "--longitude",
+            "--aspect-ratio",
+        ] {
+            for value in ["NaN", "inf", "-inf"] {
+                let argument = format!("{flag}={value}");
+                assert!(config_from(&[&argument]).is_err(), "{argument}");
+            }
+        }
+        assert!(config_from(&["-i", "Tokyo", "--latitude=NaN"]).is_err());
+        for speed in ["0", "-1000", "1e12"] {
+            assert!(config_from(&["--speed", speed]).is_ok());
+        }
+    }
+
+    #[test]
+    fn accepts_signed_extended_calendar_years() {
+        for date in ["-7974-01-01T00:00:00", "+12026-12-31T00:00:00"] {
+            assert!(config_from(&["-d", date]).is_ok());
+        }
     }
 
     #[test]

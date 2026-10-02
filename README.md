@@ -28,6 +28,12 @@ source <(cargo run --release -- --bash-completions)                     # bash c
 
 With `--quit-on-any`, any key quits instead.
 
+Dates use the **proleptic Gregorian calendar** and astronomical year numbering: year `0` is 1 BC, `-1` is 2 BC.
+Use signed extended years with `-d`, for example `-7974-01-01T00:00:00` or `+12026-01-01T00:00:00`. Input is UTC
+(UT before UTC existed); currently the calculations approximate UT1 and TT by that same input time. Wide calendar
+support is not an accuracy guarantee. Accuracy targets and currently unvalidated ranges are documented in
+`astro::accuracy`; long-term astronomy improvements remain planned.
+
 ## Layers
 
 Each module only depends on the ones above it:
@@ -78,6 +84,8 @@ Fixed:
   are drawn. Straight lines between projected stars could cut across the whole display in views wider than 180°.
 - Simulation time follows the wall clock (no drift when frames are slow).
 - Datetimes are parsed as UTC without `mktime`, so local DST no longer shifts them.
+- Gregorian date conversion also works before 4800 BC; extended years keep their sign in the metadata panel.
+- Non-finite CLI numbers are rejected; interactive speed changes saturate at ±10¹² to avoid overflow.
 - Mean anomalies wrap correctly for large negative values.
 - The point directly behind an equidistant view has a fixed direction instead of a random one.
 - The 14 BSC5 placeholder entries (no data) are no longer drawn as a bright star at RA 0 / Dec 0.
@@ -92,6 +100,10 @@ Fixed:
 ```sh
 cargo fmt --check && cargo clippy --all-targets && cargo test
 ```
+
+Offline scene snapshots include colors and wide-glyph occupancy. Independent astronomy fixtures and the Boston
+reference audit are described in [scripts/reference/README.md](scripts/reference/README.md). Reproducible
+benchmarks and PTY checks are described in [scripts/checks/README.md](scripts/checks/README.md).
 
 `make build-aggressive` builds a faster binary for the current machine into `target/aggressive-pgo/astroterm`:
 fat LTO, one codegen unit, `panic = "abort"`, `-C target-cpu=native`, then profile-guided optimization and BOLT,

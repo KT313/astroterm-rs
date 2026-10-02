@@ -54,14 +54,14 @@ impl TerminalRenderer {
         Ok(())
     }
 
-    /// Draw the sky as seen in `view`, with the metadata panel on top, and show it. `julian_date` is the simulation
+    /// Draw the sky as seen in `view`, with the metadata panel on top, and show it. `julian_date_utc` is the simulation
     /// time the sky's positions were computed for. The durations of drawing and presenting are added to `step_times`;
     /// the panel shows them as of the previous frame.
     pub fn render_frame(
         &mut self,
         sky: &Sky,
         view: &View,
-        julian_date: f64,
+        julian_date_utc: f64,
         clock: &SimulationClock,
         observer: &Observer,
         step_times: &mut StepTimes,
@@ -76,8 +76,14 @@ impl TerminalRenderer {
         step_times.measure("Draw", || {
             draw_sky_scene(&mut self.frame.sky, view, &self.options, sky);
             if let Some(panel) = &mut self.frame.panel {
-                let mut fields =
-                    collect_metadata_fields(julian_date, clock, sky.moon.phase, observer, view, self.options.unicode);
+                let mut fields = collect_metadata_fields(
+                    julian_date_utc,
+                    clock,
+                    sky.moon.phase,
+                    observer,
+                    view,
+                    self.options.unicode,
+                );
                 fields.extend(step_time_fields.into_iter().flatten());
                 draw_metadata_panel(panel, &fields);
             }

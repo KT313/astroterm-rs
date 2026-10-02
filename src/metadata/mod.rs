@@ -21,23 +21,23 @@ pub struct MetadataField {
     pub value: String,
 }
 
-/// The metadata fields for the simulation time `julian_date`. `unicode` allows symbols such as the zodiac sign's.
+/// The metadata fields for the simulation time `julian_date_utc`. `unicode` allows symbols such as the zodiac sign's.
 pub fn collect_metadata_fields(
-    julian_date: f64,
+    julian_date_utc: f64,
     clock: &SimulationClock,
     moon_phase: MoonPhase,
     observer: &Observer,
     view: &View,
     unicode: bool,
 ) -> Vec<MetadataField> {
-    let local_time = julian_date_to_utc(julian_date).map(convert_to_local_time);
-    format_metadata_fields(local_time, julian_date, clock, moon_phase, observer, view, unicode)
+    let local_time = julian_date_to_utc(julian_date_utc).map(convert_to_local_time);
+    format_metadata_fields(local_time, julian_date_utc, clock, moon_phase, observer, view, unicode)
 }
 
 /// The fields, given the simulation time in the local timezone (`None` if it can't be represented).
 fn format_metadata_fields(
     local_time: Option<LocalTime>,
-    julian_date: f64,
+    julian_date_utc: f64,
     clock: &SimulationClock,
     moon_phase: MoonPhase,
     observer: &Observer,
@@ -50,10 +50,10 @@ fn format_metadata_fields(
     match local_time {
         Some(LocalTime { time, zone }) => {
             let date = format!(
-                "{:02}-{:02}-{:04} {:02}:{:02}",
+                "{:02}-{:02}-{} {:02}:{:02}",
                 time.day(),
                 time.month(),
-                time.year(),
+                format_calendar_year(time.year()),
                 time.hour(),
                 time.minute()
             );
@@ -81,7 +81,7 @@ fn format_metadata_fields(
     fields.push(create_field("Longitude", longitude.to_string()));
 
     // time elapsed in the simulation, and how fast it runs
-    let elapsed = ElapsedTime::from_days(julian_date - clock.start_julian_date());
+    let elapsed = ElapsedTime::from_days(julian_date_utc - clock.start_julian_date());
     let year_label = if elapsed.years == 1 { " year" } else { "years" };
     let day_label = if elapsed.days == 1 { " day" } else { "days" };
     let elapsed_text = format!(
@@ -135,6 +135,15 @@ fn create_field(label: impl Into<String>, value: impl Into<String>) -> MetadataF
     }
 }
 
+/// Astronomical year, signed outside the four-digit range so year zero and BC dates remain unambiguous.
+fn format_calendar_year(year: i32) -> String {
+    if (0..=9999).contains(&year) {
+        format!("{year:04}")
+    } else {
+        format!("{year:+05}")
+    }
+}
+
 /// A speed multiplier rounded to 6 significant digits without trailing zeros, so repeated speed changes don't show
 /// floating-point noise (e.g. `7` rather than `7.000000000000001`).
 fn format_speed(speed: f64) -> String {
@@ -153,6 +162,50 @@ fn format_speed(speed: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn metadata_panel_snapshot_uses_an_explicit_zone_and_frozen_clock() {
+        let time = chrono::DateTime::parse_from_rfc3339("2025-03-01T20:00:00+09:00").unwrap();
+        let local_time = Some(LocalTime {
+            time,
+            zone: "JST".to_string(),
+        });
+        let observer = Observer {
+            latitude: 35.69_f64.to_radians(),
+            longitude: 139.69_f64.to_radians(),
+        };
+        let mut clock = SimulationClock::start(2460736.9583333335, 0.0);
+        clock.toggle_pause();
+        let fields = format_metadata_fields(
+            local_time,
+            clock.start_julian_date(),
+            &clock,
+            MoonPhase::WaxingCrescent,
+            &observer,
+            &View::default(),
+            true,
+        );
+        let mut panel = crate::canvas::Canvas::new(0, 0);
+        crate::scene::draw_metadata_panel(&mut panel, &fields);
+        let occupancy = (0..panel.height())
+            .map(|row| {
+                panel
+                    .row(row)
+                    .iter()
+                    .map(|cell| if cell.is_continuation() { '>' } else { '.' })
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let snapshot = format!(
+            "{}\ncontinuations:\n{occupancy}\ncolors: all default",
+            panel.to_lines().join("\n")
+        );
+        insta::with_settings!({snapshot_path => concat!(env!("CARGO_MANIFEST_DIR"), "/tests/snapshots")}, {
+            insta::assert_snapshot!("metadata_panel", snapshot);
+        });
+        assert!((0..panel.height()).all(|row| { panel.row(row).iter().all(|cell| cell.color.is_none()) }));
+    }
 
     #[test]
     fn collects_all_fields() {
@@ -261,5 +314,18 @@ mod tests {
         assert_eq!(format_speed(0.001), "0.001");
         assert_eq!(format_speed(123456789.0), "123456789");
         assert_eq!(format_speed(0.0), "0");
+    }
+
+    #[test]
+    fn extended_calendar_years_keep_their_sign() {
+        for (year, text) in [
+            (-7974, "-7974"),
+            (-1, "-0001"),
+            (0, "0000"),
+            (2026, "2026"),
+            (12026, "+12026"),
+        ] {
+            assert_eq!(format_calendar_year(year), text);
+        }
     }
 }

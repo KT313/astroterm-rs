@@ -92,8 +92,9 @@ impl MoonPhase {
 }
 
 /// Apply proper motion (radians per year) to a J2000 catalog position. The result is still in the J2000 frame.
-pub fn compute_star_position(catalog: Equatorial, proper_motion: Equatorial, julian_date: f64) -> Equatorial {
-    let years_since_j2000 = (julian_date - J2000) / 365.2425;
+/// Time is TT; the legacy 365.2425-day motion year is retained until the stellar-model replacement.
+pub fn compute_star_position(catalog: Equatorial, proper_motion: Equatorial, julian_date_tt: f64) -> Equatorial {
+    let years_since_j2000 = (julian_date_tt - J2000) / 365.2425;
     Equatorial {
         right_ascension: catalog.right_ascension + proper_motion.right_ascension * years_since_j2000,
         declination: catalog.declination + proper_motion.declination * years_since_j2000,
@@ -101,11 +102,12 @@ pub fn compute_star_position(catalog: Equatorial, proper_motion: Equatorial, jul
 }
 
 /// Heliocentric position of a planet in rectangular J2000 equatorial coordinates (AU).
+/// Time is TT. The result is geometric: no observer subtraction, light-time or aberration.
 ///
 /// Follows the Explanatory Supplement to the Astronomical Almanac, ch. 8, p. 340.
-pub fn compute_planet_heliocentric(orbit: &PlanetOrbit, julian_date: f64) -> Vector3 {
+pub fn compute_planet_heliocentric(orbit: &PlanetOrbit, julian_date_tt: f64) -> Vector3 {
     // 1. propagate the elements to the date
-    let centuries = (julian_date - J2000) / 36525.0;
+    let centuries = (julian_date_tt - J2000) / 36525.0;
     let elements = propagate_elements(&orbit.elements, &orbit.rates, centuries);
     let OrbitalElements {
         semi_major_axis,
@@ -133,12 +135,14 @@ pub fn compute_planet_heliocentric(orbit: &PlanetOrbit, julian_date: f64) -> Vec
 }
 
 /// Geocentric position of the Moon in rectangular equatorial coordinates (Earth radii).
+/// Time is TT. The native ecliptic coordinates are mean of date; conversion currently uses fixed J2000 obliquity
+/// as an approximation. No observer parallax or refraction is included here.
 ///
 /// Paul Schlyter's method (<https://stjarnhimlen.se/comp/ppcomp.html#6>), including his perturbation terms, which
 /// bring the error down from several degrees to a few arcminutes.
-pub fn compute_moon_geocentric(orbit: &MoonOrbit, julian_date: f64) -> Vector3 {
+pub fn compute_moon_geocentric(orbit: &MoonOrbit, julian_date_tt: f64) -> Vector3 {
     // propagate the elements to the date
-    let days = julian_date - 2451543.5; // Schlyter's day 0 is 1999-12-31T00:00
+    let days = julian_date_tt - 2451543.5; // Schlyter's day 0 is 1999-12-31T00:00
     let elements = propagate_elements(&orbit.elements, &orbit.rates, days);
     let OrbitalElements {
         semi_major_axis,

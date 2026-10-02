@@ -1,0 +1,4 @@
+numpy==2.3.3
+pyerfa==2.0.1.5
+astropy==7.1.0
+astroquery==0.4.10

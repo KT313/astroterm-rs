@@ -1,5 +1,39 @@
 //! The sky model: every object in the sky and its apparent position. It holds no rendering details, so any renderer
 //! can draw it.
+//!
+//! # Stage contract (target architecture; implementation follows in phase 2)
+//!
+//! `simulation state -> observed sky -> camera projection -> rendering`.
+//! The current [`update_sky_positions`] still combines simulation and observation. No new runtime stages or model
+//! families are introduced by documenting this contract.
+//!
+//! - Simulation owns geometric body states in a common barycentric, equatorial J2000 frame (AU, AU/day, f64),
+//!   including Sun, Earth and Moon. Until barycentric ephemerides arrive, the heliocentric origin is a documented
+//!   approximation. Each evaluator has its own sample epoch, validity interval, precision/error policy and version.
+//! - Observation evaluates prepared model samples at one requested frame time, composes parent-relative states at
+//!   matching epochs, constructs the full observer position/velocity, and applies light-time, aberration, horizon
+//!   rotation and refraction exactly once. Emission-time queries are explicit. Missing cache coverage is reported
+//!   to the coordinator; it is not hidden in rendering. Fast body spin and cheap stellar motion run on demand.
+//! - Camera projection maps read-only observed directions into screen coordinates and decides visibility. An optional
+//!   region restricts which objects are observed, never their values. Multiple cameras can share an observed sky.
+//! - Rendering chooses glyphs/pixels, colors, labels and layout from projected output. The frame loop stays visible
+//!   in `main.rs`; ordinary functions and concrete state types are sufficient.
+//!
+//! # Model-family ownership
+//!
+//! Future `astro/models/{stars,planets,moons,orientation}` files/folders own their formulas, coefficients and local
+//! reference tests. Stellar motion includes distance-dependent magnitude and bounds; planetary models can batch
+//! bodies; lunar models declare parent dependencies; orientation owns pole/spin/shape/site geometry. Shared orbital
+//! math stays in a common lower module. No model imports catalog I/O, sky orchestration, CLI or renderers.
+//! Catalog parsing supplies typed inputs, stable star IDs and compact arrays. A body's stable identity and parent
+//! link are independent of the theory selected to compute it. Common observation corrections have one implementation.
+//!
+//! A family adapter declares native origin/frame, units, time scale, precision, supported dates and errors, then
+//! returns common-frame geometric states or the stellar direction/distance representation. Per-family samples may
+//! have different ages, but their evaluated results must refer to the same requested epoch before composition.
+//! Refreshing the Moon does not invalidate a still-valid planetary sample. A model change invalidates only its own
+//! and dependent results. Tests independently cover model outputs, shared observation and camera/render integration.
+//! Earth is the only supported anchor initially; other sites/bodies remain future work.
 
 mod objects;
 mod positions;
