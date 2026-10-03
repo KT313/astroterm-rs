@@ -1,6 +1,6 @@
 //! Camera geometry only: maps an immutable observed sky to screen points and clipped segments. No simulation
 //! evaluation or astronomical corrections occur here. Character rendering consumes these prepared primitives.
-use super::{CartesianCamera, Polar, ScreenPoint, View, ViewCenter};
+use super::{CartesianCamera, Polar, ScreenPoint, View, ViewCenter, draw_order::sort_stars_for_drawing};
 use crate::astro::{Horizontal, Vector3, offset_vector_towards};
 use crate::catalog::StarNames;
 use crate::sky::{ObservedSky, ObservedStar, PlanetKind};
@@ -154,16 +154,6 @@ fn project_visible_stars<'a>(
             })
         })
         .collect()
-}
-
-fn sort_stars_for_drawing(stars: &mut [ProjectedStar<'_>]) {
-    stars.sort_unstable_by(|a, b| {
-        if a.star.magnitude == b.star.magnitude {
-            a.star.id.cmp(&b.star.id)
-        } else {
-            b.star.magnitude.total_cmp(&a.star.magnitude)
-        }
-    });
 }
 
 pub(super) fn project_bodies(

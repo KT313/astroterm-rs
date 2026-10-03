@@ -203,6 +203,8 @@ before refraction, so all objects receive the correction exactly once. Stars wit
 an always-checked list. Other stars are grouped into depth-6 cube-map cells, queried at depth 4 for wide views
 and depth 6 for narrow ones; fields of view of at least 300° use all cells. The query includes conservative motion,
 quantization, refraction and reserved aberration margins. Exact current brightness and projection decide visibility.
+Draw-order comparisons use compact current-magnitude/ID/index records. The projection cache reuses sorting
+scratch capacity; `--disable-cache` still rebuilds the order each frame.
 
 Directions and scaled velocities are stored as `f32` and expanded for `f64` evaluation. Brightness keys round
 brighter and angular bounds round outward. Trajectories whose full-interval quantization bound exceeds 0.5″ stay in

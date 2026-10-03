@@ -188,3 +188,19 @@ same selected indices; deferred labels are resolved only when needed in producti
 one million normalized directions and reports generic versus unit-input cost. Neither replaces the whole processing
 probe. Its JSON now includes evaluated-star, skipped-correction and endpoint-only counts. Current-brightness
 rejections may be rare near today; measure selection/publication overhead rather than assuming large O4 savings.
+
+
+Compact draw-order checks (O5):
+
+```sh
+cargo test --locked --lib projection::
+cargo test --locked --test stellar_pipeline --test processing_cache --test scene_snapshots
+cargo test --release --locked --lib compare_compact_draw_order -- --ignored --nocapture
+```
+
+The opt-in comparison includes dependency-key collection, refresh checks, sorting, index extraction and result
+storage. It alternates the former indirect comparator and compact records, discards two warm-ups, and reports
+the median of ten measurements for refreshes and cache hits. Inputs are all BSC stars at magnitude ≤5 and
+20k/250k synthetic sort entries; it loads no AT-HYG catalog and performs no astronomy or rasterization. It
+checks exact index-order equality and reports retained scratch capacity in bytes. This isolates draw-order cost,
+not whole-frame speed. Functional tests cover floating-point ties, dynamic names, membership changes and bypass.

@@ -4,6 +4,7 @@ mod cartesian;
 mod maps;
 pub use cartesian::{CartesianCamera, ScreenPoint};
 mod cached;
+mod draw_order;
 mod sky;
 pub use cached::ProjectionCache;
 pub use sky::{
