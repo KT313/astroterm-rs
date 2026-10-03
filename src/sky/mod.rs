@@ -3,9 +3,13 @@
 //! Common states use f64 J2000 equatorial AU/AU-day, currently with a heliocentric origin. Earth is the only real
 //! anchor. Its site vector remains zero; the legacy Moon altitude parallax is applied in observation exactly once.
 
+pub mod grid;
 mod illumination;
 mod objects;
+mod storage;
+pub use grid::{SelectionStats, SkyRegion};
 pub use illumination::{MoonIllumination, compute_moon_illumination};
+pub use storage::StarStorage;
 mod observation;
 mod positions;
 pub mod simulation;
@@ -25,8 +29,9 @@ use crate::catalog::{Catalog, ConstellationFigure, StarNames};
 /// Immutable model inputs and display metadata, shared by all observed skies.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SkyCatalog {
-    /// Brightest possible first within the computational interval; equal keys by descending stable ID. Placeholders are omitted.
-    pub stars: Vec<Star>,
+    /// Compact immutable inputs, sorted by cell then conservative brightness key and descending stable ID.
+    pub stars: StarStorage,
+    pub grid: grid::SkyGrid,
     /// Sorted union of all constellation endpoints, independent of candidate selection.
     pub endpoint_indices: Vec<usize>,
     /// Indices whose trajectory drift exceeds the grid-margin threshold.
@@ -39,28 +44,58 @@ pub struct SkyCatalog {
 impl SkyCatalog {
     /// Prepare a sorted immutable catalog and resolve constellation endpoints.
     pub fn from_catalog(catalog: &Catalog) -> SkyCatalog {
-        // compact and sort drawable stars, preserving the old drawing and label tie order
-        let mut stars: Vec<Star> = catalog
-            .stars
-            .iter()
-            .filter(|star| star.has_data)
-            .map(Star::from_catalog_star)
-            .collect();
-        stars.sort_unstable_by(|a, b| {
-            a.brightness_key
-                .total_cmp(&b.brightness_key)
-                .then_with(|| b.id.cmp(&a.id))
+        Self::build(
+            catalog.stars.iter().cloned(),
+            catalog.names.clone(),
+            &catalog.hr_representatives,
+            &catalog.constellations,
+        )
+    }
+
+    /// Consume parsed rows while compacting them; no second expanded star table is built.
+    pub fn from_owned_catalog(catalog: Catalog) -> Self {
+        Self::build(
+            catalog.stars.into_iter(),
+            catalog.names,
+            &catalog.hr_representatives,
+            &catalog.constellations,
+        )
+    }
+
+    fn build(
+        entries: impl Iterator<Item = crate::catalog::CatalogStar>,
+        names: StarNames,
+        representatives: &HashMap<u32, crate::catalog::StarId>,
+        figures: &[ConstellationFigure],
+    ) -> Self {
+        // prepare directly into compact arrays, then permute in place by cell, key and stable ID
+        let mut stars = StarStorage::default();
+        stars.reserve(entries.size_hint().1.unwrap_or(0));
+        for entry in entries.filter(|s| s.has_data) {
+            stars.push(Star::from_catalog_star(&entry));
+        }
+        stars.shrink_to_fit();
+        let cells: Vec<_> = (0..stars.len()).map(|i| grid::stored_cell(&stars, i)).collect();
+        let mut order: Vec<_> = (0..stars.len()).collect();
+        order.sort_unstable_by(|&a, &b| {
+            cells[a]
+                .cmp(&cells[b])
+                .then_with(|| stars.brightness_key(a).total_cmp(&stars.brightness_key(b)))
+                .then_with(|| stars.id(b).cmp(&stars.id(a)))
         });
+        stars.reorder(&order);
+        drop(order);
+        drop(cells);
+        let grid = grid::SkyGrid::build(&stars);
 
         // resolve representatives after sorting, without changing the choice made before overrides
-        let hr_by_id: HashMap<_, _> = catalog.hr_representatives.iter().map(|(&hr, &id)| (id, hr)).collect();
+        let hr_by_id: HashMap<_, _> = representatives.iter().map(|(&hr, &id)| (id, hr)).collect();
         let index_by_hr: HashMap<u32, usize> = stars
             .iter()
             .enumerate()
             .filter_map(|(index, star)| Some((*hr_by_id.get(&star.id)?, index)))
             .collect();
-        let constellations: Vec<Constellation> = catalog
-            .constellations
+        let constellations: Vec<Constellation> = figures
             .iter()
             .filter_map(|figure| resolve_constellation_figure(figure, &index_by_hr))
             .collect();
@@ -85,14 +120,17 @@ impl SkyCatalog {
             always_checked,
             singular_count,
             stars,
-            names: catalog.names.clone(),
+            grid,
+            names,
             constellations,
         }
     }
 
-    /// Length of the possible-brightness candidate prefix for an inclusive magnitude threshold.
+    /// Number of possible-brightness candidates across all cells for an inclusive threshold.
     pub fn count_bright_stars(&self, threshold: f64) -> usize {
-        self.stars.partition_point(|star| star.brightness_key <= threshold)
+        (0..self.stars.len())
+            .filter(|&i| self.stars.brightness_key(i) <= threshold)
+            .count()
     }
 
     /// Resolve a star's name from the sky-owned string block.
@@ -101,10 +139,13 @@ impl SkyCatalog {
     }
 }
 
-/// Read-only output of observation, independent of a view. Shares immutable catalog data across sites and frames.
+/// Read-only output of observation, independent of camera projection. It may cover only the requested SkyRegion;
+/// request All when reusing one observation for arbitrary cameras. Catalog data is shared across sites and frames.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ObservedSky {
     pub magnitude_threshold: f64,
+    pub selection: SelectionStats,
+    pub(crate) candidate_indices: Vec<usize>,
     pub runtime_singular_count: usize,
     pub catalog: Arc<SkyCatalog>,
     pub stars: Vec<ObservedStar>,
@@ -121,6 +162,8 @@ impl ObservedSky {
     pub fn new(catalog: Arc<SkyCatalog>) -> Self {
         Self {
             magnitude_threshold: f64::INFINITY,
+            selection: SelectionStats::default(),
+            candidate_indices: Vec::new(),
             runtime_singular_count: 0,
             names: catalog.names.clone(),
             constellations: catalog.constellations.clone(),
@@ -141,7 +184,7 @@ impl ObservedSky {
             .iter()
             .enumerate()
             .map(|(index, star)| {
-                ObservedStar::from_star(star, index, crate::astro::Horizontal::default().to_unit_vector())
+                ObservedStar::from_star(&star, index, crate::astro::Horizontal::default().to_unit_vector())
             })
             .collect();
         sky
@@ -199,17 +242,29 @@ mod tests {
                 .iter()
                 .all(|star| star.designation == Some(Designation::Hr(star.id.0 as u32)))
         );
-        assert!(sky.stars.windows(2).all(|pair| pair[0].magnitude < pair[1].magnitude
-            || (pair[0].magnitude == pair[1].magnitude && pair[0].id > pair[1].id)));
+        for range in sky.catalog.grid.offsets.windows(2) {
+            let stars = &sky.catalog.stars;
+            for i in range[0] + 1..range[1] {
+                assert!(
+                    stars.brightness_key(i - 1) < stars.brightness_key(i)
+                        || (stars.brightness_key(i - 1) == stars.brightness_key(i) && stars.id(i - 1) > stars.id(i))
+                );
+            }
+        }
     }
 
     #[test]
     fn stars_are_drawn_dimmest_first() {
         let sky = build_sky();
-        let drawn: Vec<_> = sky.stars.iter().rev().map(|star| star.id.0).collect();
+        let projected = crate::projection::project_sky(
+            &sky,
+            &crate::projection::View::default(),
+            crate::projection::Viewport { height: 41, width: 81 },
+        );
+        let drawn: Vec<_> = projected.stars.iter().map(|s| s.star.id.0).collect();
         assert_eq!(&drawn[..3], &[1894, 365, 3313]);
         assert_eq!(
-            sky.stars[..3].iter().map(|star| star.id.0).collect::<Vec<_>>(),
+            drawn.iter().rev().take(3).copied().collect::<Vec<_>>(),
             [2491, 2326, 5340]
         );
     }

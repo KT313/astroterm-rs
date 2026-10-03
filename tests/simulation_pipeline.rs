@@ -24,7 +24,16 @@ fn catalog() -> Arc<SkyCatalog> {
 fn observe(state: &SimulationState, time: f64, site: Observer, catalog: Arc<SkyCatalog>) -> ObservedSky {
     let observer = prepare_observer(state, FrameTime::from_utc(time), site).unwrap();
     let mut sky = ObservedSky::new(catalog);
-    observe_sky(state, &observer, 5.0, false, &mut sky, &mut StepTimes::default()).unwrap();
+    observe_sky(
+        state,
+        &observer,
+        5.0,
+        false,
+        astroterm::sky::SkyRegion::All,
+        &mut sky,
+        &mut StepTimes::default(),
+    )
+    .unwrap();
     sky
 }
 fn options() -> RenderOptions {
@@ -270,6 +279,7 @@ fn synthetic_anchor_composes_translation_tilt_spin_and_site_velocity() {
         &observer,
         -100.0,
         true,
+        astroterm::sky::SkyRegion::All,
         &mut sky,
         &mut StepTimes::default(),
     )
@@ -445,13 +455,40 @@ fn refraction_is_applied_once_in_observation_and_resets_for_each_frame() {
     update(&mut state, J2000);
     let observer = prepare_observer(&state, FrameTime::from_utc(J2000), Observer::default()).unwrap();
     let mut sky = ObservedSky::new(catalog());
-    observe_sky(&state, &observer, 5.0, false, &mut sky, &mut StepTimes::default()).unwrap();
+    observe_sky(
+        &state,
+        &observer,
+        5.0,
+        false,
+        astroterm::sky::SkyRegion::All,
+        &mut sky,
+        &mut StepTimes::default(),
+    )
+    .unwrap();
     let raw = sky.moon.position;
-    observe_sky(&state, &observer, 5.0, true, &mut sky, &mut StepTimes::default()).unwrap();
+    observe_sky(
+        &state,
+        &observer,
+        5.0,
+        true,
+        astroterm::sky::SkyRegion::All,
+        &mut sky,
+        &mut StepTimes::default(),
+    )
+    .unwrap();
     assert_eq!(sky.moon.position, astroterm::astro::refract_direction(raw));
     let once = sky.clone();
     astroterm::sky::refract_sky_positions(&mut sky);
     assert_eq!(sky, once);
-    observe_sky(&state, &observer, 5.0, true, &mut sky, &mut StepTimes::default()).unwrap();
+    observe_sky(
+        &state,
+        &observer,
+        5.0,
+        true,
+        astroterm::sky::SkyRegion::All,
+        &mut sky,
+        &mut StepTimes::default(),
+    )
+    .unwrap();
     assert_eq!(sky, once);
 }

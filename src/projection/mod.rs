@@ -78,6 +78,14 @@ impl Default for View {
 }
 
 impl View {
+    /// Renderer-neutral observation region. The observer rotates it into the inertial catalog frame.
+    pub fn sky_region(&self) -> crate::sky::SkyRegion {
+        crate::sky::SkyRegion::Cone {
+            center: self.center_direction().to_unit_vector(),
+            radius: self.fov_degrees.to_radians() / 2.0,
+        }
+    }
+
     /// Whether the view faces a direction (with the horizon across it) rather than the zenith.
     pub fn is_facing(&self) -> bool {
         matches!(self.center, ViewCenter::Facing { .. })

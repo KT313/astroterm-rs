@@ -6,6 +6,8 @@ import codecs
 import fcntl
 import json
 import os
+import re
+import statistics
 from pathlib import Path
 import select
 import signal
@@ -97,6 +99,8 @@ def check_star_diagnostics(binary):
     try:
         terminal.until(lambda: "Star fallbacks:" in terminal.text())
         assert "0 catalog, 0 frame" in terminal.text()
+        assert "Candidate cells:" in terminal.text() and "Candidate stars:" in terminal.text()
+        assert "Evaluated stars:" in terminal.text()
         assert b"Catalog: 0 stars use tangential motion" in terminal.raw
         terminal.send("q")
         assert terminal.wait_exit() == 0
@@ -178,12 +182,63 @@ def measure_startup(binary, dataset):
         terminal.close()
 
 
+def measure_workloads(binary, dataset):
+    """Read real debug-panel timings and bound input latency by the first frame with changed Facing metadata."""
+    results = []
+    for threshold, fov in [(5, 180), (12, 10), (12, 180)]:
+        for refraction in [False, True]:
+            for constellations in [False, True]:
+                command = [str(binary), "-d", "2025-03-01T11:00:00", "-i", "Tokyo", "-s", "0",
+                           "--debug-frametimes", "--fps", "24", "-F", "225", "-T", "30", "-z", str(fov),
+                           "-t", str(threshold), "-cbu"]
+                if dataset:
+                    command += ["--dataset", str(dataset)]
+                if refraction:
+                    command += ["-R"]
+                if constellations:
+                    command += ["-C"]
+                terminal = TerminalProcess(command, rows=55, columns=160, pixels=(1600, 1100))
+                try:
+                    terminal.until(lambda: "Present:" in terminal.text(), timeout=90)
+                    end = time.monotonic() + 1.5
+                    while time.monotonic() < end:
+                        terminal.pump()
+                    text = terminal.text()
+                    times = {name: float(value) for name, value in re.findall(
+                        r"(Frame Time|Simulation|Observation|Projection|Draw|Present):\s*([0-9.]+) ms", text)}
+                    counts = {label: int(value) for label, value in re.findall(
+                        r"(Candidate cells|Candidate stars|Evaluated stars):\s*(\d+)", text)}
+                    assert len(counts) == 3, text
+                    facing = lambda: re.search(r"Facing:\s*([0-9.]+)°", terminal.text()).group(1)
+                    latencies = []
+                    for _ in range(10):
+                        before = facing()
+                        start = time.perf_counter()
+                        terminal.send("l")
+                        terminal.until(lambda: facing() != before)
+                        latencies.append((time.perf_counter() - start) * 1000)
+                    memory = read_memory(terminal.process.pid)
+                    terminal.send("q")
+                    assert terminal.wait_exit() == 0
+                    terminal.assert_restored()
+                    results.append({"threshold": threshold, "fov": fov, "refraction": refraction,
+                                    "constellations": constellations, "debug_ms_ema": times,
+                                    "cells": counts["Candidate cells"], "candidates": counts["Candidate stars"],
+                                    "evaluated": counts["Evaluated stars"], "key_to_changed_frame_ms": latencies,
+                                    "median_input_ms": statistics.median(latencies), "max_input_ms": max(latencies),
+                                    "rss_kib": memory, "screen": "55x160 cells; 1600x1100 pixels"})
+                finally:
+                    terminal.close()
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=Path("target/release/astroterm"))
     parser.add_argument("--probe", type=Path, default=Path("target/release/examples/terminal_probe"))
     parser.add_argument("--dataset", type=Path)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--workloads", action="store_true", help="also measure the phase-4 matrix and input latency")
     args = parser.parse_args()
     results = {"checks": [check_interaction(args.binary.resolve(), metadata) for metadata in [False, True]],
                "stellar_diagnostics": check_star_diagnostics(args.binary.resolve()),
@@ -196,6 +251,8 @@ def main():
                           "Linux only; macOS and Windows not tested"]}
     if args.dataset:
         results["startup"].append(measure_startup(args.binary.resolve(), args.dataset.resolve()))
+    if args.workloads:
+        results["workloads"] = measure_workloads(args.binary.resolve(), args.dataset.resolve() if args.dataset else None)
     if args.output:
         args.output.write_text(json.dumps(results, indent=2) + "\n")
     print(json.dumps(results, indent=2))

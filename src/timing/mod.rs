@@ -9,6 +9,7 @@ const EMA_FACTOR: f64 = 0.95;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StepTime {
     pub name: &'static str,
+    pub depth: usize,
     pub average_seconds: f64,
 }
 
@@ -16,6 +17,7 @@ pub struct StepTime {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct StepTimes {
     steps: Vec<StepTime>,
+    depth: usize,
 }
 
 impl StepTimes {
@@ -30,7 +32,9 @@ impl StepTimes {
     /// Measure a stage that also records its own sub-steps.
     pub fn measure_steps<T>(&mut self, name: &'static str, run: impl FnOnce(&mut Self) -> T) -> T {
         let start = Instant::now();
+        self.depth += 1;
         let result = run(self);
+        self.depth -= 1;
         self.record(name, start.elapsed().as_secs_f64());
         result
     }
@@ -46,6 +50,7 @@ impl StepTimes {
             Some(step) => step.average_seconds = step.average_seconds * EMA_FACTOR + seconds * (1.0 - EMA_FACTOR),
             None => self.steps.push(StepTime {
                 name,
+                depth: self.depth,
                 average_seconds: seconds,
             }),
         }

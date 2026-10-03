@@ -72,25 +72,39 @@ pub fn prepare_observer(
     Ok(observer)
 }
 
-/// Evaluate the brightness-selected catalog prefix and every body at the observer's frame time. Refraction is part
-/// of observation, applied once. The whole sky is the region until spatial indexing arrives in phase 4.
+/// Evaluate region and brightness candidates and every body at the frame time. Corrections are applied once;
+/// constellation endpoints are independent of region selection. Outside the interval selection is disabled.
 pub fn observe_sky(
     simulation: &SimulationState,
     observer: &ObserverState,
     magnitude_threshold: f64,
     refraction: bool,
+    region: super::SkyRegion,
     output: &mut ObservedSky,
     times: &mut StepTimes,
 ) -> Result<(), SimulationError> {
-    observe_sky_candidates(
+    let mut candidates = std::mem::take(&mut output.candidate_indices);
+    output.selection = times.measure("Star selection", || {
+        output.catalog.grid.select(
+            &output.catalog.stars,
+            region,
+            observer,
+            magnitude_threshold,
+            refraction && observer.atmosphere,
+            &mut candidates,
+        )
+    });
+    let result = observe_sky_candidates(
         simulation,
         observer,
         magnitude_threshold,
         refraction,
-        None,
+        Some(&candidates),
         output,
         times,
-    )
+    );
+    output.candidate_indices = candidates;
+    result
 }
 
 /// Optional catalog indices limit candidate work, not constellation endpoints or the values computed for them.
@@ -117,43 +131,49 @@ pub fn observe_sky_candidates(
     // union drawable candidates and constellation endpoints before applying any observer corrections
     times.measure("Stellar observation", || {
         let inside = crate::astro::COMPUTATIONAL_INTERVAL.contains(tt);
-        let count = if inside {
-            output.catalog.count_bright_stars(magnitude_threshold)
-        } else {
-            output.catalog.stars.len()
-        };
-        let selected = candidates.filter(|_| inside).map(|indices| {
-            let mut indices: Vec<_> = indices.iter().copied().filter(|&i| i < count).collect();
-            indices.sort_unstable();
-            indices.dedup();
+        let selected: Vec<_> = if !inside {
+            (0..output.catalog.stars.len()).collect()
+        } else if let Some(indices) = candidates {
             indices
-        });
-        let mut indices: Vec<_> = selected.clone().unwrap_or_else(|| (0..count).collect());
-        indices.extend(
-            output
-                .catalog
-                .endpoint_indices
                 .iter()
                 .copied()
-                .filter(|&i| selected.is_some() || i >= count),
-        );
-        if selected.is_some() {
-            indices.sort_unstable();
-            indices.dedup();
-        }
+                .filter(|&i| {
+                    i < output.catalog.stars.len() && output.catalog.stars.brightness_key(i) <= magnitude_threshold
+                })
+                .collect()
+        } else {
+            (0..output.catalog.stars.len())
+                .filter(|&i| output.catalog.stars.brightness_key(i) <= magnitude_threshold)
+                .collect()
+        };
+        let mut selected = selected;
+        selected.sort_unstable();
+        selected.dedup();
+        let mut candidates = selected.into_iter().peekable();
+        let mut endpoints = output.catalog.endpoint_indices.iter().copied().peekable();
         output.magnitude_threshold = magnitude_threshold;
         output.stars.clear();
         output.runtime_singular_count = 0;
         let years = crate::astro::models::stars::years_since_j2000(tt);
-        for index in indices {
-            let star = &output.catalog.stars[index];
+        while candidates.peek().is_some() || endpoints.peek().is_some() {
+            let index = candidates
+                .peek()
+                .copied()
+                .unwrap_or(usize::MAX)
+                .min(endpoints.peek().copied().unwrap_or(usize::MAX));
+            let drawable = candidates.peek() == Some(&index);
+            if drawable {
+                candidates.next();
+            }
+            if endpoints.peek() == Some(&index) {
+                endpoints.next();
+            }
+            let star = output.catalog.stars.get(index);
             let sample = star.motion.evaluate(years, star.magnitude);
             let mut observed =
-                ObservedStar::from_star(star, index, observer.inertial_to_horizon.apply(sample.direction));
+                ObservedStar::from_star(&star, index, observer.inertial_to_horizon.apply(sample.direction));
             observed.magnitude = sample.magnitude;
-            observed.drawable = selected
-                .as_ref()
-                .map_or(index < count, |indices| indices.binary_search(&index).is_ok());
+            observed.drawable = drawable;
             observed.drawable &= sample.magnitude <= magnitude_threshold;
             output.runtime_singular_count += usize::from(sample.used_singular_fallback);
             output.stars.push(observed);

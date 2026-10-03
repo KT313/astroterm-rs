@@ -313,7 +313,13 @@ mod tests {
 
     /// Seven stars, brightest first, all dimmer than the label threshold; the brightest has no proper name.
     fn pick_unlabelled_stars(sky: &Sky) -> Vec<usize> {
-        let brightest_first: Vec<usize> = (0..sky.stars.len()).collect();
+        let mut brightest_first: Vec<usize> = (0..sky.stars.len()).collect();
+        brightest_first.sort_unstable_by(|&a, &b| {
+            sky.stars[a]
+                .magnitude
+                .total_cmp(&sky.stars[b].magnitude)
+                .then_with(|| sky.stars[b].id.cmp(&sky.stars[a].id))
+        });
         let unnamed = brightest_first
             .iter()
             .position(|&index| sky.stars[index].name.is_none() && sky.stars[index].magnitude > ASCII.label_threshold)

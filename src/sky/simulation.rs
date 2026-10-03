@@ -409,7 +409,16 @@ mod tests {
                 half_span: 0.1,
                 value: evaluator(time.tt),
             }];
-            observe_sky(&simulation, &observer, 5.0, false, &mut sky, &mut StepTimes::default()).unwrap();
+            observe_sky(
+                &simulation,
+                &observer,
+                5.0,
+                false,
+                crate::sky::SkyRegion::All,
+                &mut sky,
+                &mut StepTimes::default(),
+            )
+            .unwrap();
             observed_positions.push(sky.moon.position);
             let projected = project_sky(&sky, &View::default(), Viewport { height: 41, width: 81 });
             draw_sky_scene(&mut Canvas::new(41, 81), &options, &projected);

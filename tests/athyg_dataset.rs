@@ -4,7 +4,7 @@
 use std::path::Path;
 
 use astroterm::catalog::{Catalog, CatalogStar, load_athyg_catalog, load_embedded_catalog};
-use astroterm::sky::Sky;
+use astroterm::sky::{SkyCatalog, Star};
 
 const DATASET: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/datasets/athyg_40.csv.gz");
 
@@ -39,7 +39,7 @@ fn athyg_matches_the_embedded_catalog() {
     }
 
     // nearly all constellation figures find their stars
-    let sky = Sky::from_catalog(&athyg);
+    let sky = SkyCatalog::from_catalog(&athyg);
     assert_eq!(sky.constellations.len(), 88);
     assert_eq!(
         sky.constellations
@@ -47,5 +47,30 @@ fn athyg_matches_the_embedded_catalog() {
             .map(|figure| figure.segments.len())
             .sum::<usize>(),
         676
+    );
+}
+
+#[test]
+#[ignore = "needs datasets/athyg_40.csv.gz; release quantization audit"]
+fn real_catalog_quantization_stays_within_half_an_arcsecond() {
+    let source = load_athyg_catalog(Path::new(DATASET)).unwrap();
+    let stored = SkyCatalog::from_catalog(&source);
+    let (start, end) = astroterm::astro::models::stars::computational_years();
+    let mut maximum = 0.0_f64;
+    for star in stored.stars.iter() {
+        let i = source.stars.binary_search_by_key(&star.id, |s| s.id).unwrap();
+        let mut original = Star::from_catalog_star(&source.stars[i]).motion;
+        original.remove_singular_distance();
+        for t in [start, end, original.closest_approach(start, end).0] {
+            let a = original.evaluate(t, star.magnitude).direction;
+            let b = star.motion.evaluate(t, star.magnitude).direction;
+            let error = a.cross(b).length().atan2(a.dot(b)).to_degrees() * 3600.0;
+            maximum = maximum.max(error);
+            assert!(error <= 0.5, "{} at {t}: {error} arcsec", star.id.0);
+        }
+    }
+    eprintln!(
+        "AT-HYG max quantization separation: {maximum} arcsec; {} precise trajectories",
+        stored.stars.precise_count()
     );
 }

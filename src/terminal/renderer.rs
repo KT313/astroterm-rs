@@ -99,6 +99,22 @@ impl TerminalRenderer {
                     &self.time_zone.as_ref().expect("panel zone initialized").1,
                 );
                 if self.settings.frame_times {
+                    for (label, count) in [
+                        ("Candidate cells", sky.selection.cells),
+                        ("Candidate stars", sky.selection.candidates),
+                        ("Evaluated stars", sky.evaluated_stars),
+                    ] {
+                        fields.push(crate::metadata::MetadataField {
+                            label: label.into(),
+                            value: count.to_string(),
+                        });
+                    }
+                    if sky.selection.brute_force {
+                        fields.push(crate::metadata::MetadataField {
+                            label: "Selection".into(),
+                            value: "outside interval: all stars".into(),
+                        });
+                    }
                     fields.push(crate::metadata::MetadataField {
                         label: "Star fallbacks".into(),
                         value: format!(

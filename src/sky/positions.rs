@@ -15,7 +15,16 @@ pub fn update_sky_positions(
     let mut simulation = SimulationState::exact();
     update_simulation(&mut simulation, time, &[], times).expect("finite reference epoch");
     let observer = prepare_observer(&simulation, time, *observer).expect("prepared reference state");
-    observe_sky(&simulation, &observer, magnitude_threshold, false, sky, times).expect("prepared reference state");
+    observe_sky(
+        &simulation,
+        &observer,
+        magnitude_threshold,
+        false,
+        crate::sky::SkyRegion::All,
+        sky,
+        times,
+    )
+    .expect("prepared reference state");
 }
 
 /// Compatibility correction pass, idempotent for a prepared observed sky. Production requests refraction in observe_sky.
@@ -44,7 +53,7 @@ mod tests {
     use crate::sky::{PlanetKind, Sky};
 
     #[test]
-    fn only_the_inclusive_brightness_prefix_is_updated_and_refracted() {
+    fn brightness_candidates_and_endpoints_are_updated_and_refracted() {
         let mut sky = Sky::from_catalog(&load_embedded_catalog().unwrap());
         let threshold = 5.0;
         let count = sky.count_bright_stars(threshold);
@@ -67,7 +76,13 @@ mod tests {
         assert!(sky.stars[..count].iter().all(|s| s.position != sentinel));
         assert!(sky.stars.len() >= count);
         assert!(sky.stars.iter().all(|star| star.position != sentinel));
-        assert_eq!(sky.stars[count - 1].magnitude, threshold);
+        assert_eq!(sky.count_bright_stars(threshold), count);
+        assert!(
+            sky.stars
+                .iter()
+                .filter(|s| s.drawable)
+                .all(|s| s.magnitude <= threshold)
+        );
     }
 
     const STAR_EPSILON: f64 = 0.01;

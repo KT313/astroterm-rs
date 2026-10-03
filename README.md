@@ -63,6 +63,8 @@ New:
   changes with distance; without it, motion is tangential and brightness stays constant. Approaching-star bounds
   include perspective acceleration.
 - Projection consumes horizontal unit vectors directly and produces Cartesian screen coordinates.
+- Compact immutable star arrays and a conservative cube-map grid limit observation to possible visible stars;
+  fast movers and constellation endpoints are handled independently. Per-frame positions stay separate.
 - Simulation, observation, camera projection and rendering are separate stages. Planetary, lunar and orientation
   models have independent caches; Earth rotation and observer corrections run every frame, so panning while paused
   does not trigger an ephemeris update.
@@ -125,8 +127,16 @@ Outside the interval every star is checked; expired brightness keys never suppre
 
 Selection uses each trajectory's brightest possible magnitude; drawing sorts only visible stars by current
 brightness, with stable-ID ties. Dynamic labels use the reverse order. Constellation endpoints join the update set
-before refraction, so all objects receive the correction exactly once. Motion bounds above 15′ are recorded for
-future spatial indexing; this is not yet a sky-grid implementation.
+before refraction, so all objects receive the correction exactly once. Stars with motion bounds above 15′ enter
+an always-checked list. Other stars are grouped into depth-6 cube-map cells, queried at depth 4 for wide views
+and depth 6 for narrow ones; fields of view of at least 300° use all cells. The query includes conservative motion,
+quantization, refraction and reserved aberration margins. Exact current brightness and projection decide visibility.
+
+Directions and scaled velocities are stored as `f32` and expanded for `f64` evaluation. Brightness keys round
+brighter and angular bounds round outward. Trajectories whose full-interval quantization bound exceeds 0.5″ stay in
+a sparse `f64` exception table; near-collision handling is decided from the effective stored trajectory. Names,
+designations and IDs are separate from the numerical arrays. `--debug-frametimes` reports candidate cells and
+stars, evaluated stars, and stage times; substeps are included in their parent stage only once in the frame total.
 
 ## Development
 
@@ -142,7 +152,8 @@ The four-stage implementation lives in `sky/simulation.rs`, `sky/observation.rs`
 Pure formulas and coefficients live in `astro/models/{stars,planets,moons,orientation}`. Body identity is independent
 of the formula used. Star inputs are shared across observers; projected output borrows the immutable observed sky.
 The legacy `update_sky_positions` API remains a direct, uncached reference convenience; the application uses the
-explicit stages in `main.rs`.
+explicit stages in `main.rs`. Observation accepts a renderer-neutral `SkyRegion`; use `All` when the same observed
+sky must support arbitrary subsequent camera views.
 
 Current cache half-intervals are 5 simulated minutes for the planetary batch, 2 minutes for the Moon, and 6 hours
 for slow Earth orientation, forwards or backwards. Observation evaluates all samples at one requested epoch;

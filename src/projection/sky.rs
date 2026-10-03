@@ -67,6 +67,8 @@ pub struct ProjectedConstellation {
 }
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProjectedSky<'a> {
+    pub selection: crate::sky::SelectionStats,
+    pub evaluated_stars: usize,
     pub catalog_singular_count: usize,
     pub runtime_singular_count: usize,
     pub stars: Vec<ProjectedStar<'a>>,
@@ -154,6 +156,8 @@ pub fn project_sky<'a>(sky: &'a ObservedSky, view: &View, viewport: Viewport) ->
         })
         .collect();
     ProjectedSky {
+        selection: sky.selection,
+        evaluated_stars: sky.stars.len(),
         catalog_singular_count: sky.catalog.singular_count,
         runtime_singular_count: sky.runtime_singular_count,
         stars,

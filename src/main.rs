@@ -47,7 +47,7 @@ fn main() -> ExitCode {
         None => load_embedded_catalog(),
     };
     let mut sky = match catalog {
-        Ok(catalog) => Sky::new(Arc::new(SkyCatalog::from_catalog(&catalog))),
+        Ok(catalog) => Sky::new(Arc::new(SkyCatalog::from_owned_catalog(catalog))),
         Err(error) => return report_failure(error),
     };
 
@@ -108,6 +108,7 @@ fn run_render_loop(config: &Config, sky: &mut Sky, renderer: &mut TerminalRender
                     &observer,
                     config.render.magnitude_threshold,
                     simulation.refraction,
+                    view.sky_region(),
                     sky,
                     steps,
                 )

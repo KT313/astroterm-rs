@@ -76,7 +76,7 @@ fn horizontal(az: f64, alt: f64) -> Horizontal {
 #[test]
 fn threshold_crossing_uses_interval_key_then_current_magnitude() {
     let cat = catalog(vec![star(1, 5.5, horizontal(0.0, 60.0), -0.00005)], vec![]);
-    assert!(cat.stars[0].brightness_key < 5.0);
+    assert!(cat.stars.get(0).brightness_key < 5.0);
     let mut sky = ObservedSky::new(cat);
     for (years, drawn) in [
         (0.0, false),
@@ -86,7 +86,16 @@ fn threshold_crossing_uses_interval_key_then_current_magnitude() {
         (20000.0, false),
     ] {
         let (simulation, observer) = setup(years);
-        observe_sky(&simulation, &observer, 5.0, false, &mut sky, &mut StepTimes::default()).unwrap();
+        observe_sky(
+            &simulation,
+            &observer,
+            5.0,
+            false,
+            astroterm::sky::SkyRegion::All,
+            &mut sky,
+            &mut StepTimes::default(),
+        )
+        .unwrap();
         let projected = project_sky(&sky, &View::default(), Viewport { height: 41, width: 81 });
         assert_eq!(!projected.stars.is_empty(), drawn, "year offset {years}");
         if years == 20000.0 {
@@ -99,7 +108,7 @@ fn threshold_crossing_uses_interval_key_then_current_magnitude() {
 #[test]
 fn out_of_interval_selection_does_not_use_expired_brightness_keys() {
     let cat = catalog(vec![star(1, 6.0, horizontal(0.0, 60.0), -1.0 / 30000.0)], vec![]);
-    assert!(cat.stars[0].brightness_key > 4.0);
+    assert!(cat.stars.get(0).brightness_key > 4.0);
     let mut sky = ObservedSky::new(cat);
     let (simulation, observer) = setup(24000.0);
     observe_sky_candidates(
@@ -129,7 +138,16 @@ fn visible_drawing_order_is_current_magnitude_then_stable_id() {
     let mut sky = ObservedSky::new(cat);
     for (years, expected) in [(0.0, vec![1, 2, 3]), (5000.0, vec![2, 3, 1])] {
         let (simulation, observer) = setup(years);
-        observe_sky(&simulation, &observer, 6.0, false, &mut sky, &mut StepTimes::default()).unwrap();
+        observe_sky(
+            &simulation,
+            &observer,
+            6.0,
+            false,
+            astroterm::sky::SkyRegion::All,
+            &mut sky,
+            &mut StepTimes::default(),
+        )
+        .unwrap();
         let projected = project_sky(&sky, &View::default(), Viewport { height: 41, width: 81 });
         assert_eq!(
             projected.stars.iter().map(|p| p.star.id.0).collect::<Vec<_>>(),
@@ -151,7 +169,16 @@ fn refracted_constellation_endpoint_outside_selection_matches_full_observation()
     let mut full = ObservedSky::new(cat.clone());
     let mut restricted = ObservedSky::new(cat);
     let (simulation, observer) = setup(0.0);
-    observe_sky(&simulation, &observer, 5.0, true, &mut full, &mut StepTimes::default()).unwrap();
+    observe_sky(
+        &simulation,
+        &observer,
+        5.0,
+        true,
+        astroterm::sky::SkyRegion::All,
+        &mut full,
+        &mut StepTimes::default(),
+    )
+    .unwrap();
     observe_sky_candidates(
         &simulation,
         &observer,
@@ -166,7 +193,8 @@ fn refracted_constellation_endpoint_outside_selection_matches_full_observation()
     for (a, b) in full.stars.iter().zip(&restricted.stars) {
         assert_eq!(a.position, b.position);
     }
-    let expected = astroterm::astro::refract_direction(horizontal(0.0, 0.1).to_unit_vector());
+    let expected =
+        astroterm::astro::refract_direction(restricted.catalog.stars.motion(inside).evaluate(0.0, 5.0).direction);
     let actual = restricted
         .stars
         .iter()
@@ -205,10 +233,19 @@ fn singular_trajectories_and_fast_motion_are_reported_in_prepared_state() {
             .distance_pc
             .is_none()
     );
-    assert!(cat.always_checked.iter().any(|&i| cat.stars[i].id == StarId(2)));
+    assert!(cat.always_checked.iter().any(|&i| cat.stars.get(i).id == StarId(2)));
     let mut sky = ObservedSky::new(cat);
     let (simulation, observer) = setup(1000.0);
-    observe_sky(&simulation, &observer, 5.0, false, &mut sky, &mut StepTimes::default()).unwrap();
+    observe_sky(
+        &simulation,
+        &observer,
+        5.0,
+        false,
+        astroterm::sky::SkyRegion::All,
+        &mut sky,
+        &mut StepTimes::default(),
+    )
+    .unwrap();
     let projected = project_sky(&sky, &View::default(), Viewport { height: 41, width: 81 });
     assert_eq!(projected.catalog_singular_count, 1);
     assert_eq!(projected.runtime_singular_count, 0);

@@ -30,17 +30,18 @@ pub struct Star {
 }
 
 impl Star {
-    /// A star from its catalog entry.
+    /// Unquantized catalog inputs. Storage preparation applies singular handling and derives conservative bounds
+    /// from the effective stored trajectory; prepared entries are available through StarStorage.
     pub fn from_catalog_star(entry: &CatalogStar) -> Star {
         let direction = Equatorial {
             right_ascension: entry.right_ascension,
             declination: entry.declination,
         };
-        let mut motion = entry.space_motion.map_or_else(
+        let motion = entry.space_motion.map_or_else(
             || StellarMotion::from_sky_motion(direction, entry.ra_motion_cos_dec, entry.dec_motion),
             |space| StellarMotion::from_direction_velocity(direction, space.distance_pc, space.velocity),
         );
-        let singular_fallback = motion.remove_singular_distance();
+        let singular_fallback = false; // storage applies the policy after quantization
         let magnitude = f64::from(entry.magnitude);
         Star {
             id: entry.id,

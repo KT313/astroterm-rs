@@ -36,8 +36,7 @@ Unicode/braille/color with constellations and dynamic names), run:
 cargo run --release --locked --example catalog_probe -- datasets/athyg_40.csv.gz
 ```
 
-The probe reports CSV loading and trajectory preparation separately, including singular/always-checked/endpoint
-counts. Frame output distinguishes evaluated stars, interval-brightness candidates and currently drawable stars. It
+The probe reports CSV loading and trajectory preparation separately, including singular/always-checked/endpoint counts and precision exceptions. Frame output distinguishes evaluated stars, interval-brightness candidates and currently drawable stars. It
 excludes setup from per-frame measurements and does
 not include terminal presentation or drop the filesystem cache. Run it on an otherwise idle machine.
 
@@ -54,3 +53,20 @@ The sweep samples 12,000 epochs (including contemporary lunar cycles), both inte
 directions. It checks angular and absolute position/velocity errors against direct evaluation, not a more accurate
 physical ephemeris. Normal tests cover emission-time samples, tick transitions, independent refreshes, synthetic
 anchors, model substitution, multiple observers/views and paused camera changes.
+
+Phase-4 spatial-selection measurements use the real catalog when supplied, otherwise Criterion uses BSC5:
+
+```sh
+cargo run --release --locked --example catalog_probe -- datasets/athyg_40.csv.gz --matrix
+ASTROTERM_BENCH_DATASET=datasets/athyg_40.csv.gz cargo bench --bench spatial --locked -- --noplot
+/tmp/astroterm-checks/bin/python scripts/checks/terminal.py --dataset datasets/athyg_40.csv.gz --workloads
+cargo test --release --test athyg_dataset --locked -- --ignored --nocapture
+```
+
+The matrix covers t5/180°, t12/10° and t12/180°, each with refraction and constellations on/off. The headless probe
+uses a 41×81 canvas, fixed Tokyo/date/facing direction and paused simulation, with 20 warm-up and 80 timed frames;
+it reports stage EMAs separately from the mean complete frame. Criterion separates observation and projection/drawing,
+with additional depth-4/depth-6 queries. The optional PTY workloads use 55×160 cells, read the actual debug panel,
+and time ten pan keys until changed Facing metadata appears. These latencies include PTY transport and pyte decoding;
+they are upper-bound emulated responsiveness measurements, not physical display latency. They run sequentially.
+The ignored real-catalog quantization audit checks both interval endpoints and each trajectory's closest approach.

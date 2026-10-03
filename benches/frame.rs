@@ -70,7 +70,9 @@ fn benchmark_frames(criterion: &mut Criterion) {
         ("synthetic_100k", 100_000),
         ("synthetic_2500k", 2_500_000),
     ] {
-        let mut sky = Sky::from_catalog(&build_catalog(count));
+        let mut sky = Sky::new(std::sync::Arc::new(astroterm::sky::SkyCatalog::from_owned_catalog(
+            build_catalog(count),
+        )));
         let mut timing = StepTimes::default();
         let mut group = criterion.benchmark_group(name);
         group
@@ -94,6 +96,7 @@ fn benchmark_frames(criterion: &mut Criterion) {
                             &observer_state,
                             threshold,
                             refracted,
+                            astroterm::sky::SkyRegion::All,
                             black_box(&mut sky),
                             &mut timing,
                         )

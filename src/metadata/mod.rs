@@ -119,11 +119,15 @@ fn format_metadata_fields(
 /// Fields for the smoothed frame step durations: their total, then each step (indented), in milliseconds.
 pub fn format_step_time_fields(steps: &[StepTime]) -> Vec<MetadataField> {
     let format_ms = |seconds: f64| format!("{:.3} ms", seconds * 1000.0);
-    let total = steps.iter().map(|step| step.average_seconds).sum();
+    let total = steps
+        .iter()
+        .filter(|step| step.depth == 0)
+        .map(|step| step.average_seconds)
+        .sum();
     let mut fields = vec![create_field("Frame Time", format_ms(total))];
     for step in steps {
         fields.push(create_field(
-            format!("  {}", step.name),
+            format!("{}{}", "  ".repeat(step.depth + 1), step.name),
             format_ms(step.average_seconds),
         ));
     }
@@ -294,10 +298,12 @@ mod tests {
         let steps = [
             StepTime {
                 name: "Stars",
+                depth: 0,
                 average_seconds: 0.000512,
             },
             StepTime {
                 name: "Draw",
+                depth: 0,
                 average_seconds: 0.0012,
             },
         ];
@@ -314,6 +320,30 @@ mod tests {
                 ("  Draw", "1.200 ms")
             ]
         );
+    }
+
+    #[test]
+    fn nested_substeps_are_not_counted_twice_in_the_total() {
+        let steps = [
+            StepTime {
+                name: "Observation",
+                depth: 0,
+                average_seconds: 0.0015,
+            },
+            StepTime {
+                name: "Stars",
+                depth: 1,
+                average_seconds: 0.001,
+            },
+            StepTime {
+                name: "Draw",
+                depth: 0,
+                average_seconds: 0.0005,
+            },
+        ];
+        let fields = format_step_time_fields(&steps);
+        assert_eq!(fields[0].value, "2.000 ms");
+        assert_eq!(fields[2].label, "    Stars");
     }
 
     #[test]
