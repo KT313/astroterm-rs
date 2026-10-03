@@ -5,7 +5,13 @@ use crate::astro::{
     Vector3,
     models::stars::{StellarMotion, computational_years},
 };
-use crate::catalog::{Designation, NameId, StarId};
+use crate::catalog::cache::{
+    CatalogArray, MappedCatalog,
+    encoding::{decode_designation, encode_designation},
+    invalid,
+};
+use crate::catalog::{NameId, StarId};
+use std::{io, sync::Arc};
 
 /// The grid uses the effective stored trajectory, so this covers cell-direction rounding and f64 bound
 /// arithmetic, not the original catalog's quantization error. Model error is certified separately below.
@@ -14,21 +20,48 @@ const MAX_DIRECTION_ERROR: f64 = 0.5 * std::f64::consts::PI / (180.0 * 3600.0);
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct StarStorage {
-    u0: [Vec<f32>; 3],
-    w: [Vec<f32>; 3],
-    magnitude: Vec<f32>,
-    brightness_key: Vec<f32>,
-    distance: Vec<f32>, // zero means no usable distance
-    motion_bound: Vec<f32>,
-    ids: Vec<StarId>,
-    names: Vec<u32>, // zero means absent, otherwise index + 1
-    name_table: Vec<NameId>,
-    designations: Vec<Option<Designation>>,
-    spectral_types: Vec<[u8; 2]>,
-    colors: Vec<f32>,
-    flags: Vec<u8>,            // bit 0: singular fallback, bit 1: known color
-    precise_indices: Vec<u32>, // zero means compact, otherwise index + 1
-    precise_motions: Vec<StellarMotion>,
+    u0: [CatalogArray<f32>; 3],
+    w: [CatalogArray<f32>; 3],
+    magnitude: CatalogArray<f32>,
+    brightness_key: CatalogArray<f32>,
+    distance: CatalogArray<f32>, // zero means no usable distance
+    motion_bound: CatalogArray<f32>,
+    ids: CatalogArray<u64>,
+    names: CatalogArray<u32>, // zero means absent, otherwise index + 1
+    name_table: CatalogArray<[u64; 2]>,
+    designations: CatalogArray<[u8; 16]>,
+    spectral_types: CatalogArray<[u8; 2]>,
+    colors: CatalogArray<f32>,
+    flags: CatalogArray<u8>,            // bit 0: singular fallback, bit 1: known color
+    precise_indices: CatalogArray<u32>, // zero means compact, otherwise index + 1
+    precise_motions: CatalogArray<[f64; 7]>,
+}
+
+fn encode_motion(m: StellarMotion) -> [f64; 7] {
+    [
+        m.u0.x,
+        m.u0.y,
+        m.u0.z,
+        m.w.x,
+        m.w.y,
+        m.w.z,
+        m.distance_pc.unwrap_or(0.0),
+    ]
+}
+fn decode_motion(m: [f64; 7]) -> StellarMotion {
+    StellarMotion {
+        u0: Vector3 {
+            x: m[0],
+            y: m[1],
+            z: m[2],
+        },
+        w: Vector3 {
+            x: m[3],
+            y: m[4],
+            z: m[5],
+        },
+        distance_pc: (m[6] > 0.0).then_some(m[6]),
+    }
 }
 
 fn pack(v: Vector3) -> [f32; 3] {
@@ -58,6 +91,148 @@ fn bound_quantization(original: StellarMotion, compact: StellarMotion) -> f64 {
 }
 
 impl StarStorage {
+    pub fn is_mapped(&self) -> bool {
+        self.ids.is_mapped()
+    }
+    pub(crate) fn cache_sections(&self) -> Vec<&[u8]> {
+        vec![
+            self.u0[0].bytes(),
+            self.u0[1].bytes(),
+            self.u0[2].bytes(),
+            self.w[0].bytes(),
+            self.w[1].bytes(),
+            self.w[2].bytes(),
+            self.magnitude.bytes(),
+            self.brightness_key.bytes(),
+            self.distance.bytes(),
+            self.motion_bound.bytes(),
+            self.ids.bytes(),
+            self.names.bytes(),
+            self.name_table.bytes(),
+            self.designations.bytes(),
+            self.spectral_types.bytes(),
+            self.colors.bytes(),
+            self.flags.bytes(),
+            self.precise_indices.bytes(),
+            self.precise_motions.bytes(),
+        ]
+    }
+    pub(crate) fn from_mapping(m: &Arc<MappedCatalog>) -> io::Result<Self> {
+        Ok(Self {
+            u0: [
+                CatalogArray::from_mapping(m, 0)?,
+                CatalogArray::from_mapping(m, 1)?,
+                CatalogArray::from_mapping(m, 2)?,
+            ],
+            w: [
+                CatalogArray::from_mapping(m, 3)?,
+                CatalogArray::from_mapping(m, 4)?,
+                CatalogArray::from_mapping(m, 5)?,
+            ],
+            magnitude: CatalogArray::from_mapping(m, 6)?,
+            brightness_key: CatalogArray::from_mapping(m, 7)?,
+            distance: CatalogArray::from_mapping(m, 8)?,
+            motion_bound: CatalogArray::from_mapping(m, 9)?,
+            ids: CatalogArray::from_mapping(m, 10)?,
+            names: CatalogArray::from_mapping(m, 11)?,
+            name_table: CatalogArray::from_mapping(m, 12)?,
+            designations: CatalogArray::from_mapping(m, 13)?,
+            spectral_types: CatalogArray::from_mapping(m, 14)?,
+            colors: CatalogArray::from_mapping(m, 15)?,
+            flags: CatalogArray::from_mapping(m, 16)?,
+            precise_indices: CatalogArray::from_mapping(m, 17)?,
+            precise_motions: CatalogArray::from_mapping(m, 18)?,
+        })
+    }
+    pub(crate) fn validate(&self, names: &crate::catalog::StarNames, full: bool) -> io::Result<()> {
+        let n = self.len();
+        if self.u0.iter().chain(&self.w).any(|a| a.len() != n)
+            || [
+                self.magnitude.len(),
+                self.brightness_key.len(),
+                self.distance.len(),
+                self.motion_bound.len(),
+                self.names.len(),
+                self.designations.len(),
+                self.spectral_types.len(),
+                self.colors.len(),
+                self.flags.len(),
+                self.precise_indices.len(),
+            ]
+            .iter()
+            .any(|&len| len != n)
+        {
+            return Err(invalid("star-array length mismatch"));
+        }
+        for &range in self.name_table.iter() {
+            if names.get(Some(NameId::from_range(range))).is_none() {
+                return Err(invalid("invalid name range"));
+            }
+        }
+        for m in self.precise_motions.iter() {
+            let motion = decode_motion(*m);
+            let (start, end) = computational_years();
+            if m.iter().any(|v| !v.is_finite())
+                || m[6] < 0.0
+                || (norm(motion.u0) - 1.0).abs() > 1e-6
+                || !norm(motion.w * start.abs().max(end.abs())).is_finite()
+            {
+                return Err(invalid("invalid precise trajectory"));
+            }
+        }
+        let mut precise_seen = vec![false; self.precise_motions.len()];
+        for i in 0..n {
+            if self.names[i] as usize > self.name_table.len()
+                || self.precise_indices[i] as usize > self.precise_motions.len()
+                || self.flags[i] > 3
+                || decode_designation(self.designations[i]).is_none()
+            {
+                return Err(invalid("invalid star metadata/index"));
+            }
+            if self.u0.iter().chain(&self.w).any(|a| !a[i].is_finite())
+                || [
+                    self.magnitude[i],
+                    self.brightness_key[i],
+                    self.distance[i],
+                    self.motion_bound[i],
+                    self.colors[i],
+                ]
+                .iter()
+                .any(|x| !x.is_finite())
+                || self.distance[i] < 0.0
+                || self.motion_bound[i] < 0.0
+            {
+                return Err(invalid("invalid numerical star data"));
+            }
+            if (norm(self.stored_direction(i)) - 1.0).abs() > 1e-6 {
+                return Err(invalid("non-unit stored direction"));
+            }
+            let precision = self.precise_indices[i];
+            if precision != 0 {
+                if std::mem::replace(&mut precise_seen[precision as usize - 1], true) {
+                    return Err(invalid("duplicate precision index"));
+                }
+                if self.distance[i] != 0.0 || self.w.iter().any(|a| a[i] != 0.0) {
+                    return Err(invalid("invalid precision placeholder"));
+                }
+            }
+            if full {
+                let mut motion = self.motion(i);
+                if (norm(motion.u0) - 1.0).abs() > 1e-6
+                    || motion.remove_singular_distance()
+                    || (self.flags[i] & 1 != 0 && motion.distance_pc.is_some())
+                    || self.brightness_key(i) > motion.brightest_magnitude(self.magnitude(i))
+                    || self.motion_bound(i) < motion.motion_bound() + QUANTIZATION_MARGIN
+                {
+                    return Err(invalid("inconsistent trajectory policy/bounds"));
+                }
+            }
+        }
+        if precise_seen.iter().any(|&seen| !seen) {
+            return Err(invalid("unreferenced precision entry"));
+        }
+        Ok(())
+    }
     pub fn len(&self) -> usize {
         self.ids.len()
     }
@@ -68,7 +243,7 @@ impl StarStorage {
         self.precise_motions.len()
     }
     pub fn id(&self, i: usize) -> StarId {
-        self.ids[i]
+        StarId(self.ids[i])
     }
     pub fn brightness_key(&self, i: usize) -> f64 {
         self.brightness_key[i] as f64
@@ -85,7 +260,7 @@ impl StarStorage {
     pub fn motion(&self, i: usize) -> StellarMotion {
         let precise = self.precise_indices[i];
         if precise != 0 {
-            return self.precise_motions[precise as usize - 1];
+            return decode_motion(self.precise_motions[precise as usize - 1]);
         }
         StellarMotion {
             u0: expand(std::array::from_fn(|axis| self.u0[axis][i])),
@@ -96,9 +271,9 @@ impl StarStorage {
     /// Materialize metadata only for selected objects; no full array of expanded stars is kept.
     pub fn get(&self, i: usize) -> Star {
         Star {
-            id: self.ids[i],
-            name: (self.names[i] != 0).then(|| self.name_table[self.names[i] as usize - 1]),
-            designation: self.designations[i],
+            id: StarId(self.ids[i]),
+            name: (self.names[i] != 0).then(|| NameId::from_range(self.name_table[self.names[i] as usize - 1])),
+            designation: decode_designation(self.designations[i]).expect("validated designation"),
             motion: self.motion(i),
             magnitude: self.magnitude(i),
             brightness_key: self.brightness_key(i),
@@ -132,7 +307,7 @@ impl StarStorage {
             singular
         };
         let precise_index = if precise {
-            self.precise_motions.push(motion);
+            self.precise_motions.push(encode_motion(motion));
             u32::try_from(self.precise_motions.len()).expect("precision table fits in u32")
         } else {
             0
@@ -162,13 +337,13 @@ impl StarStorage {
             motion.distance_pc.unwrap_or(0.0) as f32
         });
         self.precise_indices.push(precise_index);
-        self.ids.push(star.id);
+        self.ids.push(star.id.0);
         let name = star.name.map_or(0, |name| {
-            self.name_table.push(name);
+            self.name_table.push(name.range());
             u32::try_from(self.name_table.len()).expect("name table fits in u32")
         });
         self.names.push(name);
-        self.designations.push(star.designation);
+        self.designations.push(encode_designation(star.designation));
         self.spectral_types.push(star.spectral_type);
         self.colors.push(star.color_index.unwrap_or(0.0));
         self.flags

@@ -1,7 +1,7 @@
 //! Validated settings, converted to the units used internally (radians, Julian dates).
 
+use crate::catalog::datasets::Dataset;
 use std::fmt;
-use std::path::PathBuf;
 
 use crate::astro::{
     Observer, compass_point_to_azimuth, current_julian_date, datetime_to_julian_date, parse_utc_datetime,
@@ -24,7 +24,7 @@ pub struct Config {
     /// Frames per second.
     pub fps: u32,
     /// Star dataset to load instead of the embedded catalog.
-    pub dataset: Option<PathBuf>,
+    pub dataset: Option<Dataset>,
 }
 
 /// What is simulated: where, from when, how fast, and with which corrections.
@@ -109,7 +109,12 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
         render,
         terminal,
         fps,
-        dataset: arguments.dataset,
+        dataset: arguments
+            .dataset
+            .as_ref()
+            .map(|p| Dataset::parse(p.as_os_str()))
+            .transpose()
+            .map_err(ConfigError)?,
     })
 }
 
@@ -297,7 +302,7 @@ mod tests {
     fn dataset_path_is_passed_through() {
         assert_eq!(config_from(&[]).unwrap().dataset, None);
         let config = config_from(&["--dataset", "datasets/athyg_40.csv.gz"]).unwrap();
-        assert_eq!(config.dataset, Some(PathBuf::from("datasets/athyg_40.csv.gz")));
+        assert_eq!(config.dataset, Some(Dataset::Path("datasets/athyg_40.csv.gz".into())));
     }
 
     #[test]

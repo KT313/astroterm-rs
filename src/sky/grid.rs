@@ -29,7 +29,7 @@ pub struct SelectionStats {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct SkyGrid {
-    pub offsets: Vec<usize>,
+    pub offsets: crate::catalog::cache::CatalogArray<usize>,
     coarse_caps: Vec<CellCap>,
     fine_caps: Vec<CellCap>,
 }
@@ -115,6 +115,13 @@ fn build_caps(depth: u8) -> Vec<CellCap> {
 }
 
 impl SkyGrid {
+    pub(crate) fn from_offsets(offsets: crate::catalog::cache::CatalogArray<usize>) -> Self {
+        Self {
+            offsets,
+            coarse_caps: build_caps(4),
+            fine_caps: build_caps(GRID_DEPTH),
+        }
+    }
     pub(crate) fn build(stars: &StarStorage) -> Self {
         let mut offsets = vec![0; CELL_COUNT + 1];
         for i in 0..stars.len() {
@@ -127,7 +134,7 @@ impl SkyGrid {
             offsets[i] += offsets[i - 1];
         }
         Self {
-            offsets,
+            offsets: offsets.into(),
             coarse_caps: build_caps(4),
             fine_caps: build_caps(GRID_DEPTH),
         }

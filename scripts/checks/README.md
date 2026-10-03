@@ -70,3 +70,19 @@ with additional depth-4/depth-6 queries. The optional PTY workloads use 55×160 
 and time ten pan keys until changed Facing metadata appears. These latencies include PTY transport and pyte decoding;
 they are upper-bound emulated responsiveness measurements, not physical display latency. They run sequentially.
 The ignored real-catalog quantization audit checks both interval endpoints and each trajectory's closest approach.
+
+
+Dataset/cache startup checks use the actual application loader (no terminal presentation):
+
+```sh
+cargo build --release --locked --example dataset_probe
+# Use isolated OS data/cache folders on Linux; the first command downloads about 200 MB.
+XDG_DATA_HOME=/tmp/astroterm-data XDG_CACHE_HOME=/tmp/astroterm-cache target/release/examples/dataset_probe athyg
+XDG_DATA_HOME=/tmp/astroterm-data XDG_CACHE_HOME=/tmp/astroterm-cache target/release/examples/dataset_probe athyg
+```
+
+The first run verifies and installs the download, prepares the catalog and writes the cache. The second reports
+`mapped=true`. A file path can be used instead of `athyg` to skip the download. To measure cold preprocessing,
+use a fresh cache folder with an existing data file; record separately whether the OS page cache was dropped.
+Unit tests cover checksum/semantic corruption, atomic concurrent writes, read-only folders, mapped lifetimes,
+name/path selection, verified streams and download cleanup. Cached and uncached frames must remain identical.

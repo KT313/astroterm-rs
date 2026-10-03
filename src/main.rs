@@ -10,11 +10,11 @@ use std::time::{Duration, Instant};
 use clap::Parser;
 
 use astroterm::astro::SimulationClock;
-use astroterm::catalog::{load_athyg_catalog, load_embedded_catalog, load_embedded_cities};
+use astroterm::catalog::{datasets::DatasetDirectories, load_embedded_cities};
 use astroterm::cli::{Arguments, Config, build_config, write_bash_completions};
 use astroterm::controls::{Control, apply_control};
 use astroterm::projection::project_sky;
-use astroterm::sky::{FrameTime, SimulationState, Sky, SkyCatalog, observe_sky, prepare_observer, update_simulation};
+use astroterm::sky::{FrameTime, SimulationState, Sky, observe_sky, prepare_observer, update_simulation};
 use astroterm::terminal::{TerminalRenderer, open_terminal_renderer, poll_frame_input};
 use astroterm::timing::StepTimes;
 
@@ -42,12 +42,11 @@ fn main() -> ExitCode {
     };
 
     // build the sky from the embedded catalogs, or from a star dataset file
-    let catalog = match &config.dataset {
-        Some(path) => load_athyg_catalog(path),
-        None => load_embedded_catalog(),
-    };
+    let directories = DatasetDirectories::for_user();
+    let catalog =
+        astroterm::sky::cache::load_sky_catalog(config.dataset.as_ref(), &directories, &mut io::stderr().lock());
     let mut sky = match catalog {
-        Ok(catalog) => Sky::new(Arc::new(SkyCatalog::from_owned_catalog(catalog))),
+        Ok(catalog) => Sky::new(Arc::new(catalog)),
         Err(error) => return report_failure(error),
     };
 

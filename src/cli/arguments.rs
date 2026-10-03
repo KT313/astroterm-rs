@@ -125,9 +125,10 @@ pub struct Arguments {
     #[arg(short = 'R', long)]
     pub refraction: bool,
 
-    /// Load stars from an AT-HYG CSV file (.csv or .csv.gz) instead of the built-in Yale Bright Star Catalog.
+    /// Load athyg (downloads about 200 MB on first use), or an AT-HYG CSV file (.csv or .csv.gz), instead of
+    /// the built-in Yale Bright Star Catalog. Existing files and values containing a path separator are paths.
     /// Constellation figures are matched by HR number
-    #[arg(long, value_name = "path")]
+    #[arg(long, value_name = "name|path")]
     pub dataset: Option<PathBuf>,
 
     /// Don't name extra stars when zooming in. By default, if fewer than 5 objects in view have names, the brightest

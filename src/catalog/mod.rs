@@ -3,7 +3,9 @@
 
 mod athyg;
 mod bsc5;
+pub mod cache;
 mod cities;
+pub mod datasets;
 mod designation;
 mod names;
 mod orbits;

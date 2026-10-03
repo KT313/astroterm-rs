@@ -74,3 +74,51 @@ fn real_catalog_quantization_stays_within_half_an_arcsecond() {
         stored.stars.precise_count()
     );
 }
+
+#[test]
+#[ignore = "needs datasets/athyg_40.csv.gz; release cache roundtrip"]
+fn real_catalog_cache_preserves_the_rendered_frame() {
+    use astroterm::{
+        astro::{J2000, Observer},
+        canvas::Canvas,
+        projection::{View, Viewport, project_sky},
+        scene::{RenderOptions, draw_sky_scene},
+        sky::{
+            Sky,
+            cache::{catalog_fingerprint, load_cached_catalog, write_cached_catalog},
+            update_sky_positions,
+        },
+        timing::StepTimes,
+    };
+    fn frame(catalog: SkyCatalog) -> Canvas {
+        let mut sky = Sky::new(std::sync::Arc::new(catalog));
+        update_sky_positions(&mut sky, J2000, &Observer::default(), 5.0, &mut StepTimes::default());
+        let mut canvas = Canvas::new(41, 81);
+        let options = RenderOptions {
+            unicode: true,
+            braille: true,
+            color: true,
+            constellations: true,
+            grid: false,
+            magnitude_threshold: 5.0,
+            label_threshold: 0.25,
+            dynamic_names: true,
+        };
+        draw_sky_scene(
+            &mut canvas,
+            &options,
+            &project_sky(&sky, &View::default(), Viewport { height: 41, width: 81 }),
+        );
+        canvas
+    }
+    let catalog = SkyCatalog::from_owned_catalog(load_athyg_catalog(Path::new(DATASET)).unwrap());
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("cache");
+    let fingerprint = catalog_fingerprint();
+    write_cached_catalog(&path, &catalog, &fingerprint).unwrap();
+    let expected = frame(catalog);
+    let mapped = load_cached_catalog(&path, &fingerprint).unwrap();
+    assert!(mapped.stars.is_mapped());
+    assert!(mapped.stars.len() > 2_500_000);
+    assert_eq!(frame(mapped), expected);
+}

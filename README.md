@@ -78,13 +78,15 @@ New:
 - Star and planet positions are precessed from J2000 to the date, so they line up with the sidereal time of date
   (the C version was about 0.35° off in 2025, growing by about 1.4° per century away from 2000).
 - Optional atmospheric refraction (`-R`/`--refraction`), which lifts objects near the horizon by up to about 0.5°.
-- `--dataset <path>` loads stars from an AT-HYG file (`.csv` or `.csv.gz`, see Data Sources) instead of the embedded
+- `--dataset athyg` downloads the pinned AT-HYG catalog on first use and reuses it offline thereafter.
+  `--dataset <path>` loads stars from an AT-HYG file (`.csv` or `.csv.gz`, see Data Sources) instead of the embedded
   Yale Bright Star Catalog; constellation figures are matched by HR number. Unnamed stars are labelled with their
   Bayer, Flamsteed, HR, HIP, Tycho-2 or Gaia designation, and stars without a spectral type are colored by B-V.
   For duplicate HR numbers, the brightest original catalog entry (earliest source row on a tie) represents the HR
   in constellation figures and receives its BSC5 magnitude; other components keep their catalog magnitudes.
   Stars that could reach the threshold within the computational interval are candidates; current brightness
-  determines drawing and labels. Constellation endpoints are updated independently.
+  determines drawing and labels. Constellation endpoints are updated independently. Prepared catalogs are cached
+  in the per-user cache folder; valid caches are memory-mapped at startup.
 - Dynamic names: when fewer than 5 objects in view have labels (e.g. after zooming in), the brightest stars in view
   are named too, with their catalog number (`HR 1234`) if they have no proper name. `--disable-dynamic-names` turns
   this off.
@@ -137,6 +139,35 @@ brighter and angular bounds round outward. Trajectories whose full-interval quan
 a sparse `f64` exception table; near-collision handling is decided from the effective stored trajectory. Names,
 designations and IDs are separate from the numerical arrays. `--debug-frametimes` reports candidate cells and
 stars, evaluated stars, and stage times; substeps are included in their parent stage only once in the frame total.
+
+## Datasets and cache
+
+The embedded BSC5 catalog remains the default and needs no download. To use AT-HYG:
+
+```sh
+astroterm --dataset athyg -i Tokyo -cCu
+astroterm --dataset ./datasets/athyg_40.csv.gz -i Tokyo -cCu
+```
+
+`athyg` selects AT-HYG v4.0: 199,688,001 compressed bytes (about 200 MB), verified with SHA-256
+`69ad04dd33d7c7bb4f5e1b4682798075811547ea9fb8d0e802e5b319c46818a6` before installation. Progress is printed before
+the terminal opens. An existing file takes precedence over a dataset name; values containing `/` or `\` are paths.
+Unknown bare names are errors. Use `./filename` for a missing relative file. Existing named downloads work offline;
+failed downloads report the source URL, destination and manual `--dataset <path>` alternative.
+
+Downloads and prepared caches use the operating system's per-user data and cache folders, respectively. On Linux:
+
+- data: `$XDG_DATA_HOME/astroterm/athyg_40.csv.gz`, default `~/.local/share/astroterm/athyg_40.csv.gz`;
+- cache: `$XDG_CACHE_HOME/astroterm/`, default `~/.cache/astroterm/`.
+
+No cache is written beside your dataset. Source path, size and modification time identify a cache; preprocessing
+rules and supplemental catalog data have their own fingerprint. The cache has a checksum and structural/semantic
+checks. A stale or damaged cache is rebuilt from the CSV. Cache-writing failures are reported but do not prevent
+use of the dataset. Downloads and cache files are installed atomically; failed operations remove their temporary
+files. The cache can be deleted safely while the application is closed. Only immutable catalog data is mapped;
+observed positions and projected frames remain ordinary mutable buffers. The current cache format is supported on
+64-bit little-endian systems; other targets use the CSV path without caching. Named datasets are not automatically
+updated to a different upstream version.
 
 ## Development
 
@@ -212,9 +243,9 @@ Optional, not distributed with this repository:
 
 - Larger star dataset for `--dataset`: [AT-HYG](https://codeberg.org/astronexus/athyg) (Augmented Tycho-HYG) by
   David Nash / astronexus, about 2.5 million stars from Tycho-2, Gaia DR3 and HYG, licensed
-  [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). Download `data/athyg_40.csv.gz` from that
-  repository (it is stored with Git LFS: `https://codeberg.org/astronexus/athyg/media/branch/main/data/athyg_40.csv.gz`)
-  into `datasets/`, which is ignored by git.
+  [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). `--dataset athyg` downloads the pinned v4.0 file
+  from its [Git LFS media URL](https://codeberg.org/astronexus/athyg/media/branch/main/data/athyg_40.csv.gz) into the
+  per-user data folder. Manual copies can be placed anywhere, including the gitignored `datasets/` folder.
 
 ## License
 

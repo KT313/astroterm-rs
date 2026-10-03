@@ -7,16 +7,37 @@ pub struct NameId {
     end: usize,
 }
 
+impl NameId {
+    pub(crate) fn range(self) -> [u64; 2] {
+        [self.start as u64, self.end as u64]
+    }
+    pub(crate) fn from_range(range: [u64; 2]) -> Self {
+        Self {
+            start: range[0] as usize,
+            end: range[1] as usize,
+        }
+    }
+}
+
 /// Owned string block, shared in format by parsed catalogs and skies.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct StarNames {
-    text: String,
+    text: super::cache::CatalogArray<u8>,
 }
 
 impl StarNames {
+    pub(crate) fn bytes(&self) -> &[u8] {
+        &self.text
+    }
+    pub(crate) fn from_array(text: super::cache::CatalogArray<u8>) -> std::io::Result<Self> {
+        std::str::from_utf8(&text).map_err(|_| super::cache::invalid("invalid UTF-8 name block"))?;
+        Ok(Self { text })
+    }
     pub fn insert(&mut self, name: &str) -> NameId {
         let start = self.text.len();
-        self.text.push_str(name);
+        for &byte in name.as_bytes() {
+            self.text.push(byte);
+        }
         NameId {
             start,
             end: self.text.len(),
@@ -25,6 +46,6 @@ impl StarNames {
 
     pub fn get(&self, name: Option<NameId>) -> Option<&str> {
         let name = name?;
-        self.text.get(name.start..name.end)
+        std::str::from_utf8(self.text.get(name.start..name.end)?).ok()
     }
 }

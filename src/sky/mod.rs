@@ -3,6 +3,7 @@
 //! Common states use f64 J2000 equatorial AU/AU-day, currently with a heliocentric origin. Earth is the only real
 //! anchor. Its site vector remains zero; the legacy Moon altitude parallax is applied in observation exactly once.
 
+pub mod cache;
 pub mod grid;
 mod illumination;
 mod objects;
@@ -33,9 +34,9 @@ pub struct SkyCatalog {
     pub stars: StarStorage,
     pub grid: grid::SkyGrid,
     /// Sorted union of all constellation endpoints, independent of candidate selection.
-    pub endpoint_indices: Vec<usize>,
+    pub endpoint_indices: crate::catalog::cache::CatalogArray<usize>,
     /// Indices whose trajectory drift exceeds the grid-margin threshold.
-    pub always_checked: Vec<usize>,
+    pub always_checked: crate::catalog::cache::CatalogArray<usize>,
     pub singular_count: usize,
     pub names: StarNames,
     pub constellations: Vec<Constellation>,
@@ -107,7 +108,7 @@ impl SkyCatalog {
             .collect();
         endpoint_indices.sort_unstable();
         endpoint_indices.dedup();
-        let always_checked = stars
+        let always_checked: Vec<_> = stars
             .iter()
             .enumerate()
             .filter_map(|(i, star)| {
@@ -116,8 +117,8 @@ impl SkyCatalog {
             .collect();
         let singular_count = stars.iter().filter(|star| star.singular_fallback).count();
         SkyCatalog {
-            endpoint_indices,
-            always_checked,
+            endpoint_indices: endpoint_indices.into(),
+            always_checked: always_checked.into(),
             singular_count,
             stars,
             grid,

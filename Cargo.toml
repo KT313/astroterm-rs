@@ -14,14 +14,21 @@ name = "astroterm"
 path = "src/main.rs"
 
 [dependencies]
+bytemuck = "1.25.2"
 chrono = "0.4.45"
 clap = { version = "4.6.7", features = ["derive", "wrap_help"] }
+crc32fast = "1.5.2"
 crossterm = "0.29.0"
 csv = "1.4.0"
+dirs = "7.0.0"
 flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs"] }
+memmap2 = "0.9.11"
+sha2 = "0.11.0"
 strsim = "0.11.1"
+tempfile = "3.27.0"
 tzf-rs = { version = "2.1.2", default-features = false, features = ["bundled"] }
 unicode-width = "0.2.2"
+ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
 
 [target.'cfg(unix)'.dependencies]
 tz-rs = "0.7.3"
