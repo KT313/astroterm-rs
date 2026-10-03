@@ -2,33 +2,19 @@
 use super::{StarStorage, decode_motion, expand};
 use crate::{
     astro::{Vector3, models::stars::StellarMotion},
-    catalog::{EncodedDesignation, NameId, StarId},
+    catalog::{EncodedDesignation, NameId},
     sky::ObservedStar,
 };
 
 pub(crate) struct ObservationFields<'a> {
-    ids: &'a [u64],
-    names: &'a [u32],
-    name_table: &'a [[u64; 2]],
-    designations: &'a [[u8; 16]],
     magnitude: &'a [f32],
-    spectral_types: &'a [[u8; 2]],
-    colors: &'a [f32],
-    flags: &'a [u8],
 }
 impl ObservationFields<'_> {
     pub fn create_observed_star(&self, index: usize, drawable: bool) -> ObservedStar {
-        let name = self.names[index];
         ObservedStar {
             source_index: index,
             drawable,
-            id: StarId(self.ids[index]),
-            name: (name != 0).then(|| NameId::from_range(self.name_table[name as usize - 1])),
-            designation: EncodedDesignation::from_validated_bytes(self.designations[index]),
             magnitude: f64::from(self.magnitude[index]),
-            spectral_type: self.spectral_types[index],
-            color_index: (self.flags[index] & 2 != 0).then_some(self.colors[index]),
-            has_data: true,
             position: Vector3::default(),
         }
     }
@@ -56,16 +42,23 @@ impl TrajectoryFields<'_> {
 impl StarStorage {
     pub(crate) fn borrow_observation_fields(&self) -> ObservationFields<'_> {
         ObservationFields {
-            ids: &self.ids,
-            names: &self.names,
-            name_table: &self.name_table,
-            designations: &self.designations,
             magnitude: &self.magnitude,
-            spectral_types: &self.spectral_types,
-            colors: &self.colors,
-            flags: &self.flags,
         }
     }
+    pub fn name(&self, index: usize) -> Option<NameId> {
+        let name = self.names[index];
+        (name != 0).then(|| NameId::from_range(self.name_table[name as usize - 1]))
+    }
+    pub fn designation(&self, index: usize) -> EncodedDesignation {
+        EncodedDesignation::from_validated_bytes(self.designations[index])
+    }
+    pub fn spectral_type(&self, index: usize) -> [u8; 2] {
+        self.spectral_types[index]
+    }
+    pub fn color_index(&self, index: usize) -> Option<f32> {
+        (self.flags[index] & 2 != 0).then_some(self.colors[index])
+    }
+
     pub(crate) fn borrow_trajectory_fields(&self) -> TrajectoryFields<'_> {
         TrajectoryFields {
             u0: std::array::from_fn(|axis| &*self.u0[axis]),
@@ -113,8 +106,22 @@ mod tests {
                 let full = catalog.stars.get(index);
                 let observed = fields.create_observed_star(index, true);
                 assert_eq!(observed, ObservedStar::from_star(&full, index, Vector3::default()));
-                assert_eq!(observed.designation.resolve(), full.designation);
-                assert_eq!(catalog.names.get(observed.name), catalog.names.get(full.name));
+                let view = crate::sky::ObservedStarView {
+                    state: &observed,
+                    catalog: &catalog.stars,
+                };
+                assert!(std::ptr::eq(view.state, &observed));
+                assert!(std::ptr::eq(view.catalog, &catalog.stars));
+                assert_eq!(view.id(), full.id);
+                assert_eq!(view.name(), full.name);
+                assert_eq!(view.spectral_type(), full.spectral_type);
+                assert_eq!(view.color_index(), full.color_index);
+                assert_eq!(view.has_data(), full.has_data);
+                assert_eq!(view.designation().resolve(), full.designation);
+                assert_eq!(
+                    catalog.names.get(catalog.stars.name(index)),
+                    catalog.names.get(full.name)
+                );
                 assert_eq!(trajectories.motion(index), catalog.stars.motion(index));
             }
         }

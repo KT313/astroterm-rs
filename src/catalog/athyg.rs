@@ -60,6 +60,13 @@ struct Columns {
 
 /// Load an AT-HYG CSV file (`.csv` or gzip-compressed `.csv.gz`), with the embedded constellation figures.
 pub fn load_athyg_catalog(path: &Path) -> Result<Catalog, CatalogError> {
+    load_athyg_catalog_with_times(path, &mut crate::timing::StepTimes::default())
+}
+
+pub(crate) fn load_athyg_catalog_with_times(
+    path: &Path,
+    times: &mut crate::timing::StepTimes,
+) -> Result<Catalog, CatalogError> {
     let describe_error = |error: io::Error| CatalogError::Io(format!("cannot read {}: {error}", path.display()));
 
     // decompress if the file starts like a gzip file
@@ -71,33 +78,68 @@ pub fn load_athyg_catalog(path: &Path) -> Result<Catalog, CatalogError> {
         Box::new(file)
     };
 
-    parse_athyg(reader).map_err(|error| match error {
+    parse_athyg_with_times(reader, times).map_err(|error| match error {
         CatalogError::Io(message) => CatalogError::Io(format!("cannot read {}: {message}", path.display())),
         other => other,
     })
 }
 
 /// Parse the stars of AT-HYG CSV data.
+#[cfg(test)]
 fn parse_athyg(reader: impl Read) -> Result<Catalog, CatalogError> {
-    let mut csv = csv::Reader::from_reader(reader);
-    let columns = find_columns(csv.headers().map_err(|error| CatalogError::Io(error.to_string()))?)?;
+    parse_athyg_with_times(reader, &mut crate::timing::StepTimes::default())
+}
 
-    let mut stars = Vec::new();
-    let mut names = StarNames::default();
-    let mut row = 0;
-    let mut record = ByteRecord::new();
-    while csv
-        .read_byte_record(&mut record)
-        .map_err(|error| CatalogError::Io(error.to_string()))?
-    {
-        let line = record.position().map_or(0, |position| position.line());
-        if let Some(star) = parse_star(&record, &columns, line, StarId(row), &mut names)? {
-            stars.push(star);
-        }
-        row += 1;
-    }
-    let mut catalog = Catalog::new(stars, names, load_constellation_figures()?);
-    apply_bsc5_magnitudes(&mut catalog)?;
+fn parse_athyg_with_times(reader: impl Read, times: &mut crate::timing::StepTimes) -> Result<Catalog, CatalogError> {
+    let (stars, names, row, missing, sun) =
+        times.measure("CSV validation and parsing", || -> Result<_, CatalogError> {
+            let mut csv = csv::Reader::from_reader(reader);
+            let columns = find_columns(csv.headers().map_err(|error| CatalogError::Io(error.to_string()))?)?;
+
+            let mut stars = Vec::new();
+            let mut names = StarNames::default();
+            let mut row = 0;
+            let mut missing = 0;
+            let mut sun = 0;
+            let mut record = ByteRecord::new();
+            while csv
+                .read_byte_record(&mut record)
+                .map_err(|error| CatalogError::Io(error.to_string()))?
+            {
+                let line = record.position().map_or(0, |position| position.line());
+                if let Some(star) = parse_star(&record, &columns, line, StarId(row), &mut names)? {
+                    stars.push(star);
+                } else if [columns.ra, columns.dec, columns.mag]
+                    .into_iter()
+                    .any(|i| read_text(&record, Some(i)).is_none())
+                {
+                    missing += 1;
+                } else {
+                    sun += 1;
+                }
+                row += 1;
+            }
+            Ok((stars, names, row, missing, sun))
+        })?;
+    times.describe("CSV validation and parsing", || format!("input rows={row}; removed missing RA/Dec/magnitude={missing}; then removed Sun (mag < -20)={sun}; output stars={}; malformed/non-finite inputs abort loading", stars.len()));
+    let mut catalog = times.measure("Catalog assembly", || -> Result<_, CatalogError> {
+        Ok(Catalog::new(stars, names, load_constellation_figures()?))
+    })?;
+    times.describe("Catalog assembly", || {
+        format!(
+            "stars={}; HR representatives={}; figures={}; duplicate HR companions retained",
+            catalog.stars.len(),
+            catalog.hr_representatives.len(),
+            catalog.constellations.len()
+        )
+    });
+    times.measure("BSC magnitude overrides", || apply_bsc5_magnitudes(&mut catalog))?;
+    times.describe("BSC magnitude overrides", || {
+        format!(
+            "output stars={}; membership unchanged; overrides apply to matching HR representatives",
+            catalog.stars.len()
+        )
+    });
     Ok(catalog)
 }
 
@@ -475,12 +517,12 @@ mod tests {
         }];
         let sky = crate::sky::Sky::from_catalog(&catalog);
         drop(catalog);
-        let bright = sky.stars.iter().find(|star| star.id == StarId(1)).unwrap();
-        assert_eq!(sky.star_name(bright), Some("Bright"));
-        assert_eq!(sky.stars[0].id, StarId(2)); // override made the original representative dimmer than its companion
+        let bright = sky.star_views().find(|star| star.id() == StarId(1)).unwrap();
+        assert_eq!(sky.star_name(&bright), Some("Bright"));
+        assert_eq!(sky.star_view(0).id(), StarId(2)); // override made the original representative dimmer than its companion
         assert_eq!(sky.constellations.len(), 1);
         let [a, b] = sky.constellations[0].segments[0];
-        assert_eq!((sky.stars[a].id, sky.stars[b].id), (StarId(1), StarId(5)));
+        assert_eq!((sky.star_view(a).id(), sky.star_view(b).id()), (StarId(1), StarId(5)));
     }
 
     #[test]

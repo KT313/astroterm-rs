@@ -16,6 +16,7 @@ use super::Arguments;
 /// Everything the application needs to run.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Config {
+    pub debug_singleframe: bool,
     pub cache: crate::cache::CacheConfig,
     /// Raster text size and spacing relative to terminal cells; ignored by native text renderers.
     pub text_scale: f64,
@@ -118,6 +119,7 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
         frame_times: arguments.debug_frametimes,
     };
     Ok(Config {
+        debug_singleframe: arguments.debug_singleframe,
         cache: crate::cache::CacheConfig::load(arguments.cache_config.as_deref(), arguments.disable_cache)
             .map_err(|e| ConfigError(e.to_string()))?,
         text_scale: arguments.text_scale,

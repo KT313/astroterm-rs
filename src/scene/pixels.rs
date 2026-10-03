@@ -9,7 +9,7 @@ use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Stroke, Transform};
 use super::RenderOptions;
 use crate::{
     projection::{ProjectedSky, ScreenPoint},
-    sky::{ObservedStar, PlanetKind},
+    sky::{ObservedStarView, PlanetKind},
     timing::StepTimes,
 };
 
@@ -37,9 +37,27 @@ fn draw_pixel_sky_with_star_path(
     times.measure("Raster planets", || draw_pixel_planets(&mut canvas, sky));
     times.measure("Raster moon", || draw_pixel_moon(&mut canvas, sky));
     times.measure("Raster grid", || draw_pixel_grid(&mut canvas, sky, options));
-    times.measure("Raster finalization", || {
+    let image = times.measure("Raster finalization", || {
         RgbaImage::from_raw(canvas.width(), canvas.height(), canvas.take())
-    })
+    });
+    super::diagnostics::describe_scene(sky, options, times);
+    times.describe("Raster stars", || {
+        let tiny = sky
+            .stars
+            .iter()
+            .filter(|s| {
+                s.cell.is_some()
+                    && s.star.magnitude <= options.magnitude_threshold
+                    && (2.8 - 0.32 * s.star.magnitude).clamp(0.55, 4.0) as f32 == MINIMUM_STAR_RADIUS
+            })
+            .count();
+        format!(
+            "minimum-radius stars={tiny}; fast path enabled={}; pixel bounds <=4096={}",
+            fast_stars,
+            sky.viewport.width <= 4096 && sky.viewport.height <= 4096
+        )
+    });
+    image
 }
 
 fn initialize_pixel_canvas(viewport: crate::projection::Viewport) -> Option<Pixmap> {
@@ -70,7 +88,7 @@ fn draw_pixel_stars(canvas: &mut Pixmap, sky: &ProjectedSky<'_>, options: &Rende
             let magnitude = star.star.magnitude;
             let radius = (2.8 - 0.32 * magnitude).clamp(0.55, 4.0) as f32;
             let strength = (1.0 - 0.045 * (magnitude + 1.46)).clamp(0.16, 1.0);
-            let color = star_rgb(star.star).map(|c| (f64::from(c) * strength).round() as u8);
+            let color = star_rgb(&star.star).map(|c| (f64::from(c) * strength).round() as u8);
             if fast_stars && radius == MINIMUM_STAR_RADIUS && draw_minimum_star(canvas, x, y, color) {
                 continue;
             }
@@ -136,8 +154,8 @@ fn draw_pixel_grid(canvas: &mut Pixmap, sky: &ProjectedSky<'_>, options: &Render
     }
 }
 
-pub(crate) fn star_rgb(star: &ObservedStar) -> [u8; 3] {
-    match star.spectral_type[0] {
+pub(crate) fn star_rgb(star: &ObservedStarView<'_>) -> [u8; 3] {
+    match star.spectral_type()[0] {
         b'O' | b'W' => [155, 185, 255],
         b'B' => [180, 205, 255],
         b'A' => [220, 231, 255],
@@ -145,7 +163,7 @@ pub(crate) fn star_rgb(star: &ObservedStar) -> [u8; 3] {
         b'G' => [255, 234, 192],
         b'K' => [255, 192, 125],
         b'M' | b'C' | b'S' | b'N' => [255, 142, 91],
-        _ => match star.color_index {
+        _ => match star.color_index() {
             Some(bv) if bv < 0.0 => [180, 205, 255],
             Some(bv) if bv >= 1.4 => [255, 142, 91],
             Some(bv) if bv >= 0.8 => [255, 192, 125],

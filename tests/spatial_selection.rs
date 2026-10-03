@@ -110,8 +110,8 @@ fn compare(date: f64, view: View, threshold: f64, refraction: bool, latitude: f6
     let a = project_sky(&selected, &view, viewport);
     let b = project_sky(&full, &view, viewport);
     assert_eq!(
-        a.stars.iter().map(|s| (s.star.id, s.cell)).collect::<Vec<_>>(),
-        b.stars.iter().map(|s| (s.star.id, s.cell)).collect::<Vec<_>>()
+        a.stars.iter().map(|s| (s.star.id(), s.cell)).collect::<Vec<_>>(),
+        b.stars.iter().map(|s| (s.star.id(), s.cell)).collect::<Vec<_>>()
     );
     assert_eq!(a.constellations, b.constellations);
     let options = RenderOptions {
@@ -307,7 +307,7 @@ fn seam_threshold_horizon_fast_mover_and_view_edge_cases_are_not_culled() {
             })
             .collect();
         assert!(!expected.is_empty());
-        let mut actual: Vec<_> = projected.stars.iter().map(|s| s.star.id).collect();
+        let mut actual: Vec<_> = projected.stars.iter().map(|s| s.star.id()).collect();
         actual.sort_unstable();
         let mut expected = expected;
         expected.sort_unstable();

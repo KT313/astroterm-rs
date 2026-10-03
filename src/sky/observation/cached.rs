@@ -1,9 +1,13 @@
 //! Stateful observation owner. Each correction retains its own output; no corrected vector becomes a model input.
+mod diagnostics;
+mod stellar;
 use super::{stages::*, *};
 use crate::astro::models::stars::{StellarMotion, StellarSample, years_since_j2000};
 use crate::cache::{Cache, CacheConfig, Group};
 use crate::sky::{ObservedStar, SkyCatalog};
 use std::{collections::HashMap, sync::Arc};
+#[cfg(test)]
+use stellar::qualify_stellar_span;
 
 type Directions = (Vec<Vector3>, Vec<Vector3>, Vector3);
 type ObserverKey = (FrameTime, Observer, [u64; 3], u64, u64);
@@ -24,7 +28,7 @@ pub struct ObservationCache {
     region: Cache<(crate::sky::SkyRegion, ObserverState, bool), crate::sky::grid::SelectedRegion>,
     candidates: Cache<(u64, f64), (Vec<usize>, crate::sky::SelectionStats)>,
     selected: Cache<(u64, bool), Vec<usize>>,
-    working: Cache<u64, Vec<ObservedStar>>,
+    working: Cache<u64, Vec<SelectedStar>>,
     stellar: HashMap<usize, Cache<(), StellarSample>>,
     stellar_stats: crate::cache::CacheStats,
     motion: Cache<u64, (Vec<(Vector3, f64)>, usize)>,
@@ -116,6 +120,8 @@ impl ObservationCache {
             self.light_time = light_time_cache;
             self.catalog = Some(output.catalog.clone());
         }
+        let mut previous_reports = None;
+        times.measure_diagnostics(|_| previous_reports = Some(self.reports()));
         let epoch = observer.time.tt;
         let enabled = |g| self.config.allows(g);
 
@@ -178,51 +184,30 @@ impl ObservationCache {
                 || filter_brightness_candidates(&output.catalog, epoch, threshold, Some(&self.candidates.value().0)),
             );
         });
-        times.measure("Constellation endpoints", || {
-            if self
-                .working
-                .needs_refresh(&self.selected.generation, epoch, None, enabled(Group::WorkingSet))
-            {
-                include_constellation_endpoints(self.selected.value().clone(), output);
+        times.measure_steps("Constellation endpoints", |times| {
+            let refresh = times.measure("Working-set cache decision", || {
                 self.working
-                    .store(self.selected.generation, epoch, 0.0, std::mem::take(&mut output.stars));
+                    .needs_refresh(&self.selected.generation, epoch, None, enabled(Group::WorkingSet))
+            });
+            if refresh {
+                let selected = times.measure("Selected index copy", || self.selected.value().clone());
+                times.describe("Selected index copy", || {
+                    format!(
+                        "copied indices={}; bytes={}",
+                        selected.len(),
+                        selected.len() * std::mem::size_of::<usize>()
+                    )
+                });
+                let working = merge_constellation_endpoints(selected, &output.catalog.endpoint_indices, times);
+                times.measure("Working-set cache store", || {
+                    self.working.store(self.selected.generation, epoch, 0.0, working)
+                });
             }
         });
-        times.measure("Stellar motion", || {
-            let maximum = self.config.age_seconds(Group::StellarState);
-            let reuse_stars = enabled(Group::StellarState);
-            if self
-                .motion
-                .needs_refresh(&self.working.generation, epoch, Some(maximum), reuse_stars)
-            {
-                let years = years_since_j2000(epoch);
-                let trajectories = output.catalog.stars.borrow_trajectory_fields();
-                let mut singular_count = 0;
-                let mut validity = maximum;
-                let mut values = Vec::with_capacity(self.working.value().len());
-                for star in self.working.value() {
-                    let entry = self.stellar.entry(star.source_index).or_default();
-                    let previous_stats = entry.stats;
-                    if entry.needs_refresh(&(), epoch, Some(maximum), reuse_stars) {
-                        let motion = trajectories.motion(star.source_index);
-                        let sample = motion.evaluate(years, star.magnitude);
-                        let span = qualify_stellar_span(motion, sample, epoch, star.magnitude, maximum);
-                        entry.store((), epoch, span, sample);
-                    }
-                    self.stellar_stats.hits += entry.stats.hits - previous_stats.hits;
-                    self.stellar_stats.refreshes += entry.stats.refreshes - previous_stats.refreshes;
-                    self.stellar_stats.bypasses += entry.stats.bypasses - previous_stats.bypasses;
-                    validity = validity
-                        .min((entry.valid_seconds - (epoch - entry.calculated_at.unwrap()).abs() * 86400.0).max(0.0));
-                    let sample = entry.value();
-                    values.push((sample.direction, sample.magnitude));
-                    singular_count += usize::from(sample.used_singular_fallback);
-                }
-                self.motion
-                    .store(self.working.generation, epoch, validity, (values, singular_count));
-            }
-            output.runtime_singular_count = self.motion.value().1;
+        times.measure_steps("Stellar motion", |times| {
+            self.update_stellar_motion(output, epoch, times)
         });
+        let enabled = |g| self.config.allows(g);
         times.measure("Current brightness", || {
             self.eligible.get_or_update(
                 (self.working.generation, self.motion.generation, threshold),
@@ -240,31 +225,46 @@ impl ObservationCache {
             output.magnitude_threshold = threshold;
         });
 
-        times.measure("Correction selection", || {
-            let selection = self.corrections.get_or_update(
-                (self.working.generation, self.eligible.generation),
-                epoch,
-                enabled(Group::StellarVisibility),
-                || {
-                    let (indices, stats) = select_correction_indices(
-                        self.working.value(),
+        times.measure_steps("Correction selection", |times| {
+            let key = (self.working.generation, self.eligible.generation);
+            let refresh = times.measure("Correction cache decision", || {
+                self.corrections
+                    .needs_refresh(&key, epoch, None, enabled(Group::StellarVisibility))
+            });
+            if refresh {
+                let (indices, stats) = times.measure("Correction index selection", || {
+                    select_correction_indices(
+                        self.working.value().iter().map(|s| s.source_index),
                         self.eligible.value(),
                         &output.catalog.endpoint_indices,
-                    );
-                    CorrectionSelection { indices, stats }
-                },
-            );
-            let working = self.working.value();
-            let drawable = self.eligible.value();
-            let samples = &self.motion.value().0;
-            output.stars.clear();
-            output.stars.extend(selection.indices.iter().map(|&index| {
-                let mut star = working[index].clone();
-                star.drawable = drawable[index];
-                (star.position, star.magnitude) = samples[index];
-                star
-            }));
-            output.corrections = selection.stats;
+                    )
+                });
+                times.measure("Correction cache store", || {
+                    self.corrections
+                        .store(key, epoch, 0.0, CorrectionSelection { indices, stats })
+                });
+            }
+            let selection = self.corrections.value();
+            times.measure("Corrected-star buffer construction", || {
+                let working = self.working.value();
+                let drawable = self.eligible.value();
+                let samples = &self.motion.value().0;
+                output.stars.clear();
+                output.stars.extend(selection.indices.iter().map(|&index| ObservedStar {
+                    source_index: working[index].source_index,
+                    drawable: drawable[index],
+                    position: samples[index].0,
+                    magnitude: samples[index].1,
+                }));
+                output.corrections = selection.stats;
+            });
+            times.describe("Corrected-star buffer construction", || {
+                format!(
+                    "output records={}; estimated record bytes={}; calculated state only; catalog metadata copied=0",
+                    output.stars.len(),
+                    output.stars.len() * std::mem::size_of::<ObservedStar>()
+                )
+            });
         });
 
         // each cache owns a distinct coordinate-space result
@@ -298,52 +298,82 @@ impl ObservationCache {
             );
             (output.moon.illumination, output.moon.phase) = *value;
         });
-        times.measure("Aberration", || {
-            let positions = self.apparent.get_or_update(
-                (
-                    self.motion.generation,
-                    self.relative.generation,
-                    self.corrections.generation,
-                    observer.state.velocity,
-                ),
-                epoch,
-                enabled(Group::ApparentDirections),
-                || {
-                    apply_sky_aberration(observer.state.velocity, output);
-                    capture_directions(output)
-                },
+        times.measure_steps("Aberration", |times| {
+            let key = (
+                self.motion.generation,
+                self.relative.generation,
+                self.corrections.generation,
+                observer.state.velocity,
             );
-            restore_directions(output, positions);
+            let refresh = times.measure("Apparent cache decision", || {
+                self.apparent
+                    .needs_refresh(&key, epoch, None, enabled(Group::ApparentDirections))
+            });
+            if refresh {
+                times.measure("Aberration calculation", || {
+                    apply_sky_aberration(observer.state.velocity, output)
+                });
+                let positions = times.measure("Direction capture", || capture_directions(output));
+                times.measure("Direction cache store", || {
+                    self.apparent.store(key, epoch, 0.0, positions)
+                });
+            } else {
+                times.measure("Direction restoration", || {
+                    restore_directions(output, self.apparent.value())
+                });
+            }
         });
-        times.measure("Horizon rotation", || {
-            let positions = self.horizontal.get_or_update(
-                (self.apparent.generation, observer.inertial_to_horizon),
-                epoch,
-                enabled(Group::HorizontalSky),
-                || {
-                    rotate_sky_to_horizon(observer.inertial_to_horizon, output);
-                    capture_directions(output)
-                },
-            );
-            restore_directions(output, positions);
+        times.measure_steps("Horizon rotation", |times| {
+            let key = (self.apparent.generation, observer.inertial_to_horizon);
+            let refresh = times.measure("Horizontal cache decision", || {
+                self.horizontal
+                    .needs_refresh(&key, epoch, None, enabled(Group::HorizontalSky))
+            });
+            if refresh {
+                times.measure("Horizon rotation calculation", || {
+                    rotate_sky_to_horizon(observer.inertial_to_horizon, output)
+                });
+                let positions = times.measure("Direction capture", || capture_directions(output));
+                times.measure("Direction cache store", || {
+                    self.horizontal.store(key, epoch, 0.0, positions)
+                });
+            } else {
+                times.measure("Direction restoration", || {
+                    restore_directions(output, self.horizontal.value())
+                });
+            }
         });
         output.refracted = false;
         if refraction && observer.atmosphere {
-            times.measure("Refraction", || {
-                let positions = self.refracted.get_or_update(
-                    (self.horizontal.generation, true),
-                    epoch,
-                    enabled(Group::Refraction),
-                    || {
-                        refract_sky_positions(output);
-                        capture_directions(output)
-                    },
-                );
-                restore_directions(output, positions);
+            times.measure_steps("Refraction", |times| {
+                let key = (self.horizontal.generation, true);
+                let refresh = times.measure("Refraction cache decision", || {
+                    self.refracted
+                        .needs_refresh(&key, epoch, None, enabled(Group::Refraction))
+                });
+                if refresh {
+                    times.measure("Refraction calculation", || refract_sky_positions(output));
+                    let positions = times.measure("Direction capture", || capture_directions(output));
+                    times.measure("Direction cache store", || {
+                        self.refracted.store(key, epoch, 0.0, positions)
+                    });
+                } else {
+                    times.measure("Direction restoration", || {
+                        restore_directions(output, self.refracted.value())
+                    });
+                }
                 output.refracted = true;
             });
         }
         output.outside_accuracy_range = crate::astro::accuracy::needs_accuracy_warning(epoch);
+        times.measure_diagnostics(|times| {
+        self.describe_observation(output, threshold, times);
+        if let Some(previous) = previous_reports {
+            for (before, after) in previous.into_iter().zip(self.reports()).skip(2) {
+                times.describe(after.name, || format!("cache hits={} refreshes={} bypasses={}; last refresh reason={:?}; stored TT={:?}; validity={} s", after.stats.hits - before.stats.hits, after.stats.refreshes - before.stats.refreshes, after.stats.bypasses - before.stats.bypasses, after.stats.last_reason, after.calculated_at, after.valid_seconds));
+            }
+        }
+        });
         Ok(())
     }
     pub fn reports(&self) -> Vec<crate::cache::CacheReport> {
@@ -413,38 +443,6 @@ fn restore_directions(sky: &mut ObservedSky, directions: &Directions) {
         planet.position = p;
     }
     sky.moon.position = directions.2;
-}
-
-/// Conservative initial brightness guard: any distance-dependent moving trajectory uses exact current samples.
-/// Constant-brightness straight-line trajectories have monotonic angular displacement on either side of the epoch.
-fn qualify_stellar_span(motion: StellarMotion, sample: StellarSample, epoch: f64, magnitude: f64, maximum: f64) -> f64 {
-    let interval = crate::astro::COMPUTATIONAL_INTERVAL;
-    if !interval.contains(epoch)
-        || sample.used_singular_fallback
-        || (motion.distance_pc.is_some() && motion.w != Vector3::default())
-    {
-        return 0.0;
-    }
-    let mut span = maximum
-        .min((epoch - interval.start_tt) * 86400.0)
-        .min((interval.end_tt - epoch) * 86400.0)
-        .max(0.0);
-    for _ in 0..32 {
-        let valid = [-span, span].into_iter().all(|offset| {
-            let end = motion.evaluate(years_since_j2000(epoch + offset / 86400.0), magnitude);
-            let angle = sample
-                .direction
-                .cross(end.direction)
-                .length()
-                .atan2(sample.direction.dot(end.direction));
-            angle.is_finite() && angle <= 0.09_f64.to_radians() / 3600.0
-        });
-        if valid {
-            return span;
-        }
-        span *= 0.5;
-    }
-    0.0
 }
 
 #[cfg(test)]

@@ -155,6 +155,10 @@ pub struct Arguments {
     #[arg(long = "debug-frametimes")]
     pub debug_frametimes: bool,
 
+    /// Present one frame, restore the terminal, then print ordered pipeline timings and data counts
+    #[arg(long)]
+    pub debug_singleframe: bool,
+
     /// Print this help message
     #[arg(short = 'h', long, action = ArgAction::Help)]
     help: Option<bool>,

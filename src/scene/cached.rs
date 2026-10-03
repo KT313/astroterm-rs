@@ -1,16 +1,20 @@
 //! Renderer-owned whole-sky caches. Metadata and terminal presentation are assembled after these immutable results.
-use super::{RenderOptions, draw_sky_scene, pixels::draw_pixel_sky};
+mod keys;
+#[cfg(test)]
+mod tests;
+
+use super::{RenderOptions, draw_sky_scene_with_times, pixels::draw_pixel_sky};
 use crate::{
     cache::{Cache, CacheConfig, Group},
     canvas::Canvas,
     projection::*,
-    sky::ObservedStar,
     timing::StepTimes,
 };
+use keys::StarKeys;
 
 #[derive(Clone, PartialEq)]
 struct SceneKey {
-    stars: Vec<(ObservedStar, Option<(i32, i32)>)>,
+    stars: StarKeys,
     planets: Vec<ProjectedPlanet>,
     moon: Option<ProjectedMoon>,
     constellations: Vec<ProjectedConstellation>,
@@ -20,20 +24,12 @@ struct SceneKey {
     facing: bool,
     warning: bool,
     options: RenderOptions,
-    names: Option<crate::catalog::StarNames>,
+    canvas_size: Option<(usize, usize)>,
 }
 impl SceneKey {
-    fn capture(sky: &ProjectedSky<'_>, options: RenderOptions, characters: bool) -> Self {
+    fn capture(sky: &ProjectedSky<'_>, options: RenderOptions, canvas_size: Option<(usize, usize)>) -> Self {
         Self {
-            stars: sky
-                .stars
-                .iter()
-                .map(|s| {
-                    let mut star = s.star.clone();
-                    star.position = crate::astro::Vector3::default(); // only screen geometry affects raster output
-                    (star, s.cell)
-                })
-                .collect(),
+            stars: StarKeys::capture(sky, &options, canvas_size.is_some()),
             planets: sky.planets.clone(),
             moon: sky.moon.cell.map(|_| sky.moon.clone()),
             constellations: sky.constellations.clone(),
@@ -43,7 +39,7 @@ impl SceneKey {
             facing: sky.facing,
             warning: sky.outside_accuracy_range,
             options,
-            names: characters.then(|| sky.names.clone()),
+            canvas_size,
         }
     }
 }
@@ -79,15 +75,21 @@ impl SceneCache {
         epoch: f64,
         times: &mut StepTimes,
     ) -> Option<image::RgbaImage> {
-        let key = SceneKey::capture(sky, *options, false);
-        if self
-            .pixels
-            .needs_refresh(&key, epoch, None, self.config.allows(Group::Raster))
-        {
+        let key = times.measure("Raster cache key", || SceneKey::capture(sky, *options, None));
+        times.describe("Raster cache key", || key.stars.describe(sky.stars.len()));
+        let refresh = times.measure("Raster cache decision", || {
+            self.pixels
+                .needs_refresh(&key, epoch, None, self.config.allows(Group::Raster))
+        });
+        if refresh {
             let image = draw_pixel_sky(sky, options, times)?;
-            self.pixels.store(key, epoch, 0.0, image);
+            times.measure("Raster cache store", || self.pixels.store(key, epoch, 0.0, image));
+        } else {
+            times.measure("Unused raster key release", || drop(key));
         }
-        Some(self.pixels.value().clone())
+        let image = times.measure("Raster output copy", || self.pixels.value().clone());
+        times.describe("Raster output copy", || format!("copied RGBA bytes={}", image.len()));
+        Some(image)
     }
     pub fn draw_characters(
         &mut self,
@@ -96,15 +98,31 @@ impl SceneCache {
         options: &RenderOptions,
         epoch: f64,
     ) {
-        let key = SceneKey::capture(sky, *options, true);
-        if self
-            .characters
-            .needs_refresh(&key, epoch, None, self.config.allows(Group::Raster))
-        {
-            draw_sky_scene(canvas, options, sky);
-            self.characters.store(key, epoch, 0.0, canvas.clone());
+        self.draw_characters_with_times(canvas, sky, options, epoch, &mut StepTimes::default());
+    }
+    pub(crate) fn draw_characters_with_times(
+        &mut self,
+        canvas: &mut Canvas,
+        sky: &ProjectedSky<'_>,
+        options: &RenderOptions,
+        epoch: f64,
+        times: &mut StepTimes,
+    ) {
+        let key = times.measure("Raster cache key", || {
+            SceneKey::capture(sky, *options, Some((canvas.height(), canvas.width())))
+        });
+        times.describe("Raster cache key", || key.stars.describe(sky.stars.len()));
+        let refresh = times.measure("Raster cache decision", || {
+            self.characters
+                .needs_refresh(&key, epoch, None, self.config.allows(Group::Raster))
+        });
+        if refresh {
+            draw_sky_scene_with_times(canvas, options, sky, times);
+            let copy = times.measure("Character cache copy", || canvas.clone());
+            times.measure("Raster cache store", || self.characters.store(key, epoch, 0.0, copy));
         } else {
-            canvas.clone_from(self.characters.value());
+            times.measure("Raster output copy", || canvas.clone_from(self.characters.value()));
+            times.measure("Unused raster key release", || drop(key));
         }
     }
 }

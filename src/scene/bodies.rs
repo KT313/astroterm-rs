@@ -28,16 +28,16 @@ pub fn draw_stars(canvas: &mut Canvas, options: &RenderOptions, sky: &ProjectedS
         }
         let star = entry.star;
         let label = if dynamically_named.contains(&index) {
-            Some(format_star_label(star, sky.names, options.unicode))
+            Some(format_star_label(&star, sky.names, options.unicode))
         } else if star.magnitude <= options.label_threshold {
-            sky.names.get(star.name).map(Cow::Borrowed)
+            sky.names.get(star.name()).map(Cow::Borrowed)
         } else {
             None
         };
         draw_object(
             canvas,
             options,
-            &select_star_appearance(star, sky.names),
+            &select_star_appearance(&star, sky.names),
             entry.cell,
             label.as_deref(),
         );
@@ -61,7 +61,7 @@ pub(crate) fn select_dynamically_named_stars(options: &RenderOptions, sky: &Proj
         if entry.cell.is_none() {
             continue;
         }
-        if star.magnitude > options.label_threshold || star.name.is_none() {
+        if star.magnitude > options.label_threshold || star.name().is_none() {
             selected.push(index);
         }
         labelled += 1;
@@ -158,9 +158,8 @@ mod tests {
         super::select_dynamically_named_stars(options, &projected)
             .into_iter()
             .map(|index| {
-                sky.stars
-                    .iter()
-                    .position(|star| star.id == projected.stars[index].star.id)
+                sky.star_views()
+                    .position(|star| star.id() == projected.stars[index].star.id())
                     .unwrap()
             })
             .collect()
@@ -321,11 +320,13 @@ mod tests {
             sky.stars[a]
                 .magnitude
                 .total_cmp(&sky.stars[b].magnitude)
-                .then_with(|| sky.stars[b].id.cmp(&sky.stars[a].id))
+                .then_with(|| sky.star_view(b).id().cmp(&sky.star_view(a).id()))
         });
         let unnamed = brightest_first
             .iter()
-            .position(|&index| sky.stars[index].name.is_none() && sky.stars[index].magnitude > ASCII.label_threshold)
+            .position(|&index| {
+                sky.star_view(index).name().is_none() && sky.stars[index].magnitude > ASCII.label_threshold
+            })
             .unwrap();
         brightest_first[unnamed..unnamed + 7].to_vec()
     }
@@ -342,7 +343,7 @@ mod tests {
         // the unnamed one shows its catalog number
         let mut canvas = Canvas::new(41, 81);
         draw_stars(&mut canvas, &View::default(), &DYNAMIC, &sky);
-        let label = format!("HR {}", sky.stars[stars[0]].id.0);
+        let label = format!("HR {}", sky.star_view(stars[0]).id().0);
         assert!(canvas.to_lines().iter().any(|line| line.contains(&label)), "{label}");
     }
 
@@ -350,9 +351,8 @@ mod tests {
     fn planets_moon_and_labelled_stars_in_view_count_toward_the_five() {
         let stars = pick_unlabelled_stars(&place_in_view(&[]));
         let vega = place_in_view(&[])
-            .stars
-            .iter()
-            .position(|star| star.id.0 == 7001)
+            .star_views()
+            .position(|star| star.id().0 == 7001)
             .unwrap(); // brighter than the label threshold, and named
         let mut sky = place_in_view(&[&stars[..], &[vega]].concat());
         sky.planets[3].position = horizontal(100.0, 70.0).to_unit_vector();
@@ -367,9 +367,14 @@ mod tests {
     fn dynamic_names_follow_current_magnitudes_instead_of_catalog_order() {
         let indices = pick_unlabelled_stars(&place_in_view(&[]));
         let mut sky = place_in_view(&indices);
+        let mut catalog = load_embedded_catalog().unwrap();
+        for star in &mut catalog.stars {
+            star.name = None;
+        }
+        sky.catalog = std::sync::Arc::new(crate::sky::SkyCatalog::from_catalog(&catalog));
         for (step, &index) in indices.iter().enumerate() {
             sky.stars[index].magnitude = 4.0 - step as f64;
-            sky.stars[index].name = None;
+            assert!(sky.star_view(index).name().is_none());
         }
         let expected = indices.iter().rev().take(5).copied().collect::<Vec<_>>();
         assert_eq!(
@@ -381,7 +386,7 @@ mod tests {
     #[test]
     fn automatic_proper_names_use_current_label_threshold() {
         let initial = place_in_view(&[]);
-        let vega = initial.stars.iter().position(|star| star.id.0 == 7001).unwrap();
+        let vega = initial.star_views().position(|star| star.id().0 == 7001).unwrap();
         let mut sky = place_in_view(&[vega]);
         let mut canvas = Canvas::new(41, 81);
         sky.stars[vega].magnitude = 0.5;

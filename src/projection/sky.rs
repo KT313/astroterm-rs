@@ -3,7 +3,7 @@
 use super::{CartesianCamera, Polar, ScreenPoint, View, ViewCenter, draw_order::sort_stars_for_drawing};
 use crate::astro::{Horizontal, Vector3, offset_vector_towards};
 use crate::catalog::StarNames;
-use crate::sky::{ObservedSky, ObservedStar, PlanetKind};
+use crate::sky::{ObservedSky, ObservedStarView, PlanetKind};
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 const EDGE_TOLERANCE: f64 = 1e-6;
@@ -38,7 +38,7 @@ impl Viewport {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProjectedStar<'a> {
-    pub star: &'a ObservedStar,
+    pub star: ObservedStarView<'a>,
     pub cell: Option<Cell>,
 }
 #[derive(Clone, Debug, PartialEq)]
@@ -144,8 +144,7 @@ fn project_visible_stars<'a>(
     viewport: Viewport,
 ) -> Vec<ProjectedStar<'a>> {
     let cell = |position| project_visible_cell(camera, viewport, position);
-    sky.stars
-        .iter()
+    sky.star_views()
         .filter(|star| star.drawable)
         .filter_map(|star| {
             cell(star.position).map(|point| ProjectedStar {

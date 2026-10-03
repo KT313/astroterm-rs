@@ -22,10 +22,13 @@ use astroterm::timing::StepTimes;
 fn main() -> ExitCode {
     // parse options and load the city table they may refer to
     let arguments = Arguments::parse();
-    let cities = match load_embedded_cities() {
+    let mut step_times = StepTimes::with_trace(arguments.debug_singleframe);
+    let cities = match step_times.measure("City loading", load_embedded_cities) {
         Ok(cities) => cities,
         Err(error) => return report_failure(error),
     };
+
+    step_times.describe("City loading", || format!("cities loaded={}", cities.len()));
 
     // printing shell completions is a command of its own
     if arguments.bash_completions {
@@ -43,12 +46,24 @@ fn main() -> ExitCode {
 
     // build the sky from the embedded catalogs, or from a star dataset file
     let directories = DatasetDirectories::for_user();
-    let catalog =
-        astroterm::sky::cache::load_sky_catalog(config.dataset.as_ref(), &directories, &mut io::stderr().lock());
+    let catalog = step_times.measure_steps("Dataset loading", |times| {
+        astroterm::sky::cache::load_sky_catalog_with_times(
+            config.dataset.as_ref(),
+            &directories,
+            &mut io::stderr().lock(),
+            times,
+        )
+    });
     let mut sky = match catalog {
         Ok(catalog) => Sky::new(Arc::new(catalog)),
         Err(error) => return report_failure(error),
     };
+
+    step_times.describe("Dataset loading", || format!(
+        "output stars={}; constellation figures={}; unique endpoints={}; always-checked stars={}; tangential fallbacks={}; mapped={}",
+        sky.catalog.stars.len(), sky.catalog.constellations.len(), sky.catalog.endpoint_indices.len(),
+        sky.catalog.always_checked.len(), sky.catalog.singular_count, sky.catalog.stars.is_mapped(),
+    ));
 
     eprintln!(
         "Catalog: {} stars use tangential motion after near-collision checks.",
@@ -56,14 +71,26 @@ fn main() -> ExitCode {
     );
 
     // render in the terminal, which is restored before any error is reported
-    let result = Renderer::open(
-        config.renderer,
-        config.graphics_protocol,
-        config.render,
-        config.terminal,
-        config.text_scale,
-    )
-    .and_then(|mut renderer| run_render_loop(&config, &mut sky, &mut renderer));
+    let result = step_times
+        .measure("Terminal setup", || {
+            Renderer::open(
+                config.renderer,
+                config.graphics_protocol,
+                config.render,
+                config.terminal,
+                config.text_scale,
+            )
+        })
+        .and_then(|mut renderer| {
+            step_times.describe("Terminal setup", || format!("renderer={:?}; projection viewport={}x{}; metadata={}; frame-time panel={}; runtime cache enabled={}", config.renderer, renderer.viewport().width, renderer.viewport().height, config.terminal.metadata_panel, config.terminal.frame_times, config.cache.enabled));
+            run_render_loop(&config, &mut sky, &mut renderer, &mut step_times)
+        });
+    if result.is_ok()
+        && config.debug_singleframe
+        && let Err(error) = step_times.trace().unwrap().write_report(&mut io::stdout().lock())
+    {
+        return report_failure(error);
+    }
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => report_failure(error),
@@ -71,13 +98,18 @@ fn main() -> ExitCode {
 }
 
 /// Draw frames at the configured rate until the user quits. Keys change the view and the simulation clock.
-fn run_render_loop(config: &Config, sky: &mut Sky, renderer: &mut Renderer) -> io::Result<()> {
+fn run_render_loop(
+    config: &Config,
+    sky: &mut Sky,
+    renderer: &mut Renderer,
+    step_times: &mut StepTimes,
+) -> io::Result<()> {
     // start from the configured view and time
     let frame_duration = Duration::from_secs_f64(1.0 / f64::from(config.fps));
     let mut view = config.view;
     let simulation = &config.simulation;
     let mut clock = SimulationClock::start(simulation.start_julian_date, simulation.speed);
-    let mut step_times = StepTimes::default(); // how long each step of a frame takes, for --debug-frametimes
+    step_times.reset_frame_timings();
 
     let mut simulation_state = SimulationState::default();
     simulation_state.configure_cache(&config.cache);
@@ -111,7 +143,11 @@ fn run_render_loop(config: &Config, sky: &mut Sky, renderer: &mut Renderer) -> i
         simulation_state.begin_frame();
 
         // refresh only model samples whose validity no longer covers this frame
-        let time = FrameTime::from_utc(clock.julian_date());
+        let time = FrameTime::from_utc(if config.debug_singleframe {
+            simulation.start_julian_date // exact requested epoch makes single-frame comparisons reproducible
+        } else {
+            clock.julian_date()
+        });
         step_times
             .measure_steps("Simulation", |steps| {
                 update_simulation(&mut simulation_state, time, &[], steps)
@@ -124,9 +160,16 @@ fn run_render_loop(config: &Config, sky: &mut Sky, renderer: &mut Renderer) -> i
                 let mut observer = steps.measure("Observer geometry", || {
                     observation_cache.prepare_observer(&simulation_state, time, simulation.observer)
                 })?;
+                steps.describe("Observer geometry", || format!("UTC JD={:.9}; UT1 JD={:.9}; TT JD={:.9}; latitude={} rad; longitude={} rad; output WGS84 observer state + horizon matrix", time.utc, time.ut1, time.tt, simulation.observer.latitude, simulation.observer.longitude));
                 steps.measure_steps("Light-time sampling", |steps| {
                     observation_cache.prepare_light_time(&mut simulation_state, &mut observer, steps)
                 })?;
+
+                steps.describe("Light-time sampling", || format!("solar-system emission epochs={:?}; stars have no light-time iteration", observer.emission_tt));
+
+                for name in ["Observer geometry", "Light-time sampling"] {
+                    steps.describe(name, || format!("cache={:?}", observation_cache.reports().into_iter().find(|r| r.name == name).unwrap()));
+                }
 
                 // observation.rs owns the timed filtering, motion, aberration, rotation and refraction passes
                 observation_cache.observe(
@@ -146,14 +189,18 @@ fn run_render_loop(config: &Config, sky: &mut Sky, renderer: &mut Renderer) -> i
             projection_cache.project(sky, &view, renderer.viewport(), time.tt, steps)
         });
         renderer.set_cache_diagnostics(observation_cache.stats(), projection_cache.stats());
-        renderer.render_frame(
-            &projected,
-            &view,
-            time.utc,
-            &clock,
-            &simulation.observer,
-            &mut step_times,
-        )?;
+        renderer.render_frame(&projected, &view, time.utc, &clock, &simulation.observer, step_times)?;
+
+        if config.debug_singleframe {
+            step_times.describe("Present", || {
+                format!(
+                    "frame elapsed including diagnostic bookkeeping={:.3} ms; UTC JD={:.9}; sleep excluded",
+                    frame_start.elapsed().as_secs_f64() * 1000.0,
+                    time.utc
+                )
+            });
+            return Ok(());
+        }
 
         thread::sleep(frame_duration.saturating_sub(frame_start.elapsed())); // wait for the rest of the frame
     }

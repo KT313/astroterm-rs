@@ -5,7 +5,7 @@ use std::borrow::Cow;
 use crate::astro::{MoonPhase, map_float_to_int_range};
 use crate::canvas::Color;
 use crate::catalog::StarNames;
-use crate::sky::{ObservedStar as Star, PlanetKind};
+use crate::sky::{ObservedStarView as Star, PlanetKind};
 
 /// Brightest and dimmest magnitudes in the star catalog, used to pick star glyphs.
 const BRIGHTEST_STAR_MAGNITUDE: f64 = -1.46;
@@ -30,18 +30,18 @@ pub fn select_star_appearance<'a>(star: &Star, names: &'a StarNames) -> Appearan
     Appearance {
         ascii: STAR_GLYPHS_ASCII[glyph_index],
         unicode: STAR_GLYPHS_UNICODE[glyph_index],
-        label: names.get(star.name),
-        color: select_star_color(star.spectral_type, star.color_index),
+        label: names.get(star.name()),
+        color: select_star_color(star.spectral_type(), star.color_index()),
     }
 }
 
 /// A star's label: its proper name, or else its catalog designation (e.g. "α Vir" or "HR 1713"), with Greek letters
 /// if `unicode`.
 pub fn format_star_label<'a>(star: &Star, names: &'a StarNames, unicode: bool) -> Cow<'a, str> {
-    if let Some(name) = names.get(star.name) {
+    if let Some(name) = names.get(star.name()) {
         return Cow::Borrowed(name);
     }
-    match star.designation.resolve() {
+    match star.designation().resolve() {
         Some(designation) => Cow::Owned(designation.format(unicode)),
         None => Cow::Borrowed(""),
     }
@@ -156,9 +156,8 @@ mod tests {
         let sky = Sky::from_catalog(&load_embedded_catalog().expect("embedded catalog loads"));
         let star = |catalog_number: usize| {
             select_star_appearance(
-                sky.stars
-                    .iter()
-                    .find(|star| star.id.0 == catalog_number as u64)
+                &sky.star_views()
+                    .find(|star| star.id().0 == catalog_number as u64)
                     .unwrap(),
                 &sky.names,
             )
@@ -180,17 +179,17 @@ mod tests {
         let sky = Sky::from_catalog(&load_embedded_catalog().expect("embedded catalog loads"));
         assert_eq!(
             format_star_label(
-                sky.stars.iter().find(|star| star.id.0 == 7001).unwrap(),
+                &sky.star_views().find(|star| star.id().0 == 7001).unwrap(),
                 &sky.names,
                 true
             ),
             "Vega"
         );
-        let unnamed = (sky.stars.iter().enumerate()).find(|(_, star)| star.has_data && star.name.is_none());
+        let unnamed = (sky.star_views().enumerate()).find(|(_, star)| star.has_data() && star.name().is_none());
         let (_, unnamed) = unnamed.unwrap();
         assert_eq!(
-            format_star_label(unnamed, &sky.names, false),
-            format!("HR {}", unnamed.id.0)
+            format_star_label(&unnamed, &sky.names, false),
+            format!("HR {}", unnamed.id().0)
         );
     }
 

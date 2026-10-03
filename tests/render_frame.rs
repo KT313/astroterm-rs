@@ -55,8 +55,7 @@ fn count_non_blank(canvas: &Canvas) -> usize {
 fn polaris_is_near_the_center_at_the_north_pole() {
     let sky = build_sky_at("2025-01-02T12:00:00", 90.0, 0.0);
     let polaris = sky
-        .stars
-        .iter()
+        .star_views()
         .find(|star| sky.star_name(star) == Some("Polaris"))
         .expect("Polaris is named");
     assert!(polaris.horizontal_position().altitude > 89.0 * PI / 180.0);
@@ -81,7 +80,7 @@ fn polaris_is_near_the_center_at_the_north_pole() {
         .map(|cell| cell.symbol)
         .collect();
     assert!(
-        glyphs.contains(select_star_appearance(polaris, &sky.names).ascii),
+        glyphs.contains(select_star_appearance(&polaris, &sky.names).ascii),
         "Polaris glyph near the center: {glyphs:?}"
     );
 }

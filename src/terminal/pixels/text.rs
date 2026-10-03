@@ -26,17 +26,66 @@ pub(super) fn compose_text(
 ) -> Buffer {
     // assemble every text layer in memory before either image encoding or terminal output
     let mut buffer = times.measure("Text canvas", || Buffer::empty(screen));
-    times.measure("Star labels", || draw_star_labels(&mut buffer, sky, options, area));
+    times.describe("Text canvas", || {
+        format!(
+            "output text grid={}x{}; cells={}",
+            screen.width,
+            screen.height,
+            buffer.content.len()
+        )
+    });
+    let (eligible, submitted) = times.measure("Star labels", || draw_star_labels(&mut buffer, sky, options, area));
+    times.describe("Star labels", || format!("input stars={}; label candidates={eligible}; skipped by label rules or missing cell={}; clipped label origins={}; submitted labels={submitted}; label threshold={}; dynamic names={}", sky.stars.len(), sky.stars.len()-eligible, eligible-submitted, options.label_threshold, options.dynamic_names));
     times.measure("Body labels", || draw_body_labels(&mut buffer, sky, area));
+    times.describe("Body labels", || {
+        format!(
+            "input Sun/planets={}; input Moon=1; visible label candidates={}; labels clipped to text area",
+            sky.planets.len(),
+            sky.planets.iter().filter(|p| p.cell.is_some()).count() + usize::from(sky.moon.cell.is_some())
+        )
+    });
     times.measure("Orientation labels", || {
         draw_orientation_labels(&mut buffer, sky, options, area)
     });
+    times.describe("Orientation labels", || {
+        format!(
+            "facing={}; grid={}; horizon label inputs={}; text clipped to area={}x{}",
+            sky.facing,
+            options.grid,
+            sky.horizon_labels.len(),
+            area.width,
+            area.height
+        )
+    });
     times.measure("Metadata panel", || draw_metadata(&mut buffer, screen, fields));
+    times.describe("Metadata panel", || {
+        format!(
+            "input fields={}; drawn rows={}; clipped rows={}; transparent background",
+            fields.len(),
+            fields.len().min(usize::from(screen.height)),
+            fields.len().saturating_sub(usize::from(screen.height))
+        )
+    });
     times.measure("Notices", || draw_notices(&mut buffer, sky, screen, notice));
+    times.describe("Notices", || {
+        format!(
+            "fallback notice={}; accuracy warning={}; final nonblank text cells={}",
+            notice.is_some(),
+            sky.outside_accuracy_range,
+            buffer.content.iter().filter(|c| !c.symbol().trim().is_empty()).count()
+        )
+    });
     buffer
 }
 
-fn draw_star_labels(buffer: &mut Buffer, sky: &ProjectedSky<'_>, options: &RenderOptions, area: Rect) {
+fn draw_star_labels(
+    buffer: &mut Buffer,
+    sky: &ProjectedSky<'_>,
+    options: &RenderOptions,
+    area: Rect,
+) -> (usize, usize) {
+    let mut eligible = 0;
+    let mut submitted = 0;
     let cell = |position| map_pixel_to_cell(sky, area, position);
     let named = if options.dynamic_names {
         select_dynamically_named_stars(options, sky)
@@ -48,18 +97,20 @@ fn draw_star_labels(buffer: &mut Buffer, sky: &ProjectedSky<'_>, options: &Rende
             continue;
         };
         let label = if named.contains(&index) {
-            Some(format_star_label(entry.star, sky.names, true))
+            Some(format_star_label(&entry.star, sky.names, true))
         } else if entry.star.magnitude <= options.label_threshold {
-            sky.names.get(entry.star.name).map(std::borrow::Cow::Borrowed)
+            sky.names.get(entry.star.name()).map(std::borrow::Cow::Borrowed)
         } else {
             None
         };
         if let Some(label) = label {
             let (row, col) = cell(position);
-            let [r, g, b] = star_rgb(entry.star);
-            put_label(buffer, area, row - 1, col + 1, &label, Color::Rgb(r, g, b));
+            let [r, g, b] = star_rgb(&entry.star);
+            eligible += 1;
+            submitted += usize::from(put_label(buffer, area, row - 1, col + 1, &label, Color::Rgb(r, g, b)));
         }
     }
+    (eligible, submitted)
 }
 
 fn draw_body_labels(buffer: &mut Buffer, sky: &ProjectedSky<'_>, area: Rect) {
@@ -143,13 +194,13 @@ fn map_pixel_to_cell(sky: &ProjectedSky<'_>, area: Rect, (row, col): (i32, i32))
     )
 }
 
-fn put_label(buffer: &mut Buffer, area: Rect, row: i32, col: i32, text: &str, color: Color) {
+fn put_label(buffer: &mut Buffer, area: Rect, row: i32, col: i32, text: &str, color: Color) -> bool {
     if row < i32::from(area.y)
         || col < i32::from(area.x)
         || row >= i32::from(area.bottom())
         || col >= i32::from(area.right())
     {
-        return;
+        return false;
     }
     Paragraph::new(text)
         .style(Style::default().fg(color).bg(Color::Rgb(3, 6, 14)))
@@ -163,4 +214,5 @@ fn put_label(buffer: &mut Buffer, area: Rect, row: i32, col: i32, text: &str, co
             .intersection(buffer.area),
             buffer,
         );
+    true
 }

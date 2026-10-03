@@ -75,11 +75,10 @@ mod tests {
         refract_sky_positions(&mut sky);
         assert!(sky.stars[..count].iter().all(|s| s.position != sentinel));
         assert!(sky.stars.len() >= count);
-        assert!(sky.stars.iter().all(|star| star.position != sentinel));
+        assert!(sky.star_views().all(|star| star.position != sentinel));
         assert_eq!(sky.count_bright_stars(threshold), count);
         assert!(
-            sky.stars
-                .iter()
+            sky.star_views()
                 .filter(|s| s.drawable)
                 .all(|s| s.magnitude <= threshold)
         );
@@ -126,15 +125,15 @@ mod tests {
         // apparent, -0.366° mean); the original exact 0.0 altitude has no reproducible correction settings.
         // See tests/position_references.rs and scripts/reference/README.md for the airless audit.
         let sky = update_boston_sky();
-        let vega = sky.stars.iter().find(|star| star.id.0 == 7001).unwrap();
+        let vega = sky.star_views().find(|star| star.id().0 == 7001).unwrap();
         assert_eq!(
-            (vega.designation.resolve(), sky.star_name(vega)),
+            (vega.designation().resolve(), sky.star_name(&vega)),
             (Some(Designation::Hr(7001)), Some("Vega"))
         );
         assert_position(vega.position, 0.547246, 0.0, STAR_EPSILON);
 
-        let arcturus = sky.stars.iter().find(|star| star.id.0 == 5340).unwrap();
-        assert_eq!(sky.star_name(arcturus), Some("Arcturus"));
+        let arcturus = sky.star_views().find(|star| star.id().0 == 5340).unwrap();
+        assert_eq!(sky.star_name(&arcturus), Some("Arcturus"));
         assert_position(arcturus.position, 1.511414, 0.440355, STAR_EPSILON);
     }
 
@@ -156,8 +155,8 @@ mod tests {
         refract_sky_positions(&mut refracted);
         let geometric = update_boston_sky();
         let arcturus = (
-            geometric.stars.iter().find(|s| s.id.0 == 5340).unwrap().position,
-            refracted.stars.iter().find(|s| s.id.0 == 5340).unwrap().position,
+            geometric.star_views().find(|s| s.id().0 == 5340).unwrap().position,
+            refracted.star_views().find(|s| s.id().0 == 5340).unwrap().position,
         );
         let arcturus = (
             crate::astro::Horizontal::from_vector(arcturus.0),

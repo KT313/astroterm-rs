@@ -67,7 +67,7 @@ fn main() {
             .collect();
         let stars: Vec<_> = [7001, 5340]
             .map(|hr| {
-                let s = sky.stars.iter().find(|s| s.id.0 == hr).unwrap();
+                let s = sky.star_views().find(|s| s.id().0 == hr).unwrap();
                 vec![s.position.x, s.position.y, s.position.z]
             })
             .into();

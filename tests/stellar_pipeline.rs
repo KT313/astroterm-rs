@@ -154,7 +154,7 @@ fn visible_drawing_order_is_current_magnitude_then_stable_id() {
         .unwrap();
         let projected = project_sky(&sky, &View::default(), Viewport { height: 41, width: 81 });
         assert_eq!(
-            projected.stars.iter().map(|p| p.star.id.0).collect::<Vec<_>>(),
+            projected.stars.iter().map(|p| p.star.id().0).collect::<Vec<_>>(),
             expected
         );
     }
@@ -200,9 +200,8 @@ fn refracted_constellation_endpoint_outside_selection_matches_full_observation()
     let expected =
         astroterm::astro::refract_direction(restricted.catalog.stars.motion(inside).evaluate(0.0, 5.0).direction);
     let actual = restricted
-        .stars
-        .iter()
-        .find(|star| star.id == StarId(1))
+        .star_views()
+        .find(|star| star.id() == StarId(1))
         .unwrap()
         .position;
     assert!((expected - actual).length() < 1e-14);
@@ -326,8 +325,8 @@ fn correction_selection_keeps_faint_endpoints_but_discards_other_rejected_stars(
         ),
         (3, 1, 1)
     );
-    assert!(!sky.stars.iter().any(|s| s.id == StarId(3)));
-    let retained = sky.stars.iter().find(|s| s.id == StarId(2)).unwrap();
+    assert!(!sky.star_views().any(|s| s.id() == StarId(3)));
+    let retained = sky.star_views().find(|s| s.id() == StarId(2)).unwrap();
     assert!(!retained.drawable);
     assert!((retained.position - expected).length() < 1e-14);
 }

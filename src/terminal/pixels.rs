@@ -160,12 +160,32 @@ impl PixelRenderer {
                 image::Rgba(crate::scene::pixels::BACKGROUND),
             )))
         })?;
+        times.describe("Frame canvas", || {
+            format!(
+                "protocol={:?}; screen={}x{} cells; font={}x{} pixels; allocated RGBA bytes={}",
+                self.protocol,
+                self.screen.width,
+                self.screen.height,
+                self.font.width,
+                self.font.height,
+                frame_image.as_ref().map_or(0, |frame| frame.len())
+            )
+        });
         let image = times
             .measure_steps("Raster", |times| {
                 self.scene_cache
                     .draw_pixels(sky, &self.options, crate::sky::FrameTime::from_utc(date).tt, times)
             })
             .ok_or_else(|| io::Error::other("cannot allocate terminal image"))?;
+        times.describe("Raster", || {
+            format!(
+                "output sky={}x{} pixels; RGBA bytes={}; cache={:?}",
+                image.width(),
+                image.height(),
+                image.len(),
+                self.scene_cache.stats()
+            )
+        });
 
         // place the sky on the full frame before preparing labels, metadata and notices
         if let Some(frame) = &mut frame_image {
@@ -175,6 +195,16 @@ impl PixelRenderer {
                     &image,
                     i64::from(self.area.x) * i64::from(self.font.width),
                     i64::from(self.area.y) * i64::from(self.font.height),
+                )
+            });
+            times.describe("Sky composition", || {
+                format!(
+                    "source sky={}x{} pixels; target={}x{} pixels; output RGBA bytes={}",
+                    image.width(),
+                    image.height(),
+                    frame.width(),
+                    frame.height(),
+                    frame.len()
                 )
             });
         }
@@ -256,30 +286,93 @@ impl PixelRenderer {
                     .expect("graphics font initialized")
                     .paint_buffer(&mut frame, &text, text_cell)
             });
+            times.describe("Text rasterization", || {
+                format!(
+                    "input text cells={}; nonblank cells={}; glyph cell={}x{} pixels; output RGBA bytes={}",
+                    text.content.len(),
+                    text.content.iter().filter(|c| !c.symbol().trim().is_empty()).count(),
+                    text_cell.0,
+                    text_cell.1,
+                    frame.len()
+                )
+            });
             if self.protocol == ProtocolType::Kitty {
                 return self.present_kitty_frame(frame, times);
             }
             let encoded = times.measure("Image encoding", || {
                 encode_image(DynamicImage::ImageRgba8(frame), self.screen, self.protocol, self.tmux)
             })?;
-            times.measure("Image composition", || {
+            times.describe("Image encoding", || {
+                format!(
+                    "protocol={:?}; full image={}x{} pixels; includes sky and text",
+                    self.protocol,
+                    u32::from(self.screen.width) * u32::from(self.font.width),
+                    u32::from(self.screen.height) * u32::from(self.font.height)
+                )
+            });
+            let buffer = times.measure("Image composition", || {
                 compose_image(&encoded, self.screen, self.screen)
-            })
+            });
+            times.describe("Image composition", || {
+                format!(
+                    "output terminal buffer cells={}; image protocol payload carried in buffer",
+                    buffer.content.len()
+                )
+            });
+            buffer
         } else {
             let encoded = times.measure("Image encoding", || {
                 encode_image(DynamicImage::ImageRgba8(image), self.area, self.protocol, self.tmux)
             })?;
-            times.measure("Cell composition", || {
+            times.describe("Image encoding", || {
+                format!(
+                    "protocol=Halfblocks; input sky={}x{} pixels; target sky area={}x{} cells",
+                    self.viewport.width, self.viewport.height, self.area.width, self.area.height
+                )
+            });
+            let buffer = times.measure("Cell composition", || {
                 compose_halfblocks(&encoded, self.screen, self.area, &text)
-            })
+            });
+            times.describe("Cell composition", || {
+                format!(
+                    "input text cells={}; output terminal cells={}; text merged over halfblocks",
+                    text.content.len(),
+                    buffer.content.len()
+                )
+            });
+            buffer
         };
         let frame = times.measure("Frame serialization", || serialize_frame(&buffer))?;
-        times.measure("Present", || present_frame(self.session.output(), &frame))
+        times.describe("Frame serialization", || {
+            format!(
+                "input terminal buffer={} cells; output bytes={}",
+                buffer.content.len(),
+                frame.len()
+            )
+        });
+        times.measure("Present", || present_frame(self.session.output(), &frame))?;
+        times.describe("Present", || {
+            format!(
+                "protocol={:?}; bytes submitted={}; frames=1",
+                self.protocol,
+                frame.len()
+            )
+        });
+        Ok(())
     }
 
     fn present_kitty_frame(&mut self, frame: image::RgbaImage, times: &mut StepTimes) -> io::Result<()> {
         // all layers have already been blended onto the opaque background
         let rgb = times.measure("Pixel conversion", || DynamicImage::ImageRgba8(frame).into_rgb8());
+        times.describe("Pixel conversion", || {
+            format!(
+                "input RGBA bytes={}; output RGB bytes={}; dimensions={}x{}",
+                rgb.width() as usize * rgb.height() as usize * 4,
+                rgb.len(),
+                rgb.width(),
+                rgb.height()
+            )
+        });
         let upload = times.measure("Image encoding", || {
             kitty::encode_upload(
                 &rgb,
@@ -288,15 +381,48 @@ impl PixelRenderer {
                 self.tmux,
             )
         })?;
+        times.describe("Image encoding", || {
+            format!(
+                "input RGB bytes={}; compression={:?}; output protocol bytes={}; image ID={}; tmux={}",
+                rgb.len(),
+                self.compression,
+                upload.len(),
+                self.kitty_image_id,
+                self.tmux
+            )
+        });
         let swap = times.measure("Frame serialization", || {
             kitty::serialize_swap(self.kitty_image_id, self.screen, self.tmux)
         })?;
 
+        times.describe("Frame serialization", || {
+            format!(
+                "swap commands bytes={}; image upload already encoded separately",
+                swap.len()
+            )
+        });
+
         // retain the front image during upload; synchronize only the completed image swap
         times.measure_steps("Present", |times| -> io::Result<()> {
             times.measure("Image upload", || present_frame(self.session.output(), &upload))?;
-            times.measure("Image swap", || present_frame(self.session.output(), &swap))
+            times.describe("Image upload", || {
+                format!(
+                    "bytes written/flushed={}; upload outside synchronized output",
+                    upload.len()
+                )
+            });
+            times.measure("Image swap", || present_frame(self.session.output(), &swap))?;
+            times.describe("Image swap", || {
+                format!(
+                    "bytes written/flushed={}; place completed image then delete prior image; frames=1",
+                    swap.len()
+                )
+            });
+            Ok(())
         })?;
+        times.describe("Present", || {
+            format!("Kitty total protocol bytes={}; frames=1", upload.len() + swap.len())
+        });
         self.kitty_image_id = kitty::other_image_id(self.kitty_image_id);
         Ok(())
     }

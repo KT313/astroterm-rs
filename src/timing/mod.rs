@@ -1,5 +1,8 @@
 //! Measuring how long the steps of each frame take, smoothed over frames, to find what needs optimizing.
 
+mod trace;
+pub use trace::{PipelineTrace, TraceStep};
+
 use std::time::Instant;
 
 /// Weight of the previous average in the exponential moving average; the newest frame gets the rest.
@@ -20,6 +23,7 @@ pub struct StepTimes {
     records: Vec<StepRecord>,
     parents: Vec<&'static str>,
     per_frame: bool,
+    trace: Option<PipelineTrace>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -28,6 +32,7 @@ struct StepRecord {
     initialized: bool,
     previous_average: Option<f64>,
     frame_seconds: Option<f64>,
+    frame_calls: usize,
 }
 
 impl StepTimes {
@@ -40,27 +45,60 @@ impl StepTimes {
             }
             record.previous_average = record.initialized.then_some(step.average_seconds);
             record.frame_seconds = None;
+            record.frame_calls = 0;
         }
         self.per_frame = true;
     }
 
     /// Run a step, add its duration to the step's average, and return its result.
     pub fn measure<T>(&mut self, name: &'static str, run: impl FnOnce() -> T) -> T {
+        let trace_index = self.start_trace(name);
         let start = Instant::now();
         let result = run();
-        self.record(name, start.elapsed().as_secs_f64());
+        let seconds = start.elapsed().as_secs_f64();
+        self.finish_trace(trace_index, seconds);
+        self.record(name, seconds);
         result
     }
 
     /// Measure a stage that also records its own sub-steps.
     pub fn measure_steps<T>(&mut self, name: &'static str, run: impl FnOnce(&mut Self) -> T) -> T {
+        let trace_index = self.start_trace(name);
         self.register_step(name); // reserve the parent before its children, so the panel reads in pipeline order
         let start = Instant::now();
         self.parents.push(name);
+        self.push_trace_scope(trace_index);
         let result = run(self);
+        self.pop_trace_scope(trace_index);
         self.parents.pop();
-        self.record(name, start.elapsed().as_secs_f64());
+        let seconds = start.elapsed().as_secs_f64();
+        self.finish_trace(trace_index, seconds);
+        self.record(name, seconds);
         result
+    }
+
+    /// Time bounded-batch passes without a clock per object or thousands of trace entries. Child rows are
+    /// explicitly aggregated in first-occurrence order; their calls interleave once per batch.
+    pub fn measure_batches<T>(&mut self, name: &'static str, run: impl FnOnce(&mut Self) -> T) -> T {
+        self.measure_steps(name, |times| {
+            let mut batches = Self::default();
+            batches.begin_frame();
+            let result = run(&mut batches);
+            for (step, record) in batches.steps.iter().zip(&batches.records) {
+                assert_eq!(step.depth, 0, "batch passes must be flat");
+                let seconds = record.frame_seconds.unwrap_or(0.0);
+                let index = times.start_trace(step.name);
+                times.finish_trace(index, seconds);
+                times.record(step.name, seconds);
+                times.describe(step.name, || {
+                    format!(
+                        "sum of {} batch calls; passes interleave per batch; no per-star timers",
+                        record.frame_calls
+                    )
+                });
+            }
+            result
+        })
     }
 
     /// The steps measured so far, with their averages.
@@ -73,6 +111,7 @@ impl StepTimes {
         let index = self.register_step(name);
         let step = &mut self.steps[index];
         let record = &mut self.records[index];
+        record.frame_calls += 1;
         let (previous, sample) = if self.per_frame {
             let total = record.frame_seconds.get_or_insert(0.0);
             *total += seconds;

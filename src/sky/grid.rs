@@ -213,6 +213,20 @@ impl SkyGrid {
         }
     }
 
+    /// Count the region's unfiltered membership without expanding the sorted cell ranges.
+    pub(crate) fn count_region_stars(&self, region: &SelectedRegion, total: usize) -> (usize, usize, usize) {
+        let always = total - self.offsets[CELL_COUNT];
+        if region.brute_force {
+            return (CELL_COUNT, total, always);
+        }
+        let count = region
+            .cells
+            .iter()
+            .map(|&cell| self.offsets[cell + 1] - self.offsets[cell])
+            .sum::<usize>();
+        (region.cells.len(), count + always, always)
+    }
+
     /// Use interval-wide magnitude bounds, including the always-checked tail. Outside the supported interval,
     /// every star is returned; only the later current-magnitude filter may reject it.
     pub(crate) fn select_brightness(

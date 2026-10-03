@@ -204,3 +204,15 @@ the median of ten measurements for refreshes and cache hits. Inputs are all BSC 
 20k/250k synthetic sort entries; it loads no AT-HYG catalog and performs no astronomy or rasterization. It
 checks exact index-order equality and reports retained scratch capacity in bytes. This isolates draw-order cost,
 not whole-frame speed. Functional tests cover floating-point ties, dynamic names, membership changes and bypass.
+
+### Single-frame execution report
+
+```sh
+python scripts/checks/singleframe.py target/release/astroterm --report-dir dev/singleframe-reports
+cargo test --locked --offline --test pipeline_trace
+```
+
+The PTY check uses only embedded BSC at `-t 5`: ASCII, Unicode with frame timings/cache bypass, and pixels
+through halfblocks, Sixel, iTerm2 and compressed Kitty. It verifies automatic one-frame exit, plain ordered
+report after terminal restoration, repeated simulation calls, exact requested UTC, and one image placement.
+It uses Python’s standard library on Unix; this validates transport, not physical display timing.

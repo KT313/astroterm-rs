@@ -8,7 +8,7 @@ use crate::catalog::{
     StarNames,
     cache::{CatalogArray, MappedCatalog, invalid, supported, write_sections},
     datasets::{Dataset, DatasetDirectories, resolve_dataset},
-    load_athyg_catalog, load_constellation_figures, load_embedded_catalog,
+    load_athyg_catalog_with_times, load_constellation_figures, load_embedded_catalog,
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -89,12 +89,32 @@ pub fn load_sky_catalog(
     directories: &DatasetDirectories,
     notices: &mut impl Write,
 ) -> io::Result<SkyCatalog> {
+    load_sky_catalog_with_times(dataset, directories, notices, &mut crate::timing::StepTimes::default())
+}
+
+/// The production loader with optional startup diagnostics; mapped catalogs are not reparsed for statistics.
+pub fn load_sky_catalog_with_times(
+    dataset: Option<&Dataset>,
+    directories: &DatasetDirectories,
+    notices: &mut impl Write,
+    times: &mut crate::timing::StepTimes,
+) -> io::Result<SkyCatalog> {
     let Some(dataset) = dataset else {
-        return load_embedded_catalog()
-            .map(SkyCatalog::from_owned_catalog)
-            .map_err(io::Error::other);
+        let parsed = times
+            .measure("Embedded BSC loading", load_embedded_catalog)
+            .map_err(io::Error::other)?;
+        times.describe("Embedded BSC loading", || {
+            format!(
+                "input entries={}; placeholders={}; parsed entries={} (placeholders removed during preparation)",
+                parsed.stars.len(),
+                parsed.stars.iter().filter(|s| !s.has_data).count(),
+                parsed.stars.len()
+            )
+        });
+        return Ok(prepare_catalog(parsed, times));
     };
-    let source = resolve_dataset(dataset, directories, notices)?;
+    let source = times.measure("Dataset resolution", || resolve_dataset(dataset, directories, notices))?;
+    times.describe("Dataset resolution", || format!("source={}", source.display()));
     let path = if supported() {
         directories
             .cache
@@ -117,7 +137,12 @@ pub fn load_sky_catalog(
         fingerprint = hash.finalize().into();
     }
     if let Some(path) = &path {
-        match load_cached_catalog(path, &fingerprint) {
+        let cached = times.measure("Prepared catalog lookup", || load_cached_catalog(path, &fingerprint));
+        times.describe("Prepared catalog lookup", || match &cached {
+            Ok(catalog) => format!("validated mapped stars={}; source CSV not read; original skipped-row counts unavailable in this cache format", catalog.stars.len()),
+            Err(error) => format!("miss: {error}; parse source next"),
+        });
+        match cached {
             Ok(catalog) => return Ok(catalog),
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => {
@@ -129,13 +154,16 @@ pub fn load_sky_catalog(
             }
         }
     }
-    let catalog = load_athyg_catalog(&source)
-        .map(SkyCatalog::from_owned_catalog)
+    let parsed = times
+        .measure_steps("AT-HYG loading", |times| load_athyg_catalog_with_times(&source, times))
         .map_err(io::Error::other)?;
+    let catalog = prepare_catalog(parsed, times);
     if let Some(path) = path {
         if cache_path(&source, path.parent().unwrap()).ok().as_ref() != Some(&path) {
             writeln!(notices, "Dataset changed while loading; cache was not written.")?;
-        } else if let Err(error) = write_cached_catalog(&path, &catalog, &fingerprint) {
+        } else if let Err(error) = times.measure("Prepared catalog write", || {
+            write_cached_catalog(&path, &catalog, &fingerprint)
+        }) {
             writeln!(
                 notices,
                 "Could not write cache {}: {error}; continuing without a cache.",
@@ -144,6 +172,13 @@ pub fn load_sky_catalog(
         }
     }
     Ok(catalog)
+}
+
+fn prepare_catalog(parsed: crate::catalog::Catalog, times: &mut crate::timing::StepTimes) -> SkyCatalog {
+    let input = parsed.stars.len();
+    let catalog = times.measure("Catalog preparation", || SkyCatalog::from_owned_catalog(parsed));
+    times.describe("Catalog preparation", || format!("input entries={input}; removed placeholders={}; output stars={}; grid cells={CELL_COUNT}; always-checked={}; unique constellation endpoints={}", input - catalog.stars.len(), catalog.stars.len(), catalog.always_checked.len(), catalog.endpoint_indices.len()));
+    catalog
 }
 
 pub fn write_cached_catalog(path: &Path, catalog: &SkyCatalog, fingerprint: &[u8; 32]) -> io::Result<()> {
@@ -588,15 +623,11 @@ mod tests {
         let mapped = load_cached_catalog(&path, &fingerprint).unwrap();
         assert_eq!(mapped, catalog);
         for storage in [&catalog.stars, &mapped.stars] {
-            let fields = storage.borrow_observation_fields();
             let trajectories = storage.borrow_trajectory_fields();
             for i in 0..storage.len() {
                 let full = storage.get(i);
                 assert_eq!(trajectories.motion(i), full.motion);
-                assert_eq!(
-                    fields.create_observed_star(i, true).designation.resolve(),
-                    full.designation
-                );
+                assert_eq!(storage.designation(i).resolve(), full.designation);
             }
         }
 

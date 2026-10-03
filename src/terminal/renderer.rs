@@ -93,13 +93,24 @@ impl TerminalRenderer {
             .then(|| format_step_time_fields(step_times.steps()));
 
         // draw the sky and the panel, then write the changes to the terminal
-        step_times.measure("Draw", || {
-            self.scene_cache.draw_characters(
-                &mut self.frame.sky,
-                sky,
-                &self.options,
-                crate::sky::FrameTime::from_utc(julian_date_utc).tt,
-            );
+        step_times.measure_steps("Draw", |step_times| {
+            step_times.measure_steps("Raster", |step_times| {
+                self.scene_cache.draw_characters_with_times(
+                    &mut self.frame.sky,
+                    sky,
+                    &self.options,
+                    crate::sky::FrameTime::from_utc(julian_date_utc).tt,
+                    step_times,
+                )
+            });
+            step_times.describe("Raster", || {
+                format!(
+                    "canvas={}x{} cells; cache={:?}",
+                    self.frame.sky.width(),
+                    self.frame.sky.height(),
+                    self.scene_cache.stats()
+                )
+            });
             if let Some(notice) = &self.startup_notice {
                 let row = self.frame.sky.height().saturating_sub(2) as i32;
                 self.frame
@@ -156,9 +167,26 @@ impl TerminalRenderer {
                     });
                 }
                 fields.extend(step_time_fields.into_iter().flatten());
-                draw_metadata_panel(panel, &fields);
+                step_times.measure("Metadata panel", || draw_metadata_panel(panel, &fields));
+                step_times.describe("Metadata panel", || {
+                    format!(
+                        "input fields={}; panel={}x{} cells; clipped to panel",
+                        fields.len(),
+                        panel.width(),
+                        panel.height()
+                    )
+                });
             }
         });
-        step_times.measure("Present", || self.session.present(&self.frame))
+        step_times.measure("Present", || self.session.present(&self.frame))?;
+        step_times.describe("Present", || {
+            format!(
+                "one character frame submitted; sky={}x{} cells; panel={}; character diff and flush included",
+                self.frame.sky.width(),
+                self.frame.sky.height(),
+                self.frame.panel.is_some()
+            )
+        });
+        Ok(())
     }
 }

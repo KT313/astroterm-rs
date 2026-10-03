@@ -88,7 +88,7 @@ Each module only depends on the ones above it:
 
 | Module | Responsibility |
 |---|---|
-| `timing` | Smoothed durations of the steps of each frame (`--debug-frametimes`) |
+| `timing` | Smoothed frame durations and opt-in single-frame execution traces |
 | `astro` | Julian dates, sidereal time, precession, coordinate conversions, star/planet/Moon positions |
 | `canvas` | In-memory cell grid (clipping, wide glyphs, braille merging) and line drawing |
 | `projection` | Stereographic / equidistant projections onto the unit disk and the `View` (zenith or facing, fov) |
@@ -162,6 +162,8 @@ New:
   Repeated calls in the same scope are summed per frame before smoothing; identical names under different parents
   stay separate. Parent totals include their children and are counted only once in the frame total. The complete
   breakdown needs a tall terminal.
+- `--debug-singleframe` presents one frame, restores the terminal, and prints an ordered pipeline report with
+  unsmoothed timings, input/output counts, filtering reasons, cache decisions and image transport sizes.
 
 Fixed:
 
@@ -281,6 +283,56 @@ it is not a claim of exact physical astronomy.
 
 ## Development
 
+Use `--debug-singleframe` to inspect one real frame, including startup, observation, projection, rendering,
+text and presentation:
+
+```sh
+make run -- -i Tokyo -d 2025-03-01T11:00:00 -t 5 -C --debug-singleframe
+make run -- -i Tokyo -d 2025-03-01T11:00:00 -t 5 -C --renderer pixels --debug-singleframe
+```
+
+The report goes to stdout after the terminal is restored. This flag does not enable the metadata panel;
+`-m` and `--debug-frametimes` still work independently. It uses the exact requested start epoch even with a
+nonzero simulation speed, presents once, and exits without the frame-rate sleep. Normal terminal negotiation
+still runs. Add `--disable-cache` to bypass runtime reuse; it does not bypass the prepared catalog cache.
+
+Entries follow invocation order, with indentation for nested stages; repeated light-time sampling calls stay
+separate. Filters report their ordered rejection counts, and endpoint-only stars are distinguished from drawable
+stars. Geometry counts describe submitted objects, not unique visible pixels after clipping and overdraw.
+These are first-frame wall times, including cold runtime caches. Parent timings include their children and
+extra diagnostic bookkeeping, so do not add all rows or compare directly with steady-state frame averages.
+Extra diagnostic scans and formatting are disabled during ordinary animation. Each parent reports direct-child
+costs, directly enclosed diagnostics, and the remaining self/unattributed time. Diagnostic work outside any
+stage is reported separately. A remainder is visible overhead or uncovered work, not automatically calculation time.
+
+Stellar work runs in batches of at most 1,024 stars: cache lookup/decisions, trajectory reads, motion and magnitude
+calculation, validity qualification, cache stores, and output assembly. Child timings are sums across batches in
+first-occurrence order; these passes interleave for each batch. There are no per-star clocks or per-star trace rows.
+The report counts refreshed/reused stars, zero-validity reasons, and extra model evaluations for validity checks.
+This decomposition uses bounded scratch storage and an additional cache lookup for each refreshed star's store;
+it preserves numerical results and cache policy but changes traversal costs, so old fused-loop timings are not
+an identical implementation baseline.
+
+Raster cache-key construction, cache decisions/stores, image copies, projected-view assembly, sorting,
+endpoint-index merging, calculated-state construction, and direction capture/restoration have separate timers.
+Working selections contain only catalog indices and drawing eligibility. Observed star buffers contain calculated
+state; renderers borrow immutable metadata directly from the shared catalog. Refresh calculations retain their
+output, while direction restoration runs only on cache hits.
+
+Raster keys use exact ordered drawing inputs instead of full observed records: pixel keys contain cell, current
+magnitude and base RGB; character keys contain cell, glyph and color plus the resolved text of selected labels.
+Names remain outside the pixel sky cache because text is composed separately. Keys still require a linear scan
+and exact comparison; this is a memory/copy reduction, not constant-time invalidation. On a 64-bit build, pixel
+star keys use 24 bytes instead of 120, working selections use 16 instead of 104, and calculated star records use
+48 instead of 104. Borrowed projected-star records increase from 24 to 32 bytes because they also reference the
+catalog. These are element sizes, not total process memory or measured speedups.
+
+CSV loads report skipped rows by reason; embedded BSC loads report placeholder removal. A mapped catalog
+reports its validated star count and explicitly marks original CSV skip counts unavailable: that cache format
+does not store them, and tracing does not reread the source to reconstruct them. Invalid source values remain
+loading errors, not silently skipped rows. Library reference paths need not emit all application diagnostics;
+the report covers the named stages of the production frame pipeline, not every scalar math helper.
+
 ```sh
 cargo fmt --check && cargo clippy --all-targets && cargo test
 ```
@@ -304,9 +356,14 @@ per-body emission epochs. The observer stays at reception while each target move
 light-time estimate plus one iteration requests bounded samples explicitly. Observation then reads those samples
 without invoking ephemeris code. Missing coverage is an error returned to the coordinator. Outside the computational interval, caches use direct evaluation only.
 
-Observation borrows prepared catalog arrays once per pass. `ObservedStar.designation` is an `EncodedDesignation`;
-call `.resolve()` when a label needs its enum value. Catalog input records retain `Option<Designation>`. The
-published observed sky contains drawable candidates and required constellation endpoints; `CorrectionStats`
+Observation borrows prepared catalog arrays once per pass. `ObservedStar` contains only `source_index`,
+`drawable`, current `magnitude` and `position`. Library callers access static metadata through
+`sky.star_view(index)` or `sky.star_views()`: `id()`, `name()`, `designation()`, `spectral_type()` and `color_index()`.
+`ProjectedStar.star` is an `ObservedStarView` that borrows both calculated state and catalog metadata.
+`designation()` returns an `EncodedDesignation`; call `.resolve()` when a label needs its enum value. Catalog
+input records retain `Option<Designation>`. Change static metadata in the input `Catalog` before preparing a sky;
+filtered/reordered calculated states must retain valid source indices into their owning catalog.
+The published observed sky contains drawable candidates and required constellation endpoints; `CorrectionStats`
 records the number prepared, skipped and retained only as endpoints. `--debug-frametimes` exposes the separate
 Correction selection stage and these counts. Stellar aberration accepts the already normalized intrinsic direction;
 distance-vector corrections retain their generic normalization path.

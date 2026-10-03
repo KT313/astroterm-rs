@@ -136,7 +136,7 @@ fn cached_pipeline_matches_reference_through_camera_time_and_site_changes() {
                 .sky
                 .stars
                 .iter()
-                .find(|s| s.id == star.id)
+                .find(|s| s.source_index == star.source_index)
                 .expect("no lost candidate or endpoint");
             assert_eq!(actual.magnitude, star.magnitude);
             assert_eq!(actual.drawable, star.drawable);
@@ -271,7 +271,10 @@ fn moving_distance_stars_preserve_magnitude_thresholds_and_order_within_ttl() {
         assert_eq!(cached.sky.stars.len(), if seconds == 0.0 { 2 } else { 1 });
         assert_eq!(cached.sky.corrections, direct.sky.corrections);
         for (a, b) in cached.sky.stars.iter().zip(&direct.sky.stars) {
-            assert_eq!((a.id, a.magnitude, a.drawable), (b.id, b.magnitude, b.drawable));
+            assert_eq!(
+                (a.source_index, a.magnitude, a.drawable),
+                (b.source_index, b.magnitude, b.drawable)
+            );
             assert_eq!(
                 cached.observation.stellar_report(a.source_index).unwrap().valid_seconds,
                 0.0
@@ -288,11 +291,14 @@ fn moving_distance_stars_preserve_magnitude_thresholds_and_order_within_ttl() {
         direct.frame(tt, view, threshold, true, Observer::default());
         assert_eq!(cached.sky.stars.len(), if threshold == 5.0 { 1 } else { 2 });
         for (a, b) in cached.sky.stars.iter().zip(&direct.sky.stars) {
-            assert_eq!((a.id, a.magnitude, a.drawable), (b.id, b.magnitude, b.drawable));
+            assert_eq!(
+                (a.source_index, a.magnitude, a.drawable),
+                (b.source_index, b.magnitude, b.drawable)
+            );
             assert!(
                 angle(a.position, b.position) < 1e-8,
                 "threshold {threshold} id {:?}: {} arcsec",
-                a.id,
+                a.source_index,
                 angle(a.position, b.position)
             );
         }

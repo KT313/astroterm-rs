@@ -23,7 +23,9 @@ pub use simulation::{
     FrameTime, ModelFamily, RefreshCounts, SimulationError, SimulationState, StateRequest, update_simulation,
 };
 
-pub use objects::{Constellation, Moon, ObservedStar, Planet, PlanetKind, Star, create_moon, create_planets};
+pub use objects::{
+    Constellation, Moon, ObservedStar, ObservedStarView, Planet, PlanetKind, Star, create_moon, create_planets,
+};
 pub use positions::{refract_sky_positions, update_sky_positions};
 
 use std::collections::HashMap;
@@ -162,6 +164,7 @@ pub struct ObservedSky {
     pub(crate) candidate_indices: Vec<usize>,
     pub runtime_singular_count: usize,
     pub catalog: Arc<SkyCatalog>,
+    /// Calculated state only. Static display metadata stays packed in `catalog`; use `star_view`/`star_views`.
     pub stars: Vec<ObservedStar>,
     pub planets: Vec<Planet>,
     pub moon: Moon,
@@ -214,7 +217,21 @@ impl ObservedSky {
             .count()
     }
     pub fn star_name(&self, star: &ObservedStar) -> Option<&str> {
-        self.names.get(star.name)
+        self.names.get(self.catalog.stars.name(star.source_index))
+    }
+    /// Borrow one calculated record and its catalog metadata; `index` addresses this observed subset.
+    pub fn star_view(&self, index: usize) -> ObservedStarView<'_> {
+        ObservedStarView {
+            state: &self.stars[index],
+            catalog: &self.catalog.stars,
+        }
+    }
+    /// Iterate the observed subset without allocating or copying metadata.
+    pub fn star_views(&self) -> impl DoubleEndedIterator<Item = ObservedStarView<'_>> + ExactSizeIterator {
+        self.stars.iter().map(|state| ObservedStarView {
+            state,
+            catalog: &self.catalog.stars,
+        })
     }
     pub fn sun(&self) -> &Planet {
         &self.planets[0]
@@ -252,13 +269,12 @@ mod tests {
         let sky = build_sky();
         assert_eq!(sky.stars.len(), 9110 - 14);
         assert_eq!(
-            sky.star_name(sky.stars.iter().find(|star| star.id.0 == 7001).unwrap()),
+            sky.star_name(&sky.star_views().find(|star| star.id().0 == 7001).unwrap()),
             Some("Vega")
         );
         assert!(
-            sky.stars
-                .iter()
-                .all(|star| star.designation.resolve() == Some(Designation::Hr(star.id.0 as u32)))
+            sky.star_views()
+                .all(|star| star.designation().resolve() == Some(Designation::Hr(star.id().0 as u32)))
         );
         for range in sky.catalog.grid.offsets.windows(2) {
             let stars = &sky.catalog.stars;
@@ -279,7 +295,7 @@ mod tests {
             &crate::projection::View::default(),
             crate::projection::Viewport { height: 41, width: 81 },
         );
-        let drawn: Vec<_> = projected.stars.iter().map(|s| s.star.id.0).collect();
+        let drawn: Vec<_> = projected.stars.iter().map(|s| s.star.id().0).collect();
         assert_eq!(&drawn[..3], &[1894, 365, 3313]);
         assert_eq!(
             drawn.iter().rev().take(3).copied().collect::<Vec<_>>(),
@@ -290,13 +306,13 @@ mod tests {
     #[test]
     fn stars_keep_their_names_and_spectral_types() {
         let sky = build_sky();
-        let star = |id| sky.stars.iter().find(|star| star.id.0 == id).unwrap();
+        let star = |id| sky.star_views().find(|star| star.id().0 == id).unwrap();
         assert_eq!(
-            (sky.star_name(star(2061)), &star(2061).spectral_type),
+            (sky.star_name(&star(2061)), &star(2061).spectral_type()),
             (Some("Betelgeuse"), b"M1")
         );
         assert_eq!(
-            (sky.star_name(star(5340)), &star(5340).spectral_type),
+            (sky.star_name(&star(5340)), &star(5340).spectral_type()),
             (Some("Arcturus"), b"K1")
         );
     }
@@ -305,7 +321,7 @@ mod tests {
     fn placeholder_stars_are_never_drawn() {
         let sky = build_sky();
         assert_eq!(sky.stars.len(), 9110 - 14);
-        assert!(!sky.stars.iter().any(|star| star.id.0 == 92)); // HR 92 has no data
+        assert!(!sky.star_views().any(|star| star.id().0 == 92)); // HR 92 has no data
     }
 
     #[test]
@@ -338,7 +354,7 @@ mod tests {
         let sky = Sky::from_catalog(&catalog);
         assert_eq!(sky.constellations.len(), 1);
         let [a, b] = sky.constellations[0].segments[0];
-        assert_eq!((sky.stars[a].id.0, sky.stars[b].id.0), (10, 20));
+        assert_eq!((sky.star_view(a).id().0, sky.star_view(b).id().0), (10, 20));
     }
 
     #[test]
@@ -346,6 +362,6 @@ mod tests {
         let sky = build_sky();
         assert_eq!(sky.constellations.len(), 88);
         let [a, b] = sky.constellations[19].segments[0];
-        assert_eq!((sky.stars[a].id.0, sky.stars[b].id.0), (4785, 4915));
+        assert_eq!((sky.star_view(a).id().0, sky.star_view(b).id().0), (4785, 4915));
     }
 }

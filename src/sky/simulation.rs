@@ -225,6 +225,7 @@ pub fn update_simulation(
             moon_epochs.push(request.tt);
         }
     }
+    let before = state.refresh_counts;
     times.measure("Planet samples", || {
         prepare_samples(
             &mut state.planets,
@@ -242,6 +243,7 @@ pub fn update_simulation(
             },
         )
     })?;
+    times.describe("Planet samples", || format!("requested epochs={}; new sample blocks={}; retained blocks={}; half-span={} days; each evaluation supplies all planetary states", planet_epochs.len(), state.refresh_counts.planets - before.planets, state.planets.len(), state.policy.planets_days));
     times.measure("Lunar samples", || {
         prepare_samples(
             &mut state.moon,
@@ -259,6 +261,15 @@ pub fn update_simulation(
             },
         )
     })?;
+    times.describe("Lunar samples", || {
+        format!(
+            "requested epochs={}; new sample blocks={}; retained blocks={}; half-span={} days",
+            moon_epochs.len(),
+            state.refresh_counts.moon - before.moon,
+            state.moon.len(),
+            state.policy.moon_days
+        )
+    });
     times.measure("Orientation samples", || {
         prepare_samples(
             &mut state.orientation,
@@ -276,6 +287,7 @@ pub fn update_simulation(
             },
         )
     })?;
+    times.describe("Orientation samples", || format!("requested epochs=1; new sample blocks={}; retained blocks={}; half-span={} days; output slow orientation matrices", state.refresh_counts.orientation - before.orientation, state.orientation.len(), state.policy.orientation_days));
     Ok(())
 }
 

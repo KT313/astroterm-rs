@@ -16,6 +16,7 @@ use std::collections::HashMap;
 use std::fmt;
 
 pub use athyg::load_athyg_catalog;
+pub(crate) use athyg::load_athyg_catalog_with_times;
 pub use bsc5::{Bsc5Entry, parse_bsc5};
 pub use cities::{City, find_city, parse_cities, suggest_cities};
 pub use designation::{Designation, EncodedDesignation};

@@ -152,7 +152,7 @@ fn observed_frames_match_de441_in_the_claimed_intervals_and_record_far_failures(
             }
         }
         for (i, hr) in [7001, 5340].into_iter().enumerate() {
-            let star = sky.stars.iter().find(|s| s.id.0 == hr).unwrap();
+            let star = sky.star_views().find(|s| s.id().0 == hr).unwrap();
             assert!(angle(star.position, vector(&row["stars"][i])) < 0.1);
         }
     }

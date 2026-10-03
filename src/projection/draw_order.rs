@@ -22,25 +22,37 @@ impl DrawRecord {
 }
 
 pub(super) fn prepare_draw_order(records: &mut Vec<DrawRecord>, stars: impl IntoIterator<Item = (f64, StarId)>) {
-    records.clear(); // retained capacity is scratch space, never a cached result
-    records.extend(
-        stars
-            .into_iter()
-            .enumerate()
-            .map(|(projected_index, (magnitude, id))| DrawRecord {
-                magnitude,
-                id,
-                projected_index,
-            }),
-    );
-    records.sort_unstable_by(DrawRecord::compare_for_drawing);
+    prepare_draw_order_with_times(records, stars, &mut crate::timing::StepTimes::default());
+}
+
+pub(super) fn prepare_draw_order_with_times(
+    records: &mut Vec<DrawRecord>,
+    stars: impl IntoIterator<Item = (f64, StarId)>,
+    times: &mut crate::timing::StepTimes,
+) {
+    times.measure("Sort record construction", || {
+        records.clear(); // retained capacity is scratch space, never a cached result
+        records.extend(
+            stars
+                .into_iter()
+                .enumerate()
+                .map(|(projected_index, (magnitude, id))| DrawRecord {
+                    magnitude,
+                    id,
+                    projected_index,
+                }),
+        );
+    });
+    times.measure("Magnitude and ID sort", || {
+        records.sort_unstable_by(DrawRecord::compare_for_drawing)
+    });
 }
 
 pub(super) fn sort_stars_for_drawing(stars: &mut [ProjectedStar<'_>]) {
     let mut records = Vec::new();
     prepare_draw_order(
         &mut records,
-        stars.iter().map(|star| (star.star.magnitude, star.star.id)),
+        stars.iter().map(|star| (star.star.magnitude, star.star.id())),
     );
 
     // Apply each permutation cycle once, without allocating another array of projected stars.
@@ -95,7 +107,7 @@ mod tests {
         let mut scratch = Vec::new();
         for count in [128, 3, 0, 17, 128] {
             for (index, star) in sky.stars.iter_mut().enumerate() {
-                star.id = StarId((index * 73 % 128) as u64); // permuted unique IDs, independent of source order
+                star.source_index = index * 73 % 128; // permuted unique IDs, independent of source order
                 star.magnitude = ((index * 19 + count) % 7) as f64;
                 if index % 7 == 0 {
                     star.magnitude = -0.0;
@@ -105,19 +117,22 @@ mod tests {
                 .iter()
                 .enumerate()
                 .map(|(index, star)| ProjectedStar {
-                    star,
+                    star: crate::sky::ObservedStarView {
+                        state: star,
+                        catalog: &sky.catalog.stars,
+                    },
                     cell: Some((index as i32, 1)),
                 })
                 .collect();
             let mut expected = actual.clone();
             expected.sort_unstable_by(|a, b| {
                 if a.star.magnitude == b.star.magnitude {
-                    a.star.id.cmp(&b.star.id)
+                    a.star.id().cmp(&b.star.id())
                 } else {
                     b.star.magnitude.total_cmp(&a.star.magnitude)
                 }
             });
-            prepare_draw_order(&mut scratch, actual.iter().map(|s| (s.star.magnitude, s.star.id)));
+            prepare_draw_order(&mut scratch, actual.iter().map(|s| (s.star.magnitude, s.star.id())));
             assert_eq!(
                 scratch
                     .iter()

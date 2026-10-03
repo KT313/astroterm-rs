@@ -48,28 +48,80 @@ pub(super) fn filter_brightness_candidates(
 }
 
 /// Preserve source-index ordering and candidate eligibility while including every constellation endpoint.
-pub(super) fn include_constellation_endpoints(mut selected: Vec<usize>, output: &mut ObservedSky) {
-    selected.sort_unstable();
-    selected.dedup();
-    let mut candidates = selected.into_iter().peekable();
-    let mut endpoints = output.catalog.endpoint_indices.iter().copied().peekable();
+pub(super) fn include_constellation_endpoints(selected: Vec<usize>, output: &mut ObservedSky) {
+    include_constellation_endpoints_with_times(selected, output, &mut crate::timing::StepTimes::default());
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct SelectedStar {
+    pub source_index: usize,
+    pub drawable: bool,
+}
+
+pub(super) fn include_constellation_endpoints_with_times(
+    selected: Vec<usize>,
+    output: &mut ObservedSky,
+    times: &mut crate::timing::StepTimes,
+) {
+    let working = merge_constellation_endpoints(selected, &output.catalog.endpoint_indices, times);
     let fields = output.catalog.stars.borrow_observation_fields();
     output.stars.clear();
-    while candidates.peek().is_some() || endpoints.peek().is_some() {
-        let index = candidates
-            .peek()
-            .copied()
-            .unwrap_or(usize::MAX)
-            .min(endpoints.peek().copied().unwrap_or(usize::MAX));
-        let drawable = candidates.peek() == Some(&index);
-        if drawable {
-            candidates.next();
+    output.stars.extend(
+        working
+            .into_iter()
+            .map(|star| fields.create_observed_star(star.source_index, star.drawable)),
+    );
+}
+
+pub(super) fn merge_constellation_endpoints(
+    mut selected: Vec<usize>,
+    endpoints: &[usize],
+    times: &mut crate::timing::StepTimes,
+) -> Vec<SelectedStar> {
+    let input = selected.len();
+    times.measure("Candidate index sort and dedup", || {
+        selected.sort_unstable();
+        selected.dedup();
+    });
+    times.describe("Candidate index sort and dedup", || {
+        format!(
+            "input indices={input}; duplicates removed={}; output indices={}",
+            input - selected.len(),
+            selected.len()
+        )
+    });
+    let working = times.measure("Endpoint index merge", || {
+        let mut working = Vec::with_capacity(selected.len() + endpoints.len());
+        let mut candidates = selected.into_iter().peekable();
+        let mut endpoints = endpoints.iter().copied().peekable();
+        while candidates.peek().is_some() || endpoints.peek().is_some() {
+            let index = candidates
+                .peek()
+                .copied()
+                .unwrap_or(usize::MAX)
+                .min(endpoints.peek().copied().unwrap_or(usize::MAX));
+            let drawable = candidates.peek() == Some(&index);
+            if drawable {
+                candidates.next();
+            }
+            if endpoints.peek() == Some(&index) {
+                endpoints.next();
+            }
+            working.push(SelectedStar {
+                source_index: index,
+                drawable,
+            });
         }
-        if endpoints.peek() == Some(&index) {
-            endpoints.next();
-        }
-        output.stars.push(fields.create_observed_star(index, drawable));
-    }
+        working
+    });
+    times.describe("Endpoint index merge", || {
+        format!(
+            "output selected indices/flags={}; element bytes={}; catalog metadata copied=0",
+            working.len(),
+            std::mem::size_of::<SelectedStar>()
+        )
+    });
+    working
 }
 
 pub(super) fn evaluate_stellar_motion(tt: f64, output: &mut ObservedSky) {
@@ -140,25 +192,25 @@ pub(super) fn rotate_sky_to_horizon(rotation: Matrix3, output: &mut ObservedSky)
 
 /// Select candidates needing directions with one walk through sorted constellation endpoints.
 pub(super) fn select_correction_indices(
-    stars: &[crate::sky::ObservedStar],
+    sources: impl ExactSizeIterator<Item = usize>,
     drawable: &[bool],
     endpoints: &[usize],
 ) -> (Vec<usize>, crate::sky::CorrectionStats) {
     let mut endpoints = endpoints.iter().copied().peekable();
-    let mut indices = Vec::with_capacity(stars.len());
+    let mut indices = Vec::with_capacity(sources.len());
     let mut stats = crate::sky::CorrectionStats {
-        evaluated: stars.len(),
+        evaluated: sources.len(),
         ..Default::default()
     };
-    for (index, (star, &drawable)) in stars.iter().zip(drawable).enumerate() {
+    for (index, (star, &drawable)) in sources.zip(drawable).enumerate() {
         if drawable {
             indices.push(index);
             continue;
         }
-        while endpoints.peek().is_some_and(|&i| i < star.source_index) {
+        while endpoints.peek().is_some_and(|&i| i < star) {
             endpoints.next();
         }
-        if endpoints.peek() == Some(&star.source_index) {
+        if endpoints.peek() == Some(&star) {
             indices.push(index);
             stats.endpoint_only += 1;
         } else {
@@ -171,7 +223,11 @@ pub(super) fn select_correction_indices(
 /// Remove rejected non-endpoints before publication, so all returned positions receive the same corrections.
 pub(super) fn select_corrections(output: &mut ObservedSky) {
     let flags: Vec<_> = output.stars.iter().map(|s| s.drawable).collect();
-    let (indices, stats) = select_correction_indices(&output.stars, &flags, &output.catalog.endpoint_indices);
+    let (indices, stats) = select_correction_indices(
+        output.stars.iter().map(|s| s.source_index),
+        &flags,
+        &output.catalog.endpoint_indices,
+    );
     output.corrections = stats;
     if stats.skipped == 0 {
         return;
@@ -186,4 +242,23 @@ pub(super) fn select_corrections(output: &mut ObservedSky) {
         }
         selected
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn endpoint_merge_preserves_source_order_and_membership_without_metadata() {
+        let merged = merge_constellation_endpoints(vec![9, 1, 5, 1], &[0, 1, 7, 9, 12], &mut Default::default());
+        assert_eq!(
+            merged.iter().map(|s| (s.source_index, s.drawable)).collect::<Vec<_>>(),
+            [(0, false), (1, true), (5, true), (7, false), (9, true), (12, false)]
+        );
+        assert!(std::mem::size_of::<SelectedStar>() <= 2 * std::mem::size_of::<usize>());
+        assert_eq!(
+            merge_constellation_endpoints(vec![], &[], &mut Default::default()),
+            vec![]
+        );
+    }
 }

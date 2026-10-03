@@ -62,14 +62,7 @@ impl Star {
 pub struct ObservedStar {
     pub source_index: usize,
     pub drawable: bool,
-    pub id: StarId,
-    pub name: Option<NameId>,
-    /// Decode with `.resolve()` only when a label is needed.
-    pub designation: crate::catalog::EncodedDesignation,
     pub magnitude: f64,
-    pub spectral_type: [u8; 2],
-    pub color_index: Option<f32>,
-    pub has_data: bool,
     /// Unit horizontal direction: East, North, Up; observer corrections have already been applied.
     pub position: Vector3,
 }
@@ -78,19 +71,72 @@ impl ObservedStar {
         Horizontal::from_vector(self.position)
     }
 
+    /// Create calculated state for `star` at its index in the associated prepared catalog.
+    /// Metadata is resolved from that catalog, so callers must keep the index/catalog association intact.
     pub fn from_star(star: &Star, source_index: usize, position: Vector3) -> Self {
         Self {
             source_index,
             drawable: true,
-            id: star.id,
-            name: star.name,
-            designation: star.designation.into(),
             magnitude: star.magnitude,
-            spectral_type: star.spectral_type,
-            color_index: star.color_index,
-            has_data: star.has_data,
             position,
         }
+    }
+}
+
+/// Borrowed read-only metadata with a separate calculated state. No catalog fields are expanded or copied
+/// when this view is created. The owning sky keeps the immutable catalog alive.
+#[derive(Clone, Copy)]
+pub struct ObservedStarView<'a> {
+    pub state: &'a ObservedStar,
+    pub catalog: &'a super::StarStorage,
+}
+impl std::fmt::Debug for ObservedStarView<'_> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ObservedStarView")
+            .field("state", self.state)
+            .field("id", &self.id())
+            .field("name", &self.name())
+            .field("designation", &self.designation())
+            .field("spectral_type", &self.spectral_type())
+            .field("color_index", &self.color_index())
+            .finish()
+    }
+}
+impl std::ops::Deref for ObservedStarView<'_> {
+    type Target = ObservedStar;
+    fn deref(&self) -> &ObservedStar {
+        self.state
+    }
+}
+impl PartialEq for ObservedStarView<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.state == other.state
+            && self.id() == other.id()
+            && self.name() == other.name()
+            && self.designation() == other.designation()
+            && self.spectral_type() == other.spectral_type()
+            && self.color_index() == other.color_index()
+    }
+}
+impl ObservedStarView<'_> {
+    pub fn id(&self) -> StarId {
+        self.catalog.id(self.source_index)
+    }
+    pub fn name(&self) -> Option<NameId> {
+        self.catalog.name(self.source_index)
+    }
+    pub fn designation(&self) -> crate::catalog::EncodedDesignation {
+        self.catalog.designation(self.source_index)
+    }
+    pub fn spectral_type(&self) -> [u8; 2] {
+        self.catalog.spectral_type(self.source_index)
+    }
+    pub fn color_index(&self) -> Option<f32> {
+        self.catalog.color_index(self.source_index)
+    }
+    pub fn has_data(&self) -> bool {
+        true // prepared catalogs contain no placeholders
     }
 }
 
