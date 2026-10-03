@@ -22,16 +22,22 @@ crossterm = "0.29.0"
 csv = "1.4.0"
 dirs = "7.0.0"
 flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs"] }
+fontdue = "0.9.4"
+image = { version = "0.25", default-features = false }
 memmap2 = "0.9.11"
+ratatui = { version = "0.30", default-features = false, features = ["crossterm_0_29"] }
+ratatui-image = { version = "11.1", default-features = false, features = ["crossterm"] }
 sha2 = "0.11.0"
 strsim = "0.11.1"
 tempfile = "3.27.0"
+tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd"] }
 tzf-rs = { version = "2.1.2", default-features = false, features = ["bundled"] }
 unicode-width = "0.2.2"
 ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
 vsop87 = "3.0.0"
 
 [target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1.5", features = ["event"] }
 tz-rs = "0.7.3"
 
 [dev-dependencies]

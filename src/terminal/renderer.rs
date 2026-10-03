@@ -31,6 +31,7 @@ pub struct TerminalRenderer {
     options: RenderOptions,
     settings: TerminalSettings,
     time_zone: Option<(Observer, ObserverTimeZone)>,
+    pub(super) startup_notice: Option<String>,
 }
 
 /// Take over the terminal and size the canvases to it.
@@ -43,6 +44,7 @@ pub fn open_terminal_renderer(options: RenderOptions, settings: TerminalSettings
         options,
         settings,
         time_zone: None,
+        startup_notice: None,
     })
 }
 
@@ -88,6 +90,12 @@ impl TerminalRenderer {
         // draw the sky and the panel, then write the changes to the terminal
         step_times.measure("Draw", || {
             draw_sky_scene(&mut self.frame.sky, &self.options, sky);
+            if let Some(notice) = &self.startup_notice {
+                let row = self.frame.sky.height().saturating_sub(2) as i32;
+                self.frame
+                    .sky
+                    .put_str_truncated(row, 0, notice, Some(crate::canvas::Color::Yellow));
+            }
             if let Some(panel) = &mut self.frame.panel {
                 let mut fields = collect_metadata_fields(
                     julian_date_utc,

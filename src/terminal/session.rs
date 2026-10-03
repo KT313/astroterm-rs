@@ -2,6 +2,9 @@
 
 use std::io::{self, BufWriter, Stdout, Write};
 use std::sync::Once;
+use std::sync::atomic::{AtomicU8, Ordering};
+
+static GRAPHICS: AtomicU8 = AtomicU8::new(0);
 
 use crossterm::cursor::{Hide, Show};
 use crossterm::style::ResetColor;
@@ -31,6 +34,13 @@ pub fn open_terminal_session() -> io::Result<TerminalSession> {
 }
 
 impl TerminalSession {
+    pub(crate) fn output(&mut self) -> &mut BufWriter<Stdout> {
+        &mut self.out
+    }
+
+    pub(crate) fn configure_graphics(&mut self, kitty: bool, tmux: bool) {
+        GRAPHICS.store(4 | u8::from(kitty) | (u8::from(tmux) << 1), Ordering::SeqCst);
+    }
     /// Size the canvases of a frame to the current terminal: a square, centered sky canvas and, with `with_panel`, an
     /// (initially empty) panel for the top left corner. `aspect_ratio` (cell height / width) overrides the detected
     /// one. The screen is cleared, so the next frame is drawn in full.
@@ -66,6 +76,11 @@ impl Drop for TerminalSession {
 
 /// Leave the alternate screen and raw mode. Safe to call more than once.
 fn restore_terminal() {
+    let graphics = GRAPHICS.swap(0, Ordering::SeqCst);
+    if graphics != 0 {
+        let _ = execute!(io::stdout(), terminal::EndSynchronizedUpdate);
+        let _ = super::graphics::clear_image(&mut io::stdout(), graphics & 1 != 0, graphics & 2 != 0);
+    }
     let _ = execute!(io::stdout(), ResetColor, Show, LeaveAlternateScreen);
     let _ = terminal::disable_raw_mode();
 }

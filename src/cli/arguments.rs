@@ -11,6 +11,20 @@ use crate::terminal::format_key_bindings_help;
 #[command(name = "astroterm", version, override_usage = "astroterm [OPTION]...", after_help = format_key_bindings_help())]
 #[command(disable_help_flag = true, disable_version_flag = true)]
 pub struct Arguments {
+    /// Renderer: characters (default) or true-color pixels. Constellations, grid, thresholds, labels,
+    /// refraction and metadata apply to both; --color, --unicode and --braille affect characters only.
+    #[arg(long, value_enum, default_value_t = crate::terminal::RendererKind::Chars)]
+    pub renderer: crate::terminal::RendererKind,
+
+    /// Pixel protocol (normally detected). Force one to test terminal support; halfblocks needs no graphics protocol.
+    #[arg(long, value_enum, default_value_t = crate::terminal::GraphicsProtocol::Auto)]
+    pub graphics_protocol: crate::terminal::GraphicsProtocol,
+
+    /// Raster text scale relative to terminal cells [0.25–4], for Sixel/Kitty/iTerm2 only. 1 restores the
+    /// terminal-cell-sized layout; characters and native half-block text are unaffected.
+    #[arg(long, default_value_t = 0.85, value_name = "factor", allow_negative_numbers = true)]
+    pub text_scale: f64,
+
     /// Observer latitude [-90°, 90°] (default: 0.0)
     #[arg(
         short = 'a',
@@ -60,16 +74,9 @@ pub struct Arguments {
     )]
     pub label_threshold: f32,
 
-    /// Frames per second (default: 24)
-    #[arg(
-        short = 'f',
-        long,
-        value_name = "int",
-        allow_negative_numbers = true,
-        default_value_t = 24,
-        hide_default_value = true
-    )]
-    pub fps: i64,
+    /// Frames per second (default: 24 for characters, 12 for pixels)
+    #[arg(short = 'f', long, value_name = "int", allow_negative_numbers = true)]
+    pub fps: Option<i64>,
 
     /// Animation speed multiplier (default: 1.0)
     #[arg(

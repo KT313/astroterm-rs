@@ -9,6 +9,38 @@ fn main() {
             let _session = open_terminal_session().expect("open probe terminal");
             panic!("intentional terminal restoration probe");
         }
+        Some("pixel-panic") => {
+            use astroterm::{
+                cli::{Arguments, build_config},
+                terminal::Renderer,
+            };
+            use clap::Parser;
+            let arguments = Arguments::parse_from(["probe", "--renderer", "pixels", "--graphics-protocol", "kitty"]);
+            let config = build_config(arguments, &[]).unwrap();
+            let mut renderer = Renderer::open(
+                config.renderer,
+                config.graphics_protocol,
+                config.render,
+                config.terminal,
+                config.text_scale,
+            )
+            .unwrap();
+            let sky = astroterm::sky::Sky::from_catalog(&astroterm::catalog::load_embedded_catalog().unwrap());
+            let projected = astroterm::projection::project_sky(&sky, &config.view, renderer.viewport());
+            let clock = astroterm::astro::SimulationClock::start(config.simulation.start_julian_date, 0.0);
+            renderer
+                .render_frame(
+                    &projected,
+                    &config.view,
+                    clock.julian_date(),
+                    &clock,
+                    &config.simulation.observer,
+                    &mut astroterm::timing::StepTimes::default(),
+                )
+                .unwrap();
+            crossterm::execute!(std::io::stdout(), crossterm::terminal::BeginSynchronizedUpdate).unwrap();
+            panic!("intentional pixel restoration probe");
+        }
         _ => panic!("expected aspect or panic"),
     }
 }

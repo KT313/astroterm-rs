@@ -51,12 +51,15 @@ pub struct ProjectedMoon {
     pub illumination: crate::sky::MoonIllumination,
     pub phase: crate::astro::MoonPhase,
     pub cell: Option<Cell>,
-    pub lit_on_right: bool,
+    /// Unit direction toward the Sun: x right, y up. None at a degenerate projection.
+    pub light_direction: Option<ScreenPoint>,
 }
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProjectedArc {
     pub start: Cell,
     pub end: Cell,
+    /// Sampled projected great-circle vertices, in this viewport (cells or pixels).
+    pub points: Vec<Cell>,
     pub includes_start: bool,
     pub includes_end: bool,
 }
@@ -180,7 +183,7 @@ fn project_bodies(
         illumination: sky.moon.illumination,
         phase: sky.moon.phase,
         cell: cell(sky.moon.position),
-        lit_on_right: is_lit_on_right(view, sky.moon.position, sky.sun().position),
+        light_direction: project_light_direction(view, sky.moon.position, sky.sun().position),
     };
     (planets, moon)
 }
@@ -220,41 +223,73 @@ fn project_constellations(sky: &ObservedSky, view: &View, viewport: Viewport) ->
         .collect()
 }
 
-/// Whether, in this view, the direction from the Moon towards the Sun points to the right of the screen.
-fn is_lit_on_right(view: &View, moon: Vector3, sun: Vector3) -> bool {
+/// Screen direction towards the Sun, shared by lunar raster lighting and character glyph orientation.
+pub fn project_light_direction(view: &View, moon: Vector3, sun: Vector3) -> Option<ScreenPoint> {
     let camera = CartesianCamera::new(view);
     let offset = offset_vector_towards(moon, sun, 1_f64.to_radians());
-    match (camera.project(moon), camera.project(offset)) {
-        (Some(a), Some(b)) => b.x > a.x,
-        _ => false,
-    }
+    let (a, b) = (camera.project(moon)?, camera.project(offset)?);
+    let (x, y) = (b.x - a.x, b.y - a.y);
+    let length = x.hypot(y);
+    (length.is_finite() && length > 0.0).then(|| ScreenPoint {
+        x: x / length,
+        y: y / length,
+    })
 }
 
-/// Draw the visible parts of the great-circle arc between two stars, each as a straight line between where it enters
-/// and leaves the view, with markers on the stars that are in view.
+/// Sample clipped great-circle arcs with at most a quarter-viewport-unit midpoint deviation. Both renderers
+/// consume this geometry; endpoints keep their star markers, while inserted vertices never create markers.
 pub fn project_constellation_segment(view: &View, viewport: Viewport, from: Vector3, to: Vector3) -> Vec<ProjectedArc> {
     let mut arcs = Vec::new();
     let camera = CartesianCamera::new(view);
+    let project = |angle| {
+        camera
+            .project(offset_vector_towards(from, to, angle))
+            .map(ScreenPoint::clamp_to_edge)
+    };
     for part in view.find_visible_arc_parts_vectors(from, to) {
-        // ends of the visible part, pulled onto the edge where rounding puts them just outside
-        let project_on_arc = |angle| {
-            camera
-                .project(offset_vector_towards(from, to, angle))
-                .map(|point| viewport.to_cell_cartesian(point.clamp_to_edge()))
-        };
-        let (Some(start_cell), Some(end_cell)) = (project_on_arc(part.start), project_on_arc(part.end)) else {
+        let (Some(start), Some(end)) = (project(part.start), project(part.end)) else {
             continue;
         };
-
+        let mut points = vec![viewport.to_cell_cartesian(start)];
+        sample_arc(&project, viewport, (part.start, start), (part.end, end), 0, &mut points);
+        let start = viewport.to_cell_cartesian(start);
+        let end = viewport.to_cell_cartesian(end);
+        points.dedup();
+        if points.len() == 1 {
+            points.push(end);
+        }
         arcs.push(ProjectedArc {
-            start: start_cell,
-            end: end_cell,
+            start,
+            end,
+            points,
             includes_start: part.includes_start,
             includes_end: part.includes_end,
         });
     }
     arcs
 }
+
+fn sample_arc(
+    project: &impl Fn(f64) -> Option<ScreenPoint>,
+    viewport: Viewport,
+    start: (f64, ScreenPoint),
+    end: (f64, ScreenPoint),
+    depth: u8,
+    points: &mut Vec<Cell>,
+) {
+    let angle = (start.0 + end.0) * 0.5;
+    if let Some(mid) = project(angle) {
+        let error_x = (mid.x - (start.1.x + end.1.x) * 0.5) * viewport.width.saturating_sub(1) as f64 * 0.5;
+        let error_y = (mid.y - (start.1.y + end.1.y) * 0.5) * viewport.height.saturating_sub(1) as f64 * 0.5;
+        if depth < 12 && (error_x.hypot(error_y) > 0.25 || end.0 - start.0 > 10_f64.to_radians()) {
+            sample_arc(project, viewport, start, (angle, mid), depth + 1, points);
+            sample_arc(project, viewport, (angle, mid), end, depth + 1, points);
+            return;
+        }
+    }
+    points.push(viewport.to_cell_cartesian(end.1));
+}
+
 /// Trace the visible part of the horizon in the facing view.
 pub fn project_horizon_line(view: &View, viewport: Viewport) -> Vec<[Cell; 2]> {
     let mut lines = Vec::new();
@@ -359,4 +394,56 @@ pub(crate) fn compute_visible_horizon_half_range(fov_degrees: f64, tilt: f64) ->
     // pad 5% so the line reaches the edge; clamped since cos(fov/2) < 0 above 180°, and kept off the point directly
     // behind, which has an arbitrary direction in the equidistant projection
     Some((PI - 1e-6).min((cos_half_fov / cos_tilt).max(-1.0).acos() * 1.05))
+}
+
+#[cfg(test)]
+mod geometry_tests {
+    use super::*;
+
+    #[test]
+    fn sampled_arc_follows_the_great_circle_midpoint_instead_of_its_chord() {
+        let view = View::default();
+        let viewport = Viewport {
+            height: 801,
+            width: 801,
+        };
+        let direction = |azimuth: f64| {
+            Horizontal {
+                azimuth: azimuth.to_radians(),
+                altitude: 20_f64.to_radians(),
+            }
+            .to_unit_vector()
+        };
+        let (a, b) = (direction(30.0), direction(150.0));
+        let arcs = project_constellation_segment(&view, viewport, a, b);
+        assert_eq!(arcs.len(), 1);
+        let arc = &arcs[0];
+        assert!(arc.includes_start && arc.includes_end);
+        assert!(arc.points.len() > 2);
+        let midpoint = viewport.to_cell_cartesian(CartesianCamera::new(&view).project((a + b).normalized()).unwrap());
+        assert!(
+            arc.points
+                .iter()
+                .any(|p| (p.0 - midpoint.0).abs() <= 1 && (p.1 - midpoint.1).abs() <= 1)
+        );
+        let chord_midpoint = ((arc.start.0 + arc.end.0) / 2, (arc.start.1 + arc.end.1) / 2);
+        assert!((midpoint.0 - chord_midpoint.0).abs() + (midpoint.1 - chord_midpoint.1).abs() > 20);
+    }
+
+    #[test]
+    fn lunar_light_direction_keeps_screen_sign_and_unit_length() {
+        let moon = Horizontal {
+            azimuth: PI,
+            altitude: 0.5,
+        }
+        .to_unit_vector();
+        let sun = Horizontal {
+            azimuth: PI + 0.7,
+            altitude: 0.5,
+        }
+        .to_unit_vector();
+        let direction = project_light_direction(&View::default(), moon, sun).unwrap();
+        assert!(direction.x > 0.0);
+        assert!((direction.x.hypot(direction.y) - 1.0).abs() < 1e-12);
+    }
 }

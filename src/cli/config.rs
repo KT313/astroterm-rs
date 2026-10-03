@@ -16,6 +16,10 @@ use super::Arguments;
 /// Everything the application needs to run.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Config {
+    /// Raster text size and spacing relative to terminal cells; ignored by native text renderers.
+    pub text_scale: f64,
+    pub renderer: crate::terminal::RendererKind,
+    pub graphics_protocol: crate::terminal::GraphicsProtocol,
     pub simulation: SimulationSettings,
     /// The view to start with, and to reset to.
     pub view: View,
@@ -52,6 +56,9 @@ impl std::error::Error for ConfigError {}
 
 /// Validate the arguments and convert them to a [`Config`]. `cities` resolves `--city`.
 pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, ConfigError> {
+    if !arguments.text_scale.is_finite() || !(0.25..=4.0).contains(&arguments.text_scale) {
+        return Err(ConfigError("Text scale must be finite and between 0.25 and 4".into()));
+    }
     // reject non-finite values even when a city overrides the supplied coordinates
     for (value, name) in [
         (arguments.speed, "Speed"),
@@ -76,7 +83,13 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
     };
 
     // frame rate and view
-    let fps = u32::try_from(arguments.fps).ok().filter(|&fps| fps >= 1);
+    let default_fps = match arguments.renderer {
+        crate::terminal::RendererKind::Chars => 24,
+        crate::terminal::RendererKind::Pixels => 12,
+    };
+    let fps = u32::try_from(arguments.fps.unwrap_or(default_fps))
+        .ok()
+        .filter(|&fps| fps >= 1);
     let fps = fps.ok_or_else(|| ConfigError("FPS must be greater than or equal to 1".into()))?;
     let aspect_ratio = validate_aspect_ratio(arguments.aspect_ratio)?;
     let view = build_view(&arguments)?;
@@ -104,6 +117,9 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
         frame_times: arguments.debug_frametimes,
     };
     Ok(Config {
+        text_scale: arguments.text_scale,
+        renderer: arguments.renderer,
+        graphics_protocol: arguments.graphics_protocol,
         simulation,
         view,
         render,
@@ -336,6 +352,28 @@ mod tests {
     #[test]
     fn dynamic_names_can_be_disabled() {
         assert!(!config_from(&["--disable-dynamic-names"]).unwrap().render.dynamic_names);
+    }
+
+    #[test]
+    fn renderer_frame_rate_defaults_preserve_explicit_overrides() {
+        assert_eq!(config_from(&[]).unwrap().fps, 24);
+        assert_eq!(config_from(&["--renderer", "pixels"]).unwrap().fps, 12);
+        assert_eq!(config_from(&["--renderer", "pixels", "--fps", "24"]).unwrap().fps, 24);
+        assert!(config_from(&["--renderer", "pixels", "--fps", "0"]).is_err());
+    }
+
+    #[test]
+    fn raster_text_scale_defaults_and_invalid_values() {
+        assert_eq!(config_from(&["--renderer", "pixels"]).unwrap().text_scale, 0.85);
+        for value in ["0.25", "0.7", "1", "1.5", "4"] {
+            assert_eq!(
+                config_from(&["--text-scale", value]).unwrap().text_scale,
+                value.parse::<f64>().unwrap()
+            );
+        }
+        for value in ["NaN", "inf", "-inf", "0", "-1", "0.24", "4.01"] {
+            assert!(config_from(&[&format!("--text-scale={value}")]).is_err(), "{value}");
+        }
     }
 
     #[test]

@@ -2,7 +2,7 @@
 //!
 //! The frame loop is visible in `main.rs`: independently refresh [`sky::SimulationState`], observe it at the current
 //! epoch and site into [`sky::ObservedSky`], project it with [`projection::project_sky`], then draw prepared screen
-//! geometry with [`scene`]. The character [`terminal::TerminalRenderer`] presents changed cells and metadata.
+//! geometry with [`scene`]. [`terminal::Renderer`] selects character diffing or pixel image/text presentation.
 //!
 //! [`astro::models`] separates stars, planets, moons and orientation, including their coefficients and reference
 //! tests. Shared time, coordinate and orbital math remain in [`astro`]; model code never imports catalog I/O,

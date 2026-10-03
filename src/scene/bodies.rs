@@ -46,7 +46,7 @@ pub fn draw_stars(canvas: &mut Canvas, options: &RenderOptions, sky: &ProjectedS
 
 /// Indices of the stars to name in addition to the usual labels: the brightest drawn stars in view without a label,
 /// until at least [`DYNAMIC_NAME_COUNT`] objects in view (the Sun, planets, Moon and labelled stars) have labels.
-fn select_dynamically_named_stars(options: &RenderOptions, sky: &ProjectedSky<'_>) -> Vec<usize> {
+pub(crate) fn select_dynamically_named_stars(options: &RenderOptions, sky: &ProjectedSky<'_>) -> Vec<usize> {
     // the Sun, planets and Moon are always labelled
     let planets_in_view = sky.planets.iter().filter(|planet| planet.cell.is_some()).count();
     let mut labelled = planets_in_view + usize::from(sky.moon.cell.is_some());
@@ -92,7 +92,7 @@ pub fn draw_planets(canvas: &mut Canvas, options: &RenderOptions, planets: &[Pro
 /// Draw the Moon. Its Unicode glyph shows its phase, lit from the side the Sun is on as seen in this view.
 pub fn draw_moon(canvas: &mut Canvas, options: &RenderOptions, sky: &ProjectedSky<'_>) {
     let moon = &sky.moon;
-    let appearance = select_moon_appearance(moon.phase, moon.lit_on_right);
+    let appearance = select_moon_appearance(moon.phase, moon.light_direction.is_some_and(|p| p.x > 0.0));
     draw_object(canvas, options, &appearance, moon.cell, appearance.label);
 }
 
@@ -122,10 +122,13 @@ fn draw_object(
 
 fn draw_constellation_arc(canvas: &mut Canvas, options: &RenderOptions, arc: &ProjectedArc) {
     let (start, end) = (arc.start, arc.end);
-    if options.unicode && options.braille {
-        draw_line_braille(canvas, start.0, start.1, end.0, end.1);
-    } else {
-        draw_line(canvas, options, start, end);
+    for pair in arc.points.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        if options.unicode && options.braille {
+            draw_line_braille(canvas, a.0, a.1, b.0, b.1);
+        } else {
+            draw_line(canvas, options, a, b);
+        }
     }
     for (cell, is_star) in [(start, arc.includes_start), (end, arc.includes_end)] {
         if is_star {

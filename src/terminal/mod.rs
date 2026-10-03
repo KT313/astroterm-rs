@@ -1,7 +1,11 @@
 //! The terminal backend: the renderer that shows the sky as characters, and below it the session lifetime,
 //! presenting canvases, and input with its key bindings.
 
+mod dispatch;
 mod input;
+mod pixels;
+pub use dispatch::{GraphicsProtocol, Renderer, RendererKind};
+pub mod graphics;
 mod keys;
 mod present;
 mod renderer;

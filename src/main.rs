@@ -17,7 +17,7 @@ use astroterm::projection::project_sky_with_times;
 use astroterm::sky::{
     FrameTime, SimulationState, Sky, observe_sky, prepare_light_time_samples, prepare_observer, update_simulation,
 };
-use astroterm::terminal::{TerminalRenderer, open_terminal_renderer, poll_frame_input};
+use astroterm::terminal::{Renderer, poll_frame_input};
 use astroterm::timing::StepTimes;
 
 /// Parse options, build the sky, and render it until the user quits.
@@ -58,8 +58,14 @@ fn main() -> ExitCode {
     );
 
     // render in the terminal, which is restored before any error is reported
-    let result = open_terminal_renderer(config.render, config.terminal)
-        .and_then(|mut renderer| run_render_loop(&config, &mut sky, &mut renderer));
+    let result = Renderer::open(
+        config.renderer,
+        config.graphics_protocol,
+        config.render,
+        config.terminal,
+        config.text_scale,
+    )
+    .and_then(|mut renderer| run_render_loop(&config, &mut sky, &mut renderer));
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => report_failure(error),
@@ -67,7 +73,7 @@ fn main() -> ExitCode {
 }
 
 /// Draw frames at the configured rate until the user quits. Keys change the view and the simulation clock.
-fn run_render_loop(config: &Config, sky: &mut Sky, renderer: &mut TerminalRenderer) -> io::Result<()> {
+fn run_render_loop(config: &Config, sky: &mut Sky, renderer: &mut Renderer) -> io::Result<()> {
     // start from the configured view and time
     let frame_duration = Duration::from_secs_f64(1.0 / f64::from(config.fps));
     let mut view = config.view;

@@ -1,5 +1,37 @@
 # Terminal and performance checks
 
+Pixel checks and the phase-7 prototype:
+
+```sh
+cargo build --release --bin astroterm --example terminal_probe --example pixel_probe --example pixel_scene
+/tmp/astroterm-checks/bin/python scripts/checks/pixels.py --output /tmp/pixels-pty.json --capture-dir /tmp/pixel-captures
+cargo run --release --example pixel_probe -- /tmp/pixel-prototype.png
+cargo run --release --example pixel_scene -- /tmp/sky.png
+```
+
+The pixel PTY script tests forced Kitty/Sixel/iTerm2/half-block transport, pan/zoom, resizing with reported and
+missing pixel sizes, automatic fallback after an unanswered query, character fallback after an oversized raster,
+and quit/panic cleanup, including a panic inside an open synchronized update. Each complete frame carries
+synchronized-update markers around its single composed image or cell buffer; physical flicker still requires a
+real-terminal check. Full graphics metadata is verified to be absent from the native text stream. The script
+decodes an actual iTerm2 PNG, optionally saves it for inspection, and checks that pan/zoom changes the image.
+It exercises input at 4 fps. Stage timings are now pixels themselves; use the debug panel or the headless prototype
+to inspect them. The prototype measures drawing, text rasterization/encoding, buffer composition and writing to
+memory at 1000×600. PTY startup measurements do not include an emulator's decoding/GPU display costs.
+
+For physical checks in Contour, Rio or another terminal, start with:
+
+```sh
+make run -- --renderer pixels -i Tokyo -d 2025-03-01T11:00:00 -s 0 -C -m
+```
+
+Check stars, curves and readable labels/panel; pan with arrows, zoom with +/- and reset with 0. Resize repeatedly,
+including narrow windows, and quit with q. Check for stale images, missing text or a broken shell/cursor afterwards.
+Repeat with `--graphics-protocol sixel`, `kitty` or `iterm2` where supported, and `halfblocks` everywhere. The
+metadata panel reports the chosen protocol. Kitty needs Unicode placeholders, not just basic image transfer.
+Also try `-g`, `-R`, `--disable-dynamic-names` and `--debug-frametimes`; use a tall terminal for the full timing list.
+Report the emulator/version, protocol, flags and whether the issue occurs on startup, resize or subsequent frames.
+
 ```sh
 uv venv /tmp/astroterm-checks
 uv pip install --python /tmp/astroterm-checks/bin/python -r scripts/checks/requirements.txt

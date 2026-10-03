@@ -14,6 +14,48 @@ cargo run --release -- -i Tokyo -u -F NNW -T 20 -z 120 -m             # facing v
 source <(cargo run --release -- --bash-completions)                     # bash completions
 ```
 
+## Renderers
+
+Characters remain the default. Use `--renderer pixels` for a true-color sky with anti-aliased stars, curved
+constellations, Sun/planet discs and a continuously shaded Moon lit toward the Sun. Object sizes are schematic,
+chosen for visibility rather than angular diameter. Sixel, Kitty and iTerm2 receive one completed bitmap containing
+the sky, labels, metadata and warnings. Text is rasterized with bundled DejaVu Sans Mono; it does not use the
+terminal's configured font. Text defaults to 85% of the reported cell dimensions; `--text-scale 1` restores the
+previous size, while `--text-scale 0.7` makes it smaller or `--text-scale 1.2` makes it larger. The range is 0.25–4;
+glyphs, spacing and the metadata layout scale together. Metadata and timing text have transparent backgrounds,
+so unused space does not cover the sky. This flag affects Sixel/Kitty/iTerm2 raster text only;
+characters and half-block text retain the terminal's font size. Latin/Greek text and common astronomy
+symbols are supported; missing glyphs use a replacement character. Complex-script shaping and color emoji are
+not implemented. Half-block output keeps native terminal text, merged into the same cell buffer as the sky.
+
+```sh
+make build
+make run -- --renderer pixels -i Tokyo -d 2025-03-01T11:00:00 -s 0 -C -m
+# Test a particular protocol supported by your terminal:
+make run -- --renderer pixels --graphics-protocol sixel -i Tokyo -C -m
+```
+
+`--graphics-protocol auto|kitty|sixel|iterm2|halfblocks` defaults to automatic selection. Unix terminals are queried
+with a bounded timeout; known iTerm2/WezTerm/Rio environments use iTerm2. Other terminals fall back to colored half-blocks.
+Kitty output requires Unicode-placeholder support as well as the basic image protocol. Use a forced protocol to
+compare your terminal's implementations; an unsupported forced protocol may show nothing or escape characters.
+Graphics startup errors fall back to characters with a visible notice.
+
+Pixel dimensions come from the reported terminal/cell size, with a 10×20-pixel cell fallback. `--aspect-ratio` still
+overrides the viewport's cell aspect ratio. Resizing redraws the image; quit and panic restore the terminal and
+remove this application's Kitty image. Pixel rendering always uses true color; `--color`, `--unicode` and
+`--braille` apply only to characters. Constellations, grid, magnitude/label thresholds, dynamic names, refraction,
+metadata and accuracy warnings apply to both renderers.
+
+Pixels default to 12 fps to allow for image encoding and transport; characters retain 24 fps.
+Use `--fps 24` (or another value) to override the default. `--debug-frametimes` separates rasterization,
+text layout/rasterization, encoding, image composition, frame serialization and presentation. The scene is assembled
+in named passes (canvas, horizon, stars, constellations, planets, Moon, grid, labels, metadata and notices).
+Full graphics paints all text into the screen-sized bitmap before encoding. Half-blocks merge text cells before
+serialization. Both publish the completed frame using synchronized terminal updates (DEC mode 2026), so supporting
+terminals keep the previous frame visible until the new one is complete. Protocol transport/cleanup is covered by PTY checks; actual
+image appearance depends on the terminal and is tested separately. See [terminal checks](scripts/checks/README.md).
+
 ## Keys
 
 | Key | Action |
@@ -48,12 +90,13 @@ Each module only depends on the ones above it:
 | `sky` | Object model (`Sky`, `Star`, `Planet`, `Moon`) and the per-frame position update, without rendering details |
 | `controls` | Actions the user can trigger (`Control`) and their effect on the view and the simulation clock |
 | `metadata` | What the metadata panel shows (date, zodiac, Moon phase, location, time, speed, view), as fields |
-| `scene` | Character-grid rendering: glyphs and colors, drawing the sky and orientation aids, the panel layout |
-| `terminal` | `TerminalRenderer`, key bindings, input, raw-mode session guard, diffing presenter (crossterm) |
+| `scene` | Character-grid rendering and pure RGBA rasterization, appearance and orientation aids |
+| `terminal` | Character/pixel renderer enum, protocol detection, text overlays, input and session restoration |
 | `cli` | Arguments, validated `Config` (simulation, view, render and terminal settings), bash completions |
 
 `src/main.rs` holds the processing flow: parse options → build the sky → per frame: poll input and apply controls,
-refresh simulation → prepare observer/emission samples → observe → project → render. Rendering only reads the sky, so other renderers can be added beside `TerminalRenderer`.
+refresh simulation → prepare observer/emission samples → observe → project → render. The renderer enum selects
+characters or pixels; both read the same observed sky. Projection uses cell or pixel viewport units respectively.
 
 Within observation, `src/sky/observation.rs` explicitly sequences region filtering, conservative brightness bounds,
 body sampling, candidate validation, constellation endpoint inclusion, stellar motion, current brightness filtering,
@@ -66,6 +109,9 @@ early filtering is conservative, and constellation endpoints remain available ev
 
 New:
 
+- Optional pixel rendering through ratatui-image (Kitty, Sixel, iTerm2 or half-blocks), with tiny-skia drawing and
+  fontdue text rasterization. Full graphics encodes one completed bitmap; half-blocks use merged text/image cells.
+  Both renderers share the curved constellation geometry and lunar lighting direction.
 - Stars move along normalized 3D trajectories in Julian years (365.25 days). With known distance, their magnitude
   changes with distance; without it, motion is tangential and brightness stays constant. Approaching-star bounds
   include perspective acceleration.
@@ -113,7 +159,7 @@ Fixed:
 - Star labels are chosen at draw time instead of being erased from the star table while rendering.
 - Braille constellation lines merge within canvas cells; no global 1024x1024 buffer.
 - Constellation lines are clipped exactly as great-circle arcs against the view, so only the parts actually in view
-  are drawn. Straight lines between projected stars could cut across the whole display in views wider than 180°.
+  are drawn. Adaptive sampling follows their projected curvature in both renderers, instead of straight chords.
 - Simulation time follows the wall clock (no drift when frames are slow).
 - Datetimes are parsed as UTC without `mktime`, so local DST no longer shifts them.
 - Gregorian date conversion also works before 4800 BC; extended years keep their sign in the metadata panel.
@@ -320,3 +366,6 @@ Optional, not distributed with this repository:
 ## License
 
 MIT, see [LICENSE](./LICENSE). The original copyright notice of astroterm is kept there.
+
+The unmodified bundled [DejaVu Sans Mono](https://dejavu-fonts.github.io/) font is distributed under its
+[Bitstream Vera/DejaVu license](data/fonts/LICENSE-DejaVu.txt); its license notice is also embedded in the font file.

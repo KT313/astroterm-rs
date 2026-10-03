@@ -3,8 +3,11 @@
 
 mod appearance;
 mod bodies;
+pub(crate) use bodies::select_dynamically_named_stars;
 mod overlays;
 mod panel;
+pub mod pixels;
+pub mod raster_text;
 
 pub use appearance::{
     Appearance, format_star_label, select_moon_appearance, select_planet_appearance, select_star_appearance,
