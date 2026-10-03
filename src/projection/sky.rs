@@ -67,6 +67,7 @@ pub struct ProjectedConstellation {
 }
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProjectedSky<'a> {
+    pub outside_accuracy_range: bool,
     pub selection: crate::sky::SelectionStats,
     pub evaluated_stars: usize,
     pub catalog_singular_count: usize,
@@ -156,6 +157,7 @@ pub fn project_sky<'a>(sky: &'a ObservedSky, view: &View, viewport: Viewport) ->
         })
         .collect();
     ProjectedSky {
+        outside_accuracy_range: sky.outside_accuracy_range,
         selection: sky.selection,
         evaluated_stars: sky.stars.len(),
         catalog_singular_count: sky.catalog.singular_count,

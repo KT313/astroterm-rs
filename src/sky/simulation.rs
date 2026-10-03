@@ -9,7 +9,7 @@ use crate::astro::{COMPUTATIONAL_INTERVAL, Matrix3};
 use crate::timing::StepTimes;
 use std::fmt;
 
-/// UTC input, approximate UT1 and TT are named separately even while ΔT is zero.
+/// UTC input approximates UT1; TT includes the Espenak–Meeus estimate of ΔT.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FrameTime {
     pub utc: f64,
@@ -18,7 +18,11 @@ pub struct FrameTime {
 }
 impl FrameTime {
     pub fn from_utc(utc: f64) -> Self {
-        Self { utc, ut1: utc, tt: utc }
+        Self {
+            utc,
+            ut1: utc,
+            tt: crate::astro::ut1_to_tt(utc),
+        }
     }
 }
 
@@ -87,7 +91,7 @@ impl Default for CachePolicy {
         Self {
             planets_days: 5.0 / 1440.0,
             moon_days: 2.0 / 1440.0,
-            orientation_days: 0.25,
+            orientation_days: 10.0 / 1440.0,
         }
     }
 }
@@ -175,7 +179,7 @@ fn find_sample<T>(samples: &[Sample<T>], tt: f64, family: ModelFamily) -> Result
 }
 
 /// Ensure reception and explicitly requested emission epochs are covered, refreshing only missing families.
-/// Production currently requests reception only (light-time is phase 6); the emission path is independently tested.
+/// Observation preparation supplies observer-dependent light-time requests; all sample mutation stays here.
 pub fn update_simulation(
     state: &mut SimulationState,
     time: FrameTime,

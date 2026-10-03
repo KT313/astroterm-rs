@@ -7,7 +7,7 @@ use astroterm::projection::{View, Viewport, project_sky};
 use astroterm::scene::{RenderOptions, draw_sky_scene};
 use astroterm::sky::{
     FrameTime, ModelFamily, ObservedSky, ObserverState, SimulationState, SkyCatalog, StateRequest, observe_sky,
-    prepare_observer, update_simulation,
+    prepare_light_time_samples, prepare_observation, prepare_observer, update_simulation,
 };
 use astroterm::timing::StepTimes;
 use std::sync::Arc;
@@ -15,17 +15,21 @@ use std::sync::Arc;
 fn angle(a: Vector3, b: Vector3) -> f64 {
     a.cross(b).length().atan2(a.dot(b)).to_degrees() * 3600.0
 }
+fn frame(tt: f64) -> FrameTime {
+    FrameTime { utc: tt, ut1: tt, tt }
+}
 fn update(state: &mut SimulationState, tt: f64) {
-    update_simulation(state, FrameTime::from_utc(tt), &[], &mut StepTimes::default()).unwrap();
+    update_simulation(state, frame(tt), &[], &mut StepTimes::default()).unwrap();
 }
 fn catalog() -> Arc<SkyCatalog> {
     Arc::new(SkyCatalog::from_catalog(&load_embedded_catalog().unwrap()))
 }
 fn observe(state: &SimulationState, time: f64, site: Observer, catalog: Arc<SkyCatalog>) -> ObservedSky {
-    let observer = prepare_observer(state, FrameTime::from_utc(time), site).unwrap();
+    let mut prepared = state.clone();
+    let observer = prepare_observation(&mut prepared, frame(time), site).unwrap();
     let mut sky = ObservedSky::new(catalog);
     observe_sky(
-        state,
+        &prepared,
         &observer,
         5.0,
         false,
@@ -159,7 +163,7 @@ fn cadence_tracks_forward_reverse_and_fast_playback_with_no_refresh_jump() {
 #[test]
 fn emissions_get_separate_bounded_samples_and_same_epoch_parents() {
     let mut state = SimulationState::default();
-    let frame = FrameTime::from_utc(J2000);
+    let frame = frame(J2000);
     let emission = J2000 - 4.0 / 24.0;
     let request = StateRequest {
         body: BodyId::Neptune,
@@ -239,7 +243,7 @@ fn model_invalidation_is_limited_to_dependents() {
 
 #[test]
 fn synthetic_anchor_composes_translation_tilt_spin_and_site_velocity() {
-    let time = FrameTime::from_utc(J2000);
+    let time = frame(J2000);
     let site = Observer::default();
     let anchor = BodyState {
         position: Vector3 { x: 5.0, y: 2.0, z: 1.0 },
@@ -284,7 +288,13 @@ fn synthetic_anchor_composes_translation_tilt_spin_and_site_velocity() {
         &mut StepTimes::default(),
     )
     .unwrap();
-    let expected_sun = Horizontal::from_vector(observer.inertial_to_horizon.apply(-observer.state.position));
+    let sun = simulation.evaluate_body(BodyId::Sun, time.tt).unwrap().position;
+    let expected_sun = Horizontal::from_vector(
+        observer.inertial_to_horizon.apply(
+            ((sun - observer.state.position).normalized() + observer.state.velocity * (1.0 / 173.144632674240))
+                .normalized(),
+        ),
+    );
     assert!(angle(sky.sun().position, expected_sun.to_unit_vector()) < 1e-8); // synthetic airless anchor ignores the requested refraction
     assert_ne!(
         rotation.transpose().apply(local.position),
@@ -304,15 +314,7 @@ fn unsupported_interval_uses_direct_samples_and_nonfinite_times_fail() {
             .evaluate_body(BodyId::Earth, COMPUTATIONAL_INTERVAL.end_tt)
             .is_err()
     );
-    assert!(
-        update_simulation(
-            &mut state,
-            FrameTime::from_utc(f64::NAN),
-            &[],
-            &mut StepTimes::default()
-        )
-        .is_err()
-    );
+    assert!(update_simulation(&mut state, frame(f64::NAN), &[], &mut StepTimes::default()).is_err());
 }
 
 /// Broad deterministic sampling, including dense contemporary lunar cycles and close approaches. This qualifies
@@ -332,7 +334,7 @@ fn qualify_cache_intervals_across_the_computational_interval() {
             J2000 + (index - 10000) as f64 * 0.731
         };
         for sign in [-1.0, 1.0] {
-            for (family, seconds) in [(0, 299.99), (1, 119.99), (2, 21599.99)] {
+            for (family, seconds) in [(0, 299.99), (1, 119.99), (2, 599.99)] {
                 let mut cached = SimulationState::default();
                 update(&mut cached, epoch);
                 let tt = epoch + sign * seconds / 86400.0;
@@ -425,7 +427,20 @@ fn continuous_moon_phase_matches_horizons_and_original_reference_dates() {
         let expected = row["Illu%"].as_str().unwrap().parse::<f64>().unwrap() / 100.0;
         let mut state = SimulationState::exact();
         update(&mut state, tt);
-        let sky = observe(&state, tt, Observer::default(), cat.clone());
+        let mut observer = prepare_observer(&state, frame(tt), Observer::default()).unwrap();
+        observer.state = state.evaluate_body(BodyId::Earth, tt).unwrap(); // Horizons fixture is geocentric
+        prepare_light_time_samples(&mut state, &mut observer, &mut StepTimes::default()).unwrap();
+        let mut sky = ObservedSky::new(cat.clone());
+        observe_sky(
+            &state,
+            &observer,
+            5.0,
+            false,
+            astroterm::sky::SkyRegion::All,
+            &mut sky,
+            &mut StepTimes::default(),
+        )
+        .unwrap();
         let actual = sky.moon.illumination.illuminated_fraction;
         println!(
             "TT {tt}: illuminated fraction {actual:.9}, Horizons {expected:.9}, difference {:.9}",
@@ -453,7 +468,7 @@ fn continuous_moon_phase_matches_horizons_and_original_reference_dates() {
 fn refraction_is_applied_once_in_observation_and_resets_for_each_frame() {
     let mut state = SimulationState::default();
     update(&mut state, J2000);
-    let observer = prepare_observer(&state, FrameTime::from_utc(J2000), Observer::default()).unwrap();
+    let observer = prepare_observer(&state, frame(J2000), Observer::default()).unwrap();
     let mut sky = ObservedSky::new(catalog());
     observe_sky(
         &state,

@@ -5,8 +5,8 @@
 //!
 //! Input, display and [`SimulationClock`] use UTC, interpreted as UT1 without Earth-orientation data. Dates before
 //! UTC existed (1960) use UT. This is an application approximation, not a prediction of future UTC or DUT1.
-//! Ephemerides and precession take TT; currently the caller approximates TT = UT1 (ΔT = 0). ERA takes UT1, while
-//! GMST takes UT1 for rotation and TT for precession. Eventually TT = UT1 + ΔT. The equation of the origins is
+//! Ephemerides, proper motion and orientation take TT = UT1 + Espenak–Meeus ΔT. ERA takes UT1.
+//! GMST uses the long-term mean equator/equinox; production adds nutation to form the apparent equation of origins. The equation of the origins is
 //! EO = ERA - GAST and already includes the equation of the equinoxes; do not add that correction twice.
 //!
 //! Calendar input and display use proleptic Gregorian dates and astronomical year numbering: 0 = 1 BC,
@@ -21,6 +21,85 @@ use super::normalize_radians;
 
 /// The J2000.0 epoch as a Julian date.
 pub const J2000: f64 = 2451545.0;
+
+/// Espenak–Meeus ΔT = TT − UT1, seconds, for a decimal Gregorian year.
+/// Published polynomials: <https://eclipse.gsfc.nasa.gov/SEcat5/deltatpoly.html>.
+/// The outer parabola is an extrapolation, not a prediction of Earth's future rotation.
+/// No ELP-specific secular-acceleration adjustment is applied to this time-scale estimate.
+pub fn estimate_delta_t(year: f64) -> f64 {
+    let polynomial = |t: f64, coefficients: &[f64]| coefficients.iter().rev().fold(0.0, |v, c| v * t + c);
+    match year {
+        y if y < -500.0 => -20.0 + 32.0 * ((y - 1820.0) / 100.0).powi(2),
+        y if y < 500.0 => polynomial(
+            y / 100.0,
+            &[
+                10583.6,
+                -1014.41,
+                33.78311,
+                -5.952053,
+                -0.1798452,
+                0.022174192,
+                0.0090316521,
+            ],
+        ),
+        y if y < 1600.0 => polynomial(
+            (y - 1000.0) / 100.0,
+            &[
+                1574.2,
+                -556.01,
+                71.23472,
+                0.319781,
+                -0.8503463,
+                -0.005050998,
+                0.0083572073,
+            ],
+        ),
+        y if y < 1700.0 => polynomial(y - 1600.0, &[120.0, -0.9808, -0.01532, 1.0 / 7129.0]),
+        y if y < 1800.0 => polynomial(y - 1700.0, &[8.83, 0.1603, -0.0059285, 0.00013336, -1.0 / 1174000.0]),
+        y if y < 1860.0 => polynomial(
+            y - 1800.0,
+            &[
+                13.72,
+                -0.332447,
+                0.0068612,
+                0.0041116,
+                -0.00037436,
+                0.0000121272,
+                -0.0000001699,
+                0.000000000875,
+            ],
+        ),
+        y if y < 1900.0 => polynomial(
+            y - 1860.0,
+            &[7.62, 0.5737, -0.251754, 0.01680668, -0.0004473624, 1.0 / 233174.0],
+        ),
+        y if y < 1920.0 => polynomial(y - 1900.0, &[-2.79, 1.494119, -0.0598939, 0.0061966, -0.000197]),
+        y if y < 1941.0 => polynomial(y - 1920.0, &[21.20, 0.84493, -0.076100, 0.0020936]),
+        y if y < 1961.0 => polynomial(y - 1950.0, &[29.07, 0.407, -1.0 / 233.0, 1.0 / 2547.0]),
+        y if y < 1986.0 => polynomial(y - 1975.0, &[45.45, 1.067, -1.0 / 260.0, -1.0 / 718.0]),
+        y if y < 2005.0 => polynomial(
+            y - 2000.0,
+            &[63.86, 0.3345, -0.060374, 0.0017275, 0.000651814, 0.00002373599],
+        ),
+        y if y < 2050.0 => polynomial(y - 2000.0, &[62.92, 0.32217, 0.005589]),
+        y if y < 2150.0 => -20.0 + 32.0 * ((y - 1820.0) / 100.0).powi(2) - 0.5628 * (2150.0 - y),
+        y => -20.0 + 32.0 * ((y - 1820.0) / 100.0).powi(2),
+    }
+}
+
+/// Convert UT1 to approximate TT using a continuous decimal Gregorian year (no monthly jumps).
+pub fn ut1_to_tt(julian_date_ut1: f64) -> f64 {
+    let year = julian_date_to_utc(julian_date_ut1).map_or(2000.0 + (julian_date_ut1 - J2000) / 365.2425, |date| {
+        let year = date.year();
+        let start = chrono::NaiveDate::from_ymd_opt(year, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+        let days = if start.date().leap_year() { 366.0 } else { 365.0 };
+        f64::from(year) + (julian_date_ut1 - datetime_to_julian_date(&start)) / days
+    });
+    julian_date_ut1 + estimate_delta_t(year) / SECONDS_PER_DAY
+}
 
 /// Julian date of the Unix epoch (1970-01-01T00:00:00 UTC).
 const UNIX_EPOCH_JULIAN_DATE: f64 = 2440587.5;
@@ -134,7 +213,7 @@ pub fn earth_rotation_angle(julian_date_ut1: f64) -> f64 {
     normalize_radians(TAU * (day_fraction + 0.7790572732640 + 0.00273781191135448 * days_since_j2000))
 }
 
-/// Greenwich mean sidereal time in radians: rotation from UT1, mean precession from TT (Capitaine et al. eq. 42).
+/// Greenwich mean sidereal time in radians: rotation from UT1, mean precession from TT (model-consistent long-term equation of origins).
 pub fn greenwich_mean_sidereal_time(julian_date_ut1: f64, julian_date_tt: f64) -> f64 {
     normalize_radians(
         earth_rotation_angle(julian_date_ut1)
@@ -272,5 +351,40 @@ mod tests {
     #[test]
     fn current_julian_date_is_after_2025() {
         assert!(current_julian_date() > 2460676.5);
+    }
+}
+
+#[cfg(test)]
+mod delta_t_tests {
+    use super::*;
+    #[test]
+    fn published_polynomials_at_named_epochs() {
+        for (year, expected) in [
+            (1900.0, -2.79),
+            (2000.0, 63.86),
+            (2026.0, 75.074584),
+            (4026.0, 15552.5952),
+        ] {
+            assert!(
+                (estimate_delta_t(year) - expected).abs() < 1e-6,
+                "{year}: {}",
+                estimate_delta_t(year)
+            );
+        }
+    }
+    #[test]
+    fn each_polynomial_boundary_is_finite_and_tt_uses_delta_t() {
+        for year in [
+            -500.0, 500.0, 1600.0, 1700.0, 1800.0, 1860.0, 1900.0, 1920.0, 1941.0, 1961.0, 1986.0, 2005.0, 2050.0,
+            2150.0,
+        ] {
+            for offset in [-0.000001, 0.0, 0.000001] {
+                assert!(estimate_delta_t(year + offset).is_finite());
+            }
+        }
+        assert!(((ut1_to_tt(J2000) - J2000) * 86400.0 - 63.86).abs() < 0.002);
+        assert!(
+            ut1_to_tt(crate::astro::COMPUTATIONAL_INTERVAL.end_tt) > crate::astro::COMPUTATIONAL_INTERVAL.end_tt + 3.0
+        );
     }
 }

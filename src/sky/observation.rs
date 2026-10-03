@@ -1,13 +1,13 @@
-//! Observer-dependent transformations and corrections. No View, ephemeris evaluation, or cache mutation.
+//! Observer-dependent transformations and corrections. The preparation coordinator requests emission coverage;
+//! observation itself reads immutable samples and never evaluates a model or sees a camera.
 use super::{
     FrameTime, ObservedSky, ObservedStar, PlanetKind, SimulationError, SimulationState, refract_sky_positions,
 };
 use crate::astro::models::{
     BodyId, BodyState,
-    moons::EARTH_RADIUS_AU,
-    orientation::{compute_body_fixed_rotation, compute_horizon_rotation},
+    orientation::{compute_body_fixed_rotation, compute_horizon_rotation, compute_site_state},
 };
-use crate::astro::{Horizontal, Matrix3, Observer, correct_for_parallax};
+use crate::astro::{Matrix3, Observer, Vector3};
 use crate::timing::StepTimes;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -16,7 +16,7 @@ pub enum Anchor {
 }
 
 /// A frame's observer in the common inertial frame. Site coordinates are body-fixed; full orientation (slow and
-/// fast) transforms a site's vector and velocity. Production uses zero site displacement until exact parallax.
+/// fast) transforms the WGS84 sea-level site vector and its rotation velocity.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ObserverState {
     pub anchor: Anchor,
@@ -27,7 +27,7 @@ pub struct ObserverState {
     pub inertial_to_fixed: Matrix3,
     pub inertial_to_horizon: Matrix3,
     pub atmosphere: bool,
-    pub legacy_lunar_parallax: bool,
+    pub emission_tt: [f64; 10],
 }
 impl ObserverState {
     /// Compose a body's translation and complete orientation with a body-fixed site state. This geometry also
@@ -54,7 +54,7 @@ impl ObserverState {
             inertial_to_fixed,
             inertial_to_horizon: compute_horizon_rotation(&site).compose(inertial_to_fixed),
             atmosphere,
-            legacy_lunar_parallax: false,
+            emission_tt: [time.tt; 10],
         }
     }
 }
@@ -67,9 +67,59 @@ pub fn prepare_observer(
     let earth = simulation.evaluate_body(BodyId::Earth, time.tt)?;
     let slow = simulation.evaluate_orientation(time.tt)?;
     let orientation = compute_body_fixed_rotation(slow, time.ut1);
-    let mut observer = ObserverState::from_anchor_state(time, site, earth, orientation, BodyState::default(), true);
-    observer.legacy_lunar_parallax = true;
+    Ok(ObserverState::from_anchor_state(
+        time,
+        site,
+        earth,
+        orientation,
+        compute_site_state(site),
+        true,
+    ))
+}
+
+/// Speed of light in AU/day (IAU exact metre definitions).
+pub const LIGHT_SPEED_AU_DAY: f64 = 299792458.0 * 86400.0 / 149597870700.0;
+
+/// Plan observer-dependent emission epochs, then ask the simulation coordinator for coverage.
+/// The target moves to emission time; the observer stays at reception. Two distance evaluations implement
+/// the initial light-time estimate plus one iteration. No model is evaluated by observe_sky itself.
+pub fn prepare_light_time_samples(
+    simulation: &mut SimulationState,
+    observer: &mut ObserverState,
+    times: &mut StepTimes,
+) -> Result<(), SimulationError> {
+    for _ in 0..2 {
+        let mut requests = Vec::with_capacity(9);
+        for body in BodyId::PLANETS
+            .into_iter()
+            .chain([BodyId::Moon])
+            .filter(|b| *b != BodyId::Earth)
+        {
+            let target = simulation.evaluate_body(body, observer.emission_tt[body as usize])?;
+            let tt = observer.time.tt - (target.position - observer.state.position).length() / LIGHT_SPEED_AU_DAY;
+            observer.emission_tt[body as usize] = tt;
+            requests.push(super::StateRequest { body, tt });
+        }
+        super::update_simulation(simulation, observer.time, &requests, times)?;
+    }
+    Ok(())
+}
+
+/// Convenience coordinator for headless callers. Reception samples must already exist.
+/// Production main.rs shows observer preparation and emission sampling explicitly.
+pub fn prepare_observation(
+    simulation: &mut SimulationState,
+    time: FrameTime,
+    site: Observer,
+) -> Result<ObserverState, SimulationError> {
+    let mut observer = prepare_observer(simulation, time, site)?;
+    prepare_light_time_samples(simulation, &mut observer, &mut StepTimes::default())?;
     Ok(observer)
+}
+
+/// First-order annual plus diurnal aberration; error is O(beta²), below 0.002 arcseconds for Earth.
+pub fn apply_aberration(direction: Vector3, velocity: Vector3) -> Vector3 {
+    (direction.normalized() + velocity * (1.0 / LIGHT_SPEED_AU_DAY)).normalized()
 }
 
 /// Evaluate region and brightness candidates and every body at the frame time. Corrections are applied once;
@@ -121,10 +171,10 @@ pub fn observe_sky_candidates(
     // resolve all body dependencies before writing output, so missing coverage is explicit
     let tt = observer.time.tt;
     let bodies = PlanetKind::ALL
-        .map(|kind| simulation.evaluate_body(body_id(kind), tt))
+        .map(|kind| simulation.evaluate_body(body_id(kind), observer.emission_tt[body_id(kind) as usize]))
         .into_iter()
         .collect::<Result<Vec<_>, _>>()?;
-    let moon = simulation.evaluate_body(BodyId::Moon, tt)?;
+    let moon = simulation.evaluate_body(BodyId::Moon, observer.emission_tt[BodyId::Moon as usize])?;
     let relative_moon = moon.position - observer.state.position;
     let relative_sun = bodies[0].position - observer.state.position;
 
@@ -170,8 +220,13 @@ pub fn observe_sky_candidates(
             }
             let star = output.catalog.stars.get(index);
             let sample = star.motion.evaluate(years, star.magnitude);
-            let mut observed =
-                ObservedStar::from_star(&star, index, observer.inertial_to_horizon.apply(sample.direction));
+            let mut observed = ObservedStar::from_star(
+                &star,
+                index,
+                observer
+                    .inertial_to_horizon
+                    .apply(apply_aberration(sample.direction, observer.state.velocity)),
+            );
             observed.magnitude = sample.magnitude;
             observed.drawable = drawable;
             observed.drawable &= sample.magnitude <= magnitude_threshold;
@@ -180,22 +235,20 @@ pub fn observe_sky_candidates(
         }
     });
 
-    // finite bodies share subtraction and rotation; keep the inherited lunar parallax until the site upgrade
+    // finite bodies share exact topocentric subtraction, aberration and orientation
     times.measure("Body observation", || {
         for (planet, state) in output.planets.iter_mut().zip(bodies) {
             planet.position = observer
                 .inertial_to_horizon
-                .apply(state.position - observer.state.position)
+                .apply(apply_aberration(
+                    state.position - observer.state.position,
+                    observer.state.velocity,
+                ))
                 .normalized();
         }
-        output.moon.position = observer.inertial_to_horizon.apply(relative_moon).normalized();
-        if observer.legacy_lunar_parallax {
-            output.moon.position = correct_for_parallax(
-                Horizontal::from_vector(output.moon.position),
-                relative_moon.length() / EARTH_RADIUS_AU,
-            )
-            .to_unit_vector();
-        }
+        output.moon.position = observer
+            .inertial_to_horizon
+            .apply(apply_aberration(relative_moon, observer.state.velocity));
 
         output.moon.illumination = super::compute_moon_illumination(
             relative_moon,
@@ -204,6 +257,7 @@ pub fn observe_sky_candidates(
         );
         output.moon.phase = output.moon.illumination.named_phase();
     });
+    output.outside_accuracy_range = crate::astro::accuracy::needs_accuracy_warning(tt);
     output.refracted = false;
     if refraction && observer.atmosphere {
         times.measure("Refraction", || refract_sky_positions(output));
@@ -221,5 +275,62 @@ fn body_id(kind: PlanetKind) -> BodyId {
         PlanetKind::Saturn => BodyId::Saturn,
         PlanetKind::Uranus => BodyId::Uranus,
         PlanetKind::Neptune => BodyId::Neptune,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn aberration_points_towards_velocity_and_never_exceeds_its_geometric_bound() {
+        let velocity = Vector3 {
+            x: 0.0,
+            y: 0.0176,
+            z: 0.00027,
+        };
+        let beta = velocity.length() / LIGHT_SPEED_AU_DAY;
+        for i in 0..1000 {
+            let a = i as f64 * std::f64::consts::TAU / 1000.0;
+            let direction = Vector3 {
+                x: a.cos(),
+                y: a.sin(),
+                z: 0.0,
+            };
+            let apparent = apply_aberration(direction, velocity);
+            let angle = direction.cross(apparent).length().atan2(direction.dot(apparent));
+            assert!(angle <= beta.asin() + 1e-15);
+            assert!(apparent.dot(velocity) >= direction.dot(velocity) - 1e-15);
+        }
+    }
+    #[test]
+    #[ignore = "release measurement of the phase-6 per-star correction"]
+    fn measure_aberration_cost() {
+        use std::hint::black_box;
+        let directions: Vec<_> = (0..1_000_000)
+            .map(|i| {
+                let a = i as f64 * 0.001;
+                Vector3 {
+                    x: a.cos(),
+                    y: a.sin(),
+                    z: 0.2,
+                }
+                .normalized()
+            })
+            .collect();
+        let start = std::time::Instant::now();
+        for direction in &directions {
+            black_box(apply_aberration(
+                black_box(*direction),
+                black_box(Vector3 {
+                    x: 0.0,
+                    y: 0.0176,
+                    z: 0.00027,
+                }),
+            ));
+        }
+        println!(
+            "aberration including input/output normalization: {:.3} ns/star (1,000,000 directions)",
+            start.elapsed().as_secs_f64() * 1000.0
+        );
     }
 }

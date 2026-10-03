@@ -53,7 +53,7 @@ Each module only depends on the ones above it:
 | `cli` | Arguments, validated `Config` (simulation, view, render and terminal settings), bash completions |
 
 `src/main.rs` holds the processing flow: parse options → build the sky → per frame: poll input and apply controls,
-update positions, render. Rendering only reads the sky, so other renderers can be added beside `TerminalRenderer`.
+refresh simulation → prepare observer/emission samples → observe → project → render. Rendering only reads the sky, so other renderers can be added beside `TerminalRenderer`.
 
 ## Differences from the C version
 
@@ -72,12 +72,17 @@ New:
   fraction and phase angle. Full Moon is recognized on both sides of opposition within the phase band.
 - Interactive controls (see [Keys](#keys)); the metadata panel shows the simulation speed and whether time is paused.
 - With `--color`, stars are colored by spectral class (blue-white O/B in cyan, orange K in yellow, red M in red).
-- The Moon includes the main perturbations by the Sun (about 0.1° instead of several degrees off), parallax, a
-  phase computed from its actual elongation from the Sun, and an emoji lit on the side facing the Sun in the current
-  view (the C version only mirrored it by hemisphere).
+- VSOP87E supplies barycentric states for the Sun and planets, including the Earth geocenter. The Moon uses the
+  120-term Meeus chapter 47 series (truncated ELP-2000/82), adapted from its native mean ecliptic of date.
+- Exact topocentric geometry subtracts a WGS84 sea-level site for every finite body. Observation applies iterated
+  light-time and annual/diurnal aberration. Lunar glyphs face the Sun in the current view.
+- TT = UT1 + Espenak–Meeus ΔT drives the models; UTC input approximates UT1. Vondrák long-term precession,
+  IAU 2000B nutation and a matching equation of origins keep the equinox consistent with Earth rotation.
+- A yellow bottom-row message appears whenever any drawn class is outside its measured accuracy range;
+  it stays stable while panning. See [Accuracy](#accuracy) for ranges and limitations.
 - Star and planet positions are precessed from J2000 to the date, so they line up with the sidereal time of date
   (the C version was about 0.35° off in 2025, growing by about 1.4° per century away from 2000).
-- Optional atmospheric refraction (`-R`/`--refraction`), which lifts objects near the horizon by up to about 0.5°.
+- Optional atmospheric refraction (`-R`/`--refraction`), which lifts objects near the horizon by up to about 0.647°.
 - `--dataset athyg` downloads the pinned AT-HYG catalog on first use and reuses it offline thereafter.
   `--dataset <path>` loads stars from an AT-HYG file (`.csv` or `.csv.gz`, see Data Sources) instead of the embedded
   Yale Bright Star Catalog; constellation figures are matched by HR number. Unnamed stars are labelled with their
@@ -186,22 +191,63 @@ The legacy `update_sky_positions` API remains a direct, uncached reference conve
 explicit stages in `main.rs`. Observation accepts a renderer-neutral `SkyRegion`; use `All` when the same observed
 sky must support arbitrary subsequent camera views.
 
-Current cache half-intervals are 5 simulated minutes for the planetary batch, 2 minutes for the Moon, and 6 hours
+Current cache half-intervals are 5 simulated minutes for the planetary batch, 2 minutes for the Moon, and 10 minutes
 for slow Earth orientation, forwards or backwards. Observation evaluates all samples at one requested epoch;
 parent-relative lunar states are composed with Earth at that same epoch. Bounded additional samples cover
-explicit per-body emission-time queries, although light-time correction itself remains unimplemented. Missing coverage is an
-error returned to the coordinator. Outside the computational interval, caches use direct evaluation only.
+per-body emission epochs. The observer stays at reception while each target moves to emission; an initial
+light-time estimate plus one iteration requests bounded samples explicitly. Observation then reads those samples
+without invoking ephemeris code. Missing coverage is an error returned to the coordinator. Outside the computational interval, caches use direct evaluation only.
 
 The cache interpolation budget is 1″ (0.3″ planetary direction, 0.4″ lunar direction, 0.2″ orientation, 0.1″ velocity
 expressed as aberration). This is measured **against the current models**, not an astronomical accuracy claim.
-The underlying Kepler/Schlyter models, zero ΔT and altitude-only lunar parallax remain approximations. The Sun is
-still the heliocentric origin; observer site displacement remains zero until the exact-site model is added.
+Positions and velocities are barycentric, equatorial J2000, in AU and AU/day. Each family owns its formulas and
+accuracy policy. The Moon is sampled relative to Earth, then composed with its parent at the requested epoch.
+The orientation family owns the WGS84 shape and slow precession/nutation; observation transforms the site's
+position and rotation velocity with the complete orientation every frame. All current physical calculations use
+f64. Archived Kepler/Schlyter APIs exist only for historical reference comparisons.
 
 `make build-aggressive` builds a faster binary for the current machine into `target/aggressive-pgo/astroterm`:
 fat LTO, one codegen unit, `panic = "abort"`, `-C target-cpu=native`, then profile-guided optimization and BOLT,
 trained by running typical workloads in a pseudo-terminal (`scripts/pgo-training.sh`). Behavior is the same as the
 release build. It needs `cargo install cargo-pgo`, `rustup component add llvm-tools-preview` and BOLT (on Ubuntu
 `sudo apt install bolt-18`).
+
+## Accuracy
+
+The computational interval is −7974-01-01 through 12026-12-31 (Gregorian TT, astronomical years). It bounds
+catalog/index shortcuts, **not astronomical accuracy**. Outside it the program checks every star directly.
+Empirically qualified ranges are narrower: stars use that whole interval, Sun/planets use **1850-01-01 to
+2030-01-01**, and the Moon **0000-01-01 to 4000-01-01** (upper endpoints exclusive). A single warning appears
+outside any of these ranges. The bands below remain targets, not promises throughout the full band.
+
+Independent qualification uses 659 sampled epochs, past and future separately, with observation 59 seconds after
+a cache sample. DE441 vectors come directly from JPL kernel byte ranges, including year 12026; ERFA provides
+orientation/aberration references. A separate 27-position Horizons check uses actual planet centers, WGS84 Boston,
+matched TT and UT1, and no refraction. It measures planets below 1.5″ and the Moon below 4.9″. The broad DE441
+check uses explicitly identified system barycenters for Mars and the outer planets. Results below are sampled
+maxima, not rigorous bounds between samples or guarantees for every observer/catalog trajectory.
+
+| Band from J2000 | Stars past / future | Sun/planets past / future | Moon past / future |
+|---|---:|---:|---:|
+| Within 200 Julian years | 0.03″ / 0.03″ | 2.11″ / 3.89″ | 11.45″ / 10.88″ |
+| 200–2,000 years | 0.03″ / 0.03″ | 44.61″ / 21.99″ | 59.78″ / 6.49″ |
+| Beyond 2,000 years | 0.03″ / 0.03″ | 9,716″ / 17,870″ | 4,526″ / 2,764″ (unvalidated) |
+
+Targets are 1″/1″/5″ for stars, 2″/60″/80″ for Sun/planets, and 15″/120″/unvalidated for the Moon.
+Precession agrees with ERFA's long-term matrix to below 0.000001″ at the sampled epochs; this is implementation
+agreement, not a claim that Earth's distant orientation is known that accurately. Neptune misses the near-band
+2″ target at some dates, and long-term outer-planet errors exceed 80″. Hence the conservative planetary range.
+Meeus meets the sampled lunar targets inside its qualified range; its far-date comparisons remain unvalidated.
+
+Time-scale uncertainty is separate: UTC is approximated as UT1 (up to 0.9 s, about 13.5″ of rotation), and ΔT is
+an estimate, especially before modern measurements or in the future. The polynomials give about 75.1 s in 2026,
+4.3 hours in 4026, and 3.9 days in 12026; these are not measured future rotation. Model comparisons explicitly
+match TT and UT1 to avoid conflating these uncertainties. TT≈TDB neglects the small periodic difference.
+Catalog uncertainty, stellar parallax, gravitational light deflection, observer elevation and polar motion are
+not modelled. Refraction is an optional standard formula, not a weather measurement.
+
+Reproduction commands, reference provenance and the interpretation of the ranges are in
+[scripts/reference/README.md](scripts/reference/README.md). Ordinary tests are offline.
 
 ## Citations
 
@@ -220,6 +266,20 @@ Resources used by the original astroterm and this port:
 - [Dan Smith's "Meeus Solar Position Calculations"](https://observablehq.com/@danleesmith/meeus-solar-position-calculations)
 - [Bryan Weber's "Orbital Mechanics Notes"](https://github.com/bryanwweber/orbital-mechanics-notes)
 - [ASCOM](https://ascom-standards.org/Help/Developer/html/72A95B28-BBE2-4C7D-BC03-2D6AB324B6F7.htm)
+
+Additional accuracy-model sources:
+
+- [Bretagnon & Francou (1988), VSOP87](https://ui.adsabs.harvard.edu/abs/1988A%26A...202..309B/abstract),
+  through the [VSOP87E Rust implementation](https://docs.rs/vsop87/3.0.0/vsop87/vsop87e/).
+- [Vondrák, Capitaine & Wallace (2011/2012), long-term precession](https://www.aanda.org/articles/aa/abs/2011/10/aa17274-11/aa17274-11.html).
+- [ERFA](https://github.com/liberfa/erfa): long-term pole and IAU 2000B nutation coefficients; translated code is
+  covered by [LICENSE-ERFA](LICENSE-ERFA), with its SOFA heritage acknowledged there.
+- [Espenak–Meeus ΔT polynomials](https://eclipse.gsfc.nasa.gov/SEcat5/deltatpoly.html).
+- Jean Meeus, *Astronomical Algorithms*, second edition, chapters 22 and 47 (lunar tables 47.A/B).
+- [WGS84](https://earth-info.nga.mil/index.php?dir=wgs84&action=wgs84): equatorial radius 6378137 m,
+  inverse flattening 298.257223563, height 0.
+- [JPL DE440/DE441](https://ssd.jpl.nasa.gov/planets/eph_export.html) and
+  [Horizons](https://ssd.jpl.nasa.gov/horizons/manual.html) for independent comparisons.
 
 ## Data Sources
 

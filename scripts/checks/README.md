@@ -86,3 +86,19 @@ The first run verifies and installs the download, prepares the catalog and write
 use a fresh cache folder with an existing data file; record separately whether the OS page cache was dropped.
 Unit tests cover checksum/semantic corruption, atomic concurrent writes, read-only folders, mapped lifetimes,
 name/path selection, verified streams and download cleanup. Cached and uncached frames must remain identical.
+
+
+Phase-6 qualification keeps the functional terminal checks and adds independent astronomy references
+([reference README](../reference/README.md)). The model cadence sweep still has 12,000 epochs; orientation now
+uses a 10-minute half-interval. The culling margin includes annual and diurnal aberration:
+
+```sh
+cargo run --release --locked --example aberration_bound
+cargo test --release --locked --lib measure_aberration_cost -- --ignored --nocapture
+```
+
+The first samples 200,001 Earth velocities over the computational interval and adds the maximum WGS84 site spin;
+production also expands the margin from the actual observer velocity every frame. The second isolates correction
+arithmetic on one million directions. Neither substitutes for the final whole-frame optimization pass. Record
+machine/build/frequency/concurrency conditions with performance results. Phase-6 Linux PTY checks passed; physical
+fonts and other operating systems are not thereby qualified.

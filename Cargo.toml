@@ -29,6 +29,7 @@ tempfile = "3.27.0"
 tzf-rs = { version = "2.1.2", default-features = false, features = ["bundled"] }
 unicode-width = "0.2.2"
 ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
+vsop87 = "3.0.0"
 
 [target.'cfg(unix)'.dependencies]
 tz-rs = "0.7.3"

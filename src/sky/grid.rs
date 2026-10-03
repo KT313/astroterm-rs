@@ -8,8 +8,9 @@ use std::f64::consts::PI;
 pub const GRID_DEPTH: u8 = 6;
 pub const CELL_COUNT: usize = 6 << (2 * GRID_DEPTH);
 pub const REFRACTION_MARGIN: f64 = 0.647 * PI / 180.0;
-/// Reserved for the phase-6 aberration model, whose full-interval velocity bound must qualify this value.
-pub const ABERRATION_MARGIN: f64 = 21.0 * PI / (180.0 * 3600.0);
+/// Qualified against 200,001 Earth-velocity samples plus maximum WGS84 site spin (21.219703″).
+/// Selection also expands this from the actual observer velocity, independently of the sampled bound.
+pub const ABERRATION_MARGIN: f64 = 22.0 * PI / (180.0 * 3600.0);
 const NUMERIC_SLACK: f64 = 1e-10;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -167,7 +168,11 @@ impl SkyGrid {
             SkyRegion::Cone { center, radius } if radius < 150_f64.to_radians() => {
                 let margin = ALWAYS_CHECKED_ANGLE
                     + QUANTIZATION_MARGIN
-                    + ABERRATION_MARGIN
+                    + ABERRATION_MARGIN.max(
+                        (observer.state.velocity.length() / super::observation::LIGHT_SPEED_AU_DAY)
+                            .clamp(0.0, 1.0)
+                            .asin(),
+                    )
                     + NUMERIC_SLACK
                     + if refraction { REFRACTION_MARGIN } else { 0.0 };
                 let radius = (radius + margin).min(PI);

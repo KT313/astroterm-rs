@@ -1,6 +1,6 @@
 //! One-shot direct evaluation retained for reference fixtures and library compatibility. The runtime frame loop
 //! owns persistent SimulationState and invokes simulation, observation and projection explicitly.
-use super::{FrameTime, SimulationState, Sky, observe_sky, prepare_observer, update_simulation};
+use super::{FrameTime, SimulationState, Sky, observe_sky, prepare_observation, update_simulation};
 use crate::astro::{Observer, refract_direction};
 use crate::timing::StepTimes;
 
@@ -14,7 +14,7 @@ pub fn update_sky_positions(
     let time = FrameTime::from_utc(julian_date_ut1);
     let mut simulation = SimulationState::exact();
     update_simulation(&mut simulation, time, &[], times).expect("finite reference epoch");
-    let observer = prepare_observer(&simulation, time, *observer).expect("prepared reference state");
+    let observer = prepare_observation(&mut simulation, time, *observer).expect("prepared reference state");
     observe_sky(
         &simulation,
         &observer,

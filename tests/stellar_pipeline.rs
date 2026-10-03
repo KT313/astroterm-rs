@@ -6,7 +6,7 @@ use astroterm::{
     projection::{View, ViewCenter, Viewport, project_sky},
     scene::{RenderOptions, draw_sky_scene},
     sky::{
-        FrameTime, ObservedSky, SimulationState, SkyCatalog, observe_sky, observe_sky_candidates, prepare_observer,
+        FrameTime, ObservedSky, SimulationState, SkyCatalog, observe_sky, observe_sky_candidates, prepare_observation,
         update_simulation,
     },
     timing::StepTimes,
@@ -47,11 +47,13 @@ fn catalog(stars: Vec<CatalogStar>, segments: Vec<[u32; 2]>) -> Arc<SkyCatalog> 
     )))
 }
 fn setup(years: f64) -> (SimulationState, astroterm::sky::ObserverState) {
-    let time = FrameTime::from_utc(J2000 + years * JULIAN_YEAR_DAYS);
+    let tt = J2000 + years * JULIAN_YEAR_DAYS;
+    let time = FrameTime { utc: tt, ut1: tt, tt };
     let mut simulation = SimulationState::exact();
     update_simulation(&mut simulation, time, &[], &mut StepTimes::default()).unwrap();
-    let mut observer = prepare_observer(&simulation, time, Observer::default()).unwrap();
-    observer.inertial_to_horizon = Matrix3::IDENTITY; // known synthetic directions, independent of sidereal rotation
+    let mut observer = prepare_observation(&mut simulation, time, Observer::default()).unwrap();
+    observer.inertial_to_horizon = Matrix3::IDENTITY;
+    observer.state.velocity = astroterm::astro::Vector3::default(); // known synthetic directions, independent of sidereal rotation
     (simulation, observer)
 }
 fn options(threshold: f64) -> RenderOptions {

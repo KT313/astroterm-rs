@@ -146,3 +146,56 @@ fn filtered_updates_match_full_updates_across_threshold_changes() {
         );
     }
 }
+
+#[test]
+fn accuracy_warning_is_stable_at_all_class_and_computational_boundaries() {
+    use astroterm::astro::{J2000, accuracy::*};
+    let mut sky = Sky::from_catalog(&load_embedded_catalog().unwrap());
+    let options = RenderOptions {
+        unicode: true,
+        braille: false,
+        color: true,
+        constellations: false,
+        grid: false,
+        magnitude_threshold: -100.0,
+        label_threshold: -100.0,
+        dynamic_names: false,
+    };
+    let mut description = String::new();
+    let mut cases = vec![("today", J2000)];
+    for (name, range) in [
+        ("stars", STAR_VALIDATED_INTERVAL.unwrap()),
+        ("planets", PLANET_VALIDATED_INTERVAL.unwrap()),
+        ("moon", MOON_VALIDATED_INTERVAL.unwrap()),
+        ("computation", COMPUTATIONAL_INTERVAL),
+    ] {
+        for (edge, date) in [
+            ("before start", range.start_tt.next_down()),
+            ("at start", range.start_tt),
+            ("before end", range.end_tt.next_down()),
+            ("at end", range.end_tt),
+        ] {
+            description.push_str(&format!("{name} {edge}: {}\n", needs_accuracy_warning(date)));
+            cases.push((name, date));
+        }
+    }
+    for (name, tt) in cases {
+        sky.outside_accuracy_range = needs_accuracy_warning(tt);
+        for (width, expected) in [(64, ACCURACY_WARNING), (12, "Some positio")] {
+            let mut canvas = Canvas::new(3, width);
+            draw_sky_scene(&mut canvas, &View::default(), &options, &sky);
+            if sky.outside_accuracy_range {
+                assert!(canvas.to_lines()[2].starts_with(expected), "{name} {tt}");
+                assert_eq!(canvas.cell(2, 0).unwrap().color, Some(astroterm::canvas::Color::Yellow));
+            } else {
+                assert!(!canvas.to_lines()[2].starts_with("Some"));
+            }
+        }
+    }
+    // Preserve both the message and its color without repeating every identical boundary canvas.
+    sky.outside_accuracy_range = true;
+    let mut canvas = Canvas::new(3, 64);
+    draw_sky_scene(&mut canvas, &View::default(), &options, &sky);
+    description.push_str(&canvas_snapshot::describe_canvas(&canvas));
+    insta::assert_snapshot!("accuracy_warning", description);
+}

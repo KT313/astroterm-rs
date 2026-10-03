@@ -9,8 +9,8 @@
 //! observers or renderers. [`catalog`] parses inputs; [`sky::SkyCatalog`] owns immutable star data. [`controls`]
 //! changes views and the simulation clock without invalidating geometric caches. [`timing`] records stage costs.
 //!
-//! Earth is the only production anchor. Common f64 states use equatorial J2000 axes, AU and AU/day, currently with
-//! a heliocentric origin. [`sky`] documents the approximation and the remaining observer-site correction.
+//! Earth is the only production anchor. Common f64 states use equatorial J2000 axes, AU and AU/day, with
+//! a barycentric origin. [`sky`] documents the observer site and apparent-place corrections.
 
 pub mod astro;
 pub mod canvas;

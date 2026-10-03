@@ -56,7 +56,8 @@ pub fn horizontal_to_spherical(position: Horizontal) -> (f64, f64) {
 
 /// Correct a geocentric position for parallax: seen from the Earth's surface, a nearby body appears lower in the sky.
 /// `distance` is in Earth radii (Schlyter, section 13; altitude only, ignoring the Earth's flattening).
-pub fn correct_for_parallax(position: Horizontal, distance: f64) -> Horizontal {
+#[cfg(test)]
+fn correct_for_parallax(position: Horizontal, distance: f64) -> Horizontal {
     let parallax = (1.0 / distance).asin();
     Horizontal {
         altitude: position.altitude - parallax * position.altitude.cos(),

@@ -1,0 +1,21 @@
+{
+  "url": "https://ssd.jpl.nasa.gov/api/horizons.api",
+  "parameters": {
+    "format": "json",
+    "COMMAND": "'301'",
+    "MAKE_EPHEM": "'YES'",
+    "EPHEM_TYPE": "'OBSERVER'",
+    "CENTER": "'coord@399'",
+    "COORD_TYPE": "'GEODETIC'",
+    "SITE_COORD": "'-71.0589,42.3601,0'",
+    "TLIST": "'2459146.000800741 2461041.5 2461223.5'",
+    "TLIST_TYPE": "'JD'",
+    "TIME_TYPE": "'TT'",
+    "QUANTITIES": "'2,4,30,49'",
+    "APPARENT": "'AIRLESS'",
+    "ANG_FORMAT": "'DEG'",
+    "EXTRA_PREC": "'YES'",
+    "CSV_FORMAT": "'YES'",
+    "CAL_FORMAT": "'JD'"
+  }
+}

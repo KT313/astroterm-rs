@@ -1,15 +1,11 @@
-//! Schlyter lunar model, geometric Earth-relative mean-of-date equatorial coordinates in Earth radii, TT, f64.
-//! Native conversion retains fixed J2000 obliquity. The common-frame adapter removes only source precession, then
-//! converts to AU. Parent Earth is composed at the requested epoch by sky::simulation, never at a stale sample time.
+//! Meeus chapter 47 (truncated ELP-2000/82), geometric mean ecliptic of date, TT, f64.
+//! Conversion uses the date's obliquity and inverse long-term precession to form an Earth-relative J2000
+//! equatorial AU state. The coordinator composes Earth's translation at the requested epoch.
+mod legacy;
+mod meeus;
 use crate::astro::Vector3;
-use crate::astro::orbital::*;
-use std::f64::consts::{PI, TAU};
-/// Geocentric orbit of the Moon. Rates are per day since 1999-12-31T00:00 (Schlyter's epoch).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct MoonOrbit {
-    pub elements: OrbitalElements,
-    pub rates: OrbitalElements,
-}
+pub use legacy::{MOON_ORBIT, MoonOrbit, compute_moon_age, compute_moon_geocentric, moon_age_to_phase};
+pub use meeus::compute_lunar_ecliptic;
 
 /// The eight named phases of the Moon.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,203 +49,22 @@ impl MoonPhase {
     }
 }
 
-/// Geocentric position of the Moon in rectangular equatorial coordinates (Earth radii).
-/// Time is TT. The native ecliptic coordinates are mean of date; conversion currently uses fixed J2000 obliquity
-/// as an approximation. No observer parallax or refraction is included here.
-///
-/// Paul Schlyter's method (<https://stjarnhimlen.se/comp/ppcomp.html#6>), including his perturbation terms, which
-/// bring the error down from several degrees to a few arcminutes.
-pub fn compute_moon_geocentric(orbit: &MoonOrbit, julian_date_tt: f64) -> Vector3 {
-    // propagate the elements to the date
-    let days = julian_date_tt - 2451543.5; // Schlyter's day 0 is 1999-12-31T00:00
-    let elements = propagate_elements(&orbit.elements, &orbit.rates, days);
-    let OrbitalElements {
-        semi_major_axis,
-        eccentricity,
-        ..
-    } = elements;
-
-    // solve Kepler's equation
-    let mean_anomaly = wrap_degrees_signed(elements.mean_anomaly);
-    let m = mean_anomaly * TO_RAD;
-    let initial_guess = mean_anomaly + 180.0 / PI * eccentricity * m.sin() * (1.0 + eccentricity * m.cos());
-    let eccentric_anomaly = solve_eccentric_anomaly(mean_anomaly, eccentricity, initial_guess);
-
-    // unperturbed position in the orbital plane, rotated to ecliptic coordinates
-    let (xp, yp) = compute_orbital_plane_position(semi_major_axis, eccentricity, eccentric_anomaly);
-    let ecliptic = rotate_orbital_plane_to_ecliptic(xp, yp, &elements);
-
-    // add the perturbations by the Sun, then rotate to equatorial coordinates
-    let perturbed = apply_lunar_perturbations(ecliptic, &elements, days);
-    ecliptic_to_equatorial(perturbed)
-}
-
-/// Legacy planar elongation helper retained for historical audit fixtures; runtime phase uses continuous geometry.
-/// Age of the Moon within the synodic month in [0, 1): 0 is a New Moon and 0.5 a Full Moon. It is the elongation of
-/// the Moon from the Sun along the ecliptic, as a fraction of a full turn, given their geocentric equatorial positions.
-pub fn compute_moon_age(moon_geocentric: Vector3, sun_geocentric: Vector3) -> f64 {
-    let north = super::orientation::j2000_ecliptic_north();
-    let cosine = moon_geocentric.dot(sun_geocentric) - moon_geocentric.dot(north) * sun_geocentric.dot(north);
-    let sine = sun_geocentric.cross(moon_geocentric).dot(north);
-    (sine.atan2(cosine) / TAU).rem_euclid(1.0)
-}
-
-/// Named phase for a Moon age in [0, 1).
-pub fn moon_age_to_phase(age: f64) -> MoonPhase {
-    const UPPER_BOUNDS: [f64; 7] = [0.03, 0.25, 0.27, 0.50, 0.53, 0.75, 0.77];
-    if !(0.03..=0.97).contains(&age) {
-        return MoonPhase::New;
-    }
-    let index = UPPER_BOUNDS.iter().position(|&bound| age < bound).unwrap_or(7);
-    MoonPhase::ALL[index]
-}
-
-/// Add the largest periodic perturbations of the Moon's longitude, latitude and distance (Schlyter, section 9) to an
-/// unperturbed ecliptic position. `days` counts from Schlyter's epoch.
-fn apply_lunar_perturbations(ecliptic: Vector3, elements: &OrbitalElements, days: f64) -> Vector3 {
-    // fundamental arguments in degrees: mean anomalies, mean elongation and argument of latitude
-    let sun_mean_anomaly = 356.0470 + 0.9856002585 * days;
-    let sun_mean_longitude = sun_mean_anomaly + 282.9404 + 4.70935e-5 * days;
-    let moon_mean_anomaly = elements.mean_anomaly;
-    let moon_mean_longitude = moon_mean_anomaly + elements.argument_of_periapsis + elements.ascending_node;
-    let elongation = moon_mean_longitude - sun_mean_longitude;
-    let latitude_argument = moon_mean_longitude - elements.ascending_node;
-    let (ms, mm, d, f) = (
-        sun_mean_anomaly * TO_RAD,
-        moon_mean_anomaly * TO_RAD,
-        elongation * TO_RAD,
-        latitude_argument * TO_RAD,
-    );
-
-    // perturbations: longitude and latitude in degrees, distance in Earth radii
-    let longitude_terms = -1.274 * (mm - 2.0 * d).sin() // evection
-        + 0.658 * (2.0 * d).sin() // variation
-        - 0.186 * ms.sin() // yearly equation
-        - 0.059 * (2.0 * mm - 2.0 * d).sin()
-        - 0.057 * (mm - 2.0 * d + ms).sin()
-        + 0.053 * (mm + 2.0 * d).sin()
-        + 0.046 * (2.0 * d - ms).sin()
-        + 0.041 * (mm - ms).sin()
-        - 0.035 * d.sin() // parallactic equation
-        - 0.031 * (mm + ms).sin()
-        - 0.015 * (2.0 * f - 2.0 * d).sin()
-        + 0.011 * (mm - 4.0 * d).sin();
-    let latitude_terms =
-        -0.173 * (f - 2.0 * d).sin() - 0.055 * (mm - f - 2.0 * d).sin() - 0.046 * (mm + f - 2.0 * d).sin()
-            + 0.033 * (f + 2.0 * d).sin()
-            + 0.017 * (2.0 * mm + f).sin();
-    let distance_terms = -0.58 * (mm - 2.0 * d).cos() - 0.46 * (2.0 * d).cos();
-
-    // apply them in spherical ecliptic coordinates
-    let distance = (ecliptic.x * ecliptic.x + ecliptic.y * ecliptic.y + ecliptic.z * ecliptic.z).sqrt();
-    let longitude = ecliptic.y.atan2(ecliptic.x) + longitude_terms * TO_RAD;
-    let latitude = (ecliptic.z / distance).asin() + latitude_terms * TO_RAD;
-    let distance = distance + distance_terms;
-    Vector3 {
-        x: distance * latitude.cos() * longitude.cos(),
-        y: distance * latitude.cos() * longitude.sin(),
-        z: distance * latitude.sin(),
-    }
-}
-
-pub const MOON_ORBIT: MoonOrbit = MoonOrbit {
-    elements: elements(60.2666, 0.054900, 5.1454, 115.3654, 318.0634, 125.1228),
-    rates: elements(0.0, 0.0, 0.0, 13.0649929509, 0.1643573223, -0.0529538083),
-};
-
-/// Preserve the legacy Earth-radius scale (6378.14 km); the exact site model is a later change.
-pub const EARTH_RADIUS_AU: f64 = 6378.14 / 149597870.7;
-
 /// Parent-relative common-frame lunar state. Its only frame dependency is the source precession evaluated at
 /// each finite-difference epoch; Earth's translation is composed at the requested epoch by the coordinator.
 pub fn evaluate_moon(julian_date_tt: f64) -> super::BodyState {
-    super::state::evaluate_with_velocity(julian_date_tt, |t| {
-        let native = compute_moon_geocentric(&MOON_ORBIT, t);
-        super::orientation::compute_precession_matrix(t)
+    super::state::evaluate_with_velocity(julian_date_tt, |tt| {
+        let (longitude, latitude, distance_km) = compute_lunar_ecliptic(tt);
+        let (sl, cl) = longitude.sin_cos();
+        let (sb, cb) = latitude.sin_cos();
+        let native = Vector3 {
+            x: cb * cl,
+            y: cb * sl,
+            z: sb,
+        } * (distance_km / 149597870.7);
+        let eps = super::orientation::compute_obliquity(tt);
+        super::orientation::compute_precession_matrix(tt)
             .matrix()
             .transpose()
-            .apply(native)
-            * EARTH_RADIUS_AU
+            .apply(super::orientation::rotate_x(-eps).apply(native))
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::astro::models::planets::{EARTH_ORBIT, compute_planet_heliocentric};
-
-    fn circular_distance(a: f64, b: f64) -> f64 {
-        let difference = (a - b).abs();
-        difference.min(1.0 - difference)
-    }
-
-    fn moon_age_at(julian_date: f64) -> f64 {
-        let moon = compute_moon_geocentric(&MOON_ORBIT, julian_date);
-        let sun = -compute_planet_heliocentric(&EARTH_ORBIT, julian_date);
-        compute_moon_age(moon, sun)
-    }
-
-    #[test]
-    fn compute_moon_age_matches_reference_dates() {
-        // the reference dates of the original test suite, at its tolerance
-        for (julian_date, expected) in [(2451550.1, 0.0), (2460645.5, 0.0), (2459242.5, 0.5), (2466447.5, 0.5)] {
-            assert!(
-                circular_distance(moon_age_at(julian_date), expected) < 0.05,
-                "jd {julian_date}"
-            );
-        }
-
-        // exact instants of new and full moons (2000-01-06T18:14Z, 2021-01-28T19:16Z, 2024-12-01T06:21Z), to within
-        // a few hours
-        for (julian_date, expected) in [(2451550.2597, 0.0), (2459243.3028, 0.5), (2460645.7646, 0.0)] {
-            assert!(
-                circular_distance(moon_age_at(julian_date), expected) < 0.005,
-                "jd {julian_date}"
-            );
-        }
-    }
-
-    #[test]
-    fn moon_position_matches_meeus_example() {
-        // Meeus, Astronomical Algorithms, example 47.a: 1992-04-12T00:00 TD, λ = 133.162655° and β = -3.229126°
-        // (of date, about 0.11° of precession ahead of J2000), at 368409.7 km
-        let moon = compute_moon_geocentric(&MOON_ORBIT, 2448724.5);
-        let (sin_eps, cos_eps) = (OBLIQUITY_J2000.sin(), OBLIQUITY_J2000.cos());
-        let distance = (moon.x * moon.x + moon.y * moon.y + moon.z * moon.z).sqrt();
-        let longitude = (cos_eps * moon.y + sin_eps * moon.z)
-            .atan2(moon.x)
-            .to_degrees()
-            .rem_euclid(360.0);
-        let latitude = ((-sin_eps * moon.y + cos_eps * moon.z) / distance).asin().to_degrees();
-
-        assert!((longitude - (133.162655 - 0.11)).abs() < 0.1, "longitude {longitude}");
-        assert!((latitude + 3.229126).abs() < 0.1, "latitude {latitude}");
-        assert!(
-            (distance * 6378.14 - 368409.7).abs() < 500.0,
-            "distance {distance} Earth radii"
-        );
-    }
-
-    #[test]
-    fn moon_age_to_phase_covers_all_phases() {
-        let cases = [
-            (0.0, MoonPhase::New),
-            (0.1, MoonPhase::WaxingCrescent),
-            (0.25, MoonPhase::FirstQuarter),
-            (0.4, MoonPhase::WaxingGibbous),
-            (0.5, MoonPhase::Full),
-            (0.6, MoonPhase::WaningGibbous),
-            (0.75, MoonPhase::LastQuarter),
-            (0.9, MoonPhase::WaningCrescent),
-            (0.98, MoonPhase::New),
-        ];
-        for (age, phase) in cases {
-            assert_eq!(moon_age_to_phase(age), phase, "age {age}");
-        }
-    }
-
-    #[test]
-    fn moon_phase_names() {
-        assert_eq!(MoonPhase::WaxingGibbous.name(), "Waxing Gibbous");
-    }
 }

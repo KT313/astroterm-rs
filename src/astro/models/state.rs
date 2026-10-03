@@ -29,8 +29,7 @@ impl BodyId {
     ];
 }
 
-/// Geometric J2000 equatorial state, AU and AU/day. The current common origin is heliocentric, approximating
-/// barycentric coordinates until VSOP87E arrives. Lunar samples are explicitly parent-relative until composition.
+/// Geometric J2000 equatorial state, AU and AU/day. The common origin is the solar-system barycenter. Lunar samples are explicitly parent-relative until composition.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct BodyState {
     pub position: Vector3,

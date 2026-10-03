@@ -84,3 +84,61 @@ Phase-2 lunar illumination uses a separate replayable fixture, preserving the or
 records the generator and response hashes. Query dates are TT Julian dates, observer Earth center, quantity 10
 (illuminated percent). The geometric model is compared with Horizons apparent illumination at four dates; the
 0.001 fraction envelope is a model comparison, not the 1″ cache interpolation budget.
+
+
+## Phase 6 qualification
+
+The historical phase-0 audit above is preserved. Production now uses VSOP87E, Meeus chapter 47, WGS84 sea-level
+site subtraction, Espenak–Meeus ΔT, long-term precession, IAU 2000B nutation, light-time and aberration.
+
+```sh
+cargo build --release --example accuracy_probe --example reference_probe
+# Fetch only the required DE441 ranges, about 6 MB for the current audit; never the full 3 GB kernel.
+/tmp/astroterm-phase0-venv/bin/python scripts/reference/accuracy.py --full --fetch
+# Replay those ranges offline:
+/tmp/astroterm-phase0-venv/bin/python scripts/reference/accuracy.py --full
+/tmp/astroterm-phase0-venv/bin/python scripts/reference/topocentric.py       # saved Horizons responses
+/tmp/astroterm-phase0-venv/bin/python scripts/reference/orientation.py       # ERFA only
+/tmp/astroterm-phase0-venv/bin/python scripts/reference/record_current.py    # explicitly replace phase-6 baseline
+cargo test --release --test accuracy_models
+```
+
+Use any environment installed from `requirements.txt`; the `/tmp` path is an example. `accuracy.py --ranges PATH`
+chooses the raw-range directory (default `dev/phase6-de441-ranges`, ignored). Each byte range is saved with its
+URL, offsets, HTTP ETag/Last-Modified and SHA256. Fetching refuses servers that ignore the HTTP Range header.
+`accuracy.json` contains numerical references and the range provenance manifest; tests need neither Python nor
+kernel files. Replaying verifies hashes before evaluating coefficients. `de441.py` uses jplephem only to parse the
+DAF directory and NumPy Chebyshev evaluation, independently of the Rust models. The original full kernel is not
+redistributed. A rerun of `--fetch` reuses existing verified ranges; remove the chosen range folder explicitly to
+request a fresh upstream version.
+
+The 659 reference epochs include the roadmap's eight years, exact computational/range boundaries, seasonal
+samples through 1800–2200, fortnightly contemporary lunar cycles, monthly samples every five years in
+1850–2030, and past/future middle/far samples. Frame comparisons occur 59 seconds after the seeded caches.
+The broad reference assembles DE441 retarded positions, WGS84 geometry, ERFA `ab`, `ltpb`, `numat`/`nut00b`, and
+ERA. No light deflection or refraction is included. Its slow origin follows ERFA's long-term equator pole with
+64-node Gaussian integration; Rust uses independent composite Simpson integration and its translated pole code.
+Contemporary sidereal time/full rotation also have separate `gst06a`/`c2i06a` fixtures.
+
+The broad tests deliberately set explicit TT=UT1 to isolate model error: this is a controlled comparison, not
+an application time-scale conversion. SPK epochs use TDB≈TT; contemporary observer checks use Horizons TT and
+its saved TDB−UTC and DUT1 values. **Quantity 30 is TDB−UTC after 1962, not TDB−UT1**; quantity 49 supplies DUT1.
+The residual TT−TDB difference contributes at most about 0.03″ of rotation near today. Horizons also includes
+measured Earth-orientation and light-deflection corrections absent from this application's approximation.
+
+Mars and outer-planet DE441 entries are explicitly system barycenters, not silently substituted center kernels.
+The separate 27-position Horizons fixture checks all drawn body centers near today (including Venus and Moon).
+Heliocentric vectors are compared by subtracting each theory's Sun: absolute barycentric origins in VSOP87's
+older mass/ephemeris fit and DE441 differ at the ~1,000 km level, mostly canceling in observer-relative geometry.
+
+Measured maxima and conservative empirical coverage are in README Accuracy. The Moon meets the near/middle
+sampled targets, so the optional ELP-MPP02 replacement was not triggered. Neptune fails 2″ at parts of the near
+band; outer-planet VSOP87 extrapolation fails 80″ far from today. The far Moon is recorded, never certified.
+Coverage is deliberately 1850–2030 for planets, 0–4000 for Moon, and the computational interval for the stellar
+transformation. These are sampled model checks, not guarantees at every untested instant. Reference catalog
+uncertainties and unknown future ΔT remain separate. Raw summary output lives in ignored development notes.
+
+Original C numerical fixtures/tolerances remain unchanged. `current_positions.rs` retains the phase-0 historical
+baseline; `phase6_positions.rs` is the explicitly regenerated production regression baseline. Four character
+snapshots change by a few cells as corrected star/endpoint positions cross rounding boundaries; the remaining
+scene snapshots are unchanged. A separate lossless snapshot covers the yellow coverage message and boundaries.

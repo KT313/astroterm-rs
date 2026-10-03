@@ -1,11 +1,8 @@
 //! Celestial objects: what they are and where they are. How they look is up to the renderer.
 
 use crate::astro::models::stars::StellarMotion;
-use crate::astro::{Equatorial, Horizontal, MoonOrbit, MoonPhase, PlanetOrbit, Vector3};
-use crate::catalog::{
-    CatalogStar, Designation, JUPITER_ORBIT, MARS_ORBIT, MERCURY_ORBIT, MOON_ORBIT, NEPTUNE_ORBIT, NameId,
-    SATURN_ORBIT, StarId, URANUS_ORBIT, VENUS_ORBIT,
-};
+use crate::astro::{Equatorial, Horizontal, MoonPhase, Vector3};
+use crate::catalog::{CatalogStar, Designation, NameId, StarId};
 
 /// A catalog star.
 #[derive(Clone, Debug, PartialEq)]
@@ -129,20 +126,6 @@ impl PlanetKind {
         ];
         NAMES[self as usize]
     }
-
-    /// Heliocentric orbit. The Sun has none: its position is the negated position of the Earth.
-    pub fn orbit(self) -> Option<&'static PlanetOrbit> {
-        match self {
-            PlanetKind::Sun => None,
-            PlanetKind::Mercury => Some(&MERCURY_ORBIT),
-            PlanetKind::Venus => Some(&VENUS_ORBIT),
-            PlanetKind::Mars => Some(&MARS_ORBIT),
-            PlanetKind::Jupiter => Some(&JUPITER_ORBIT),
-            PlanetKind::Saturn => Some(&SATURN_ORBIT),
-            PlanetKind::Uranus => Some(&URANUS_ORBIT),
-            PlanetKind::Neptune => Some(&NEPTUNE_ORBIT),
-        }
-    }
 }
 
 /// The Sun or a planet.
@@ -156,7 +139,6 @@ pub struct Planet {
 /// The Moon.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Moon {
-    pub orbit: &'static MoonOrbit,
     pub phase: MoonPhase,
     pub illumination: super::MoonIllumination,
     /// Unit horizontal direction: East, North, Up; observer corrections have already been applied.
@@ -195,7 +177,6 @@ pub fn create_planets() -> Vec<Planet> {
 /// The Moon, initially new.
 pub fn create_moon() -> Moon {
     Moon {
-        orbit: &MOON_ORBIT,
         phase: MoonPhase::New,
         illumination: super::MoonIllumination::default(),
         position: Horizontal::default().to_unit_vector(),
@@ -215,14 +196,5 @@ mod tests {
                 "Sun", "Mercury", "Venus", "Mars", "Jupiter", "Saturn", "Uranus", "Neptune"
             ]
         );
-    }
-
-    #[test]
-    fn only_the_sun_has_no_orbit() {
-        let without_orbit: Vec<_> = PlanetKind::ALL
-            .into_iter()
-            .filter(|kind| kind.orbit().is_none())
-            .collect();
-        assert_eq!(without_orbit, [PlanetKind::Sun]);
     }
 }

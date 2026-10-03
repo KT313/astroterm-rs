@@ -9,7 +9,7 @@ use astroterm::catalog::{Catalog, CatalogStar, load_embedded_catalog};
 use astroterm::projection::{View, ViewCenter, Viewport, project_sky};
 use astroterm::scene::{RenderOptions, draw_sky_scene};
 use astroterm::sky::{
-    FrameTime, SimulationState, Sky, observe_sky, prepare_observer, update_simulation, update_sky_positions,
+    FrameTime, SimulationState, Sky, observe_sky, prepare_observation, update_simulation, update_sky_positions,
 };
 use astroterm::timing::StepTimes;
 use criterion::{Criterion, SamplingMode, criterion_group, criterion_main};
@@ -90,7 +90,7 @@ fn benchmark_frames(criterion: &mut Criterion) {
                         let time = FrameTime::from_utc(date + frame as f64 / (24.0 * 86400.0));
                         frame += 1;
                         update_simulation(&mut simulation, time, &[], &mut timing).unwrap();
-                        let observer_state = prepare_observer(&simulation, time, observer).unwrap();
+                        let observer_state = prepare_observation(&mut simulation, time, observer).unwrap();
                         observe_sky(
                             &simulation,
                             &observer_state,

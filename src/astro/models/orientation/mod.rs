@@ -1,24 +1,75 @@
-//! Earth orientation, f64: precession uses TT, fast spin uses UT1. The slow matrix carries the mean equation of
-//! origins, so its equinox agrees with the sidereal-time model. No nutation or finite observer site yet.
+//! Earth orientation, f64: Vondrak precession and IAU 2000B nutation use TT, fast ERA spin uses UT1.
+//! The slow matrix includes the model-consistent equation of origins. WGS84 geometry supplies the site state.
+mod long_term_terms;
+mod nutation;
+mod nutation_terms;
 mod precession;
+pub use nutation::compute_nutation;
+mod site;
 pub use precession::{PrecessionMatrix, compute_precession_matrix};
+pub use site::compute_site_state;
 
 use crate::astro::{J2000, Matrix3, Observer, earth_rotation_angle};
 
-/// Mean equation of the origins, ERA − GMST, radians (TT). Kept unwrapped to avoid subtracting large angles.
-pub fn compute_mean_equation_of_origins(julian_date_tt: f64) -> f64 {
-    let t = (julian_date_tt - J2000) / 36525.0;
-    let precession_arcsec = -0.014506 - 4612.156534 * t - 1.3915817 * t.powi(2)
-        + 0.00000044 * t.powi(3)
-        + 0.000029956 * t.powi(4)
-        + 0.0000000368 * t.powi(5);
-    precession_arcsec / 3600.0 * std::f64::consts::PI / 180.0
+/// Mean obliquity implied by the long-term equator and ecliptic poles, radians.
+pub fn compute_obliquity(tt: f64) -> f64 {
+    precession::compute_equator_pole(tt)
+        .dot(precession::compute_ecliptic_pole(tt))
+        .clamp(-1.0, 1.0)
+        .acos()
 }
 
-/// Slow J2000-to-intermediate rotation C = R3(−EO_mean) P, sampled in TT.
-pub fn compute_slow_orientation(julian_date_tt: f64) -> Matrix3 {
-    Matrix3::rotate_z(-compute_mean_equation_of_origins(julian_date_tt))
-        .compose(compute_precession_matrix(julian_date_tt).matrix())
+/// Passive X rotation, with the same convention as Matrix3::rotate_z.
+pub fn rotate_x(angle: f64) -> Matrix3 {
+    let (s, c) = angle.sin_cos();
+    Matrix3([[1.0, 0.0, 0.0], [0.0, c, s], [0.0, -s, c]])
+}
+
+/// Long-term mean equation of origins. Parallel-transport the origin along this model's equator pole,
+/// then measure its angle from this model's equinox. This avoids extrapolating the IAU 2006 GMST polynomial.
+/// Composite Simpson quadrature uses at most half-century panels; the pole derivative uses a symmetric 0.01 yr
+/// step. J2000's ERA origin offset is the IAU 2006 value. Nutation is added separately, exactly once.
+pub fn compute_mean_equation_of_origins(tt: f64) -> f64 {
+    let centuries = (tt - J2000) / 36525.0;
+    let panels = ((centuries.abs() * 2.0).ceil() as usize)
+        .clamp(2, 20000)
+        .next_multiple_of(2);
+    let h = centuries / panels as f64;
+    let integrand = |t: f64| {
+        let epoch = J2000 + t * 36525.0;
+        let p = precession::compute_equator_pole(epoch);
+        let v = (precession::compute_equator_pole(epoch + 3.6525) - precession::compute_equator_pole(epoch - 3.6525))
+            * 5000.0;
+        (p.x * v.y - p.y * v.x) / (1.0 + p.z)
+    };
+    let mut integral = integrand(0.0) + integrand(centuries);
+    for i in 1..panels {
+        integral += (if i % 2 == 0 { 2.0 } else { 4.0 }) * integrand(i as f64 * h);
+    }
+    let angle = integral * h / 3.0 + (0.014506_f64 / 3600.0).to_radians();
+    let p = precession::compute_equator_pole(tt);
+    let a = 1.0 / (1.0 + p.z);
+    let basis = Matrix3([
+        [1.0 - a * p.x * p.x, -a * p.x * p.y, -p.x],
+        [-a * p.x * p.y, 1.0 - a * p.y * p.y, -p.y],
+        [p.x, p.y, p.z],
+    ]);
+    let origin = Matrix3::rotate_z(angle).compose(basis);
+    let relative = origin.compose(compute_precession_matrix(tt).matrix().transpose());
+    -relative.0[0][1].atan2(relative.0[0][0])
+}
+
+/// Slow true-equator rotation C = R3(−EO) N P, sampled in TT. No Earth spin here.
+pub fn compute_slow_orientation(tt: f64) -> Matrix3 {
+    let (dpsi, deps) = compute_nutation(tt);
+    let eps = compute_obliquity(tt);
+    let nutation = rotate_x(-eps - deps)
+        .compose(Matrix3::rotate_z(-dpsi))
+        .compose(rotate_x(eps));
+    let eo = compute_mean_equation_of_origins(tt) - dpsi * eps.cos();
+    Matrix3::rotate_z(-eo)
+        .compose(nutation)
+        .compose(compute_precession_matrix(tt).matrix())
 }
 
 /// Body-fixed equatorial axes to East/North/Up at a site; independent of which body carries the site.

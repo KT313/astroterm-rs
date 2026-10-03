@@ -5,7 +5,7 @@ use astroterm::{
     catalog::{load_athyg_catalog, load_embedded_catalog},
     projection::{View, ViewCenter, Viewport, project_sky},
     scene::{RenderOptions, draw_sky_scene},
-    sky::{FrameTime, SimulationState, Sky, SkyCatalog, observe_sky, prepare_observer, update_simulation},
+    sky::{FrameTime, SimulationState, Sky, SkyCatalog, observe_sky, prepare_observation, update_simulation},
     timing::StepTimes,
 };
 use criterion::{Criterion, SamplingMode, criterion_group, criterion_main};
@@ -21,8 +21,8 @@ fn benchmark_spatial(criterion: &mut Criterion) {
     let mut timing = StepTimes::default();
     let time = FrameTime::from_utc(2460736.9583333335);
     update_simulation(&mut simulation, time, &[], &mut timing).unwrap();
-    let observer = prepare_observer(
-        &simulation,
+    let observer = prepare_observation(
+        &mut simulation,
         time,
         Observer {
             latitude: 35.69_f64.to_radians(),

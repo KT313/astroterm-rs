@@ -69,6 +69,15 @@ pub fn draw_sky_scene(canvas: &mut Canvas, options: &RenderOptions, sky: &Projec
     } else {
         draw_cardinal_directions(canvas, options);
     }
+
+    // reserve the final row for one stable coverage message, independent of panning
+    if sky.outside_accuracy_range && canvas.height() > 0 {
+        let row = canvas.height() as i32 - 1;
+        for col in 0..canvas.width() {
+            canvas.put_char(row, col as i32, ' ', None);
+        }
+        canvas.put_str_truncated(row, 0, crate::astro::accuracy::ACCURACY_WARNING, Some(Color::Yellow));
+    }
 }
 
 /// Draw a line in the style of the options (smooth Unicode or ASCII).

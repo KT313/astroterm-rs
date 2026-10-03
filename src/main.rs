@@ -14,7 +14,9 @@ use astroterm::catalog::{datasets::DatasetDirectories, load_embedded_cities};
 use astroterm::cli::{Arguments, Config, build_config, write_bash_completions};
 use astroterm::controls::{Control, apply_control};
 use astroterm::projection::project_sky;
-use astroterm::sky::{FrameTime, SimulationState, Sky, observe_sky, prepare_observer, update_simulation};
+use astroterm::sky::{
+    FrameTime, SimulationState, Sky, observe_sky, prepare_light_time_samples, prepare_observer, update_simulation,
+};
 use astroterm::terminal::{TerminalRenderer, open_terminal_renderer, poll_frame_input};
 use astroterm::timing::StepTimes;
 
@@ -101,7 +103,8 @@ fn run_render_loop(config: &Config, sky: &mut Sky, renderer: &mut TerminalRender
         // observe at the current epoch, with exact body spin and observer corrections
         step_times
             .measure_steps("Observation", |steps| {
-                let observer = prepare_observer(&simulation_state, time, simulation.observer)?;
+                let mut observer = prepare_observer(&simulation_state, time, simulation.observer)?;
+                prepare_light_time_samples(&mut simulation_state, &mut observer, steps)?;
                 observe_sky(
                     &simulation_state,
                     &observer,

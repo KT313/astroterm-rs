@@ -8,7 +8,7 @@ use astroterm::{
     catalog::load_athyg_catalog,
     projection::{View, Viewport, project_sky},
     scene::{RenderOptions, draw_sky_scene},
-    sky::{FrameTime, SimulationState, Sky, SkyCatalog, observe_sky, prepare_observer, update_simulation},
+    sky::{FrameTime, SimulationState, Sky, SkyCatalog, observe_sky, prepare_observation, update_simulation},
     timing::StepTimes,
 };
 
@@ -60,7 +60,7 @@ fn main() {
     let mut timing = StepTimes::default();
     let mut update = |sky: &mut Sky| {
         update_simulation(&mut simulation, time, &[], &mut timing).unwrap();
-        let site = prepare_observer(&simulation, time, observer).unwrap();
+        let site = prepare_observation(&mut simulation, time, observer).unwrap();
         observe_sky(&simulation, &site, 5.0, false, view.sky_region(), sky, &mut timing).unwrap();
     };
 
@@ -133,7 +133,7 @@ fn measure_matrix(sky: &mut Sky) {
                         })
                         .unwrap();
                     timing.measure_steps("Observation", |steps| {
-                        let observer = prepare_observer(&simulation, time, site).unwrap();
+                        let observer = prepare_observation(&mut simulation, time, site).unwrap();
                         observe_sky(
                             &simulation,
                             &observer,

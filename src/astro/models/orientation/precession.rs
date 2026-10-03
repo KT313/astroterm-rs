@@ -1,7 +1,7 @@
 //! Precession: the slow turning of the Earth's axis, which moves the celestial equator and equinox against the stars.
 //!
-//! References: Capitaine, Wallace & Chapront, "Expressions for IAU 2000 precession quantities" (2003), eq. 39 (the
-//! IAU 2006 angles); Jean Meeus, Astronomical Algorithms, ch. 21.
+//! Vondrak, Capitaine & Wallace (2011/2012), translated from ERFA ltp/ltpequ/ltpecl.
+//! Copyright (C) 2013-2023 NumFOCUS Foundation; see LICENSE-ERFA.
 
 use std::f64::consts::PI;
 
@@ -13,38 +13,54 @@ pub struct PrecessionMatrix([[f64; 3]; 3]);
 
 /// The precession rotation from J2000 to `julian_date_tt`.
 pub fn compute_precession_matrix(julian_date_tt: f64) -> PrecessionMatrix {
-    // precession angles ζ, z and θ in arcseconds, from Julian centuries since J2000
-    let t = (julian_date_tt - J2000) / 36525.0;
-    let zeta = 2.650545 + 2306.083227 * t + 0.2988499 * t.powi(2) + 0.01801828 * t.powi(3)
-        - 0.000005971 * t.powi(4)
-        - 0.0000003173 * t.powi(5);
-    let z = -2.650545 + 2306.077181 * t + 1.0927348 * t.powi(2) + 0.01826837 * t.powi(3)
-        - 0.000028596 * t.powi(4)
-        - 0.0000002904 * t.powi(5);
-    let theta = 2004.191903 * t
-        - 0.4294934 * t.powi(2)
-        - 0.04182264 * t.powi(3)
-        - 0.000007089 * t.powi(4)
-        - 0.0000001274 * t.powi(5);
-
-    // the rotation R3(-z) · R2(θ) · R3(-ζ), written out
-    let to_radians = |arcseconds: f64| arcseconds / 3600.0 * PI / 180.0;
-    let (sin_zeta, cos_zeta) = to_radians(zeta).sin_cos();
-    let (sin_z, cos_z) = to_radians(z).sin_cos();
-    let (sin_theta, cos_theta) = to_radians(theta).sin_cos();
+    let equator = compute_equator_pole(julian_date_tt);
+    let ecliptic = compute_ecliptic_pole(julian_date_tt);
+    let equinox = equator.cross(ecliptic).normalized();
+    let y = equator.cross(equinox);
     PrecessionMatrix([
-        [
-            cos_zeta * cos_theta * cos_z - sin_zeta * sin_z,
-            -sin_zeta * cos_theta * cos_z - cos_zeta * sin_z,
-            -sin_theta * cos_z,
-        ],
-        [
-            cos_zeta * cos_theta * sin_z + sin_zeta * cos_z,
-            -sin_zeta * cos_theta * sin_z + cos_zeta * cos_z,
-            -sin_theta * sin_z,
-        ],
-        [cos_zeta * sin_theta, -sin_zeta * sin_theta, cos_theta],
+        [equinox.x, equinox.y, equinox.z],
+        [y.x, y.y, y.z],
+        [equator.x, equator.y, equator.z],
     ])
+}
+
+/// Evaluate the polynomial plus periodic pole coordinates in radians, ERFA ltpequ/ltpecl.
+fn compute_pole_components(tt: f64, polynomial: &[[f64; 4]; 2], periodic: &[[f64; 5]]) -> (f64, f64) {
+    let t = (tt - J2000) / 36525.0;
+    let mut xy = [0.0; 2];
+    for row in periodic {
+        let (s, c) = (std::f64::consts::TAU * t / row[0]).sin_cos();
+        for i in 0..2 {
+            xy[i] += c * row[1 + i] + s * row[3 + i];
+        }
+    }
+    for i in 0..2 {
+        xy[i] += polynomial[i].iter().rev().fold(0.0, |v, c| v * t + c);
+        xy[i] *= PI / (180.0 * 3600.0);
+    }
+    (xy[0], xy[1])
+}
+
+pub(super) fn compute_equator_pole(tt: f64) -> Vector3 {
+    use super::long_term_terms::{XYPER, XYPOL};
+    let (x, y) = compute_pole_components(tt, &XYPOL, &XYPER);
+    Vector3 {
+        x,
+        y,
+        z: (1.0 - x * x - y * y).max(0.0).sqrt(),
+    }
+}
+
+pub(super) fn compute_ecliptic_pole(tt: f64) -> Vector3 {
+    use super::long_term_terms::{PQPER, PQPOL};
+    let (p, q) = compute_pole_components(tt, &PQPOL, &PQPER);
+    let w = (1.0 - p * p - q * q).max(0.0).sqrt();
+    let (s, c) = (84381.406 * PI / (180.0 * 3600.0)).sin_cos();
+    Vector3 {
+        x: p,
+        y: -q * c - w * s,
+        z: -q * s + w * c,
+    }
 }
 
 impl PrecessionMatrix {

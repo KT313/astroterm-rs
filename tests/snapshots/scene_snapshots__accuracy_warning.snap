@@ -1,0 +1,33 @@
+---
+source: tests/scene_snapshots.rs
+expression: description
+---
+stars before start: true
+stars at start: true
+stars before end: true
+stars at end: true
+planets before start: true
+planets at start: false
+planets before end: false
+planets at end: true
+moon before start: true
+moon at start: true
+moon before end: true
+moon at end: true
+computation before start: true
+computation at start: true
+computation before end: true
+computation at end: true
+3 rows x 64 columns
+glyphs:
+|                                N                               |
+|E                                                              W|
+|Some positions are outside their validated accuracy range.      |
+colors (. default; K R G Y B M C W):
+|................................B...............................|
+|B..............................................................B|
+|YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY......|
+continuations (> continuation, . ordinary cell):
+|................................................................|
+|................................................................|
+|................................................................|

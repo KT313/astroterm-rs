@@ -1,7 +1,8 @@
 //! Four-stage pipeline: immutable catalog and independently cached geometric simulation -> observer-relative sky
 //! -> camera projection -> rendering. Astronomy families live in astro::models; no camera enters observation.
-//! Common states use f64 J2000 equatorial AU/AU-day, currently with a heliocentric origin. Earth is the only real
-//! anchor. Its site vector remains zero; the legacy Moon altitude parallax is applied in observation exactly once.
+//! Common states use f64 J2000 equatorial AU/AU-day, with a barycentric origin. Earth is the only real
+//! anchor, with a WGS84 sea-level site. Observation applies light-time, exact parallax and aberration before
+//! horizon rotation and optional refraction; camera projection never changes these values.
 
 pub mod cache;
 pub mod grid;
@@ -14,7 +15,10 @@ pub use storage::StarStorage;
 mod observation;
 mod positions;
 pub mod simulation;
-pub use observation::{Anchor, ObserverState, observe_sky, observe_sky_candidates, prepare_observer};
+pub use observation::{
+    Anchor, ObserverState, observe_sky, observe_sky_candidates, prepare_light_time_samples, prepare_observation,
+    prepare_observer,
+};
 pub use simulation::{
     FrameTime, ModelFamily, RefreshCounts, SimulationError, SimulationState, StateRequest, update_simulation,
 };
@@ -155,6 +159,7 @@ pub struct ObservedSky {
     pub names: crate::catalog::StarNames,
     pub constellations: Vec<Constellation>,
     pub(crate) refracted: bool,
+    pub outside_accuracy_range: bool,
 }
 /// Compatibility name for the observed sky; simulation caches are a separate type.
 pub type Sky = ObservedSky;
@@ -173,6 +178,7 @@ impl ObservedSky {
             planets: create_planets(),
             moon: create_moon(),
             refracted: false,
+            outside_accuracy_range: false,
         }
     }
     /// Build a fixture with zero positions. Runtime callers should construct SkyCatalog once and call observe_sky.

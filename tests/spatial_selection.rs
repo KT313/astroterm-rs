@@ -6,7 +6,7 @@ use astroterm::{
     projection::{ProjectionKind, View, ViewCenter, Viewport, project_sky},
     scene::{RenderOptions, draw_sky_scene},
     sky::{
-        FrameTime, ObservedSky, ObservedStar, SimulationState, SkyCatalog, observe_sky, prepare_observer,
+        FrameTime, ObservedSky, ObservedStar, SimulationState, SkyCatalog, observe_sky, prepare_observation,
         update_simulation,
     },
     timing::StepTimes,
@@ -69,7 +69,7 @@ fn compare(date: f64, view: View, threshold: f64, refraction: bool, latitude: f6
     let mut simulation = SimulationState::exact();
     let mut timing = StepTimes::default();
     update_simulation(&mut simulation, time, &[], &mut timing).unwrap();
-    let observer = prepare_observer(&simulation, time, Observer { latitude, longitude }).unwrap();
+    let observer = prepare_observation(&mut simulation, time, Observer { latitude, longitude }).unwrap();
     let mut selected = ObservedSky::new(catalog());
     observe_sky(
         &simulation,
@@ -84,7 +84,7 @@ fn compare(date: f64, view: View, threshold: f64, refraction: bool, latitude: f6
 
     // scan every star without consulting keys, bounds, the grid or the always-checked list
     let mut full = selected.clone();
-    let years = (date - J2000) / JULIAN_YEAR_DAYS;
+    let years = (time.tt - J2000) / JULIAN_YEAR_DAYS;
     full.stars = full
         .catalog
         .stars
@@ -92,7 +92,9 @@ fn compare(date: f64, view: View, threshold: f64, refraction: bool, latitude: f6
         .enumerate()
         .map(|(i, star)| {
             let sample = star.motion.evaluate(years, star.magnitude);
-            let position = observer.inertial_to_horizon.apply(sample.direction);
+            let aberrated =
+                (sample.direction.normalized() + observer.state.velocity * (1.0 / 173.144632674240)).normalized();
+            let position = observer.inertial_to_horizon.apply(aberrated);
             let position = if refraction {
                 refract_direction(position)
             } else {
@@ -127,7 +129,7 @@ fn compare(date: f64, view: View, threshold: f64, refraction: bool, latitude: f6
     draw_sky_scene(&mut ca, &options, &a);
     draw_sky_scene(&mut cb, &options, &b);
     assert_eq!(ca, cb);
-    if !COMPUTATIONAL_INTERVAL.contains(date) {
+    if !COMPUTATIONAL_INTERVAL.contains(time.tt) {
         assert!(selected.selection.brute_force);
         assert_eq!(selected.stars.len(), full.catalog.stars.len());
     }
@@ -272,8 +274,9 @@ fn seam_threshold_horizon_fast_mover_and_view_edge_cases_are_not_culled() {
         let mut simulation = SimulationState::exact();
         let mut timing = StepTimes::default();
         update_simulation(&mut simulation, time, &[], &mut timing).unwrap();
-        let mut observer = prepare_observer(&simulation, time, Observer::default()).unwrap();
+        let mut observer = prepare_observation(&mut simulation, time, Observer::default()).unwrap();
         observer.inertial_to_horizon = Matrix3::IDENTITY;
+        observer.state.velocity = Vector3::default();
         let mut sky = ObservedSky::new(catalog);
         observe_sky(
             &simulation,

@@ -7,18 +7,18 @@
 //!
 //! # Current model conventions
 //!
-//! Physical calculations, motion bounds and current magnitudes use f64 (source catalog encodings/colors retain their original precision). TT is currently approximated
-//! by UT1, itself approximated by UTC/UT input. `astro/time.rs` documents the calendar and time-scale contract.
+//! Physical calculations use f64; immutable catalog storage uses certified compact representations. Ephemerides,
+//! stellar motion and slow orientation use TT; UTC/UT input approximates UT1 and Espenak–Meeus ΔT supplies TT.
 //!
-//! | Quantity / owner | Native origin and frame | Units / epoch | Current corrections and stage |
+//! | Quantity / owner | Native origin and frame | Units / epoch | Corrections and stage |
 //! |---|---|---|---|
-//! | Catalog stars / `models::stars` | Barycentric direction, J2000 mean equator/equinox | Unit direction, velocity/distance per Julian year, optional distance in pc at J2000 | Normalized straight-line motion, distance-dependent magnitude, precession and observation |
-//! | Planets and Sun / `models::planets` | Heliocentric equatorial J2000 | AU; TT Julian centuries from J2000 | Earth subtraction, precession, horizon rotation; no light-time or aberration |
-//! | Moon / `models::moons` | Geocentric mean-of-date ecliptic, converted with fixed J2000 obliquity (approximation) | Earth radii; TT days from JD 2451543.5 | Solar perturbations; inverse source precession to J2000, Earth-relative AU sample; observer rotation and altitude parallax |
-//! | Precession and Earth rotation / `models::orientation` | Mean J2000 to mean-of-date, then local horizon | Radians; precession TT, ERA UT1 | Cached C = R3(−EO) P; exact per-frame ERA, then site horizon rotation |
-//! | Horizontal / observation | Observer sky: East, North, Up unit vectors | Cartesian unit vectors (radians only at display/API boundaries) | Optional refraction applied once after position update |
+//! | Catalog stars / `models::stars` | Barycentric direction, J2000 mean equator/equinox | Unit direction, velocity/distance per Julian year, optional parsec distance at J2000 | Normalized straight-line motion and brightness, then aberration/orientation in observation |
+//! | Planets and Sun / `models::planets` | VSOP87E barycentric ecliptic J2000, adapted to equatorial J2000 | AU and AU/day, TT≈TDB | Observation requests emission epochs, subtracts observer, applies aberration and orientation |
+//! | Moon / `models::moons` | Meeus/ELP geometric mean ecliptic of date | Radians/km, TT; adapter returns Earth-relative J2000 AU/AU-day | Date obliquity and inverse precession; coordinator adds same-time Earth; shared observer corrections |
+//! | Orientation / `models::orientation` | J2000 to true-of-date, then body-fixed and local horizon | Radians; precession/nutation TT, ERA UT1 | Cached C = R3(−EO) N P, model-consistent equinox; exact per-frame ERA; WGS84 sea-level site |
+//! | Horizontal / observation | Observer sky: East, North, Up unit vectors | Cartesian unit vectors | Refraction optional, exactly once after apparent-place corrections |
 //!
-//! The current positions are approximations to apparent places, not complete apparent-place solutions. Geometric
+//! The current positions are approximations to apparent places, with the documented omissions (stellar parallax, light deflection and polar motion). Geometric
 //! means before light-time/aberration; geocentric is relative to Earth's center; topocentric is relative to a surface
 //! site; refracted includes the atmosphere. Coordinate origin and apparent/geometric status are separate properties.
 //! Family adapters declare both, their dependencies and error/precision policy; see [`crate::sky`].
@@ -38,8 +38,8 @@ pub use accuracy::{
     PLANET_VALIDATED_INTERVAL, PRECESSION_TARGET_ARCSECONDS, STAR_VALIDATED_INTERVAL, accuracy_target_arcseconds,
 };
 pub use coords::{
-    apply_refraction, correct_for_parallax, equatorial_to_horizontal, horizontal_to_spherical, offset_towards,
-    offset_vector_towards, rectangular_to_equatorial, refract_direction,
+    apply_refraction, equatorial_to_horizontal, horizontal_to_spherical, offset_towards, offset_vector_towards,
+    rectangular_to_equatorial, refract_direction,
 };
 pub use matrix::Matrix3;
 pub use models::moons::{MoonOrbit, MoonPhase, compute_moon_age, compute_moon_geocentric, moon_age_to_phase};
@@ -49,8 +49,8 @@ pub use models::stars::compute_star_position;
 pub use notation::{DegreesMinutesSeconds, ElapsedTime, ZodiacSign, azimuth_to_compass, compass_point_to_azimuth};
 pub use orbital::OrbitalElements;
 pub use time::{
-    J2000, SimulationClock, current_julian_date, datetime_to_julian_date, earth_rotation_angle,
-    greenwich_mean_sidereal_time, julian_date_to_utc, parse_utc_datetime,
+    J2000, SimulationClock, current_julian_date, datetime_to_julian_date, earth_rotation_angle, estimate_delta_t,
+    greenwich_mean_sidereal_time, julian_date_to_utc, parse_utc_datetime, ut1_to_tt,
 };
 
 /// Position on the local sky of an observer.
