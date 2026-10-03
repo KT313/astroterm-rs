@@ -152,3 +152,19 @@ The viewport is 1102×1102 sky pixels; encoding, labels and terminal presentatio
 Run it without concurrent tests/benchmarks. These short comparisons do not establish sustained terminal throughput.
 The production model windows are now ±30 seconds (planets), ±12 seconds (Moon), ±60 seconds (orientation); the
 cadence test's boundary offsets have been updated accordingly. The full 12,000-epoch sweep remains opt-in.
+
+Minimum-star rasterizer qualification (O1):
+
+```sh
+cargo test --locked --lib scene::pixels
+ASTROTERM_DATASET=/path/to/athyg_40.csv.gz ASTROTERM_RASTER_OUTPUT=/tmp/astroterm-raster \
+  cargo test --release --locked --lib compare_minimum_star_rasterizers -- --ignored --nocapture
+```
+
+The opt-in comparison alternates the original tiny-skia path and the minimum-star fast path on identical projected
+scenes, asserts byte-for-byte image equality, and reports seven redraw measurements after a warm-up. It covers
+thresholds 5/10 and fields of view 225°/115.2°/12.4°. Both paths really redraw each time; whole-scene cache reuse
+cannot hide raster cost. Optional PNGs contain sky geometry only, before labels and metadata. Normal tests cover
+all source/background channel values, transparent overlaps, clipping, integer coordinates through 4096, mixed
+star radii and fallback on larger canvases. The shortcut has no computed mask cache; `--disable-cache` uses the
+same direct blending arithmetic.
