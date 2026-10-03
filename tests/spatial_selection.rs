@@ -131,7 +131,7 @@ fn compare(date: f64, view: View, threshold: f64, refraction: bool, latitude: f6
     assert_eq!(ca, cb);
     if !COMPUTATIONAL_INTERVAL.contains(time.tt) {
         assert!(selected.selection.brute_force);
-        assert_eq!(selected.stars.len(), full.catalog.stars.len());
+        assert_eq!(selected.corrections.evaluated, full.catalog.stars.len());
     }
 }
 

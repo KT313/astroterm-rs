@@ -144,10 +144,19 @@ impl SkyCatalog {
     }
 }
 
+/// Counts before and after dropping non-drawable stars that are not required constellation endpoints.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CorrectionStats {
+    pub evaluated: usize,
+    pub skipped: usize,
+    pub endpoint_only: usize,
+}
+
 /// Read-only output of observation, independent of camera projection. It may cover only the requested SkyRegion;
 /// request All when reusing one observation for arbitrary cameras. Catalog data is shared across sites and frames.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ObservedSky {
+    pub corrections: CorrectionStats,
     pub magnitude_threshold: f64,
     pub selection: SelectionStats,
     pub(crate) candidate_indices: Vec<usize>,
@@ -167,6 +176,7 @@ pub type Sky = ObservedSky;
 impl ObservedSky {
     pub fn new(catalog: Arc<SkyCatalog>) -> Self {
         Self {
+            corrections: CorrectionStats::default(),
             magnitude_threshold: f64::INFINITY,
             selection: SelectionStats::default(),
             candidate_indices: Vec::new(),
@@ -194,6 +204,7 @@ impl ObservedSky {
                 ObservedStar::from_star(&star, index, crate::astro::Horizontal::default().to_unit_vector())
             })
             .collect();
+        sky.corrections.evaluated = sky.stars.len();
         sky
     }
     pub fn count_bright_stars(&self, threshold: f64) -> usize {
@@ -247,7 +258,7 @@ mod tests {
         assert!(
             sky.stars
                 .iter()
-                .all(|star| star.designation == Some(Designation::Hr(star.id.0 as u32)))
+                .all(|star| star.designation.resolve() == Some(Designation::Hr(star.id.0 as u32)))
         );
         for range in sky.catalog.grid.offsets.windows(2) {
             let stars = &sky.catalog.stars;

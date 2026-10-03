@@ -102,7 +102,9 @@ fn threshold_crossing_uses_interval_key_then_current_magnitude() {
         assert_eq!(!projected.stars.is_empty(), drawn, "year offset {years}");
         if years == 20000.0 {
             assert_eq!(sky.runtime_singular_count, 1);
-            assert_eq!(sky.stars[0].magnitude, 5.5);
+            assert!(sky.stars.is_empty());
+            assert_eq!(sky.corrections.skipped, 1);
+            assert_eq!(sky.catalog.stars.motion(0).evaluate(years, 5.5).magnitude, 5.5);
         }
     }
 }
@@ -283,4 +285,49 @@ fn normalized_motion_change_stays_within_a_derived_legacy_bound() {
             assert!(angle <= bound + 1e-12, "dec {dec}, t {years}: {angle} > {bound}");
         }
     }
+}
+
+#[test]
+fn correction_selection_keeps_faint_endpoints_but_discards_other_rejected_stars() {
+    let cat = catalog(
+        vec![
+            star(1, 1.0, horizontal(0.0, 20.0), 0.0),
+            star(2, 5.5, horizontal(100.0, 0.1), -0.00005),
+            star(3, 5.5, horizontal(40.0, 30.0), -0.00005),
+        ],
+        vec![[1, 2]],
+    );
+    let endpoint = cat.stars.iter().position(|s| s.id == StarId(2)).unwrap();
+    let candidates: Vec<_> = cat
+        .stars
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| s.id != StarId(2))
+        .map(|(i, _)| i)
+        .collect();
+    let expected = astroterm::astro::refract_direction(cat.stars.motion(endpoint).evaluate(0.0, 5.5).direction);
+    let mut sky = ObservedSky::new(cat);
+    let (simulation, observer) = setup(0.0);
+    observe_sky_candidates(
+        &simulation,
+        &observer,
+        5.0,
+        true,
+        Some(&candidates),
+        &mut sky,
+        &mut StepTimes::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        (
+            sky.corrections.evaluated,
+            sky.corrections.skipped,
+            sky.corrections.endpoint_only
+        ),
+        (3, 1, 1)
+    );
+    assert!(!sky.stars.iter().any(|s| s.id == StarId(3)));
+    let retained = sky.stars.iter().find(|s| s.id == StarId(2)).unwrap();
+    assert!(!retained.drawable);
+    assert!((retained.position - expected).length() < 1e-14);
 }

@@ -267,12 +267,33 @@ fn moving_distance_stars_preserve_magnitude_thresholds_and_order_within_ttl() {
         let tt = J2000 + seconds / 86400.0;
         cached.frame(tt, view, 5.0, false, Observer::default());
         direct.frame(tt, view, 5.0, false, Observer::default());
-        assert_eq!(cached.sky.stars.len(), 2);
+        assert_eq!(cached.sky.corrections.evaluated, 2);
+        assert_eq!(cached.sky.stars.len(), if seconds == 0.0 { 2 } else { 1 });
+        assert_eq!(cached.sky.corrections, direct.sky.corrections);
         for (a, b) in cached.sky.stars.iter().zip(&direct.sky.stars) {
             assert_eq!((a.id, a.magnitude, a.drawable), (b.id, b.magnitude, b.drawable));
             assert_eq!(
                 cached.observation.stellar_report(a.source_index).unwrap().valid_seconds,
                 0.0
+            );
+        }
+    }
+    // anchor both pipelines at the same epoch to isolate membership invalidation from sample-holding error
+    let cat = cached.sky.catalog.clone();
+    let mut cached = Pipeline::new(cat.clone(), CacheConfig::default());
+    let mut direct = Pipeline::new(cat, CacheConfig::disabled());
+    let tt = J2000 + 10.0 / 86400.0;
+    for threshold in [5.0, 6.0, 5.0, 6.0] {
+        cached.frame(tt, view, threshold, true, Observer::default());
+        direct.frame(tt, view, threshold, true, Observer::default());
+        assert_eq!(cached.sky.stars.len(), if threshold == 5.0 { 1 } else { 2 });
+        for (a, b) in cached.sky.stars.iter().zip(&direct.sky.stars) {
+            assert_eq!((a.id, a.magnitude, a.drawable), (b.id, b.magnitude, b.drawable));
+            assert!(
+                angle(a.position, b.position) < 1e-8,
+                "threshold {threshold} id {:?}: {} arcsec",
+                a.id,
+                angle(a.position, b.position)
             );
         }
     }

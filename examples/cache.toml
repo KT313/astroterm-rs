@@ -28,7 +28,7 @@ enabled = true
 [groups.solar_system_observation]
 enabled = true
 
-# Region + brightness bounds; candidate validation + endpoint union; current brightness eligibility.
+# Region + brightness bounds; candidate validation + endpoint union; current brightness eligibility and correction selection.
 [groups.candidate_selection]
 enabled = true
 [groups.working_set]

@@ -223,13 +223,14 @@ impl SkyGrid {
         indices: &mut Vec<usize>,
     ) -> SelectionStats {
         indices.clear();
+        let keys = stars.brightness_keys();
         if region.brute_force {
             indices.extend(0..stars.len());
         } else {
             for &cell in &region.cells {
-                append_bright(stars, self.offsets[cell]..self.offsets[cell + 1], threshold, indices);
+                append_bright(keys, self.offsets[cell]..self.offsets[cell + 1], threshold, indices);
             }
-            append_bright(stars, self.offsets[CELL_COUNT]..stars.len(), threshold, indices);
+            append_bright(keys, self.offsets[CELL_COUNT]..stars.len(), threshold, indices);
         }
         SelectionStats {
             cells: if region.brute_force {
@@ -243,9 +244,9 @@ impl SkyGrid {
     }
 }
 
-fn append_bright(stars: &StarStorage, range: std::ops::Range<usize>, threshold: f64, indices: &mut Vec<usize>) {
+fn append_bright(keys: &[f32], range: std::ops::Range<usize>, threshold: f64, indices: &mut Vec<usize>) {
     for i in range {
-        if stars.brightness_key(i) > threshold {
+        if f64::from(keys[i]) > threshold {
             break;
         }
         indices.push(i);

@@ -73,6 +73,7 @@ pub struct ProjectedSky<'a> {
     pub outside_accuracy_range: bool,
     pub selection: crate::sky::SelectionStats,
     pub evaluated_stars: usize,
+    pub correction_stats: crate::sky::CorrectionStats,
     pub catalog_singular_count: usize,
     pub runtime_singular_count: usize,
     pub stars: Vec<ProjectedStar<'a>>,
@@ -114,7 +115,8 @@ pub fn project_sky_with_times<'a>(
     ProjectedSky {
         outside_accuracy_range: sky.outside_accuracy_range,
         selection: sky.selection,
-        evaluated_stars: sky.stars.len(),
+        evaluated_stars: sky.corrections.evaluated,
+        correction_stats: sky.corrections,
         catalog_singular_count: sky.catalog.singular_count,
         runtime_singular_count: sky.runtime_singular_count,
         stars,

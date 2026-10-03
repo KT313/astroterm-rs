@@ -37,24 +37,30 @@ make run -- --renderer pixels --graphics-protocol sixel -i Tokyo -C -m
 
 `--graphics-protocol auto|kitty|sixel|iterm2|halfblocks` defaults to automatic selection. Unix terminals are queried
 with a bounded timeout; known iTerm2/WezTerm/Rio environments use iTerm2. Other terminals fall back to colored half-blocks.
-Kitty output requires Unicode-placeholder support as well as the basic image protocol. Use a forced protocol to
-compare your terminal's implementations; an unsupported forced protocol may show nothing or escape characters.
+Kitty output sends RGB images through direct placements. Zlib compression is enabled only after a successful
+capability probe, including when Kitty is selected explicitly. With `-m`, the metadata panel reports whether
+compression is enabled, unsupported by the terminal, or unconfirmed because the probe was unanswered.
+Unsupported or unconfirmed compression falls back to uncompressed RGB. Use a forced protocol to compare your
+terminal's implementations; an unsupported forced protocol may show nothing or escape characters.
 Graphics startup errors fall back to characters with a visible notice.
 
 Pixel dimensions come from the reported terminal/cell size, with a 10×20-pixel cell fallback. `--aspect-ratio` still
 overrides the viewport's cell aspect ratio. Resizing redraws the image; quit and panic restore the terminal and
-remove this application's Kitty image. Pixel rendering always uses true color; `--color`, `--unicode` and
+remove both of this application's Kitty images. Pixel rendering always uses true color; `--color`, `--unicode` and
 `--braille` apply only to characters. Constellations, grid, magnitude/label thresholds, dynamic names, refraction,
 metadata and accuracy warnings apply to both renderers.
 
 Pixels default to 12 fps to allow for image encoding and transport; characters retain 24 fps.
 Use `--fps 24` (or another value) to override the default. `--debug-frametimes` separates rasterization,
-text layout/rasterization, encoding, image composition, frame serialization and presentation. The scene is assembled
+text layout/rasterization, pixel conversion, encoding, image composition, frame serialization and presentation.
+Kitty presentation additionally separates image upload and image swap. The scene is assembled
 in named passes (canvas, horizon, stars, constellations, planets, Moon, grid, labels, metadata and notices).
 Full graphics paints all text into the screen-sized bitmap before encoding. Half-blocks merge text cells before
-serialization. Both publish the completed frame using synchronized terminal updates (DEC mode 2026), so supporting
-terminals keep the previous frame visible until the new one is complete. Protocol transport/cleanup is covered by PTY checks; actual
-image appearance depends on the terminal and is tested separately. See [terminal checks](scripts/checks/README.md).
+serialization. Kitty uploads the next image while the current image remains displayed, then uses a short
+synchronized update (DEC mode 2026) to place the completed image and delete the previous one. Two alternating
+image IDs bound terminal storage. Other protocols wrap their completed output in a synchronized update.
+Protocol transport/cleanup is covered by PTY checks; actual image appearance depends on the terminal and is
+tested separately. See [terminal checks](scripts/checks/README.md).
 
 ## Keys
 
@@ -109,15 +115,17 @@ early filtering is conservative, and constellation endpoints remain available ev
 
 New:
 
-- Optional pixel rendering through ratatui-image (Kitty, Sixel, iTerm2 or half-blocks), with tiny-skia drawing and
+- Optional pixel rendering through Kitty RGB or ratatui-image (Sixel, iTerm2 or half-blocks), with tiny-skia drawing and
   fontdue text rasterization. Full graphics encodes one completed bitmap; half-blocks use merged text/image cells.
-  Both renderers share the curved constellation geometry and lunar lighting direction.
+  Kitty uses capability-checked compression and uploads before switching images. Both renderers share the curved
+  constellation geometry and lunar lighting direction.
 - Stars move along normalized 3D trajectories in Julian years (365.25 days). With known distance, their magnitude
   changes with distance; without it, motion is tangential and brightness stays constant. Approaching-star bounds
   include perspective acceleration.
 - Projection consumes horizontal unit vectors directly and produces Cartesian screen coordinates.
 - Compact immutable star arrays and a conservative cube-map grid limit observation to possible visible stars;
-  fast movers and constellation endpoints are handled independently. Per-frame positions stay separate.
+  fast movers and constellation endpoints are handled independently. Stars rejected by current brightness are
+  removed before direction corrections unless needed as constellation endpoints. Per-frame positions stay separate.
 - Simulation, observation, camera projection and rendering are separate stages. Planetary, lunar and orientation
   models have independent caches; Earth rotation and observer corrections follow simulation time, so panning while
   paused does not trigger an ephemeris update. Configurable processing caches retain separate stage results;
@@ -293,6 +301,13 @@ parent-relative lunar states are composed with Earth at that same epoch. Bounded
 per-body emission epochs. The observer stays at reception while each target moves to emission; an initial
 light-time estimate plus one iteration requests bounded samples explicitly. Observation then reads those samples
 without invoking ephemeris code. Missing coverage is an error returned to the coordinator. Outside the computational interval, caches use direct evaluation only.
+
+Observation borrows prepared catalog arrays once per pass. `ObservedStar.designation` is an `EncodedDesignation`;
+call `.resolve()` when a label needs its enum value. Catalog input records retain `Option<Designation>`. The
+published observed sky contains drawable candidates and required constellation endpoints; `CorrectionStats`
+records the number prepared, skipped and retained only as endpoints. `--debug-frametimes` exposes the separate
+Correction selection stage and these counts. Stellar aberration accepts the already normalized intrinsic direction;
+distance-vector corrections retain their generic normalization path.
 
 The cache interpolation budget is 1″ (0.3″ planetary direction, 0.4″ lunar direction, 0.2″ orientation, 0.1″ velocity
 expressed as aberration). This is measured **against the current models**, not an astronomical accuracy claim.

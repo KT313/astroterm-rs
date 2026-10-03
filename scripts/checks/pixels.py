@@ -8,6 +8,7 @@ import re
 from pathlib import Path
 import signal
 import time
+import zlib
 from terminal import TerminalProcess
 
 
@@ -105,13 +106,64 @@ def check_detection(binary, response, expected):
     try:
         terminal.until(lambda: b"\x1b[5n" in terminal.raw, timeout=5)
         terminal.send(response)
-        marker = {"Kitty": b"a=T", "Sixel": b"\x1bP"}[expected]
+        marker = {"Kitty": b"a=t", "Sixel": b"\x1bP"}[expected]
         terminal.until(lambda: marker in terminal.raw and b"\x1b[?2026l" in terminal.raw, timeout=10)
         terminal.send("q")
         assert terminal.wait_exit() == 0
         terminal.settle()
         terminal.assert_restored()
         return "reported capability selected; next key received"
+    finally:
+        terminal.close()
+
+
+def check_kitty_compression(binary, support, forced):
+    command = [str(binary), "--renderer", "pixels", "-d", "2025-03-01T11:00:00", "-i", "Tokyo",
+               "-s", "0", "-t", "5", "--fps", "10"]
+    if forced:
+        command += ["--graphics-protocol", "kitty"]
+    terminal = TerminalProcess(command, rows=30, columns=80, pixels=(800, 600))
+    terminal.stream.feed = lambda _: None
+    try:
+        terminal.until(lambda: b"\x1b[5n" in terminal.raw, timeout=5)
+        assert b"i=32,s=1,v=1,a=q,t=d,f=24,o=z;" in terminal.raw
+        reply = "\x1b_Gi=31;OK\x1b\\"
+        if support is not None:
+            reply += "\x1b_Gi=32;" + ("OK" if support else "ENOTSUP:compressed payloads are not supported") + "\x1b\\"
+        terminal.send(reply + "\x1b[6;20;10t\x1b[0n")
+        terminal.until(lambda: bytes(terminal.raw).count(b"\x1b[?2026l") >= 2, timeout=15)
+        raw = bytes(terminal.raw)
+        images, ids, payload = [], [], b""
+        uploading = False
+        for header, data in re.findall(rb"\x1b_G([^\x1b;]+);([^\x1b]*)\x1b\\", raw):
+            if b"a=t," in header:
+                uploading = True
+                assert b"f=24," in header
+                assert (b"o=z," in header) == bool(support)
+                ids.append(int(re.search(rb"i=(\d+)", header)[1]))
+            if not uploading:
+                continue
+            assert len(data) <= 4096
+            payload += base64.b64decode(data)
+            if b"m=0" in header:
+                images.append(zlib.decompress(payload) if support else payload)
+                payload, uploading = b"", False
+        assert len(images) >= 2 and ids[0] != ids[1]
+        assert all(len(image) == 800 * 600 * 3 for image in images)
+        assert images[0] == images[1], "paused frames must preserve pixels"
+        assert "\U0010eeee".encode() not in raw
+        for frame in raw.split(b"\x1b[?2026l")[:2]:
+            before, after = frame.split(b"\x1b[?2026h")
+            assert b"a=t," in before and b"m=0;" in before
+            assert b"m=" not in after and b"\x1b[2J" not in after
+            assert after.index(b"a=p") < after.index(b"a=d")
+        terminal.send("q")
+        assert terminal.wait_exit() == 0
+        terminal.assert_restored()
+        tail = bytes(terminal.raw).split(b"\x1b[?2026l")[-1]
+        for image_id in [1953849929, 1953849930]:
+            assert f"a=d,d=I,i={image_id}".encode() in tail
+        return {"compressed": bool(support), "rgb_roundtrip_staged_swap_cleanup": "passed", "forced": forced}
     finally:
         terminal.close()
 
@@ -155,6 +207,9 @@ if __name__ == "__main__":
     result["detection"] = check_auto(args.binary.resolve())
     result["detect_kitty"] = check_detection(args.binary.resolve(), "\x1b_Gi=31;OK\x1b\\\x1b[6;20;10t\x1b[0n", "Kitty")
     result["detect_sixel"] = check_detection(args.binary.resolve(), "\x1b[?1;2;4c\x1b[6;20;10t\x1b[0n", "Sixel")
+    for name, support, forced in [("accepted_auto", True, False), ("accepted_forced", True, True),
+                                  ("rejected_forced", False, True), ("unanswered_forced", None, True)]:
+        result["compression_" + name] = check_kitty_compression(args.binary.resolve(), support, forced)
     result["panic_restore"] = check_panic(args.probe.resolve())
     result["startup_fallback"] = check_startup_fallback(args.binary.resolve())
     print(json.dumps(result, indent=2))

@@ -18,7 +18,7 @@ use std::fmt;
 pub use athyg::load_athyg_catalog;
 pub use bsc5::{Bsc5Entry, parse_bsc5};
 pub use cities::{City, find_city, parse_cities, suggest_cities};
-pub use designation::Designation;
+pub use designation::{Designation, EncodedDesignation};
 pub use names::{NameId, StarNames};
 pub use orbits::{
     EARTH_ORBIT, JUPITER_ORBIT, MARS_ORBIT, MERCURY_ORBIT, MOON_ORBIT, NEPTUNE_ORBIT, SATURN_ORBIT, URANUS_ORBIT,

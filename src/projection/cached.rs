@@ -170,7 +170,8 @@ impl ProjectionCache {
         ProjectedSky {
             outside_accuracy_range: sky.outside_accuracy_range,
             selection: sky.selection,
-            evaluated_stars: sky.stars.len(),
+            evaluated_stars: sky.corrections.evaluated,
+            correction_stats: sky.corrections,
             catalog_singular_count: sky.catalog.singular_count,
             runtime_singular_count: sky.runtime_singular_count,
             stars: self

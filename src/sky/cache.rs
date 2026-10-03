@@ -587,6 +587,19 @@ mod tests {
         write_cached_catalog(&path, &catalog, &fingerprint).unwrap();
         let mapped = load_cached_catalog(&path, &fingerprint).unwrap();
         assert_eq!(mapped, catalog);
+        for storage in [&catalog.stars, &mapped.stars] {
+            let fields = storage.borrow_observation_fields();
+            let trajectories = storage.borrow_trajectory_fields();
+            for i in 0..storage.len() {
+                let full = storage.get(i);
+                assert_eq!(trajectories.motion(i), full.motion);
+                assert_eq!(
+                    fields.create_observed_star(i, true).designation.resolve(),
+                    full.designation
+                );
+            }
+        }
+
         assert_eq!(render(mapped, 5.0, J2000), render(catalog, 5.0, J2000));
     }
 

@@ -1,8 +1,8 @@
 //! Private passes owned by observe_sky_candidates. Its output buffer holds inertial directions during preparation;
 //! only the completed horizontal sky escapes the coordinator. No pass evaluates an ephemeris or sees a camera.
-use super::{ObserverState, apply_aberration, body_id};
+use super::{LIGHT_SPEED_AU_DAY, ObserverState, apply_aberration, apply_unit_aberration, body_id};
 use crate::astro::{Matrix3, Vector3};
-use crate::sky::{ObservedSky, ObservedStar, PlanetKind, SimulationError, SimulationState, SkyCatalog};
+use crate::sky::{ObservedSky, PlanetKind, SimulationError, SimulationState, SkyCatalog};
 
 #[derive(Clone, PartialEq)]
 pub(super) struct BodySamples {
@@ -31,17 +31,18 @@ pub(super) fn filter_brightness_candidates(
     threshold: f64,
     candidates: Option<&[usize]>,
 ) -> Vec<usize> {
+    let keys = catalog.stars.brightness_keys();
     if !crate::astro::COMPUTATIONAL_INTERVAL.contains(tt) {
         (0..catalog.stars.len()).collect()
     } else if let Some(indices) = candidates {
         indices
             .iter()
             .copied()
-            .filter(|&i| i < catalog.stars.len() && catalog.stars.brightness_key(i) <= threshold)
+            .filter(|&i| i < keys.len() && f64::from(keys[i]) <= threshold)
             .collect()
     } else {
         (0..catalog.stars.len())
-            .filter(|&i| catalog.stars.brightness_key(i) <= threshold)
+            .filter(|&i| f64::from(keys[i]) <= threshold)
             .collect()
     }
 }
@@ -52,6 +53,7 @@ pub(super) fn include_constellation_endpoints(mut selected: Vec<usize>, output: 
     selected.dedup();
     let mut candidates = selected.into_iter().peekable();
     let mut endpoints = output.catalog.endpoint_indices.iter().copied().peekable();
+    let fields = output.catalog.stars.borrow_observation_fields();
     output.stars.clear();
     while candidates.peek().is_some() || endpoints.peek().is_some() {
         let index = candidates
@@ -66,18 +68,16 @@ pub(super) fn include_constellation_endpoints(mut selected: Vec<usize>, output: 
         if endpoints.peek() == Some(&index) {
             endpoints.next();
         }
-        let star = output.catalog.stars.get(index);
-        let mut observed = ObservedStar::from_star(&star, index, Vector3::default());
-        observed.drawable = drawable;
-        output.stars.push(observed);
+        output.stars.push(fields.create_observed_star(index, drawable));
     }
 }
 
 pub(super) fn evaluate_stellar_motion(tt: f64, output: &mut ObservedSky) {
     let years = crate::astro::models::stars::years_since_j2000(tt);
     output.runtime_singular_count = 0;
+    let trajectories = output.catalog.stars.borrow_trajectory_fields();
     for observed in &mut output.stars {
-        let motion = output.catalog.stars.motion(observed.source_index);
+        let motion = trajectories.motion(observed.source_index);
         let sample = motion.evaluate(years, observed.magnitude);
         observed.position = sample.direction;
         observed.magnitude = sample.magnitude;
@@ -118,8 +118,9 @@ pub(super) fn update_moon_illumination(relative_moon: Vector3, relative_sun: Vec
 }
 
 pub(super) fn apply_sky_aberration(velocity: Vector3, output: &mut ObservedSky) {
+    let beta = velocity * (1.0 / LIGHT_SPEED_AU_DAY);
     for star in &mut output.stars {
-        star.position = apply_aberration(star.position, velocity);
+        star.position = apply_unit_aberration(star.position, beta);
     }
     for planet in &mut output.planets {
         planet.position = apply_aberration(planet.position, velocity);
@@ -135,4 +136,54 @@ pub(super) fn rotate_sky_to_horizon(rotation: Matrix3, output: &mut ObservedSky)
         planet.position = rotation.apply(planet.position).normalized();
     }
     output.moon.position = rotation.apply(output.moon.position);
+}
+
+/// Select candidates needing directions with one walk through sorted constellation endpoints.
+pub(super) fn select_correction_indices(
+    stars: &[crate::sky::ObservedStar],
+    drawable: &[bool],
+    endpoints: &[usize],
+) -> (Vec<usize>, crate::sky::CorrectionStats) {
+    let mut endpoints = endpoints.iter().copied().peekable();
+    let mut indices = Vec::with_capacity(stars.len());
+    let mut stats = crate::sky::CorrectionStats {
+        evaluated: stars.len(),
+        ..Default::default()
+    };
+    for (index, (star, &drawable)) in stars.iter().zip(drawable).enumerate() {
+        if drawable {
+            indices.push(index);
+            continue;
+        }
+        while endpoints.peek().is_some_and(|&i| i < star.source_index) {
+            endpoints.next();
+        }
+        if endpoints.peek() == Some(&star.source_index) {
+            indices.push(index);
+            stats.endpoint_only += 1;
+        } else {
+            stats.skipped += 1;
+        }
+    }
+    (indices, stats)
+}
+
+/// Remove rejected non-endpoints before publication, so all returned positions receive the same corrections.
+pub(super) fn select_corrections(output: &mut ObservedSky) {
+    let flags: Vec<_> = output.stars.iter().map(|s| s.drawable).collect();
+    let (indices, stats) = select_correction_indices(&output.stars, &flags, &output.catalog.endpoint_indices);
+    output.corrections = stats;
+    if stats.skipped == 0 {
+        return;
+    }
+    let mut keep = indices.into_iter().peekable();
+    let mut index = 0;
+    output.stars.retain(|_| {
+        let selected = keep.peek() == Some(&index);
+        index += 1;
+        if selected {
+            keep.next();
+        }
+        selected
+    });
 }

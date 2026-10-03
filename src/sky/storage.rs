@@ -1,5 +1,6 @@
 //! Immutable structure-of-arrays storage. Arithmetic is f64 after expanding the compact inputs; only a sparse
 //! exception table retains trajectories whose certified quantization error would exceed half an arcsecond.
+mod views;
 use super::Star;
 use crate::astro::{
     Vector3,

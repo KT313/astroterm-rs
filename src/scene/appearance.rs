@@ -38,10 +38,12 @@ pub fn select_star_appearance<'a>(star: &Star, names: &'a StarNames) -> Appearan
 /// A star's label: its proper name, or else its catalog designation (e.g. "α Vir" or "HR 1713"), with Greek letters
 /// if `unicode`.
 pub fn format_star_label<'a>(star: &Star, names: &'a StarNames, unicode: bool) -> Cow<'a, str> {
-    match (names.get(star.name), star.designation) {
-        (Some(name), _) => Cow::Borrowed(name),
-        (None, Some(designation)) => Cow::Owned(designation.format(unicode)),
-        (None, None) => Cow::Borrowed(""),
+    if let Some(name) = names.get(star.name) {
+        return Cow::Borrowed(name);
+    }
+    match star.designation.resolve() {
+        Some(designation) => Cow::Owned(designation.format(unicode)),
+        None => Cow::Borrowed(""),
     }
 }
 

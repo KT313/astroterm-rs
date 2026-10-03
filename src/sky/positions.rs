@@ -128,7 +128,7 @@ mod tests {
         let sky = update_boston_sky();
         let vega = sky.stars.iter().find(|star| star.id.0 == 7001).unwrap();
         assert_eq!(
-            (vega.designation, sky.star_name(vega)),
+            (vega.designation.resolve(), sky.star_name(vega)),
             (Some(Designation::Hr(7001)), Some("Vega"))
         );
         assert_position(vega.position, 0.547246, 0.0, STAR_EPSILON);

@@ -1,5 +1,7 @@
 //! Image encoding and complete-frame serialization. Graphics protocols receive the fully composed raster;
 //! half-block output merges native text into its cell buffer before serialization.
+pub mod kitty;
+
 use std::io::{self, Write};
 
 use image::DynamicImage;
@@ -12,18 +14,19 @@ use ratatui::{
 use ratatui_image::{
     Image,
     picker::ProtocolType,
-    protocol::{Protocol, halfblocks::Halfblocks, iterm2::Iterm2, kitty::Kitty, sixel::Sixel},
+    protocol::{Protocol, halfblocks::Halfblocks, iterm2::Iterm2, sixel::Sixel},
 };
 
-/// One image ID reused by this alternate-screen application; no unbounded per-frame image allocation.
+/// First of two image IDs reserved for this alternate-screen application.
 pub const IMAGE_ID: u32 = 1_953_849_929;
 
+/// Encode cell-based protocols. Kitty uses the separate RGB upload/swap functions in [`kitty`].
 pub fn encode_image(image: DynamicImage, area: Rect, protocol: ProtocolType, tmux: bool) -> io::Result<Protocol> {
     let size = area.as_size();
     let result = match protocol {
         ProtocolType::Halfblocks => Halfblocks::new(image, size).map(Protocol::Halfblocks),
         ProtocolType::Sixel => Sixel::new(image, size, tmux).map(Protocol::Sixel),
-        ProtocolType::Kitty => Kitty::new(image, size, IMAGE_ID, tmux, false).map(Protocol::Kitty),
+        ProtocolType::Kitty => return Err(io::Error::other("Kitty output requires the RGB upload/swap pipeline")),
         ProtocolType::Iterm2 => Iterm2::new(image, size, tmux).map(Protocol::ITerm2),
     };
     result.map_err(io::Error::other)
@@ -75,7 +78,7 @@ pub fn compose_halfblocks(protocol: &Protocol, screen: Rect, area: Rect, text: &
 
 /// Serialize a single completed cell buffer, containing either the image protocol or merged half-block/text cells.
 pub fn serialize_frame(image: &Buffer) -> io::Result<Vec<u8>> {
-    crossterm::style::force_color_output(true); // RGB is required even for Kitty image IDs encoded in cell colors
+    crossterm::style::force_color_output(true); // retain true-color output when serialized to a memory buffer
     let mut frame = Vec::new();
     crossterm::queue!(frame, crossterm::terminal::BeginSynchronizedUpdate)?;
     let blank = Buffer::empty(image.area);
@@ -97,12 +100,7 @@ pub fn present_frame(out: &mut impl Write, frame: &[u8]) -> io::Result<()> {
 
 pub(crate) fn clear_image(out: &mut impl Write, kitty: bool, tmux: bool) -> io::Result<()> {
     if kitty {
-        let command = format!("\x1b_Ga=d,d=I,i={IMAGE_ID},q=2\x1b\\");
-        if tmux {
-            write!(out, "\x1bPtmux;{}\x1b\\", command.replace('\x1b', "\x1b\x1b"))?;
-        } else {
-            out.write_all(command.as_bytes())?;
-        }
+        kitty::clear_images(out, tmux)?;
     }
     crossterm::execute!(
         out,
@@ -128,12 +126,7 @@ mod tests {
             .style(Style::default().fg(Color::White).bg(Color::Black))
             .render(area, &mut text);
         let mut raster = crate::scene::raster_text::TextRasterizer::new().unwrap();
-        for protocol in [
-            ProtocolType::Halfblocks,
-            ProtocolType::Sixel,
-            ProtocolType::Kitty,
-            ProtocolType::Iterm2,
-        ] {
+        for protocol in [ProtocolType::Halfblocks, ProtocolType::Sixel, ProtocolType::Iterm2] {
             let mut image = image::RgbaImage::from_pixel(240, 40, image::Rgba([20, 40, 80, 255]));
             let before = image.clone();
             if protocol != ProtocolType::Halfblocks {

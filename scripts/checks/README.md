@@ -11,8 +11,10 @@ cargo run --release --example pixel_scene -- /tmp/sky.png
 
 The pixel PTY script tests forced Kitty/Sixel/iTerm2/half-block transport, pan/zoom, resizing with reported and
 missing pixel sizes, automatic fallback after an unanswered query, character fallback after an oversized raster,
-and quit/panic cleanup, including a panic inside an open synchronized update. Each complete frame carries
-synchronized-update markers around its single composed image or cell buffer; physical flicker still requires a
+and quit/panic cleanup, including a panic inside an open synchronized update. Kitty checks also simulate accepted,
+rejected and unanswered compression probes, including explicit Kitty selection, and decode the RGB payloads.
+Kitty uploads precede synchronization; only placement and old-image deletion are synchronized. Other protocols
+carry synchronized-update markers around their composed output; physical flicker still requires a
 real-terminal check. Full graphics metadata is verified to be absent from the native text stream. The script
 decodes an actual iTerm2 PNG, optionally saves it for inspection, and checks that pan/zoom changes the image.
 It exercises input at 4 fps. Stage timings are now pixels themselves; use the debug panel or the headless prototype
@@ -28,7 +30,8 @@ make run -- --renderer pixels -i Tokyo -d 2025-03-01T11:00:00 -s 0 -C -m
 Check stars, curves and readable labels/panel; pan with arrows, zoom with +/- and reset with 0. Resize repeatedly,
 including narrow windows, and quit with q. Check for stale images, missing text or a broken shell/cursor afterwards.
 Repeat with `--graphics-protocol sixel`, `kitty` or `iterm2` where supported, and `halfblocks` everywhere. The
-metadata panel reports the chosen protocol. Kitty needs Unicode placeholders, not just basic image transfer.
+metadata panel reports the chosen protocol and, for Kitty, the compression capability result. Kitty uses direct
+image placement; Unicode placeholders are not required.
 Also try `-g`, `-R`, `--disable-dynamic-names` and `--debug-frametimes`; use a tall terminal for the full timing list.
 Report the emulator/version, protocol, flags and whether the issue occurs on startup, resize or subsequent frames.
 
@@ -168,3 +171,20 @@ cannot hide raster cost. Optional PNGs contain sky geometry only, before labels 
 all source/background channel values, transparent overlaps, clipping, integer coordinates through 4096, mixed
 star radii and fallback on larger canvases. The shortcut has no computed mask cache; `--disable-cache` uses the
 same direct blending arithmetic.
+
+
+Observation optimization checks (O2–O4):
+
+```sh
+ASTROTERM_DATASET=/path/to/athyg_40.csv.gz \
+  cargo test --release --locked --lib compare_catalog_access_paths -- --ignored --nocapture
+cargo test --release --locked --lib measure_aberration_cost -- --ignored --nocapture
+cargo test --locked --lib unit_aberration_matches_generic -- --nocapture
+cargo test --locked --test processing_cache --test stellar_pipeline
+```
+
+The catalog comparison alternates full-record metadata / individual trajectory access with borrowed arrays on the
+same selected indices; deferred labels are resolved only when needed in production. The aberration comparison uses
+one million normalized directions and reports generic versus unit-input cost. Neither replaces the whole processing
+probe. Its JSON now includes evaluated-star, skipped-correction and endpoint-only counts. Current-brightness
+rejections may be rare near today; measure selection/publication overhead rather than assuming large O4 savings.

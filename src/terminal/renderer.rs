@@ -133,6 +133,8 @@ impl TerminalRenderer {
                         ("Candidate cells", sky.selection.cells),
                         ("Candidate stars", sky.selection.candidates),
                         ("Evaluated stars", sky.evaluated_stars),
+                        ("Correction skips", sky.correction_stats.skipped),
+                        ("Endpoint only", sky.correction_stats.endpoint_only),
                     ] {
                         fields.push(crate::metadata::MetadataField {
                             label: label.into(),

@@ -4,7 +4,7 @@ mod detection;
 mod text;
 use super::{
     TerminalSession, TerminalSettings, fit_square_viewport,
-    graphics::{clear_image, compose_halfblocks, compose_image, encode_image, present_frame, serialize_frame},
+    graphics::{clear_image, compose_halfblocks, compose_image, encode_image, kitty, present_frame, serialize_frame},
     open_terminal_session,
 };
 use crate::{
@@ -14,6 +14,7 @@ use crate::{
     scene::{RenderOptions, raster_text::TextRasterizer},
     timing::StepTimes,
 };
+use detection::CompressionSupport;
 use image::DynamicImage;
 use ratatui::layout::Rect;
 use ratatui_image::{
@@ -28,6 +29,8 @@ pub struct PixelRenderer {
     pub(super) reuse_assets: bool,
     session: TerminalSession,
     protocol: ProtocolType,
+    compression: CompressionSupport,
+    kitty_image_id: u32,
     font: FontSize,
     tmux: bool,
     screen: Rect,
@@ -54,13 +57,8 @@ impl PixelRenderer {
         session.configure_graphics(false, false); // cleanup also covers a failed startup or capability query
         let picker = Picker::halfblocks();
         let tmux = picker.tmux_detected();
-        let (protocol, font) = match forced {
-            Some(protocol) => (protocol, picker.font_size()),
-            None => {
-                let (protocol, font) = detection::detect_protocol(tmux, session.output())?;
-                (protocol, font.unwrap_or(picker.font_size()))
-            }
-        };
+        let (protocol, font, compression) = detection::detect_protocol(forced, tmux, session.output())?;
+        let font = font.unwrap_or(picker.font_size());
         session.configure_graphics(protocol == ProtocolType::Kitty, tmux);
         let mut renderer = Self {
             scene_cache: Default::default(),
@@ -68,6 +66,8 @@ impl PixelRenderer {
             reuse_assets: true,
             session,
             protocol,
+            compression,
+            kitty_image_id: kitty::IMAGE_IDS[0],
             font,
             tmux,
             screen: Rect::default(),
@@ -84,8 +84,10 @@ impl PixelRenderer {
             },
         };
         renderer.fit_to_terminal()?;
-        let test = image::RgbaImage::from_pixel(1, 1, image::Rgba([0, 0, 0, 255]));
-        encode_image(DynamicImage::ImageRgba8(test), Rect::new(0, 0, 1, 1), protocol, tmux)?;
+        if protocol != ProtocolType::Kitty {
+            let test = image::RgbaImage::from_pixel(1, 1, image::Rgba([0, 0, 0, 255]));
+            encode_image(DynamicImage::ImageRgba8(test), Rect::new(0, 0, 1, 1), protocol, tmux)?;
+        }
         Ok(renderer)
     }
 
@@ -95,6 +97,7 @@ impl PixelRenderer {
 
     pub fn fit_to_terminal(&mut self) -> io::Result<()> {
         self.scene_cache.invalidate();
+        self.kitty_image_id = kitty::IMAGE_IDS[0];
         let (columns, rows) = crossterm::terminal::size()?;
         if columns == 0 || rows == 0 {
             return Err(io::Error::other("terminal has no drawable area"));
@@ -200,8 +203,22 @@ impl PixelRenderer {
                 label: "Graphics".into(),
                 value: format!("{:?} · {width}×{height}", self.protocol),
             });
+            if self.protocol == ProtocolType::Kitty {
+                fields.push(MetadataField {
+                    label: "Compression".into(),
+                    value: self.compression.metadata().into(),
+                });
+            }
         }
         if self.settings.frame_times {
+            fields.push(MetadataField {
+                label: "Correction skips".into(),
+                value: sky.correction_stats.skipped.to_string(),
+            });
+            fields.push(MetadataField {
+                label: "Endpoint only".into(),
+                value: sky.correction_stats.endpoint_only.to_string(),
+            });
             fields.push(MetadataField {
                 label: "Obs cache".into(),
                 value: self.cache_diagnostics[0].clone(),
@@ -239,6 +256,9 @@ impl PixelRenderer {
                     .expect("graphics font initialized")
                     .paint_buffer(&mut frame, &text, text_cell)
             });
+            if self.protocol == ProtocolType::Kitty {
+                return self.present_kitty_frame(frame, times);
+            }
             let encoded = times.measure("Image encoding", || {
                 encode_image(DynamicImage::ImageRgba8(frame), self.screen, self.protocol, self.tmux)
             })?;
@@ -255,6 +275,30 @@ impl PixelRenderer {
         };
         let frame = times.measure("Frame serialization", || serialize_frame(&buffer))?;
         times.measure("Present", || present_frame(self.session.output(), &frame))
+    }
+
+    fn present_kitty_frame(&mut self, frame: image::RgbaImage, times: &mut StepTimes) -> io::Result<()> {
+        // all layers have already been blended onto the opaque background
+        let rgb = times.measure("Pixel conversion", || DynamicImage::ImageRgba8(frame).into_rgb8());
+        let upload = times.measure("Image encoding", || {
+            kitty::encode_upload(
+                &rgb,
+                self.kitty_image_id,
+                self.compression == CompressionSupport::Supported,
+                self.tmux,
+            )
+        })?;
+        let swap = times.measure("Frame serialization", || {
+            kitty::serialize_swap(self.kitty_image_id, self.screen, self.tmux)
+        })?;
+
+        // retain the front image during upload; synchronize only the completed image swap
+        times.measure_steps("Present", |times| -> io::Result<()> {
+            times.measure("Image upload", || present_frame(self.session.output(), &upload))?;
+            times.measure("Image swap", || present_frame(self.session.output(), &swap))
+        })?;
+        self.kitty_image_id = kitty::other_image_id(self.kitty_image_id);
+        Ok(())
     }
 }
 

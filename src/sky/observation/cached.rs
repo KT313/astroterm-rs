@@ -9,6 +9,12 @@ type Directions = (Vec<Vector3>, Vec<Vector3>, Vector3);
 type ObserverKey = (FrameTime, Observer, [u64; 3], u64, u64);
 type BodyKey = (ObserverState, u64, u64);
 
+#[derive(Clone, PartialEq)]
+struct CorrectionSelection {
+    indices: Vec<usize>,
+    stats: crate::sky::CorrectionStats,
+}
+
 #[derive(Default)]
 pub struct ObservationCache {
     config: CacheConfig,
@@ -23,10 +29,11 @@ pub struct ObservationCache {
     stellar_stats: crate::cache::CacheStats,
     motion: Cache<u64, (Vec<(Vector3, f64)>, usize)>,
     eligible: Cache<(u64, u64, f64), Vec<bool>>,
+    corrections: Cache<(u64, u64), CorrectionSelection>,
     bodies: Cache<BodyKey, BodySamples>,
     relative: Cache<(u64, BodyState), (Vec<Vector3>, Vector3)>,
     illumination: Cache<(Vector3, Vector3), (crate::sky::MoonIllumination, crate::astro::MoonPhase)>,
-    apparent: Cache<(u64, u64, Vector3), Directions>,
+    apparent: Cache<(u64, u64, u64, Vector3), Directions>,
     horizontal: Cache<(u64, Matrix3), Directions>,
     refracted: Cache<(u64, bool), Directions>,
 }
@@ -178,28 +185,26 @@ impl ObservationCache {
             {
                 include_constellation_endpoints(self.selected.value().clone(), output);
                 self.working
-                    .store(self.selected.generation, epoch, 0.0, output.stars.clone());
-            } else {
-                output.stars.clone_from(self.working.value());
+                    .store(self.selected.generation, epoch, 0.0, std::mem::take(&mut output.stars));
             }
         });
         times.measure("Stellar motion", || {
             let maximum = self.config.age_seconds(Group::StellarState);
-            if self.motion.needs_refresh(
-                &self.working.generation,
-                epoch,
-                Some(maximum),
-                enabled(Group::StellarState),
-            ) {
+            let reuse_stars = enabled(Group::StellarState);
+            if self
+                .motion
+                .needs_refresh(&self.working.generation, epoch, Some(maximum), reuse_stars)
+            {
                 let years = years_since_j2000(epoch);
+                let trajectories = output.catalog.stars.borrow_trajectory_fields();
                 let mut singular_count = 0;
                 let mut validity = maximum;
-                let mut values = Vec::with_capacity(output.stars.len());
-                for star in &output.stars {
-                    let motion = output.catalog.stars.motion(star.source_index);
+                let mut values = Vec::with_capacity(self.working.value().len());
+                for star in self.working.value() {
                     let entry = self.stellar.entry(star.source_index).or_default();
                     let previous_stats = entry.stats;
-                    if entry.needs_refresh(&(), epoch, Some(maximum), enabled(Group::StellarState)) {
+                    if entry.needs_refresh(&(), epoch, Some(maximum), reuse_stars) {
+                        let motion = trajectories.motion(star.source_index);
                         let sample = motion.evaluate(years, star.magnitude);
                         let span = qualify_stellar_span(motion, sample, epoch, star.magnitude, maximum);
                         entry.store((), epoch, span, sample);
@@ -216,26 +221,50 @@ impl ObservationCache {
                 self.motion
                     .store(self.working.generation, epoch, validity, (values, singular_count));
             }
-            for (star, &(position, magnitude)) in output.stars.iter_mut().zip(&self.motion.value().0) {
-                star.position = position;
-                star.magnitude = magnitude;
-            }
             output.runtime_singular_count = self.motion.value().1;
         });
         times.measure("Current brightness", || {
-            let flags = self.eligible.get_or_update(
+            self.eligible.get_or_update(
                 (self.working.generation, self.motion.generation, threshold),
                 epoch,
                 enabled(Group::StellarVisibility),
                 || {
-                    filter_current_magnitudes(threshold, output);
-                    output.stars.iter().map(|s| s.drawable).collect()
+                    self.working
+                        .value()
+                        .iter()
+                        .zip(&self.motion.value().0)
+                        .map(|(star, &(_, magnitude))| star.drawable && magnitude <= threshold)
+                        .collect()
                 },
             );
-            for (star, &flag) in output.stars.iter_mut().zip(flags) {
-                star.drawable = flag;
-            }
             output.magnitude_threshold = threshold;
+        });
+
+        times.measure("Correction selection", || {
+            let selection = self.corrections.get_or_update(
+                (self.working.generation, self.eligible.generation),
+                epoch,
+                enabled(Group::StellarVisibility),
+                || {
+                    let (indices, stats) = select_correction_indices(
+                        self.working.value(),
+                        self.eligible.value(),
+                        &output.catalog.endpoint_indices,
+                    );
+                    CorrectionSelection { indices, stats }
+                },
+            );
+            let working = self.working.value();
+            let drawable = self.eligible.value();
+            let samples = &self.motion.value().0;
+            output.stars.clear();
+            output.stars.extend(selection.indices.iter().map(|&index| {
+                let mut star = working[index].clone();
+                star.drawable = drawable[index];
+                (star.position, star.magnitude) = samples[index];
+                star
+            }));
+            output.corrections = selection.stats;
         });
 
         // each cache owns a distinct coordinate-space result
@@ -274,6 +303,7 @@ impl ObservationCache {
                 (
                     self.motion.generation,
                     self.relative.generation,
+                    self.corrections.generation,
                     observer.state.velocity,
                 ),
                 epoch,
@@ -326,6 +356,7 @@ impl ObservationCache {
             self.working.report("Constellation endpoints"),
             self.motion.report("Stellar motion"),
             self.eligible.report("Current brightness"),
+            self.corrections.report("Correction selection"),
             self.bodies.report("Body sampling"),
             self.relative.report("Observer subtraction"),
             self.illumination.report("Moon illumination"),
@@ -348,6 +379,7 @@ impl ObservationCache {
             self.working.stats,
             self.motion.stats,
             self.eligible.stats,
+            self.corrections.stats,
             self.bodies.stats,
             self.relative.stats,
             self.illumination.stats,

@@ -1,4 +1,5 @@
 //! Headless phase-7 prototype: raster quality, protocol encoding and image/text composition cost.
+use astroterm::terminal::graphics::kitty;
 use astroterm::terminal::graphics::{compose_halfblocks, compose_image, encode_image, present_frame, serialize_frame};
 use image::{DynamicImage, RgbaImage};
 use ratatui::{
@@ -48,6 +49,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut frame_image = image.clone();
         if protocol != ProtocolType::Halfblocks {
             raster_text.paint_buffer(&mut frame_image, &text, (10, 20));
+        }
+        if protocol == ProtocolType::Kitty {
+            let rgb = DynamicImage::ImageRgba8(frame_image).into_rgb8();
+            let encoded = kitty::encode_upload(&rgb, kitty::IMAGE_IDS[0], true, false)?;
+            let encode_ms = start.elapsed().as_secs_f64() * 1000.0;
+            let start = Instant::now();
+            let mut out = Vec::new();
+            present_frame(&mut out, &encoded)?;
+            present_frame(&mut out, &kitty::serialize_swap(kitty::IMAGE_IDS[0], area, false)?)?;
+            eprintln!(
+                "{protocol:?}: encode_ms={encode_ms:.3}, compose_write_memory_ms={:.3}, bytes={}",
+                start.elapsed().as_secs_f64() * 1000.0,
+                out.len()
+            );
+            continue;
         }
         let encoded = encode_image(DynamicImage::ImageRgba8(frame_image), area, protocol, false)?;
         let encode_ms = start.elapsed().as_secs_f64() * 1000.0;

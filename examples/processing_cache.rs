@@ -117,7 +117,8 @@ fn main() {
                 println!(
                     "{}",
                     serde_json::json!({"stars":catalog.stars.len(),"fov":fov,"speed":speed,"cache":enabled,
-                    "viewport":[1102,1102],"frames":6,"mean_ms":totals.map(|v|v/6.0),
+                    "viewport":[1102,1102],"frames":6,
+                    "evaluated_stars":sky.corrections.evaluated,"correction_skips":sky.corrections.skipped,"endpoint_only":sky.corrections.endpoint_only,"mean_ms":totals.map(|v|v/6.0),
                     "refresh_frame_mean_ms":(0..4).map(|i|if refresh_frames[i]>0 {Some(refresh_totals[i]/f64::from(refresh_frames[i]))} else {None}).collect::<Vec<_>>(),
                     "stage_order":["simulation","observation","projection","raster"],
                     "observation_hits":observation.stats().hits,"projection_hits":projection.stats().hits,"raster_hits":raster.stats().hits,

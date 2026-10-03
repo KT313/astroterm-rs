@@ -95,6 +95,7 @@ fn observation_and_projection_report_independent_ordered_passes() {
             ("Constellation endpoints", 1),
             ("Stellar motion", 1),
             ("Current brightness", 1),
+            ("Correction selection", 1),
             ("Observer subtraction", 1),
             ("Moon illumination", 1),
             ("Aberration", 1),

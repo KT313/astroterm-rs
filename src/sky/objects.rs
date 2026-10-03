@@ -56,7 +56,7 @@ impl Star {
     }
 }
 
-/// Per-frame output for the union of candidates and constellation endpoints, in catalog-index order.
+/// Per-frame output for drawable candidates and required constellation endpoints, in catalog-index order.
 /// `drawable` uses the current magnitude; immutable model inputs stay in SkyCatalog.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ObservedStar {
@@ -64,7 +64,8 @@ pub struct ObservedStar {
     pub drawable: bool,
     pub id: StarId,
     pub name: Option<NameId>,
-    pub designation: Option<Designation>,
+    /// Decode with `.resolve()` only when a label is needed.
+    pub designation: crate::catalog::EncodedDesignation,
     pub magnitude: f64,
     pub spectral_type: [u8; 2],
     pub color_index: Option<f32>,
@@ -83,7 +84,7 @@ impl ObservedStar {
             drawable: true,
             id: star.id,
             name: star.name,
-            designation: star.designation,
+            designation: star.designation.into(),
             magnitude: star.magnitude,
             spectral_type: star.spectral_type,
             color_index: star.color_index,
