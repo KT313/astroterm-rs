@@ -1,4 +1,5 @@
 /target
+/.vscode/
 /rust_code_style.md
 /dev/
 /CLAUDE.md
