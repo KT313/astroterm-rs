@@ -11,7 +11,7 @@ use crate::{
     astro::{Observer, SimulationClock},
     metadata::{MetadataField, ObserverTimeZone, collect_metadata_fields, format_step_time_fields},
     projection::{ProjectedSky, View, Viewport},
-    scene::{RenderOptions, pixels::draw_pixel_sky, raster_text::TextRasterizer},
+    scene::{RenderOptions, raster_text::TextRasterizer},
     timing::StepTimes,
 };
 use image::DynamicImage;
@@ -23,6 +23,9 @@ use ratatui_image::{
 use std::io;
 
 pub struct PixelRenderer {
+    pub(super) scene_cache: crate::scene::cached::SceneCache,
+    pub(super) cache_diagnostics: [String; 2],
+    pub(super) reuse_assets: bool,
     session: TerminalSession,
     protocol: ProtocolType,
     font: FontSize,
@@ -60,6 +63,9 @@ impl PixelRenderer {
         };
         session.configure_graphics(protocol == ProtocolType::Kitty, tmux);
         let mut renderer = Self {
+            scene_cache: Default::default(),
+            cache_diagnostics: Default::default(),
+            reuse_assets: true,
             session,
             protocol,
             font,
@@ -88,6 +94,7 @@ impl PixelRenderer {
     }
 
     pub fn fit_to_terminal(&mut self) -> io::Result<()> {
+        self.scene_cache.invalidate();
         let (columns, rows) = crossterm::terminal::size()?;
         if columns == 0 || rows == 0 {
             return Err(io::Error::other("terminal has no drawable area"));
@@ -151,7 +158,10 @@ impl PixelRenderer {
             )))
         })?;
         let image = times
-            .measure_steps("Raster", |times| draw_pixel_sky(sky, &self.options, times))
+            .measure_steps("Raster", |times| {
+                self.scene_cache
+                    .draw_pixels(sky, &self.options, crate::sky::FrameTime::from_utc(date).tt, times)
+            })
             .ok_or_else(|| io::Error::other("cannot allocate terminal image"))?;
 
         // place the sky on the full frame before preparing labels, metadata and notices
@@ -192,6 +202,18 @@ impl PixelRenderer {
             });
         }
         if self.settings.frame_times {
+            fields.push(MetadataField {
+                label: "Obs cache".into(),
+                value: self.cache_diagnostics[0].clone(),
+            });
+            fields.push(MetadataField {
+                label: "Proj cache".into(),
+                value: self.cache_diagnostics[1].clone(),
+            });
+            fields.push(MetadataField {
+                label: "Raster cache".into(),
+                value: crate::cache::format_stats(self.scene_cache.stats()),
+            });
             fields.extend(format_step_time_fields(times.steps()));
         }
         let notice = (self.protocol == ProtocolType::Halfblocks)
@@ -204,6 +226,10 @@ impl PixelRenderer {
         let text = times.measure_steps("Text layout", |times| {
             text::compose_text(sky, &self.options, text_screen, text_area, &fields, notice, times)
         });
+
+        if let Some(text) = &mut self.raster_text {
+            text.begin_frame(self.reuse_assets);
+        }
 
         // complete the bitmap before encoding it; half-blocks instead merge text into their final cell buffer
         let buffer = if let Some(mut frame) = frame_image {

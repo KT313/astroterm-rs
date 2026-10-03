@@ -29,6 +29,7 @@ pub struct SelectionStats {
 }
 
 /// Intermediate region selection, consumed by the independently timed brightness pass.
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct SelectedRegion {
     cells: Vec<usize>,
     brute_force: bool,
@@ -176,7 +177,8 @@ impl SkyGrid {
         let mut cells = Vec::new();
         match region {
             SkyRegion::Cone { center, radius } if radius < 150_f64.to_radians() => {
-                let margin = ALWAYS_CHECKED_ANGLE
+                let margin = 0.1_f64.to_radians() / 3600.0 // intrinsic stellar-cache angular allowance
+                    + ALWAYS_CHECKED_ANGLE
                     + QUANTIZATION_MARGIN
                     + ABERRATION_MARGIN.max(
                         (observer.state.velocity.length() / super::observation::LIGHT_SPEED_AU_DAY)

@@ -22,6 +22,13 @@ pub struct TextRasterizer {
 }
 
 impl TextRasterizer {
+    /// Discard computed glyph masks in bypass mode; within-frame reuse remains permitted.
+    pub fn begin_frame(&mut self, reuse_assets: bool) {
+        if !reuse_assets {
+            self.glyphs.clear();
+        }
+    }
+
     pub fn new() -> Result<Self, &'static str> {
         let font = Font::from_bytes(FONT, FontSettings::default())?;
         let mut renderer = Self {

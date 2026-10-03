@@ -13,10 +13,8 @@ use astroterm::astro::SimulationClock;
 use astroterm::catalog::{datasets::DatasetDirectories, load_embedded_cities};
 use astroterm::cli::{Arguments, Config, build_config, write_bash_completions};
 use astroterm::controls::{Control, apply_control};
-use astroterm::projection::project_sky_with_times;
-use astroterm::sky::{
-    FrameTime, SimulationState, Sky, observe_sky, prepare_light_time_samples, prepare_observer, update_simulation,
-};
+use astroterm::projection::ProjectionCache;
+use astroterm::sky::{FrameTime, ObservationCache, SimulationState, Sky, update_simulation};
 use astroterm::terminal::{Renderer, poll_frame_input};
 use astroterm::timing::StepTimes;
 
@@ -82,6 +80,10 @@ fn run_render_loop(config: &Config, sky: &mut Sky, renderer: &mut Renderer) -> i
     let mut step_times = StepTimes::default(); // how long each step of a frame takes, for --debug-frametimes
 
     let mut simulation_state = SimulationState::default();
+    simulation_state.configure_cache(&config.cache);
+    let mut observation_cache = ObservationCache::new(config.cache.clone());
+    let mut projection_cache = ProjectionCache::new(config.cache.clone());
+    renderer.configure_cache(&config.cache);
 
     loop {
         let frame_start = Instant::now();
@@ -92,12 +94,21 @@ fn run_render_loop(config: &Config, sky: &mut Sky, renderer: &mut Renderer) -> i
         if input.controls.contains(&Control::Quit) {
             return Ok(());
         }
+        let previous_view = view;
         if input.resized {
             renderer.fit_to_terminal()?;
         }
         for &control in &input.controls {
             apply_control(control, &mut view, &mut clock, &config.view);
         }
+
+        if view != previous_view {
+            observation_cache.invalidate_view();
+            projection_cache.invalidate_view();
+        } else if input.resized {
+            projection_cache.invalidate_view();
+        }
+        simulation_state.begin_frame();
 
         // refresh only model samples whose validity no longer covers this frame
         let time = FrameTime::from_utc(clock.julian_date());
@@ -111,14 +122,14 @@ fn run_render_loop(config: &Config, sky: &mut Sky, renderer: &mut Renderer) -> i
         step_times
             .measure_steps("Observation", |steps| {
                 let mut observer = steps.measure("Observer geometry", || {
-                    prepare_observer(&simulation_state, time, simulation.observer)
+                    observation_cache.prepare_observer(&simulation_state, time, simulation.observer)
                 })?;
                 steps.measure_steps("Light-time sampling", |steps| {
-                    prepare_light_time_samples(&mut simulation_state, &mut observer, steps)
+                    observation_cache.prepare_light_time(&mut simulation_state, &mut observer, steps)
                 })?;
 
                 // observation.rs owns the timed filtering, motion, aberration, rotation and refraction passes
-                observe_sky(
+                observation_cache.observe(
                     &simulation_state,
                     &observer,
                     config.render.magnitude_threshold,
@@ -132,8 +143,9 @@ fn run_render_loop(config: &Config, sky: &mut Sky, renderer: &mut Renderer) -> i
 
         // project the immutable observed sky for this camera, then render prepared screen geometry
         let projected = step_times.measure_steps("Projection", |steps| {
-            project_sky_with_times(sky, &view, renderer.viewport(), steps)
+            projection_cache.project(sky, &view, renderer.viewport(), time.tt, steps)
         });
+        renderer.set_cache_diagnostics(observation_cache.stats(), projection_cache.stats());
         renderer.render_frame(
             &projected,
             &view,

@@ -119,8 +119,9 @@ New:
 - Compact immutable star arrays and a conservative cube-map grid limit observation to possible visible stars;
   fast movers and constellation endpoints are handled independently. Per-frame positions stay separate.
 - Simulation, observation, camera projection and rendering are separate stages. Planetary, lunar and orientation
-  models have independent caches; Earth rotation and observer corrections run every frame, so panning while paused
-  does not trigger an ephemeris update.
+  models have independent caches; Earth rotation and observer corrections follow simulation time, so panning while
+  paused does not trigger an ephemeris update. Configurable processing caches retain separate stage results;
+  `--disable-cache` provides a per-frame direct-evaluation reference.
 - Moon illumination uses Sun/Moon vectors relative to the observer in one frame, with a continuous illuminated
   fraction and phase angle. Full Moon is recognized on both sides of opposition within the phase band.
 - Interactive controls (see [Keys](#keys)); the metadata panel shows the simulation speed and whether time is paused.
@@ -230,6 +231,44 @@ observed positions and projected frames remain ordinary mutable buffers. The cur
 64-bit little-endian systems; other targets use the CSV path without caching. Named datasets are not automatically
 updated to a different upstream version.
 
+## Processing caches
+
+Runtime processing caches are separate from the downloaded dataset and prepared catalog files above. Policies
+are loaded once from the platform configuration directory: on Linux, `$XDG_CONFIG_HOME/astroterm/cache.toml`,
+usually `~/.config/astroterm/cache.toml`. A missing default file uses built-in defaults. Use
+`--cache-config <path>` to select an explicit file; missing explicit files and invalid policies fail at startup.
+See [examples/cache.toml](examples/cache.toml) for all supported groups.
+
+| Group | Maximum offset from sample epoch |
+| --- | --- |
+| Intrinsic stellar state | 360 simulated seconds, shortened to respect a 0.1″ direction allowance |
+| Planetary samples, including Sun and Earth | ±30 simulated seconds |
+| Lunar samples | ±12 simulated seconds |
+| Slow orientation | ±60 simulated seconds |
+
+Durations use TT, in either playback direction. Hits never extend a sample's validity. Shorter intervals and
+individual group disabling are supported; larger unqualified intervals, non-finite/negative values, unknown keys
+and TTLs on dependency-only groups are rejected. Planetary/lunar states are evaluated at the requested epoch from
+position/velocity samples; their displayed positions are not frozen until the next model refresh.
+
+The initial stellar brightness guard is deliberately conservative: moving stars with known distance are evaluated
+at each distinct epoch, preserving current magnitudes, threshold crossings and draw order. Constant-brightness
+trajectories can reuse their intrinsic state within a checked angular bound. This means the six-minute setting
+is a maximum, not a guarantee that every star will be held that long. Region selection includes the extra angular
+allowance. Entries are filled lazily and bounded by catalog size; physical state is retained when the camera moves.
+
+Each observation correction owns a separate result. Projection caches own geometry and bind star references only
+for the current frame. Pan/zoom, site changes, resizing and changed upstream inputs invalidate the relevant results.
+Both renderers can reuse an unchanged sky canvas; labels/metadata and graphics presentation remain correctly
+assembled. Continuous Earth rotation normally requires new projection and rasterization during playback.
+
+`--disable-cache` bypasses **runtime processing reuse**, including existing model interpolation and retained glyph
+masks. Active stages execute every frame, even while paused. Identical requests may share frame-local results;
+allocated buffers, loaded fonts and immutable catalog inputs remain reusable. It does not delete cache files,
+disable the startup catalog mapping, or redownload the dataset. `--debug-frametimes` includes lifetime
+`H` (hit), `R` (run) and `B` (bypass) counts, with stage timings still including the cache checks. The no-cache mode uses the same models;
+it is not a claim of exact physical astronomy.
+
 ## Development
 
 ```sh
@@ -244,10 +283,11 @@ The four-stage implementation lives in `sky/simulation.rs`, `sky/observation.rs`
 Pure formulas and coefficients live in `astro/models/{stars,planets,moons,orientation}`. Body identity is independent
 of the formula used. Star inputs are shared across observers; projected output borrows the immutable observed sky.
 The legacy `update_sky_positions` API remains a direct, uncached reference convenience; the application uses the
-explicit stages in `main.rs`. Observation accepts a renderer-neutral `SkyRegion`; use `All` when the same observed
+explicit stages in `main.rs`, with common runtime policy/validity code in `cache/` and typed cache owners in the
+observation, projection and scene modules. Observation accepts a renderer-neutral `SkyRegion`; use `All` when the same observed
 sky must support arbitrary subsequent camera views.
 
-Current cache half-intervals are 5 simulated minutes for the planetary batch, 2 minutes for the Moon, and 10 minutes
+Current cache half-intervals are 30 simulated seconds for the planetary batch, 12 seconds for the Moon, and 60 seconds
 for slow Earth orientation, forwards or backwards. Observation evaluates all samples at one requested epoch;
 parent-relative lunar states are composed with Earth at that same epoch. Bounded additional samples cover
 per-body emission epochs. The observer stays at reception while each target moves to emission; an initial

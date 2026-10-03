@@ -1,6 +1,8 @@
 //! Observer-dependent transformations and corrections. The preparation coordinator requests emission coverage;
 //! observation itself reads immutable samples and never evaluates a model or sees a camera.
+mod cached;
 mod stages;
+pub use cached::ObservationCache;
 use stages::*;
 
 use super::{FrameTime, ObservedSky, PlanetKind, SimulationError, SimulationState, refract_sky_positions};

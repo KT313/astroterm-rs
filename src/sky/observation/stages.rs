@@ -4,6 +4,7 @@ use super::{ObserverState, apply_aberration, body_id};
 use crate::astro::{Matrix3, Vector3};
 use crate::sky::{ObservedSky, ObservedStar, PlanetKind, SimulationError, SimulationState, SkyCatalog};
 
+#[derive(Clone, PartialEq)]
 pub(super) struct BodySamples {
     planets: Vec<crate::astro::models::BodyState>,
     moon: crate::astro::models::BodyState,

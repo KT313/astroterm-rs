@@ -134,3 +134,21 @@ production also expands the margin from the actual observer velocity every frame
 arithmetic on one million directions. Neither substitutes for the final whole-frame optimization pass. Record
 machine/build/frequency/concurrency conditions with performance results. Phase-6 Linux PTY checks passed; physical
 fonts and other operating systems are not thereby qualified.
+
+
+Runtime processing-cache checks and controlled headless comparisons:
+
+```sh
+cargo test --locked --test processing_cache
+python scripts/checks/processing_cache.py --output /tmp/processing-cache-pty.json
+cargo run --release --locked --example processing_cache
+# Optional existing AT-HYG file; the probe's prepared catalog cache lives under the OS temporary directory.
+cargo run --release --locked --example processing_cache -- /path/to/athyg_40.csv.gz
+```
+
+The probe compares enabled/disabled reuse at three fields of view and paused, forward, reverse and large-step
+playback. Each row warms two frames, measures six, and reports stage means, refresh-frame means and hit counts.
+The viewport is 1102×1102 sky pixels; encoding, labels and terminal presentation are excluded. Load time is excluded.
+Run it without concurrent tests/benchmarks. These short comparisons do not establish sustained terminal throughput.
+The production model windows are now ±30 seconds (planets), ±12 seconds (Moon), ±60 seconds (orientation); the
+cadence test's boundary offsets have been updated accordingly. The full 12,000-epoch sweep remains opt-in.

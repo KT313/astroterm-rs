@@ -42,6 +42,30 @@ pub enum Renderer {
     Pixels(Box<PixelRenderer>),
 }
 impl Renderer {
+    pub fn configure_cache(&mut self, config: &crate::cache::CacheConfig) {
+        match self {
+            Self::Chars(r) => r.scene_cache.configure(config),
+            Self::Pixels(r) => {
+                r.scene_cache.configure(config);
+                r.reuse_assets = config.allows(crate::cache::Group::RasterAssets);
+            }
+        }
+    }
+    pub fn set_cache_diagnostics(
+        &mut self,
+        observation: crate::cache::CacheStats,
+        projection: crate::cache::CacheStats,
+    ) {
+        let value = [
+            crate::cache::format_stats(observation),
+            crate::cache::format_stats(projection),
+        ];
+        match self {
+            Self::Chars(r) => r.cache_diagnostics = value,
+            Self::Pixels(r) => r.cache_diagnostics = value,
+        }
+    }
+
     pub fn open(
         kind: RendererKind,
         protocol: GraphicsProtocol,

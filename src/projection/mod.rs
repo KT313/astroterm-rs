@@ -3,10 +3,12 @@
 mod cartesian;
 mod maps;
 pub use cartesian::{CartesianCamera, ScreenPoint};
+mod cached;
 mod sky;
+pub use cached::ProjectionCache;
 pub use sky::{
-    ProjectedArc, ProjectedMoon, ProjectedPlanet, ProjectedSky, ProjectedStar, Viewport, project_light_direction,
-    project_sky, project_sky_with_times,
+    ProjectedArc, ProjectedConstellation, ProjectedMoon, ProjectedPlanet, ProjectedSky, ProjectedStar, Viewport,
+    project_light_direction, project_sky, project_sky_with_times,
 };
 #[cfg(test)]
 pub(crate) use sky::{

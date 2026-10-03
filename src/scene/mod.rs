@@ -3,6 +3,7 @@
 
 mod appearance;
 mod bodies;
+pub mod cached;
 pub(crate) use bodies::select_dynamically_named_stars;
 mod overlays;
 mod panel;

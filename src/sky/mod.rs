@@ -16,8 +16,8 @@ mod observation;
 mod positions;
 pub mod simulation;
 pub use observation::{
-    Anchor, ObserverState, observe_sky, observe_sky_candidates, prepare_light_time_samples, prepare_observation,
-    prepare_observer,
+    Anchor, ObservationCache, ObserverState, observe_sky, observe_sky_candidates, prepare_light_time_samples,
+    prepare_observation, prepare_observer,
 };
 pub use simulation::{
     FrameTime, ModelFamily, RefreshCounts, SimulationError, SimulationState, StateRequest, update_simulation,

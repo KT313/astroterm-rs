@@ -129,7 +129,7 @@ pub fn project_sky_with_times<'a>(
     }
 }
 
-fn project_visible_cell(camera: &CartesianCamera, viewport: Viewport, position: Vector3) -> Option<Cell> {
+pub(super) fn project_visible_cell(camera: &CartesianCamera, viewport: Viewport, position: Vector3) -> Option<Cell> {
     camera
         .project(position)
         .filter(|p| p.is_visible())
@@ -164,7 +164,7 @@ fn sort_stars_for_drawing(stars: &mut [ProjectedStar<'_>]) {
     });
 }
 
-fn project_bodies(
+pub(super) fn project_bodies(
     sky: &ObservedSky,
     view: &View,
     camera: &CartesianCamera,
@@ -188,7 +188,11 @@ fn project_bodies(
     (planets, moon)
 }
 
-fn project_constellations(sky: &ObservedSky, view: &View, viewport: Viewport) -> Vec<ProjectedConstellation> {
+pub(super) fn project_constellations(
+    sky: &ObservedSky,
+    view: &View,
+    viewport: Viewport,
+) -> Vec<ProjectedConstellation> {
     let find_star = |index| {
         sky.stars
             .binary_search_by_key(&index, |star| star.source_index)

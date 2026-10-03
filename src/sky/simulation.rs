@@ -89,9 +89,9 @@ pub struct CachePolicy {
 impl Default for CachePolicy {
     fn default() -> Self {
         Self {
-            planets_days: 5.0 / 1440.0,
-            moon_days: 2.0 / 1440.0,
-            orientation_days: 10.0 / 1440.0,
+            planets_days: 30.0 / 86400.0,
+            moon_days: 12.0 / 86400.0,
+            orientation_days: 60.0 / 86400.0,
         }
     }
 }
@@ -127,6 +127,34 @@ pub struct SimulationState {
     versions: [u64; 3],
 }
 impl SimulationState {
+    /// Apply validated policies once at startup. A zero span keeps exact within-frame samples only.
+    pub fn configure_cache(&mut self, config: &crate::cache::CacheConfig) {
+        use crate::cache::Group;
+        self.policy = CachePolicy {
+            planets_days: config.age_seconds(Group::PlanetarySamples) / 86400.0,
+            moon_days: config.age_seconds(Group::LunarSamples) / 86400.0,
+            orientation_days: config.age_seconds(Group::SlowOrientation) / 86400.0,
+        };
+        self.planets.clear();
+        self.moon.clear();
+        self.orientation.clear();
+    }
+    /// Clear bypassed families once per frame, not between reception and emission requests.
+    pub fn begin_frame(&mut self) {
+        if self.policy.planets_days == 0.0 {
+            self.planets.clear();
+        }
+        if self.policy.moon_days == 0.0 {
+            self.moon.clear();
+        }
+        if self.policy.orientation_days == 0.0 {
+            self.orientation.clear();
+        }
+    }
+    pub fn model_versions(&self) -> [u64; 3] {
+        self.versions
+    }
+
     /// Direct per-frame evaluation, used as the reference for cache qualification.
     pub fn exact() -> Self {
         Self {
@@ -264,7 +292,7 @@ fn is_finite_state(state: &BodyState) -> bool {
     .all(f64::is_finite)
 }
 
-/// Keep samples needed by this request set; no history grows with playback. Plan the whole family before mutation.
+/// Prepare required coverage first, then retain a bounded recent working set for subsequent emission requests.
 fn prepare_samples<T: Clone>(
     samples: &mut Vec<Sample<T>>,
     epochs: &[f64],
@@ -302,6 +330,15 @@ fn prepare_samples<T: Clone>(
                 value: evaluate(tt)?,
             });
             *counter += 1;
+        }
+    }
+    // retain a bounded working history so reception-only preparation does not evict emission coverage
+    for sample in samples.iter() {
+        if prepared.len() >= maximum_samples * 2 {
+            break;
+        }
+        if !prepared.iter().any(|p| p.epoch == sample.epoch) {
+            prepared.push(sample.clone());
         }
     }
     *samples = prepared;
@@ -345,6 +382,59 @@ mod tests {
                 z: 0.0,
             },
         })
+    }
+
+    #[test]
+    fn retention_is_bounded_and_reception_keeps_emission_coverage() {
+        let mut samples = Vec::new();
+        let mut count = 0;
+        let epoch = J2000;
+        prepare_samples(
+            &mut samples,
+            &[epoch, epoch - 0.1],
+            1e-4,
+            ModelFamily::Planets,
+            &mut count,
+            linear_parent,
+        )
+        .unwrap();
+        let original = count;
+        for _ in 0..5 {
+            prepare_samples(
+                &mut samples,
+                &[epoch],
+                1e-4,
+                ModelFamily::Planets,
+                &mut count,
+                linear_parent,
+            )
+            .unwrap();
+            prepare_samples(
+                &mut samples,
+                &[epoch, epoch - 0.1],
+                1e-4,
+                ModelFamily::Planets,
+                &mut count,
+                linear_parent,
+            )
+            .unwrap();
+        }
+        assert_eq!(count, original);
+        for i in 1..200 {
+            let tt = epoch + (i as f64 * 0.2) * if i % 2 == 0 { 1.0 } else { -1.0 };
+            prepare_samples(
+                &mut samples,
+                &[tt, tt - 0.1],
+                1e-4,
+                ModelFamily::Planets,
+                &mut count,
+                linear_parent,
+            )
+            .unwrap();
+            assert!(samples.len() <= 22);
+            assert!(find_sample(&samples, tt, ModelFamily::Planets).is_ok());
+            assert!(find_sample(&samples, tt - 0.1, ModelFamily::Planets).is_ok());
+        }
     }
 
     #[test]

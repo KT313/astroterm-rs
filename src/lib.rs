@@ -7,12 +7,14 @@
 //! [`astro::models`] separates stars, planets, moons and orientation, including their coefficients and reference
 //! tests. Shared time, coordinate and orbital math remain in [`astro`]; model code never imports catalog I/O,
 //! observers or renderers. [`catalog`] parses inputs; [`sky::SkyCatalog`] owns immutable star data. [`controls`]
-//! changes views and the simulation clock without invalidating geometric caches. [`timing`] records stage costs.
+//! changes views and the simulation clock; main and dependency stamps invalidate the affected caches.
+//! [`cache`] owns processing policies and validity; [`timing`] records stage costs.
 //!
 //! Earth is the only production anchor. Common f64 states use equatorial J2000 axes, AU and AU/day, with
 //! a barycentric origin. [`sky`] documents the observer site and apparent-place corrections.
 
 pub mod astro;
+pub mod cache;
 pub mod canvas;
 pub mod catalog;
 pub mod cli;

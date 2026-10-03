@@ -153,7 +153,7 @@ fn frames_between_ticks_follow_exact_earth_spin() {
     let original = cached.refresh_counts;
     let cat = catalog();
     let first = observe(&cached, J2000, Observer::default(), cat.clone());
-    for seconds in [10.0, 30.0, 60.0, 110.0] {
+    for seconds in [1.0, 3.0, 6.0, 10.0] {
         let tt = J2000 + seconds / 86400.0;
         update(&mut cached, tt);
         let mut direct = SimulationState::exact();
@@ -207,7 +207,7 @@ fn cadence_tracks_forward_reverse_and_fast_playback_with_no_refresh_jump() {
     // Compare the expired extrapolation's limiting value with a fresh direct state, excluding real motion.
     let mut cached = SimulationState::default();
     update(&mut cached, J2000);
-    for delta in [-119.999, 119.999] {
+    for delta in [-11.999, 11.999] {
         let tt = J2000 + delta / 86400.0;
         let old = cached.evaluate_body(BodyId::Moon, tt).unwrap();
         let mut direct = SimulationState::exact();
@@ -231,7 +231,7 @@ fn emissions_get_separate_bounded_samples_and_same_epoch_parents() {
     let counts = state.refresh_counts;
     update_simulation(&mut state, frame, &[request], &mut StepTimes::default()).unwrap();
     assert_eq!(counts, state.refresh_counts);
-    for delta in [-299.99, 0.0, 299.99] {
+    for delta in [-29.99, 0.0, 29.99] {
         let tt = emission + delta / 86400.0;
         let actual = state.evaluate_body(BodyId::Neptune, tt).unwrap();
         let mut direct = SimulationState::exact();
@@ -392,7 +392,7 @@ fn qualify_cache_intervals_across_the_computational_interval() {
             J2000 + (index - 10000) as f64 * 0.731
         };
         for sign in [-1.0, 1.0] {
-            for (family, seconds) in [(0, 299.99), (1, 119.99), (2, 599.99)] {
+            for (family, seconds) in [(0, 29.99), (1, 11.99), (2, 59.99)] {
                 let mut cached = SimulationState::default();
                 update(&mut cached, epoch);
                 let tt = epoch + sign * seconds / 86400.0;
