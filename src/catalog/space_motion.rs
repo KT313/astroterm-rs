@@ -1,10 +1,11 @@
-//! Validated AT-HYG space-motion inputs. The current sky still uses angular proper motion only.
+//! Validated AT-HYG space-motion inputs. The stellar model uses precise RA/Dec, validated distance and Cartesian velocity.
 
 use crate::astro::{Equatorial, Vector3};
 
 /// J2000 equatorial position in parsecs and velocity in parsecs per Julian year.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SpaceMotion {
+    pub distance_pc: f64,
     pub position: Vector3,
     pub velocity: Vector3,
 }
@@ -49,5 +50,9 @@ pub(super) fn prepare_space_motion(
             + north * (motion_on_sky.declination * distance)
             + unit * (radial_velocity.unwrap_or(0.0) * KM_S_TO_PC_YEAR)
     });
-    Some(SpaceMotion { position, velocity })
+    Some(SpaceMotion {
+        distance_pc: distance,
+        position,
+        velocity,
+    })
 }

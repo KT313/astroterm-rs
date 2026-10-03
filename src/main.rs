@@ -51,6 +51,11 @@ fn main() -> ExitCode {
         Err(error) => return report_failure(error),
     };
 
+    eprintln!(
+        "Catalog: {} stars use tangential motion after near-collision checks.",
+        sky.catalog.singular_count
+    );
+
     // render in the terminal, which is restored before any error is reported
     let result = open_terminal_renderer(config.render, config.terminal)
         .and_then(|mut renderer| run_render_loop(&config, &mut sky, &mut renderer));

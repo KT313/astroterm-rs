@@ -94,6 +94,34 @@ pub fn offset_towards(from: Horizontal, to: Horizontal, angle: f64) -> Horizonta
     Horizontal::from_vector(a * cos + tangent * (sin / tangent_length))
 }
 
+/// Apply refraction without recovering azimuth. The horizontal direction is preserved, including across azimuth 0.
+pub fn refract_direction(direction: Vector3) -> Vector3 {
+    let horizontal = direction.x.hypot(direction.y);
+    let altitude = direction.z.atan2(horizontal);
+    let corrected = apply_refraction(Horizontal { azimuth: 0.0, altitude }).altitude;
+    let (s, c) = corrected.sin_cos();
+    if horizontal == 0.0 {
+        Vector3 { x: 0.0, y: c, z: s }
+    } else {
+        Vector3 {
+            x: direction.x * (c / horizontal),
+            y: direction.y * (c / horizontal),
+            z: s,
+        }
+    }
+}
+
+/// Great-circle offset on unit vectors, retaining the legacy degenerate-arc convention.
+pub fn offset_vector_towards(from: Vector3, to: Vector3, angle: f64) -> Vector3 {
+    let tangent = to - from * from.dot(to);
+    let length = tangent.length();
+    if length < 1e-12 {
+        return from;
+    }
+    let (s, c) = angle.sin_cos();
+    (from * c + tangent * (s / length)).normalized()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

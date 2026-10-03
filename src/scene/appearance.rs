@@ -110,15 +110,9 @@ fn select_color_from_color_index(color_index: f32) -> Option<Color> {
 }
 
 /// Index into the star glyph tables for a magnitude (brighter stars get bigger glyphs).
-fn select_star_glyph_index(magnitude: f32) -> usize {
+fn select_star_glyph_index(magnitude: f64) -> usize {
     let last = STAR_GLYPHS_ASCII.len() as i32 - 1;
-    let index = map_float_to_int_range(
-        BRIGHTEST_STAR_MAGNITUDE,
-        DIMMEST_STAR_MAGNITUDE,
-        0,
-        last,
-        f64::from(magnitude),
-    );
+    let index = map_float_to_int_range(BRIGHTEST_STAR_MAGNITUDE, DIMMEST_STAR_MAGNITUDE, 0, last, magnitude);
     index.clamp(0, last) as usize
 }
 

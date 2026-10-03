@@ -98,6 +98,15 @@ impl TerminalRenderer {
                     self.options.unicode,
                     &self.time_zone.as_ref().expect("panel zone initialized").1,
                 );
+                if self.settings.frame_times {
+                    fields.push(crate::metadata::MetadataField {
+                        label: "Star fallbacks".into(),
+                        value: format!(
+                            "{} catalog, {} frame",
+                            sky.catalog_singular_count, sky.runtime_singular_count
+                        ),
+                    });
+                }
                 fields.extend(step_time_fields.into_iter().flatten());
                 draw_metadata_panel(panel, &fields);
             }

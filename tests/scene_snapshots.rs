@@ -125,7 +125,7 @@ fn filtered_updates_match_full_updates_across_threshold_changes() {
     for (step, threshold) in [-2.0, 5.0, 8.0, 0.0, 5.0].into_iter().enumerate() {
         let date = 2451545.0 + step as f64 * 1000.0;
         update_sky_positions(&mut filtered, date, &observer, threshold, &mut StepTimes::default());
-        update_sky_positions(&mut full, date, &observer, f32::INFINITY, &mut StepTimes::default());
+        update_sky_positions(&mut full, date, &observer, f64::INFINITY, &mut StepTimes::default());
         refract_sky_positions(&mut filtered);
         refract_sky_positions(&mut full);
         let options = RenderOptions {

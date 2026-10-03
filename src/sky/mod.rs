@@ -9,7 +9,7 @@ pub use illumination::{MoonIllumination, compute_moon_illumination};
 mod observation;
 mod positions;
 pub mod simulation;
-pub use observation::{Anchor, ObserverState, observe_sky, prepare_observer};
+pub use observation::{Anchor, ObserverState, observe_sky, observe_sky_candidates, prepare_observer};
 pub use simulation::{
     FrameTime, ModelFamily, RefreshCounts, SimulationError, SimulationState, StateRequest, update_simulation,
 };
@@ -25,8 +25,13 @@ use crate::catalog::{Catalog, ConstellationFigure, StarNames};
 /// Immutable model inputs and display metadata, shared by all observed skies.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SkyCatalog {
-    /// Brightest first; equal magnitudes by descending stable ID. Placeholders are omitted.
+    /// Brightest possible first within the computational interval; equal keys by descending stable ID. Placeholders are omitted.
     pub stars: Vec<Star>,
+    /// Sorted union of all constellation endpoints, independent of candidate selection.
+    pub endpoint_indices: Vec<usize>,
+    /// Indices whose trajectory drift exceeds the grid-margin threshold.
+    pub always_checked: Vec<usize>,
+    pub singular_count: usize,
     pub names: StarNames,
     pub constellations: Vec<Constellation>,
 }
@@ -41,7 +46,11 @@ impl SkyCatalog {
             .filter(|star| star.has_data)
             .map(Star::from_catalog_star)
             .collect();
-        stars.sort_unstable_by(|a, b| a.magnitude.total_cmp(&b.magnitude).then_with(|| b.id.cmp(&a.id)));
+        stars.sort_unstable_by(|a, b| {
+            a.brightness_key
+                .total_cmp(&b.brightness_key)
+                .then_with(|| b.id.cmp(&a.id))
+        });
 
         // resolve representatives after sorting, without changing the choice made before overrides
         let hr_by_id: HashMap<_, _> = catalog.hr_representatives.iter().map(|(&hr, &id)| (id, hr)).collect();
@@ -50,22 +59,40 @@ impl SkyCatalog {
             .enumerate()
             .filter_map(|(index, star)| Some((*hr_by_id.get(&star.id)?, index)))
             .collect();
-        let constellations = catalog
+        let constellations: Vec<Constellation> = catalog
             .constellations
             .iter()
             .filter_map(|figure| resolve_constellation_figure(figure, &index_by_hr))
             .collect();
 
+        let mut endpoint_indices: Vec<_> = constellations
+            .iter()
+            .flat_map(|figure| figure.segments.iter().flatten())
+            .copied()
+            .collect();
+        endpoint_indices.sort_unstable();
+        endpoint_indices.dedup();
+        let always_checked = stars
+            .iter()
+            .enumerate()
+            .filter_map(|(i, star)| {
+                (star.motion_bound > crate::astro::models::stars::ALWAYS_CHECKED_ANGLE).then_some(i)
+            })
+            .collect();
+        let singular_count = stars.iter().filter(|star| star.singular_fallback).count();
         SkyCatalog {
+            endpoint_indices,
+            always_checked,
+            singular_count,
             stars,
             names: catalog.names.clone(),
             constellations,
         }
     }
 
-    /// Length of the drawable prefix for an inclusive magnitude threshold.
-    pub fn count_bright_stars(&self, threshold: f32) -> usize {
-        self.stars.partition_point(|star| star.magnitude <= threshold)
+    /// Length of the possible-brightness candidate prefix for an inclusive magnitude threshold.
+    pub fn count_bright_stars(&self, threshold: f64) -> usize {
+        self.stars.partition_point(|star| star.brightness_key <= threshold)
     }
 
     /// Resolve a star's name from the sky-owned string block.
@@ -77,6 +104,8 @@ impl SkyCatalog {
 /// Read-only output of observation, independent of a view. Shares immutable catalog data across sites and frames.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ObservedSky {
+    pub magnitude_threshold: f64,
+    pub runtime_singular_count: usize,
     pub catalog: Arc<SkyCatalog>,
     pub stars: Vec<ObservedStar>,
     pub planets: Vec<Planet>,
@@ -91,6 +120,8 @@ pub type Sky = ObservedSky;
 impl ObservedSky {
     pub fn new(catalog: Arc<SkyCatalog>) -> Self {
         Self {
+            magnitude_threshold: f64::INFINITY,
+            runtime_singular_count: 0,
             names: catalog.names.clone(),
             constellations: catalog.constellations.clone(),
             catalog,
@@ -108,12 +139,18 @@ impl ObservedSky {
             .catalog
             .stars
             .iter()
-            .map(|star| ObservedStar::from_star(star, crate::astro::Horizontal::default()))
+            .enumerate()
+            .map(|(index, star)| {
+                ObservedStar::from_star(star, index, crate::astro::Horizontal::default().to_unit_vector())
+            })
             .collect();
         sky
     }
-    pub fn count_bright_stars(&self, threshold: f32) -> usize {
-        self.stars.partition_point(|star| star.magnitude <= threshold)
+    pub fn count_bright_stars(&self, threshold: f64) -> usize {
+        self.stars
+            .iter()
+            .filter(|star| star.drawable && star.magnitude <= threshold)
+            .count()
     }
     pub fn star_name(&self, star: &ObservedStar) -> Option<&str> {
         self.names.get(star.name)
@@ -209,6 +246,7 @@ mod tests {
             right_ascension: 0.0,
             declination: 0.0,
             ra_motion: 0.0,
+            ra_motion_cos_dec: 0.0,
             dec_motion: 0.0,
             magnitude: 1.0,
             spectral_type: *b"  ",

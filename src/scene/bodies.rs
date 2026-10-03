@@ -22,10 +22,10 @@ pub fn draw_stars(canvas: &mut Canvas, options: &RenderOptions, sky: &ProjectedS
         Vec::new()
     };
 
-    let count = sky
-        .stars
-        .partition_point(|entry| entry.star.magnitude <= options.magnitude_threshold);
-    for (index, entry) in sky.stars[..count].iter().enumerate().rev() {
+    for (index, entry) in sky.stars.iter().enumerate() {
+        if entry.star.magnitude > options.magnitude_threshold {
+            continue;
+        }
         let star = entry.star;
         let label = if dynamically_named.contains(&index) {
             Some(format_star_label(star, sky.names, options.unicode))
@@ -53,7 +53,7 @@ fn select_dynamically_named_stars(options: &RenderOptions, sky: &ProjectedSky<'_
 
     // then stars, brightest first: ones labelled anyway only count, the others get a name
     let mut selected = Vec::new();
-    for (index, entry) in sky.stars.iter().enumerate() {
+    for (index, entry) in sky.stars.iter().enumerate().rev() {
         let star = entry.star;
         if labelled >= DYNAMIC_NAME_COUNT || star.magnitude > options.magnitude_threshold {
             break; // enough labels, or this and all following stars are too dim to be drawn
@@ -151,7 +151,16 @@ mod tests {
         super::draw_stars(canvas, options, &project_sky(sky, view, viewport(canvas)));
     }
     fn select_dynamically_named_stars(view: &View, options: &RenderOptions, sky: &Sky) -> Vec<usize> {
-        super::select_dynamically_named_stars(options, &project_sky(sky, view, Viewport { height: 41, width: 81 }))
+        let projected = project_sky(sky, view, Viewport { height: 41, width: 81 });
+        super::select_dynamically_named_stars(options, &projected)
+            .into_iter()
+            .map(|index| {
+                sky.stars
+                    .iter()
+                    .position(|star| star.id == projected.stars[index].star.id)
+                    .unwrap()
+            })
+            .collect()
     }
     fn draw_constellation_segment(
         canvas: &mut Canvas,
@@ -160,7 +169,7 @@ mod tests {
         from: Horizontal,
         to: Horizontal,
     ) {
-        for arc in project_constellation_segment(view, viewport(canvas), from, to) {
+        for arc in project_constellation_segment(view, viewport(canvas), from.to_unit_vector(), to.to_unit_vector()) {
             draw_constellation_arc(canvas, options, &arc);
         }
     }
@@ -292,12 +301,12 @@ mod tests {
     /// on a ring around the zenith.
     fn place_in_view(visible: &[usize]) -> Sky {
         let mut sky = Sky::from_catalog(&load_embedded_catalog().expect("embedded catalog loads"));
-        let nadir = horizontal(0.0, -90.0);
+        let nadir = horizontal(0.0, -90.0).to_unit_vector();
         sky.stars.iter_mut().for_each(|star| star.position = nadir);
         sky.planets.iter_mut().for_each(|planet| planet.position = nadir);
         sky.moon.position = nadir;
         for (step, &index) in visible.iter().enumerate() {
-            sky.stars[index].position = horizontal(step as f64 * 40.0, 60.0);
+            sky.stars[index].position = horizontal(step as f64 * 40.0, 60.0).to_unit_vector();
         }
         sky
     }
@@ -337,12 +346,41 @@ mod tests {
             .position(|star| star.id.0 == 7001)
             .unwrap(); // brighter than the label threshold, and named
         let mut sky = place_in_view(&[&stars[..], &[vega]].concat());
-        sky.planets[3].position = horizontal(100.0, 70.0);
-        sky.moon.position = horizontal(200.0, 70.0);
+        sky.planets[3].position = horizontal(100.0, 70.0).to_unit_vector();
+        sky.moon.position = horizontal(200.0, 70.0).to_unit_vector();
         assert_eq!(
             select_dynamically_named_stars(&View::default(), &DYNAMIC, &sky),
             stars[..2]
         );
+    }
+
+    #[test]
+    fn dynamic_names_follow_current_magnitudes_instead_of_catalog_order() {
+        let indices = pick_unlabelled_stars(&place_in_view(&[]));
+        let mut sky = place_in_view(&indices);
+        for (step, &index) in indices.iter().enumerate() {
+            sky.stars[index].magnitude = 4.0 - step as f64;
+            sky.stars[index].name = None;
+        }
+        let expected = indices.iter().rev().take(5).copied().collect::<Vec<_>>();
+        assert_eq!(
+            select_dynamically_named_stars(&View::default(), &DYNAMIC, &sky),
+            expected
+        );
+    }
+
+    #[test]
+    fn automatic_proper_names_use_current_label_threshold() {
+        let initial = place_in_view(&[]);
+        let vega = initial.stars.iter().position(|star| star.id.0 == 7001).unwrap();
+        let mut sky = place_in_view(&[vega]);
+        let mut canvas = Canvas::new(41, 81);
+        sky.stars[vega].magnitude = 0.5;
+        draw_stars(&mut canvas, &View::default(), &ASCII, &sky);
+        assert!(!canvas.to_lines().concat().contains("Vega"));
+        sky.stars[vega].magnitude = 0.1;
+        draw_stars(&mut canvas, &View::default(), &ASCII, &sky);
+        assert!(canvas.to_lines().concat().contains("Vega"));
     }
 
     #[test]

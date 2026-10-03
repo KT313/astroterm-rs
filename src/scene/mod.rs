@@ -30,9 +30,9 @@ pub struct RenderOptions {
     /// Draw an azimuthal grid in the overhead view (instead of compass letters).
     pub grid: bool,
     /// Only draw stars at least this bright (magnitude at most this value).
-    pub magnitude_threshold: f32,
+    pub magnitude_threshold: f64,
     /// Only label stars at least this bright.
-    pub label_threshold: f32,
+    pub label_threshold: f64,
     /// Name the brightest stars in view too, until at least 5 objects in view have labels.
     pub dynamic_names: bool,
 }

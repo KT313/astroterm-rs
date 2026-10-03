@@ -24,8 +24,16 @@ fn main() {
     );
 
     // prepare the fixed rendering workload
+    let start = Instant::now();
     let mut sky = Sky::new(std::sync::Arc::new(SkyCatalog::from_catalog(&catalog)));
     drop(catalog);
+    println!(
+        "prepare_ms={:.3} singular={} always_checked={} endpoints={}",
+        start.elapsed().as_secs_f64() * 1000.0,
+        sky.catalog.singular_count,
+        sky.catalog.always_checked.len(),
+        sky.catalog.endpoint_indices.len()
+    );
     let mut canvas = Canvas::new(41, 81);
     let view = View::default();
     let options = RenderOptions {
@@ -73,8 +81,10 @@ fn main() {
         draw_sky_scene(black_box(&mut canvas), &options, &projected);
     }
     println!(
-        "update_draw_ms={:.3} candidates={}",
+        "update_draw_ms={:.3} drawable={} evaluated={} brightness_candidates={}",
         start.elapsed().as_secs_f64() * 1000.0 / 100.0,
-        sky.count_bright_stars(5.0)
+        sky.count_bright_stars(5.0),
+        sky.stars.len(),
+        sky.catalog.count_bright_stars(5.0)
     );
 }

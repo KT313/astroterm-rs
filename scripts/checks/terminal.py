@@ -91,6 +91,21 @@ class TerminalProcess:
         os.close(self.slave)
 
 
+def check_star_diagnostics(binary):
+    terminal = TerminalProcess([str(binary), "-d", "2025-03-01T11:00:00", "-i", "Tokyo", "-s", "0",
+                                "--debug-frametimes"])
+    try:
+        terminal.until(lambda: "Star fallbacks:" in terminal.text())
+        assert "0 catalog, 0 frame" in terminal.text()
+        assert b"Catalog: 0 stars use tangential motion" in terminal.raw
+        terminal.send("q")
+        assert terminal.wait_exit() == 0
+        terminal.assert_restored()
+        return {"stellar_fallback_diagnostics": "passed"}
+    finally:
+        terminal.close()
+
+
 def read_memory(pid):
     fields = Path(f"/proc/{pid}/status").read_text().splitlines()
     return {line.split(":")[0]: int(line.split()[1]) for line in fields if line.startswith(("VmRSS:", "VmHWM:"))}
@@ -171,6 +186,7 @@ def main():
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     results = {"checks": [check_interaction(args.binary.resolve(), metadata) for metadata in [False, True]],
+               "stellar_diagnostics": check_star_diagnostics(args.binary.resolve()),
                "probes": [check_probe(args.probe.resolve(), "panic"),
                           check_probe(args.probe.resolve(), "aspect", pixels=(1000, 300), expected="aspect=1.000000"),
                           check_probe(args.probe.resolve(), "aspect", pixels=(0, 0), expected="aspect=2.000000")],

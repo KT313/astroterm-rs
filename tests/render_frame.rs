@@ -36,7 +36,7 @@ fn build_sky_at(datetime: &str, latitude: f64, longitude: f64) -> Sky {
         &mut sky,
         julian_date,
         &observer,
-        f32::INFINITY,
+        f64::INFINITY,
         &mut StepTimes::default(),
     );
     sky
@@ -59,7 +59,7 @@ fn polaris_is_near_the_center_at_the_north_pole() {
         .iter()
         .find(|star| sky.star_name(star) == Some("Polaris"))
         .expect("Polaris is named");
-    assert!(polaris.position.altitude > 89.0 * PI / 180.0);
+    assert!(polaris.horizontal_position().altitude > 89.0 * PI / 180.0);
 
     let mut canvas = Canvas::new(41, 81);
     let options = RenderOptions {

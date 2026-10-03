@@ -15,25 +15,27 @@ fn main() {
     };
     let mut sky = Sky::from_catalog(&load_embedded_catalog().unwrap());
     for date in [2451545.0, 2459146.0, 2460736.9583333335] {
-        update_sky_positions(&mut sky, date, &observer, f32::INFINITY, &mut StepTimes::default());
+        update_sky_positions(&mut sky, date, &observer, f64::INFINITY, &mut StepTimes::default());
         for name in ["Vega", "Arcturus"] {
             let star = sky.stars.iter().find(|star| sky.star_name(star) == Some(name)).unwrap();
             println!(
                 "position,{date:.12},{name},{:.16},{:.16}",
-                star.position.azimuth, star.position.altitude
+                star.horizontal_position().azimuth,
+                star.horizontal_position().altitude
             );
         }
         for planet in &sky.planets {
             println!(
                 "position,{date:.12},{},{:.16},{:.16}",
                 planet.kind.name(),
-                planet.position.azimuth,
-                planet.position.altitude
+                planet.horizontal_position().azimuth,
+                planet.horizontal_position().altitude
             );
         }
         println!(
             "position,{date:.12},Moon,{:.16},{:.16}",
-            sky.moon.position.azimuth, sky.moon.position.altitude
+            sky.moon.horizontal_position().azimuth,
+            sky.moon.horizontal_position().altitude
         );
         let moon = compute_moon_geocentric(&MOON_ORBIT, date);
         let sun = -compute_planet_heliocentric(&EARTH_ORBIT, date);

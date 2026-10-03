@@ -7,16 +7,16 @@
 //!
 //! # Current model conventions
 //!
-//! All physical calculations currently use f64 (catalog magnitudes/colors use f32). TT is currently approximated
+//! Physical calculations, motion bounds and current magnitudes use f64 (source catalog encodings/colors retain their original precision). TT is currently approximated
 //! by UT1, itself approximated by UTC/UT input. `astro/time.rs` documents the calendar and time-scale contract.
 //!
 //! | Quantity / owner | Native origin and frame | Units / epoch | Current corrections and stage |
 //! |---|---|---|---|
-//! | Catalog stars / `models::stars` | Barycentric direction, J2000 mean equator/equinox | Radians, radians/year at J2000 | Linear RA/Dec motion (365.2425 days/year for legacy compatibility), then precession and observation |
+//! | Catalog stars / `models::stars` | Barycentric direction, J2000 mean equator/equinox | Unit direction, velocity/distance per Julian year, optional distance in pc at J2000 | Normalized straight-line motion, distance-dependent magnitude, precession and observation |
 //! | Planets and Sun / `models::planets` | Heliocentric equatorial J2000 | AU; TT Julian centuries from J2000 | Earth subtraction, precession, horizon rotation; no light-time or aberration |
 //! | Moon / `models::moons` | Geocentric mean-of-date ecliptic, converted with fixed J2000 obliquity (approximation) | Earth radii; TT days from JD 2451543.5 | Solar perturbations; inverse source precession to J2000, Earth-relative AU sample; observer rotation and altitude parallax |
 //! | Precession and Earth rotation / `models::orientation` | Mean J2000 to mean-of-date, then local horizon | Radians; precession TT, ERA UT1 | Cached C = R3(−EO) P; exact per-frame ERA, then site horizon rotation |
-//! | Horizontal / observation | Observer sky: azimuth E of N, altitude from horizon | Radians | Optional refraction applied once after position update |
+//! | Horizontal / observation | Observer sky: East, North, Up unit vectors | Cartesian unit vectors (radians only at display/API boundaries) | Optional refraction applied once after position update |
 //!
 //! The current positions are approximations to apparent places, not complete apparent-place solutions. Geometric
 //! means before light-time/aberration; geocentric is relative to Earth's center; topocentric is relative to a surface
@@ -39,7 +39,7 @@ pub use accuracy::{
 };
 pub use coords::{
     apply_refraction, correct_for_parallax, equatorial_to_horizontal, horizontal_to_spherical, offset_towards,
-    rectangular_to_equatorial,
+    offset_vector_towards, rectangular_to_equatorial, refract_direction,
 };
 pub use matrix::Matrix3;
 pub use models::moons::{MoonOrbit, MoonPhase, compute_moon_age, compute_moon_geocentric, moon_age_to_phase};
@@ -118,6 +118,10 @@ impl Equatorial {
 }
 
 impl Vector3 {
+    pub fn normalized(self) -> Self {
+        self * (1.0 / self.x.hypot(self.y).hypot(self.z))
+    }
+
     /// Euclidean length.
     pub fn length(self) -> f64 {
         (self.x * self.x + self.y * self.y + self.z * self.z).sqrt()

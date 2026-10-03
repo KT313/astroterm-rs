@@ -12,7 +12,7 @@ cargo bench --bench frame -- --noplot
 
 The PTY script supplies fixed time/location, sends repeated keys, resizes with and without metadata, checks
 terminal attributes/cursor/alternate-screen restoration after quit and an intentional panic, and tests reported
-pixel sizes plus the aspect-ratio fallback. It uses `pyte` to interpret terminal output. The script also measures
+pixel sizes plus the aspect-ratio fallback. It also checks the stellar fallback count on stderr and in the debug panel. It uses `pyte` to interpret terminal output. The script also measures
 time to the first metadata-bearing frame, RSS after one second, and the process high-water RSS on Linux. It does
 not drop the OS page cache. `--output path.json` records the results.
 
@@ -36,7 +36,9 @@ Unicode/braille/color with constellations and dynamic names), run:
 cargo run --release --locked --example catalog_probe -- datasets/athyg_40.csv.gz
 ```
 
-The probe reports loading separately from sky construction, excludes setup from per-frame measurements, and does
+The probe reports CSV loading and trajectory preparation separately, including singular/always-checked/endpoint
+counts. Frame output distinguishes evaluated stars, interval-brightness candidates and currently drawable stars. It
+excludes setup from per-frame measurements and does
 not include terminal presentation or drop the filesystem cache. Run it on an otherwise idle machine.
 
 Per-family refresh costs and cheap cached state evaluation have separate `models/` Criterion cases. For a focused

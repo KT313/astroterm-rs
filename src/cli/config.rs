@@ -87,8 +87,8 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
         color: arguments.color,
         constellations: arguments.constellations,
         grid: arguments.grid,
-        magnitude_threshold: arguments.threshold,
-        label_threshold: arguments.label_threshold,
+        magnitude_threshold: f64::from(arguments.threshold),
+        label_threshold: f64::from(arguments.label_threshold),
         dynamic_names: !arguments.disable_dynamic_names,
     };
     let simulation = SimulationSettings {

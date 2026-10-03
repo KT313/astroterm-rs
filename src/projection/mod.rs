@@ -1,6 +1,8 @@
 //! The view onto the sky: where it is centered, which projection is used, and how much of the sky it shows.
 
+mod cartesian;
 mod maps;
+pub use cartesian::{CartesianCamera, ScreenPoint};
 mod sky;
 pub use sky::{ProjectedArc, ProjectedMoon, ProjectedPlanet, ProjectedSky, ProjectedStar, Viewport, project_sky};
 #[cfg(test)]
@@ -109,8 +111,11 @@ impl View {
     /// has one visible window `|t - φ| <= acos(cos(fov/2) / R)`. Within an arc that is at most two parts, e.g. when
     /// the arc dips into the hidden cap behind a view wider than 180°.
     pub fn find_visible_arc_parts(&self, from: Horizontal, to: Horizontal) -> Vec<ArcPart> {
+        self.find_visible_arc_parts_vectors(from.to_unit_vector(), to.to_unit_vector())
+    }
+
+    pub fn find_visible_arc_parts_vectors(&self, a: crate::astro::Vector3, b: crate::astro::Vector3) -> Vec<ArcPart> {
         // the arc as p(t) = a·cos(t) + u·sin(t), t in [0, length]
-        let (a, b) = (from.to_unit_vector(), to.to_unit_vector());
         let length = a.dot(b).clamp(-1.0, 1.0).acos();
         let tangent = b - a * a.dot(b);
         let (center, cos_half_fov) = (

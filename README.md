@@ -59,6 +59,10 @@ update positions, render. Rendering only reads the sky, so other renderers can b
 
 New:
 
+- Stars move along normalized 3D trajectories in Julian years (365.25 days). With known distance, their magnitude
+  changes with distance; without it, motion is tangential and brightness stays constant. Approaching-star bounds
+  include perspective acceleration.
+- Projection consumes horizontal unit vectors directly and produces Cartesian screen coordinates.
 - Simulation, observation, camera projection and rendering are separate stages. Planetary, lunar and orientation
   models have independent caches; Earth rotation and observer corrections run every frame, so panning while paused
   does not trigger an ephemeris update.
@@ -77,7 +81,8 @@ New:
   Bayer, Flamsteed, HR, HIP, Tycho-2 or Gaia designation, and stars without a spectral type are colored by B-V.
   For duplicate HR numbers, the brightest original catalog entry (earliest source row on a tie) represents the HR
   in constellation figures and receives its BSC5 magnitude; other components keep their catalog magnitudes.
-  Only stars bright enough for the threshold are updated and drawn.
+  Stars that could reach the threshold within the computational interval are candidates; current brightness
+  determines drawing and labels. Constellation endpoints are updated independently.
 - Dynamic names: when fewer than 5 objects in view have labels (e.g. after zooming in), the brightest stars in view
   are named too, with their catalog number (`HR 1234`) if they have no proper name. `--disable-dynamic-names` turns
   this off.
@@ -109,8 +114,19 @@ values report the source line. Rows missing RA, declination or magnitude are ski
 are treated as missing. Distance must be positive, below 100,000 pc and, when a full position triple exists, agree
 with its length within 1%; otherwise the star uses angular proper motion only. Valid distance with missing position
 uses RA/Dec; missing velocity uses tangential proper motion plus radial velocity (zero if absent). These validated
-3D inputs are retained for a later motion model; rendering still uses angular proper motion and constant magnitude.
+3D inputs drive straight-line space motion and distance-dependent brightness. Initial direction uses precise
+RA/Dec, since some Cartesian positions in the file are rounded. Tangential RA motion is retained at the poles.
 Names are catalog-owned, and stable IDs preserve source identity through sorting.
+
+Trajectory preprocessing uses the shared computational interval. A closest approach below 0.001 of the initial
+distance drops the radial component and distance information for that star, keeping brightness constant. A load-time
+count is printed to stderr; `--debug-frametimes` also shows this count and any per-frame fallbacks outside the interval.
+Outside the interval every star is checked; expired brightness keys never suppress a newly bright star.
+
+Selection uses each trajectory's brightest possible magnitude; drawing sorts only visible stars by current
+brightness, with stable-ID ties. Dynamic labels use the reverse order. Constellation endpoints join the update set
+before refraction, so all objects receive the correction exactly once. Motion bounds above 15′ are recorded for
+future spatial indexing; this is not yet a sky-grid implementation.
 
 ## Development
 

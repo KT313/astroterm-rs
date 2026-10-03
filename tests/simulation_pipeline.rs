@@ -56,7 +56,7 @@ fn immutable_simulation_supports_multiple_sites_and_observed_sky_multiple_views(
         },
         catalog,
     );
-    assert!(angle(a.moon.position.to_unit_vector(), b.moon.position.to_unit_vector()) > 3600.0);
+    assert!(angle(a.moon.position, b.moon.position) > 3600.0);
     assert_eq!(simulation, original);
     let untouched = a.clone();
     let mut view = View::default();
@@ -90,20 +90,10 @@ fn frames_between_ticks_follow_exact_earth_spin() {
         let actual = observe(&cached, tt, Observer::default(), cat.clone());
         let expected = observe(&direct, tt, Observer::default(), cat.clone());
         for (a, b) in actual.stars.iter().zip(&expected.stars) {
-            assert!(angle(a.position.to_unit_vector(), b.position.to_unit_vector()) < 0.2);
+            assert!(angle(a.position, b.position) < 0.2);
         }
-        assert!(
-            angle(
-                first.stars[0].position.to_unit_vector(),
-                actual.stars[0].position.to_unit_vector()
-            ) > seconds
-        );
-        assert!(
-            angle(
-                actual.moon.position.to_unit_vector(),
-                expected.moon.position.to_unit_vector()
-            ) < 1.0
-        );
+        assert!(angle(first.stars[0].position, actual.stars[0].position) > seconds);
+        assert!(angle(actual.moon.position, expected.moon.position) < 1.0);
     }
     assert_eq!(cached.refresh_counts, original);
 }
@@ -137,14 +127,9 @@ fn cadence_tracks_forward_reverse_and_fast_playback_with_no_refresh_jump() {
                 cat.clone(),
             );
             for (a, b) in actual.planets.iter().zip(&expected.planets) {
-                assert!(angle(a.position.to_unit_vector(), b.position.to_unit_vector()) < 1.0);
+                assert!(angle(a.position, b.position) < 1.0);
             }
-            assert!(
-                angle(
-                    actual.moon.position.to_unit_vector(),
-                    expected.moon.position.to_unit_vector()
-                ) < 1.0
-            );
+            assert!(angle(actual.moon.position, expected.moon.position) < 1.0);
         }
         println!("speed {speed}x, 80 frames: {:?}", cached.refresh_counts);
     }
@@ -290,7 +275,7 @@ fn synthetic_anchor_composes_translation_tilt_spin_and_site_velocity() {
     )
     .unwrap();
     let expected_sun = Horizontal::from_vector(observer.inertial_to_horizon.apply(-observer.state.position));
-    assert_eq!(sky.sun().position, expected_sun); // synthetic airless anchor ignores the requested refraction
+    assert!(angle(sky.sun().position, expected_sun.to_unit_vector()) < 1e-8); // synthetic airless anchor ignores the requested refraction
     assert_ne!(
         rotation.transpose().apply(local.position),
         Matrix3::rotate_z(0.7).transpose().apply(local.position)
@@ -463,7 +448,7 @@ fn refraction_is_applied_once_in_observation_and_resets_for_each_frame() {
     observe_sky(&state, &observer, 5.0, false, &mut sky, &mut StepTimes::default()).unwrap();
     let raw = sky.moon.position;
     observe_sky(&state, &observer, 5.0, true, &mut sky, &mut StepTimes::default()).unwrap();
-    assert_eq!(sky.moon.position, astroterm::astro::apply_refraction(raw));
+    assert_eq!(sky.moon.position, astroterm::astro::refract_direction(raw));
     let once = sky.clone();
     astroterm::sky::refract_sky_positions(&mut sky);
     assert_eq!(sky, once);

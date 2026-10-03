@@ -1,14 +1,14 @@
 //! One-shot direct evaluation retained for reference fixtures and library compatibility. The runtime frame loop
 //! owns persistent SimulationState and invokes simulation, observation and projection explicitly.
 use super::{FrameTime, SimulationState, Sky, observe_sky, prepare_observer, update_simulation};
-use crate::astro::{Observer, apply_refraction};
+use crate::astro::{Observer, refract_direction};
 use crate::timing::StepTimes;
 
 pub fn update_sky_positions(
     sky: &mut Sky,
     julian_date_ut1: f64,
     observer: &Observer,
-    magnitude_threshold: f32,
+    magnitude_threshold: f64,
     times: &mut StepTimes,
 ) {
     let time = FrameTime::from_utc(julian_date_ut1);
@@ -24,12 +24,12 @@ pub fn refract_sky_positions(sky: &mut Sky) {
         return;
     }
     for star in &mut sky.stars {
-        star.position = apply_refraction(star.position);
+        star.position = refract_direction(star.position);
     }
     for planet in &mut sky.planets {
-        planet.position = apply_refraction(planet.position);
+        planet.position = refract_direction(planet.position);
     }
-    sky.moon.position = apply_refraction(sky.moon.position);
+    sky.moon.position = refract_direction(sky.moon.position);
     sky.refracted = true;
 }
 
@@ -51,7 +51,8 @@ mod tests {
         let sentinel = crate::astro::Horizontal {
             azimuth: 123.0,
             altitude: -123.0,
-        };
+        }
+        .to_unit_vector();
         for star in &mut sky.stars {
             star.position = sentinel;
         }
@@ -64,7 +65,8 @@ mod tests {
         );
         refract_sky_positions(&mut sky);
         assert!(sky.stars[..count].iter().all(|s| s.position != sentinel));
-        assert_eq!(sky.stars.len(), count);
+        assert!(sky.stars.len() >= count);
+        assert!(sky.stars.iter().all(|star| star.position != sentinel));
         assert_eq!(sky.stars[count - 1].magnitude, threshold);
     }
 
@@ -80,11 +82,12 @@ mod tests {
             longitude: -71.0589 * PI / 180.0,
         };
         let mut sky = Sky::from_catalog(&load_embedded_catalog().expect("embedded catalog loads"));
-        update_sky_positions(&mut sky, julian_date, &boston, f32::INFINITY, &mut StepTimes::default());
+        update_sky_positions(&mut sky, julian_date, &boston, f64::INFINITY, &mut StepTimes::default());
         sky
     }
 
-    fn assert_position(actual: crate::astro::Horizontal, azimuth: f64, altitude: f64, epsilon: f64) {
+    fn assert_position(actual: crate::astro::Vector3, azimuth: f64, altitude: f64, epsilon: f64) {
+        let actual = crate::astro::Horizontal::from_vector(actual);
         eprintln!(
             "DEV az {:.5} alt {:.5}",
             actual.azimuth - azimuth,
@@ -141,9 +144,15 @@ mod tests {
             geometric.stars.iter().find(|s| s.id.0 == 5340).unwrap().position,
             refracted.stars.iter().find(|s| s.id.0 == 5340).unwrap().position,
         );
-        assert!(arcturus.1.altitude > arcturus.0.altitude && arcturus.1.azimuth == arcturus.0.azimuth);
-        assert!(refracted.planets[0].position.altitude > geometric.planets[0].position.altitude);
-        assert!(refracted.moon.position.altitude > geometric.moon.position.altitude);
+        let arcturus = (
+            crate::astro::Horizontal::from_vector(arcturus.0),
+            crate::astro::Horizontal::from_vector(arcturus.1),
+        );
+        assert!(arcturus.1.altitude > arcturus.0.altitude && (arcturus.1.azimuth - arcturus.0.azimuth).abs() < 1e-12);
+        assert!(
+            refracted.planets[0].horizontal_position().altitude > geometric.planets[0].horizontal_position().altitude
+        );
+        assert!(refracted.moon.horizontal_position().altitude > geometric.moon.horizontal_position().altitude);
     }
 
     #[test]

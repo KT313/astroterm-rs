@@ -5,7 +5,7 @@
 //! epoch and equinox J2000; `mag` (V); `pmra` (multiplied by cos dec) and `pmdec` in milliarcseconds per year; `ci`
 //! (B-V); `spect`; `proper`; and `bayer`, `flam`, `con`, `hr`, `hip`, `tyc`, `gaia` for designations. Missing values
 //! are empty fields. `dist` and `x0/y0/z0` are parsecs; `vx/vy/vz` and `rv` are km/s. Validated space-motion
-//! inputs are retained separately; the current sky still uses angular proper motion.
+//! inputs feed the stellar family; precise RA/Dec define the initial direction rather than rounded x0/y0/z0.
 
 use std::f64::consts::PI;
 use std::fs::File;
@@ -209,6 +209,24 @@ fn parse_star(
         },
         radial_velocity,
     );
+
+    // reject finite source numbers whose derived motion cannot be represented over the computational interval
+    if !ra_motion.is_finite() {
+        return Err(CatalogError::MalformedDatasetRow { line, column: "pmra" });
+    }
+    if let Some(space) = space_motion {
+        let (start, end) = crate::astro::models::stars::computational_years();
+        let span = start.abs().max(end.abs());
+        if ![space.velocity.x, space.velocity.y, space.velocity.z]
+            .into_iter()
+            .map(|v| v / space.distance_pc * span)
+            .fold(0.0_f64, f64::hypot)
+            .is_finite()
+        {
+            return Err(CatalogError::MalformedDatasetRow { line, column: "dist" });
+        }
+    }
+
     Ok(Some(CatalogStar {
         id,
         space_motion,
@@ -218,6 +236,7 @@ fn parse_star(
         right_ascension: (ra_hours * 15.0).to_radians(),
         declination,
         ra_motion,
+        ra_motion_cos_dec: pm_ra,
         dec_motion: pm_dec,
         magnitude,
         spectral_type,
@@ -462,6 +481,49 @@ mod tests {
         assert_eq!(sky.constellations.len(), 1);
         let [a, b] = sky.constellations[0].segments[0];
         assert_eq!((sky.stars[a].id, sky.stars[b].id), (StarId(1), StarId(5)));
+    }
+
+    #[test]
+    fn distance_unknown_polar_star_preserves_tangential_ra_motion() {
+        let source = parse_motion_row("12,90,1,,,,,,,,1000,,");
+        let star = crate::sky::Star::from_catalog_star(&source);
+        assert!(star.motion.distance_pc.is_none());
+        assert!((star.motion.w.y + 1000.0 * MILLIARCSECONDS_TO_RADIANS).abs() < 1e-15);
+        assert!(star.motion.evaluate(10.0, star.magnitude).direction.y < 0.0);
+    }
+
+    #[test]
+    fn finite_but_unrepresentable_scaled_velocity_is_rejected() {
+        let csv = b"ra,dec,mag,dist,rv\n1,2,3,1e-300,1e308\n";
+        assert_eq!(
+            parse_athyg(csv.as_slice()).unwrap_err(),
+            CatalogError::MalformedDatasetRow {
+                line: 2,
+                column: "dist"
+            }
+        );
+    }
+
+    #[test]
+    fn barnard_vectors_keep_precise_catalog_direction_and_brighten_towards_approach() {
+        // AT-HYG v4 row 1794252, HIP 87937. Cartesian positions are rounded to 0.0001 pc; RA/Dec retain precision.
+        let star = parse_motion_row(
+            "17.96347159,4.69327996,9.776,1.8282,-0.0174,-1.822,0.1496,-5.82,117.51,80.47,-801.55,10362.39,-110.468",
+        );
+        let source = star.space_motion.unwrap();
+        assert!((source.velocity.y - 117.51 * (365.25 * 86400.0 / 3.085677581491367e13)).abs() < 1e-15);
+        let prepared = crate::sky::Star::from_catalog_star(&star);
+        let expected = Equatorial {
+            right_ascension: star.right_ascension,
+            declination: star.declination,
+        }
+        .to_unit_vector();
+        assert_eq!(prepared.motion.u0, expected);
+        assert_eq!(prepared.motion.distance_pc, Some(1.8282));
+        let (start, end) = crate::astro::models::stars::computational_years();
+        let (closest, ratio) = prepared.motion.closest_approach(start, end);
+        assert!(closest > 0.0 && closest < end && ratio < 1.0);
+        assert!(prepared.motion.evaluate(closest, prepared.magnitude).magnitude < prepared.magnitude - 0.5);
     }
 
     /// A few rows in the AT-HYG v4 layout (shortened to the columns used plus a few others).

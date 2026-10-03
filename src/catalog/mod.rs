@@ -87,6 +87,8 @@ pub struct CatalogStar {
     pub declination: f64,
     /// Proper motion of the right ascension and declination themselves, in radians per year.
     pub ra_motion: f64,
+    /// Tangential RA motion (dRA/dt · cos declination), radians/Julian year; retained even at a pole.
+    pub ra_motion_cos_dec: f64,
     pub dec_motion: f64,
     pub magnitude: f32,
     /// Morgan-Keenan spectral class and subclass, e.g. `*b"K1"`; blank if unknown.
@@ -180,6 +182,7 @@ fn convert_bsc5_entry(entry: &Bsc5Entry, name: Option<NameId>) -> CatalogStar {
         right_ascension: entry.right_ascension,
         declination: entry.declination,
         ra_motion: entry.ra_motion,
+        ra_motion_cos_dec: entry.ra_motion * entry.declination.cos(),
         dec_motion: entry.dec_motion,
         magnitude: entry.magnitude,
         spectral_type: entry.spectral_type,

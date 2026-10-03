@@ -1,6 +1,7 @@
 //! Celestial objects: what they are and where they are. How they look is up to the renderer.
 
-use crate::astro::{Equatorial, Horizontal, MoonOrbit, MoonPhase, PlanetOrbit};
+use crate::astro::models::stars::StellarMotion;
+use crate::astro::{Equatorial, Horizontal, MoonOrbit, MoonPhase, PlanetOrbit, Vector3};
 use crate::catalog::{
     CatalogStar, Designation, JUPITER_ORBIT, MARS_ORBIT, MERCURY_ORBIT, MOON_ORBIT, NEPTUNE_ORBIT, NameId,
     SATURN_ORBIT, StarId, URANUS_ORBIT, VENUS_ORBIT,
@@ -14,11 +15,12 @@ pub struct Star {
     pub name: Option<NameId>,
     /// Catalog designation, e.g. a Bayer letter or an HR number, for labelling stars without a name.
     pub designation: Option<Designation>,
-    /// J2000 position.
-    pub catalog_position: Equatorial,
-    /// Radians per year.
-    pub proper_motion: Equatorial,
-    pub magnitude: f32,
+    pub motion: StellarMotion,
+    /// Catalog magnitude at J2000; evaluated magnitude belongs to ObservedStar.
+    pub magnitude: f64,
+    pub brightness_key: f64,
+    pub motion_bound: f64,
+    pub singular_fallback: bool,
     /// Morgan-Keenan spectral class and subclass as in the catalog, e.g. `*b"K1"`; blank if unknown.
     pub spectral_type: [u8; 2],
     /// B-V color index, if known.
@@ -30,19 +32,25 @@ pub struct Star {
 impl Star {
     /// A star from its catalog entry.
     pub fn from_catalog_star(entry: &CatalogStar) -> Star {
+        let direction = Equatorial {
+            right_ascension: entry.right_ascension,
+            declination: entry.declination,
+        };
+        let mut motion = entry.space_motion.map_or_else(
+            || StellarMotion::from_sky_motion(direction, entry.ra_motion_cos_dec, entry.dec_motion),
+            |space| StellarMotion::from_direction_velocity(direction, space.distance_pc, space.velocity),
+        );
+        let singular_fallback = motion.remove_singular_distance();
+        let magnitude = f64::from(entry.magnitude);
         Star {
             id: entry.id,
             name: entry.name,
             designation: entry.designation,
-            catalog_position: Equatorial {
-                right_ascension: entry.right_ascension,
-                declination: entry.declination,
-            },
-            proper_motion: Equatorial {
-                right_ascension: entry.ra_motion,
-                declination: entry.dec_motion,
-            },
-            magnitude: entry.magnitude,
+            brightness_key: motion.brightest_magnitude(magnitude),
+            motion_bound: motion.motion_bound(),
+            motion,
+            magnitude,
+            singular_fallback,
             spectral_type: entry.spectral_type,
             color_index: entry.color_index,
             has_data: entry.has_data,
@@ -50,21 +58,31 @@ impl Star {
     }
 }
 
-/// Per-frame stellar output. Only drawable candidates are materialized; immutable model inputs stay in SkyCatalog.
+/// Per-frame output for the union of candidates and constellation endpoints, in catalog-index order.
+/// `drawable` uses the current magnitude; immutable model inputs stay in SkyCatalog.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ObservedStar {
+    pub source_index: usize,
+    pub drawable: bool,
     pub id: StarId,
     pub name: Option<NameId>,
     pub designation: Option<Designation>,
-    pub magnitude: f32,
+    pub magnitude: f64,
     pub spectral_type: [u8; 2],
     pub color_index: Option<f32>,
     pub has_data: bool,
-    pub position: Horizontal,
+    /// Unit horizontal direction: East, North, Up; observer corrections have already been applied.
+    pub position: Vector3,
 }
 impl ObservedStar {
-    pub fn from_star(star: &Star, position: Horizontal) -> Self {
+    pub fn horizontal_position(&self) -> Horizontal {
+        Horizontal::from_vector(self.position)
+    }
+
+    pub fn from_star(star: &Star, source_index: usize, position: Vector3) -> Self {
         Self {
+            source_index,
+            drawable: true,
             id: star.id,
             name: star.name,
             designation: star.designation,
@@ -130,7 +148,8 @@ impl PlanetKind {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Planet {
     pub kind: PlanetKind,
-    pub position: Horizontal,
+    /// Unit horizontal direction: East, North, Up; observer corrections have already been applied.
+    pub position: Vector3,
 }
 
 /// The Moon.
@@ -139,7 +158,19 @@ pub struct Moon {
     pub orbit: &'static MoonOrbit,
     pub phase: MoonPhase,
     pub illumination: super::MoonIllumination,
-    pub position: Horizontal,
+    /// Unit horizontal direction: East, North, Up; observer corrections have already been applied.
+    pub position: Vector3,
+}
+
+impl Planet {
+    pub fn horizontal_position(&self) -> Horizontal {
+        Horizontal::from_vector(self.position)
+    }
+}
+impl Moon {
+    pub fn horizontal_position(&self) -> Horizontal {
+        Horizontal::from_vector(self.position)
+    }
 }
 
 /// A constellation figure as segments between indices into the star table.
@@ -155,7 +186,7 @@ pub fn create_planets() -> Vec<Planet> {
         .iter()
         .map(|&kind| Planet {
             kind,
-            position: Horizontal::default(),
+            position: Horizontal::default().to_unit_vector(),
         })
         .collect()
 }
@@ -166,7 +197,7 @@ pub fn create_moon() -> Moon {
         orbit: &MOON_ORBIT,
         phase: MoonPhase::New,
         illumination: super::MoonIllumination::default(),
-        position: Horizontal::default(),
+        position: Horizontal::default().to_unit_vector(),
     }
 }
 

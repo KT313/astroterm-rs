@@ -7,7 +7,7 @@ use crate::astro::models::{
     moons::EARTH_RADIUS_AU,
     orientation::{compute_body_fixed_rotation, compute_horizon_rotation},
 };
-use crate::astro::{Horizontal, Matrix3, Observer, compute_star_position, correct_for_parallax};
+use crate::astro::{Horizontal, Matrix3, Observer, correct_for_parallax};
 use crate::timing::StepTimes;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -77,8 +77,30 @@ pub fn prepare_observer(
 pub fn observe_sky(
     simulation: &SimulationState,
     observer: &ObserverState,
-    magnitude_threshold: f32,
+    magnitude_threshold: f64,
     refraction: bool,
+    output: &mut ObservedSky,
+    times: &mut StepTimes,
+) -> Result<(), SimulationError> {
+    observe_sky_candidates(
+        simulation,
+        observer,
+        magnitude_threshold,
+        refraction,
+        None,
+        output,
+        times,
+    )
+}
+
+/// Optional catalog indices limit candidate work, not constellation endpoints or the values computed for them.
+/// Outside the computational interval all stars are checked, since interval-specific selection is invalid there.
+pub fn observe_sky_candidates(
+    simulation: &SimulationState,
+    observer: &ObserverState,
+    magnitude_threshold: f64,
+    refraction: bool,
+    candidates: Option<&[usize]>,
     output: &mut ObservedSky,
     times: &mut StepTimes,
 ) -> Result<(), SimulationError> {
@@ -92,32 +114,69 @@ pub fn observe_sky(
     let relative_moon = moon.position - observer.state.position;
     let relative_sun = bodies[0].position - observer.state.position;
 
-    // stars need no finite-distance site correction yet
+    // union drawable candidates and constellation endpoints before applying any observer corrections
     times.measure("Stellar observation", || {
-        let count = output.catalog.count_bright_stars(magnitude_threshold);
+        let inside = crate::astro::COMPUTATIONAL_INTERVAL.contains(tt);
+        let count = if inside {
+            output.catalog.count_bright_stars(magnitude_threshold)
+        } else {
+            output.catalog.stars.len()
+        };
+        let selected = candidates.filter(|_| inside).map(|indices| {
+            let mut indices: Vec<_> = indices.iter().copied().filter(|&i| i < count).collect();
+            indices.sort_unstable();
+            indices.dedup();
+            indices
+        });
+        let mut indices: Vec<_> = selected.clone().unwrap_or_else(|| (0..count).collect());
+        indices.extend(
+            output
+                .catalog
+                .endpoint_indices
+                .iter()
+                .copied()
+                .filter(|&i| selected.is_some() || i >= count),
+        );
+        if selected.is_some() {
+            indices.sort_unstable();
+            indices.dedup();
+        }
+        output.magnitude_threshold = magnitude_threshold;
         output.stars.clear();
-        output.stars.extend(output.catalog.stars[..count].iter().map(|star| {
-            let direction = compute_star_position(star.catalog_position, star.proper_motion, tt).to_unit_vector();
-            ObservedStar::from_star(
-                star,
-                Horizontal::from_vector(observer.inertial_to_horizon.apply(direction)),
-            )
-        }));
+        output.runtime_singular_count = 0;
+        let years = crate::astro::models::stars::years_since_j2000(tt);
+        for index in indices {
+            let star = &output.catalog.stars[index];
+            let sample = star.motion.evaluate(years, star.magnitude);
+            let mut observed =
+                ObservedStar::from_star(star, index, observer.inertial_to_horizon.apply(sample.direction));
+            observed.magnitude = sample.magnitude;
+            observed.drawable = selected
+                .as_ref()
+                .map_or(index < count, |indices| indices.binary_search(&index).is_ok());
+            observed.drawable &= sample.magnitude <= magnitude_threshold;
+            output.runtime_singular_count += usize::from(sample.used_singular_fallback);
+            output.stars.push(observed);
+        }
     });
 
     // finite bodies share subtraction and rotation; keep the inherited lunar parallax until the site upgrade
     times.measure("Body observation", || {
         for (planet, state) in output.planets.iter_mut().zip(bodies) {
-            planet.position = Horizontal::from_vector(
-                observer
-                    .inertial_to_horizon
-                    .apply(state.position - observer.state.position),
-            );
+            planet.position = observer
+                .inertial_to_horizon
+                .apply(state.position - observer.state.position)
+                .normalized();
         }
-        output.moon.position = Horizontal::from_vector(observer.inertial_to_horizon.apply(relative_moon));
+        output.moon.position = observer.inertial_to_horizon.apply(relative_moon).normalized();
         if observer.legacy_lunar_parallax {
-            output.moon.position = correct_for_parallax(output.moon.position, relative_moon.length() / EARTH_RADIUS_AU);
+            output.moon.position = correct_for_parallax(
+                Horizontal::from_vector(output.moon.position),
+                relative_moon.length() / EARTH_RADIUS_AU,
+            )
+            .to_unit_vector();
         }
+
         output.moon.illumination = super::compute_moon_illumination(
             relative_moon,
             relative_sun,
