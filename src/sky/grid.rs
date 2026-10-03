@@ -28,6 +28,12 @@ pub struct SelectionStats {
     pub brute_force: bool,
 }
 
+/// Intermediate region selection, consumed by the independently timed brightness pass.
+pub(crate) struct SelectedRegion {
+    cells: Vec<usize>,
+    brute_force: bool,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct SkyGrid {
     pub offsets: crate::catalog::cache::CatalogArray<usize>,
@@ -150,20 +156,24 @@ impl SkyGrid {
         refraction: bool,
         indices: &mut Vec<usize>,
     ) -> SelectionStats {
-        indices.clear();
+        let region = self.select_region(region, observer, refraction);
+        self.select_brightness(stars, &region, threshold, indices)
+    }
+
+    /// Select conservative cells only; brightness is a separate pass over their sorted prefixes.
+    pub(crate) fn select_region(
+        &self,
+        region: SkyRegion,
+        observer: &super::ObserverState,
+        refraction: bool,
+    ) -> SelectedRegion {
         if !crate::astro::COMPUTATIONAL_INTERVAL.contains(observer.time.tt) {
-            indices.extend(0..stars.len());
-            return SelectionStats {
-                cells: CELL_COUNT,
-                candidates: indices.len(),
+            return SelectedRegion {
+                cells: Vec::new(),
                 brute_force: true,
             };
         }
-        let mut cells = 0;
-        let mut visit = |cell: usize| {
-            cells += 1;
-            append_bright(stars, self.offsets[cell]..self.offsets[cell + 1], threshold, indices);
-        };
+        let mut cells = Vec::new();
         match region {
             SkyRegion::Cone { center, radius } if radius < 150_f64.to_radians() => {
                 let margin = ALWAYS_CHECKED_ANGLE
@@ -184,22 +194,49 @@ impl SkyGrid {
                     }
                     for child in parent * 16..(parent + 1) * 16 {
                         if !fine || self.fine_caps[child].intersects(center, radius) {
-                            visit(child);
+                            cells.push(child);
                         }
                     }
                 }
             }
             _ => {
                 for cell in 0..CELL_COUNT {
-                    visit(cell);
+                    cells.push(cell);
                 }
             }
         }
-        append_bright(stars, self.offsets[CELL_COUNT]..stars.len(), threshold, indices);
-        SelectionStats {
+        SelectedRegion {
             cells,
-            candidates: indices.len(),
             brute_force: false,
+        }
+    }
+
+    /// Use interval-wide magnitude bounds, including the always-checked tail. Outside the supported interval,
+    /// every star is returned; only the later current-magnitude filter may reject it.
+    pub(crate) fn select_brightness(
+        &self,
+        stars: &StarStorage,
+        region: &SelectedRegion,
+        threshold: f64,
+        indices: &mut Vec<usize>,
+    ) -> SelectionStats {
+        indices.clear();
+        if region.brute_force {
+            indices.extend(0..stars.len());
+        } else {
+            for &cell in &region.cells {
+                append_bright(stars, self.offsets[cell]..self.offsets[cell + 1], threshold, indices);
+            }
+            append_bright(stars, self.offsets[CELL_COUNT]..stars.len(), threshold, indices);
+        }
+        SelectionStats {
+            cells: if region.brute_force {
+                CELL_COUNT
+            } else {
+                region.cells.len()
+            },
+            candidates: indices.len(),
+            brute_force: region.brute_force,
         }
     }
 }

@@ -83,16 +83,63 @@ pub struct ProjectedSky<'a> {
     pub horizon_labels: Vec<(Cell, &'static str)>,
 }
 
+/// Project without retaining timing diagnostics (reference fixtures and library callers).
 pub fn project_sky<'a>(sky: &'a ObservedSky, view: &View, viewport: Viewport) -> ProjectedSky<'a> {
+    project_sky_with_times(sky, view, viewport, &mut crate::timing::StepTimes::default())
+}
+
+/// Camera-stage coordinator. Exact visibility and draw order stay separate from observation's conservative filters.
+pub fn project_sky_with_times<'a>(
+    sky: &'a ObservedSky,
+    view: &View,
+    viewport: Viewport,
+    times: &mut crate::timing::StepTimes,
+) -> ProjectedSky<'a> {
     let camera = CartesianCamera::new(view);
-    let cell = |position| {
-        camera
-            .project(position)
-            .filter(|p| p.is_visible())
-            .map(|p| viewport.to_cell_cartesian(p))
-    };
-    let mut stars: Vec<_> = sky
-        .stars
+    let mut stars = times.measure("Star projection", || project_visible_stars(sky, &camera, viewport));
+    times.measure("Star draw order", || sort_stars_for_drawing(&mut stars));
+    let (planets, moon) = times.measure("Body projection", || project_bodies(sky, view, &camera, viewport));
+    let constellations = times.measure("Constellation projection", || {
+        project_constellations(sky, view, viewport)
+    });
+    let (horizon, horizon_labels) = times.measure("Horizon projection", || {
+        (
+            project_horizon_line(view, viewport),
+            project_horizon_labels(view, viewport),
+        )
+    });
+    ProjectedSky {
+        outside_accuracy_range: sky.outside_accuracy_range,
+        selection: sky.selection,
+        evaluated_stars: sky.stars.len(),
+        catalog_singular_count: sky.catalog.singular_count,
+        runtime_singular_count: sky.runtime_singular_count,
+        stars,
+        planets,
+        moon,
+        constellations,
+        names: &sky.names,
+        facing: view.is_facing(),
+        viewport,
+        horizon,
+        horizon_labels,
+    }
+}
+
+fn project_visible_cell(camera: &CartesianCamera, viewport: Viewport, position: Vector3) -> Option<Cell> {
+    camera
+        .project(position)
+        .filter(|p| p.is_visible())
+        .map(|p| viewport.to_cell_cartesian(p))
+}
+
+fn project_visible_stars<'a>(
+    sky: &'a ObservedSky,
+    camera: &CartesianCamera,
+    viewport: Viewport,
+) -> Vec<ProjectedStar<'a>> {
+    let cell = |position| project_visible_cell(camera, viewport, position);
+    sky.stars
         .iter()
         .filter(|star| star.drawable)
         .filter_map(|star| {
@@ -101,7 +148,10 @@ pub fn project_sky<'a>(sky: &'a ObservedSky, view: &View, viewport: Viewport) ->
                 cell: Some(point),
             })
         })
-        .collect();
+        .collect()
+}
+
+fn sort_stars_for_drawing(stars: &mut [ProjectedStar<'_>]) {
     stars.sort_unstable_by(|a, b| {
         if a.star.magnitude == b.star.magnitude {
             a.star.id.cmp(&b.star.id)
@@ -109,6 +159,15 @@ pub fn project_sky<'a>(sky: &'a ObservedSky, view: &View, viewport: Viewport) ->
             b.star.magnitude.total_cmp(&a.star.magnitude)
         }
     });
+}
+
+fn project_bodies(
+    sky: &ObservedSky,
+    view: &View,
+    camera: &CartesianCamera,
+    viewport: Viewport,
+) -> (Vec<ProjectedPlanet>, ProjectedMoon) {
+    let cell = |position| project_visible_cell(camera, viewport, position);
     let planets = sky
         .planets
         .iter()
@@ -123,14 +182,17 @@ pub fn project_sky<'a>(sky: &'a ObservedSky, view: &View, viewport: Viewport) ->
         cell: cell(sky.moon.position),
         lit_on_right: is_lit_on_right(view, sky.moon.position, sky.sun().position),
     };
+    (planets, moon)
+}
+
+fn project_constellations(sky: &ObservedSky, view: &View, viewport: Viewport) -> Vec<ProjectedConstellation> {
     let find_star = |index| {
         sky.stars
             .binary_search_by_key(&index, |star| star.source_index)
             .ok()
             .map(|i| &sky.stars[i])
     };
-    let constellations = sky
-        .constellations
+    sky.constellations
         .iter()
         .filter_map(|figure| {
             let endpoints = figure
@@ -155,23 +217,7 @@ pub fn project_sky<'a>(sky: &'a ObservedSky, view: &View, viewport: Viewport) ->
                 arcs,
             })
         })
-        .collect();
-    ProjectedSky {
-        outside_accuracy_range: sky.outside_accuracy_range,
-        selection: sky.selection,
-        evaluated_stars: sky.stars.len(),
-        catalog_singular_count: sky.catalog.singular_count,
-        runtime_singular_count: sky.runtime_singular_count,
-        stars,
-        planets,
-        moon,
-        constellations,
-        names: &sky.names,
-        facing: view.is_facing(),
-        viewport,
-        horizon: project_horizon_line(view, viewport),
-        horizon_labels: project_horizon_labels(view, viewport),
-    }
+        .collect()
 }
 
 /// Whether, in this view, the direction from the Moon towards the Sun points to the right of the screen.

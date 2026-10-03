@@ -4,7 +4,10 @@ mod cartesian;
 mod maps;
 pub use cartesian::{CartesianCamera, ScreenPoint};
 mod sky;
-pub use sky::{ProjectedArc, ProjectedMoon, ProjectedPlanet, ProjectedSky, ProjectedStar, Viewport, project_sky};
+pub use sky::{
+    ProjectedArc, ProjectedMoon, ProjectedPlanet, ProjectedSky, ProjectedStar, Viewport, project_sky,
+    project_sky_with_times,
+};
 #[cfg(test)]
 pub(crate) use sky::{
     compute_visible_horizon_half_range, project_constellation_segment, project_horizon_labels, project_horizon_line,

@@ -1,8 +1,9 @@
 //! Observer-dependent transformations and corrections. The preparation coordinator requests emission coverage;
 //! observation itself reads immutable samples and never evaluates a model or sees a camera.
-use super::{
-    FrameTime, ObservedSky, ObservedStar, PlanetKind, SimulationError, SimulationState, refract_sky_positions,
-};
+mod stages;
+use stages::*;
+
+use super::{FrameTime, ObservedSky, PlanetKind, SimulationError, SimulationState, refract_sky_positions};
 use crate::astro::models::{
     BodyId, BodyState,
     orientation::{compute_body_fixed_rotation, compute_horizon_rotation, compute_site_state},
@@ -134,13 +135,17 @@ pub fn observe_sky(
     times: &mut StepTimes,
 ) -> Result<(), SimulationError> {
     let mut candidates = std::mem::take(&mut output.candidate_indices);
-    output.selection = times.measure("Star selection", || {
-        output.catalog.grid.select(
+    let selected_region = times.measure("Region filtering", || {
+        output
+            .catalog
+            .grid
+            .select_region(region, observer, refraction && observer.atmosphere)
+    });
+    output.selection = times.measure("Brightness bounds", || {
+        output.catalog.grid.select_brightness(
             &output.catalog.stars,
-            region,
-            observer,
+            &selected_region,
             magnitude_threshold,
-            refraction && observer.atmosphere,
             &mut candidates,
         )
     });
@@ -168,95 +173,35 @@ pub fn observe_sky_candidates(
     output: &mut ObservedSky,
     times: &mut StepTimes,
 ) -> Result<(), SimulationError> {
-    // resolve all body dependencies before writing output, so missing coverage is explicit
+    // resolve every body dependency before changing output; all following passes are infallible
     let tt = observer.time.tt;
-    let bodies = PlanetKind::ALL
-        .map(|kind| simulation.evaluate_body(body_id(kind), observer.emission_tt[body_id(kind) as usize]))
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()?;
-    let moon = simulation.evaluate_body(BodyId::Moon, observer.emission_tt[BodyId::Moon as usize])?;
-    let relative_moon = moon.position - observer.state.position;
-    let relative_sun = bodies[0].position - observer.state.position;
+    let bodies = times.measure("Body sampling", || sample_body_states(simulation, observer))?;
 
-    // union drawable candidates and constellation endpoints before applying any observer corrections
-    times.measure("Stellar observation", || {
-        let inside = crate::astro::COMPUTATIONAL_INTERVAL.contains(tt);
-        let selected: Vec<_> = if !inside {
-            (0..output.catalog.stars.len()).collect()
-        } else if let Some(indices) = candidates {
-            indices
-                .iter()
-                .copied()
-                .filter(|&i| {
-                    i < output.catalog.stars.len() && output.catalog.stars.brightness_key(i) <= magnitude_threshold
-                })
-                .collect()
-        } else {
-            (0..output.catalog.stars.len())
-                .filter(|&i| output.catalog.stars.brightness_key(i) <= magnitude_threshold)
-                .collect()
-        };
-        let mut selected = selected;
-        selected.sort_unstable();
-        selected.dedup();
-        let mut candidates = selected.into_iter().peekable();
-        let mut endpoints = output.catalog.endpoint_indices.iter().copied().peekable();
-        output.magnitude_threshold = magnitude_threshold;
-        output.stars.clear();
-        output.runtime_singular_count = 0;
-        let years = crate::astro::models::stars::years_since_j2000(tt);
-        while candidates.peek().is_some() || endpoints.peek().is_some() {
-            let index = candidates
-                .peek()
-                .copied()
-                .unwrap_or(usize::MAX)
-                .min(endpoints.peek().copied().unwrap_or(usize::MAX));
-            let drawable = candidates.peek() == Some(&index);
-            if drawable {
-                candidates.next();
-            }
-            if endpoints.peek() == Some(&index) {
-                endpoints.next();
-            }
-            let star = output.catalog.stars.get(index);
-            let sample = star.motion.evaluate(years, star.magnitude);
-            let mut observed = ObservedStar::from_star(
-                &star,
-                index,
-                observer
-                    .inertial_to_horizon
-                    .apply(apply_aberration(sample.direction, observer.state.velocity)),
-            );
-            observed.magnitude = sample.magnitude;
-            observed.drawable = drawable;
-            observed.drawable &= sample.magnitude <= magnitude_threshold;
-            output.runtime_singular_count += usize::from(sample.used_singular_fallback);
-            output.stars.push(observed);
-        }
+    // preserve conservative eligibility separately from current brightness and constellation membership
+    let selected = times.measure("Candidate validation", || {
+        filter_brightness_candidates(&output.catalog, tt, magnitude_threshold, candidates)
+    });
+    times.measure("Constellation endpoints", || {
+        include_constellation_endpoints(selected, output)
+    });
+    times.measure("Stellar motion", || evaluate_stellar_motion(tt, output));
+    times.measure("Current brightness", || {
+        filter_current_magnitudes(magnitude_threshold, output)
     });
 
-    // finite bodies share exact topocentric subtraction, aberration and orientation
-    times.measure("Body observation", || {
-        for (planet, state) in output.planets.iter_mut().zip(bodies) {
-            planet.position = observer
-                .inertial_to_horizon
-                .apply(apply_aberration(
-                    state.position - observer.state.position,
-                    observer.state.velocity,
-                ))
-                .normalized();
-        }
-        output.moon.position = observer
-            .inertial_to_horizon
-            .apply(apply_aberration(relative_moon, observer.state.velocity));
-
-        output.moon.illumination = super::compute_moon_illumination(
-            relative_moon,
-            relative_sun,
-            crate::astro::models::orientation::j2000_ecliptic_north(),
-        );
-        output.moon.phase = output.moon.illumination.named_phase();
+    // form observer-relative geometry before the direction-only corrections
+    let (relative_moon, relative_sun) = times.measure("Observer subtraction", || {
+        subtract_observer_position(bodies, observer, output)
     });
+    times.measure("Moon illumination", || {
+        update_moon_illumination(relative_moon, relative_sun, output)
+    });
+    times.measure("Aberration", || apply_sky_aberration(observer.state.velocity, output));
+    times.measure("Horizon rotation", || {
+        rotate_sky_to_horizon(observer.inertial_to_horizon, output)
+    });
+
+    // publish coverage and optionally refract the completed horizontal directions
     output.outside_accuracy_range = crate::astro::accuracy::needs_accuracy_warning(tt);
     output.refracted = false;
     if refraction && observer.atmosphere {

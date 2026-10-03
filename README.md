@@ -55,6 +55,13 @@ Each module only depends on the ones above it:
 `src/main.rs` holds the processing flow: parse options → build the sky → per frame: poll input and apply controls,
 refresh simulation → prepare observer/emission samples → observe → project → render. Rendering only reads the sky, so other renderers can be added beside `TerminalRenderer`.
 
+Within observation, `src/sky/observation.rs` explicitly sequences region filtering, conservative brightness bounds,
+body sampling, candidate validation, constellation endpoint inclusion, stellar motion, current brightness filtering,
+observer subtraction, Moon illumination, aberration, horizon rotation and optional refraction. Each pass has a
+dedicated function and timer. `src/projection/sky.rs` separately times visible-star projection, draw-order sorting,
+body projection, constellation projection and horizon projection. Exact visibility is checked after corrections;
+early filtering is conservative, and constellation endpoints remain available even when not drawable as stars.
+
 ## Differences from the C version
 
 New:
@@ -95,8 +102,11 @@ New:
 - Dynamic names: when fewer than 5 objects in view have labels (e.g. after zooming in), the brightest stars in view
   are named too, with their catalog number (`HR 1234`) if they have no proper name. `--disable-dynamic-names` turns
   this off.
-- `--debug-frametimes` shows how long each step of a frame takes (position calculation, drawing, writing to the
-  terminal), including Simulation, Observation and Projection with per-family sub-steps, as exponential moving averages below the metadata, to find what needs optimizing.
+- `--debug-frametimes` shows Simulation, Observation, Projection, Draw and Present with their timed sub-steps as
+  exponential moving averages below the metadata. Observer geometry and light-time sampling have separate timers.
+  Repeated calls in the same scope are summed per frame before smoothing; identical names under different parents
+  stay separate. Parent totals include their children and are counted only once in the frame total. The complete
+  breakdown needs a tall terminal.
 
 Fixed:
 

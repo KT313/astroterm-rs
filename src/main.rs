@@ -13,7 +13,7 @@ use astroterm::astro::SimulationClock;
 use astroterm::catalog::{datasets::DatasetDirectories, load_embedded_cities};
 use astroterm::cli::{Arguments, Config, build_config, write_bash_completions};
 use astroterm::controls::{Control, apply_control};
-use astroterm::projection::project_sky;
+use astroterm::projection::project_sky_with_times;
 use astroterm::sky::{
     FrameTime, SimulationState, Sky, observe_sky, prepare_light_time_samples, prepare_observer, update_simulation,
 };
@@ -79,6 +79,7 @@ fn run_render_loop(config: &Config, sky: &mut Sky, renderer: &mut TerminalRender
 
     loop {
         let frame_start = Instant::now();
+        step_times.begin_frame();
 
         // handle key presses and terminal resizes
         let input = poll_frame_input(config.terminal.quit_on_any_key)?;
@@ -103,8 +104,14 @@ fn run_render_loop(config: &Config, sky: &mut Sky, renderer: &mut TerminalRender
         // observe at the current epoch, with exact body spin and observer corrections
         step_times
             .measure_steps("Observation", |steps| {
-                let mut observer = prepare_observer(&simulation_state, time, simulation.observer)?;
-                prepare_light_time_samples(&mut simulation_state, &mut observer, steps)?;
+                let mut observer = steps.measure("Observer geometry", || {
+                    prepare_observer(&simulation_state, time, simulation.observer)
+                })?;
+                steps.measure_steps("Light-time sampling", |steps| {
+                    prepare_light_time_samples(&mut simulation_state, &mut observer, steps)
+                })?;
+
+                // observation.rs owns the timed filtering, motion, aberration, rotation and refraction passes
                 observe_sky(
                     &simulation_state,
                     &observer,
@@ -118,7 +125,9 @@ fn run_render_loop(config: &Config, sky: &mut Sky, renderer: &mut TerminalRender
             .map_err(io::Error::other)?;
 
         // project the immutable observed sky for this camera, then render prepared screen geometry
-        let projected = step_times.measure("Projection", || project_sky(sky, &view, renderer.viewport()));
+        let projected = step_times.measure_steps("Projection", |steps| {
+            project_sky_with_times(sky, &view, renderer.viewport(), steps)
+        });
         renderer.render_frame(
             &projected,
             &view,

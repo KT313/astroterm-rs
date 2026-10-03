@@ -54,6 +54,64 @@ fn options() -> RenderOptions {
 }
 
 #[test]
+fn observation_and_projection_report_independent_ordered_passes() {
+    let mut simulation = SimulationState::default();
+    update(&mut simulation, J2000);
+    let observer = prepare_observation(&mut simulation, frame(J2000), Observer::default()).unwrap();
+    let mut sky = ObservedSky::new(catalog());
+    let mut times = StepTimes::default();
+    times.begin_frame();
+    times.measure_steps("Observation", |times| {
+        observe_sky(
+            &simulation,
+            &observer,
+            5.0,
+            true,
+            astroterm::sky::SkyRegion::All,
+            &mut sky,
+            times,
+        )
+        .unwrap();
+    });
+    let unchanged = sky.clone();
+    times.measure_steps("Projection", |times| {
+        astroterm::projection::project_sky_with_times(
+            &sky,
+            &View::default(),
+            Viewport { height: 41, width: 81 },
+            times,
+        );
+    });
+    assert_eq!(sky, unchanged);
+    let recorded: Vec<_> = times.steps().iter().map(|step| (step.name, step.depth)).collect();
+    assert_eq!(
+        recorded,
+        [
+            ("Observation", 0),
+            ("Region filtering", 1),
+            ("Brightness bounds", 1),
+            ("Body sampling", 1),
+            ("Candidate validation", 1),
+            ("Constellation endpoints", 1),
+            ("Stellar motion", 1),
+            ("Current brightness", 1),
+            ("Observer subtraction", 1),
+            ("Moon illumination", 1),
+            ("Aberration", 1),
+            ("Horizon rotation", 1),
+            ("Refraction", 1),
+            ("Projection", 0),
+            ("Star projection", 1),
+            ("Star draw order", 1),
+            ("Body projection", 1),
+            ("Constellation projection", 1),
+            ("Horizon projection", 1),
+        ]
+    );
+    assert!(times.steps().iter().all(|step| step.average_seconds.is_finite()));
+}
+
+#[test]
 fn immutable_simulation_supports_multiple_sites_and_observed_sky_multiple_views() {
     let mut simulation = SimulationState::default();
     update(&mut simulation, J2000);
