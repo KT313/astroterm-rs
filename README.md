@@ -100,9 +100,9 @@ Each module only depends on the ones above it:
 | `terminal` | Character/pixel renderer enum, protocol detection, text overlays, input and session restoration |
 | `cli` | Arguments, validated `Config` (simulation, view, render and terminal settings), bash completions |
 
-`src/main.rs` is the compact entry point: parse options → build the sky → render → report. Its startup,
-terminal-lifetime and reporting helpers live in `src/helpers.rs`. `src/pipeline.rs` keeps `prepare_frame_data`
-and `run_render_loop` together: prepare immutable inputs once, then per frame poll input and apply controls →
+`src/main.rs` is the compact entry point: parse options → build the sky → render → report. Startup,
+terminal-lifetime, frame-stage and reporting helpers live in `src/helpers.rs`. `src/pipeline.rs` keeps
+`prepare_frame_data` and `run_render_loop` together: prepare immutable inputs once, then per frame poll input and apply controls →
 refresh simulation → prepare observer/emission samples → observe → project → render. Both modules are private
 to the binary. The renderer enum selects characters or pixels; both read the same observed sky. Projection
 uses cell or pixel viewport units respectively.
