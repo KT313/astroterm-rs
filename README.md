@@ -389,11 +389,17 @@ The orientation family owns the WGS84 shape and slow precession/nutation; observ
 position and rotation velocity with the complete orientation every frame. All current physical calculations use
 f64. Archived Kepler/Schlyter APIs exist only for historical reference comparisons.
 
-`make build-aggressive` builds a faster binary for the current machine into `target/aggressive-pgo/astroterm`:
-fat LTO, one codegen unit, `panic = "abort"`, `-C target-cpu=native`, then profile-guided optimization and BOLT,
-trained by running typical workloads in a pseudo-terminal (`scripts/pgo-training.sh`). Behavior is the same as the
-release build. It needs `cargo install cargo-pgo`, `rustup component add llvm-tools-preview` and BOLT (on Ubuntu
-`sudo apt install bolt-18`).
+`make build-aggressive` builds `target/aggressive/astroterm` using fat LTO, one codegen unit, `panic = "abort"`,
+and `-C target-cpu=native`. It requires no PGO/BOLT tools or training runs.
+
+`make build-aggressive-pgo` adds profile-guided optimization and BOLT, trained using typical workloads in a
+pseudo-terminal (`scripts/pgo-training.sh`), and writes `target/aggressive-pgo/astroterm`. It needs
+`cargo install cargo-pgo`, `rustup component add llvm-tools-preview` and BOLT (on Ubuntu `sudo apt install bolt-18`).
+Both targets preserve the application's rendering behavior. Select the desired binary explicitly, for example:
+
+```sh
+make run BINARY=target/aggressive/astroterm -- -i Tokyo -cCu
+```
 
 ## Accuracy
 

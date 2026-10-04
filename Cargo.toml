@@ -57,9 +57,9 @@ harness = false
 name = "spatial"
 harness = false
 
-# `make build-aggressive`: the release profile plus whole-program optimization. On top of this, the Makefile adds
-# `-C target-cpu=native`, PGO and BOLT. None of it changes behavior; panics abort, but the panic hook still restores
-# the terminal first.
+# `make build-aggressive`: the release profile plus whole-program optimization and `-C target-cpu=native`.
+# `make build-aggressive-pgo` additionally trains/applies PGO and BOLT. Panics abort, but the panic hook still
+# restores the terminal first.
 [profile.aggressive]
 inherits = "release"
 lto = "fat"
