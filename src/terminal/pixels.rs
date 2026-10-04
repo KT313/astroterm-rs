@@ -271,7 +271,17 @@ impl PixelRenderer {
             compute_text_layout(self.screen, self.area, self.font, self.text_scale)
         };
         let text = times.measure_steps("Text layout", |times| {
-            text::compose_text(sky, &self.options, text_screen, text_area, &fields, notice, times)
+            text::compose_text(
+                sky,
+                &self.options,
+                text_screen,
+                text_area,
+                &fields,
+                notice,
+                times,
+                self.scene_cache.prepared(),
+                self.scene_cache.named_candidates(),
+            )
         });
 
         if let Some(text) = &mut self.raster_text {

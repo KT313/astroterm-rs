@@ -26,12 +26,23 @@ pub struct Appearance<'a> {
 
 /// A star's look: a bigger glyph the brighter it is, its name, and a color from its spectral class.
 pub fn select_star_appearance<'a>(star: &Star, names: &'a StarNames) -> Appearance<'a> {
+    select_star_appearance_prepared(star, names, None)
+}
+
+pub(crate) fn select_star_appearance_prepared<'a>(
+    star: &Star,
+    names: &'a StarNames,
+    prepared: Option<&super::prepared::PreparedScene>,
+) -> Appearance<'a> {
     let glyph_index = select_star_glyph_index(star.magnitude);
     Appearance {
         ascii: STAR_GLYPHS_ASCII[glyph_index],
         unicode: STAR_GLYPHS_UNICODE[glyph_index],
         label: names.get(star.name()),
-        color: select_star_color(star.spectral_type(), star.color_index()),
+        color: prepared.map_or_else(
+            || select_star_color(star.spectral_type(), star.color_index()),
+            |p| p.color(star),
+        ),
     }
 }
 
@@ -87,7 +98,7 @@ pub fn select_moon_appearance(phase: MoonPhase, lit_on_right: bool) -> Appearanc
 /// Approximate color of a star from its spectral class, within the 8 basic terminal colors: hot blue-white stars
 /// (O, B, Wolf-Rayet) are cyan, white to yellow-white stars (A, F, G) use the default color, orange K stars are yellow
 /// and cool red giants and carbon stars (M, C, S, N) are red. Without a known class, the B-V color index decides.
-fn select_star_color(spectral_type: [u8; 2], color_index: Option<f32>) -> Option<Color> {
+pub(super) fn select_star_color(spectral_type: [u8; 2], color_index: Option<f32>) -> Option<Color> {
     match spectral_type[0] {
         b'O' | b'B' | b'W' => Some(Color::Cyan),
         b'A' | b'F' | b'G' => None,

@@ -21,9 +21,13 @@ impl Pipeline {
     fn new(catalog: Arc<SkyCatalog>, config: CacheConfig) -> Self {
         let mut simulation = SimulationState::default();
         simulation.configure_cache(&config);
+        let mut observation = ObservationCache::new(config.clone());
+        if config.enabled {
+            observation.prepare_catalog(catalog.clone(), &mut StepTimes::default());
+        }
         Self {
             simulation,
-            observation: ObservationCache::new(config),
+            observation,
             sky: ObservedSky::new(catalog),
             times: StepTimes::default(),
         }
@@ -108,7 +112,9 @@ fn cached_pipeline_matches_reference_through_camera_time_and_site_changes() {
     let mut cached = Pipeline::new(cat.clone(), CacheConfig::default());
     let mut direct = Pipeline::new(cat, CacheConfig::disabled());
     let mut projection = ProjectionCache::new(CacheConfig::default());
+    projection.prepare_catalog(&cached.sky.catalog, &mut StepTimes::default());
     let mut raster = SceneCache::default();
+    raster.prepare_catalog(cached.sky.catalog.clone(), &mut StepTimes::default());
     let mut canvas = Canvas::new(45, 90);
     let mut maxima = [0.0_f64; 3];
     for (n, seconds) in [0.0, 1.0, 10.0, 31.0, 361.0, 5.0, -500.0, 86400.0, 0.0]

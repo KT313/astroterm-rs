@@ -291,6 +291,19 @@ make run -- -i Tokyo -d 2025-03-01T11:00:00 -t 5 -C --debug-singleframe
 make run -- -i Tokyo -d 2025-03-01T11:00:00 -t 5 -C --renderer pixels --debug-singleframe
 ```
 
+Before entering the frame loop, `main.rs::prepare_frame_data` prepares catalog-only inputs once: stellar motion
+classifications, reusable constellation endpoint topology, and per-star RGB/character colors plus name eligibility.
+The `Frame preparation` trace records these startup costs separately from frame timings. The additional fixed
+per-star tables use approximately six bytes per catalog star on a 64-bit build (about 15.4 MB for AT-HYG).
+The prepared data belongs to its catalog: replacement catalogs or changed constellation definitions use correct
+fallback calculations. Library callers can opt in through the cache/renderer `prepare_catalog` methods.
+
+Pixel raster-key construction collects named-label candidates using the prepared flags; text layout visits that
+small list plus dynamically selected labels, retaining the original drawing order. Current magnitude, visibility,
+label choice, drawing order, projected arcs, and brightness-dependent pixel sizes/intensities remain dynamic.
+Designation strings are still formatted only for selected labels; startup does not expand millions of unused names.
+Immutable preparation remains available with `--disable-cache`, like the prepared catalog itself.
+
 The report goes to stdout after the terminal is restored. This flag does not enable the metadata panel;
 `-m` and `--debug-frametimes` still work independently. It uses the exact requested start epoch even with a
 nonzero simulation speed, presents once, and exits without the frame-rate sleep. Normal terminal negotiation

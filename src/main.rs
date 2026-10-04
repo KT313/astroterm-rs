@@ -108,14 +108,23 @@ fn run_render_loop(
     let frame_duration = Duration::from_secs_f64(1.0 / f64::from(config.fps));
     let mut view = config.view;
     let simulation = &config.simulation;
-    let mut clock = SimulationClock::start(simulation.start_julian_date, simulation.speed);
-    step_times.reset_frame_timings();
 
     let mut simulation_state = SimulationState::default();
     simulation_state.configure_cache(&config.cache);
     let mut observation_cache = ObservationCache::new(config.cache.clone());
     let mut projection_cache = ProjectionCache::new(config.cache.clone());
     renderer.configure_cache(&config.cache);
+
+    // prepare immutable catalog-derived inputs before starting the simulation clock and frame loop
+    prepare_frame_data(
+        &sky.catalog,
+        &mut observation_cache,
+        &mut projection_cache,
+        renderer,
+        step_times,
+    );
+    let mut clock = SimulationClock::start(simulation.start_julian_date, simulation.speed);
+    step_times.reset_frame_timings();
 
     loop {
         let frame_start = Instant::now();
@@ -204,6 +213,21 @@ fn run_render_loop(
 
         thread::sleep(frame_duration.saturating_sub(frame_start.elapsed())); // wait for the rest of the frame
     }
+}
+
+/// Prepare values that depend only on this run's immutable catalog. Time and camera results stay in the loop.
+fn prepare_frame_data(
+    catalog: &Arc<astroterm::sky::SkyCatalog>,
+    observation: &mut ObservationCache,
+    projection: &mut ProjectionCache,
+    renderer: &mut Renderer,
+    times: &mut StepTimes,
+) {
+    times.measure_steps("Frame preparation", |times| {
+        observation.prepare_catalog(catalog.clone(), times);
+        projection.prepare_catalog(catalog, times);
+        renderer.prepare_catalog(catalog.clone(), times);
+    });
 }
 
 /// Print an error and return a failing exit code.

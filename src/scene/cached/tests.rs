@@ -225,3 +225,42 @@ fn compact_keys_preserve_bodies_overlays_warnings_and_disabled_cache_behavior() 
     }
     assert_eq!(cache.pixels.stats.bypasses, 2);
 }
+
+#[test]
+fn prepared_display_constants_match_reference_and_fall_back_for_another_catalog() {
+    let original = fixture("Original", *b"B0", None);
+    let other = fixture("Other", *b"  ", Some(1.4));
+    let mut cache = SceneCache::default();
+    cache.prepare_catalog(original.catalog.clone(), &mut StepTimes::with_trace(true));
+    for sky in [&original, &other] {
+        let mut projected = project(sky);
+        for phase in 0..3 {
+            if phase == 1 {
+                projected.stars.reverse();
+            }
+            if phase == 2 {
+                projected.stars[0].cell = None;
+            }
+            check_pixels(&mut cache, &projected, &options());
+            let expected: Vec<_> = projected
+                .stars
+                .iter()
+                .enumerate()
+                .filter_map(|(i, star)| star.star.name().is_some().then_some(i))
+                .collect();
+            assert_eq!(cache.named_candidates().unwrap(), expected);
+            check_characters(&mut cache, &projected, &options(), (40, 60));
+        }
+    }
+    cache.configure(&CacheConfig::disabled());
+    assert!(
+        cache.prepared().is_some(),
+        "immutable preparation survives runtime cache bypass"
+    );
+    assert_eq!(
+        cache
+            .draw_pixels(&project(&original), &options(), J2000, &mut StepTimes::default())
+            .unwrap(),
+        draw_pixel_sky(&project(&original), &options(), &mut StepTimes::default()).unwrap()
+    );
+}

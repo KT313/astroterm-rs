@@ -5,9 +5,7 @@ use std::borrow::Cow;
 use crate::canvas::{Canvas, draw_line_braille};
 use crate::projection::{ProjectedArc, ProjectedPlanet, ProjectedSky};
 
-use super::appearance::{
-    Appearance, format_star_label, select_moon_appearance, select_planet_appearance, select_star_appearance,
-};
+use super::appearance::{Appearance, format_star_label, select_moon_appearance, select_planet_appearance};
 use super::{RenderOptions, draw_line};
 
 /// With dynamic names, the brightest stars in view are named until at least this many objects in view have labels.
@@ -16,6 +14,15 @@ const DYNAMIC_NAME_COUNT: usize = 5;
 /// Draw the stars bright enough for the threshold, dimmest first. Named stars brighter than the label threshold get
 /// labels, and with dynamic names also the brightest stars in view when few objects in view have labels.
 pub fn draw_stars(canvas: &mut Canvas, options: &RenderOptions, sky: &ProjectedSky<'_>) {
+    draw_stars_prepared(canvas, options, sky, None);
+}
+
+pub(super) fn draw_stars_prepared(
+    canvas: &mut Canvas,
+    options: &RenderOptions,
+    sky: &ProjectedSky<'_>,
+    prepared: Option<&super::prepared::PreparedScene>,
+) {
     let dynamically_named = if options.dynamic_names {
         select_dynamically_named_stars(options, sky)
     } else {
@@ -37,7 +44,7 @@ pub fn draw_stars(canvas: &mut Canvas, options: &RenderOptions, sky: &ProjectedS
         draw_object(
             canvas,
             options,
-            &select_star_appearance(&star, sky.names),
+            &super::appearance::select_star_appearance_prepared(&star, sky.names, prepared),
             entry.cell,
             label.as_deref(),
         );

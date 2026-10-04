@@ -4,7 +4,11 @@ use crate::{
     canvas::Color,
     projection::ProjectedSky,
     scene::{
-        RenderOptions, format_star_label, pixels::star_rgb, select_dynamically_named_stars, select_star_appearance,
+        RenderOptions,
+        appearance::select_star_appearance_prepared,
+        format_star_label,
+        prepared::{PreparedScene, resolve_star_rgb},
+        select_dynamically_named_stars,
     },
 };
 
@@ -32,14 +36,24 @@ pub(super) enum StarKeys {
 }
 
 impl StarKeys {
-    pub(super) fn capture(sky: &ProjectedSky<'_>, options: &RenderOptions, characters: bool) -> Self {
+    pub(super) fn capture(
+        sky: &ProjectedSky<'_>,
+        options: &RenderOptions,
+        characters: bool,
+        prepared: Option<&PreparedScene>,
+        named_candidates: &mut Vec<usize>,
+    ) -> Self {
         if characters {
-            Self::capture_characters(sky, options)
+            Self::capture_characters(sky, options, prepared)
         } else {
             // Keep exact magnitude and base RGB: deriving final radius/strength here would repeat per-star
             // floating-point rounding on cache misses. The existing rasterizer remains the only owner of that work.
             let mut stars = Vec::with_capacity(sky.stars.len());
-            for entry in &sky.stars {
+            named_candidates.clear();
+            for (index, entry) in sky.stars.iter().enumerate() {
+                if prepared.is_some_and(|p| p.is_named(&entry.star)) {
+                    named_candidates.push(index);
+                }
                 if entry.star.magnitude > options.magnitude_threshold {
                     continue;
                 }
@@ -47,7 +61,7 @@ impl StarKeys {
                     stars.push(PixelStarKey {
                         cell,
                         magnitude: entry.star.magnitude,
-                        color: star_rgb(&entry.star),
+                        color: resolve_star_rgb(&entry.star, prepared),
                     });
                 }
             }
@@ -55,7 +69,7 @@ impl StarKeys {
         }
     }
 
-    fn capture_characters(sky: &ProjectedSky<'_>, options: &RenderOptions) -> Self {
+    fn capture_characters(sky: &ProjectedSky<'_>, options: &RenderOptions, prepared: Option<&PreparedScene>) -> Self {
         let dynamically_named = if options.dynamic_names {
             select_dynamically_named_stars(options, sky)
         } else {
@@ -68,7 +82,7 @@ impl StarKeys {
                 continue;
             }
             let Some(cell) = entry.cell else { continue };
-            let appearance = select_star_appearance(&entry.star, sky.names);
+            let appearance = select_star_appearance_prepared(&entry.star, sky.names, prepared);
             let label = if dynamically_named.contains(&index) {
                 Some(format_star_label(&entry.star, sky.names, options.unicode))
             } else if entry.star.magnitude <= options.label_threshold {

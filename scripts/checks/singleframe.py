@@ -60,6 +60,9 @@ def check(binary, name, flags):
     assert "UTC JD=2460735.958333333" in report, "single frame must use exact requested UTC"
     names = re.findall(r"^\d+ +(.*?): [\d.]+ ms$", report, re.M)
     assert names.count("Present") == 1
+    for stage in ["Frame preparation", "Stellar classifications", "Constellation topology", "Star display constants"]:
+        assert names.count(stage) == 1, stage
+        assert names.index(stage) < names.index("Simulation"), stage
     for before, after in [("Dataset loading", "Simulation"), ("Simulation", "Observation"),
                           ("Region filtering", "Brightness bounds"), ("Stellar motion", "Current brightness"),
                           ("Correction selection", "Aberration"), ("Projection", "Raster"),

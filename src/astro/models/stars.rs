@@ -6,6 +6,21 @@ use crate::astro::{COMPUTATIONAL_INTERVAL, Equatorial, J2000, JULIAN_YEAR_DAYS, 
 pub const SINGULAR_RATIO: f64 = 1e-3;
 pub const ALWAYS_CHECKED_ANGLE: f64 = std::f64::consts::PI / 720.0; // 15 arcminutes
 
+/// Catalog-only motion properties. Epoch-dependent singular handling remains in evaluation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct StellarClass(u8);
+impl StellarClass {
+    pub fn is_stationary(self) -> bool {
+        self.0 & 1 != 0
+    }
+    pub fn has_distance(self) -> bool {
+        self.0 & 2 != 0
+    }
+    pub fn has_variable_brightness(self) -> bool {
+        self.has_distance() && !self.is_stationary()
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StellarMotion {
     pub u0: Vector3,
@@ -109,19 +124,27 @@ impl StellarMotion {
         }
     }
 
+    pub(crate) fn classify(self) -> StellarClass {
+        StellarClass(u8::from(self.w == Vector3::default()) | (u8::from(self.distance_pc.is_some()) << 1))
+    }
+
     pub fn evaluate(self, years: f64, magnitude: f64) -> StellarSample {
+        self.evaluate_classified(years, magnitude, self.classify())
+    }
+
+    pub(crate) fn evaluate_classified(self, years: f64, magnitude: f64, class: StellarClass) -> StellarSample {
         let mut q = self.u0 + self.w * years;
         let mut ratio = length(q);
-        let singular = self.distance_pc.is_some() && ratio < SINGULAR_RATIO;
+        let singular = class.has_distance() && ratio < SINGULAR_RATIO;
         if singular {
             q = self.u0 + self.tangential_velocity() * years;
             ratio = length(q);
         }
         let norm = ratio;
-        if years == 0.0 || self.w == Vector3::default() {
+        if years == 0.0 || class.is_stationary() {
             ratio = 1.0;
         }
-        let current = if self.distance_pc.is_some() && !singular {
+        let current = if class.has_distance() && !singular {
             magnitude + 5.0 * ratio.log10()
         } else {
             magnitude

@@ -23,6 +23,7 @@ struct CorrectionSelection {
 pub struct ObservationCache {
     config: CacheConfig,
     catalog: Option<Arc<SkyCatalog>>,
+    prepared_classes: Option<Vec<crate::astro::models::stars::StellarClass>>,
     observer: Cache<ObserverKey, ObserverState>,
     light_time: Cache<(ObserverState, [u64; 3]), ObserverState>,
     region: Cache<(crate::sky::SkyRegion, ObserverState, bool), crate::sky::grid::SelectedRegion>,
@@ -48,6 +49,28 @@ impl ObservationCache {
             ..Self::default()
         }
     }
+    /// Prepare catalog-only classifications once; replacing the catalog drops these with all dependent caches.
+    pub fn prepare_catalog(&mut self, catalog: Arc<SkyCatalog>, times: &mut StepTimes) {
+        *self = Self::new(self.config.clone());
+        let classes: Vec<_> = times.measure("Stellar classifications", || {
+            let trajectories = catalog.stars.borrow_trajectory_fields();
+            (0..catalog.stars.len())
+                .map(|i| trajectories.motion(i).classify())
+                .collect()
+        });
+        times.describe("Stellar classifications", || {
+            format!(
+                "stars={}; stationary={}; moving with distance={}; classification bytes={}",
+                classes.len(),
+                classes.iter().filter(|c| c.is_stationary()).count(),
+                classes.iter().filter(|c| c.has_variable_brightness()).count(),
+                classes.len() * std::mem::size_of::<crate::astro::models::stars::StellarClass>()
+            )
+        });
+        self.prepared_classes = Some(classes);
+        self.catalog = Some(catalog);
+    }
+
     pub fn invalidate_view(&mut self) {
         self.region.invalidate();
     }

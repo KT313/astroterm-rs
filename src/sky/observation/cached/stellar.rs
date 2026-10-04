@@ -9,6 +9,7 @@ struct StellarWork {
     magnitude: f64,
     refresh: bool,
     motion: Option<StellarMotion>,
+    class: Option<crate::astro::models::stars::StellarClass>,
     sample: Option<StellarSample>,
     valid_seconds: f64,
     calculated_at: f64,
@@ -77,6 +78,7 @@ impl ObservationCache {
                                 magnitude: output.catalog.stars.magnitude(star.source_index),
                                 refresh,
                                 motion: None,
+                                class: None,
                                 sample: (!refresh).then(|| *entry.value()),
                                 valid_seconds: entry.valid_seconds,
                                 calculated_at: entry.calculated_at.unwrap_or(epoch),
@@ -85,18 +87,29 @@ impl ObservationCache {
                     });
                     batches.measure("Trajectory reads", || {
                         for item in scratch.iter_mut().filter(|s| s.refresh) {
-                            item.motion = Some(trajectories.motion(item.source_index));
+                            let motion = trajectories.motion(item.source_index);
+                            item.class = Some(
+                                self.prepared_classes
+                                    .as_ref()
+                                    .map_or_else(|| motion.classify(), |classes| classes[item.source_index]),
+                            );
+                            item.motion = Some(motion);
                         }
                     });
                     batches.measure("Motion and magnitude calculation", || {
                         for item in scratch.iter_mut().filter(|s| s.refresh) {
-                            item.sample = Some(item.motion.unwrap().evaluate(years, item.magnitude));
+                            item.sample = Some(item.motion.unwrap().evaluate_classified(
+                                years,
+                                item.magnitude,
+                                item.class.unwrap(),
+                            ));
                         }
                     });
                     batches.measure("Stellar validity qualification", || {
                         for item in scratch.iter_mut().filter(|s| s.refresh) {
                             item.valid_seconds = qualify_stellar_span_counted(
                                 item.motion.unwrap(),
+                                item.class.unwrap(),
                                 item.sample.unwrap(),
                                 epoch,
                                 item.magnitude,
@@ -139,6 +152,7 @@ impl ObservationCache {
 /// Keep the same conservative rule and arithmetic as the original fused loop. Reasons are mutually exclusive.
 fn qualify_stellar_span_counted(
     motion: StellarMotion,
+    class: crate::astro::models::stars::StellarClass,
     sample: StellarSample,
     epoch: f64,
     magnitude: f64,
@@ -154,7 +168,7 @@ fn qualify_stellar_span_counted(
         counts.singular += 1;
         return 0.0;
     }
-    if motion.distance_pc.is_some() && motion.w != Vector3::default() {
+    if class.has_variable_brightness() {
         counts.moving_distance += 1;
         return 0.0;
     }
@@ -165,7 +179,7 @@ fn qualify_stellar_span_counted(
     for _ in 0..32 {
         let valid = [-span, span].into_iter().all(|offset| {
             counts.probe_evaluations += 1;
-            let end = motion.evaluate(years_since_j2000(epoch + offset / 86400.0), magnitude);
+            let end = motion.evaluate_classified(years_since_j2000(epoch + offset / 86400.0), magnitude, class);
             let angle = sample
                 .direction
                 .cross(end.direction)
@@ -199,6 +213,7 @@ pub(super) fn qualify_stellar_span(
 ) -> f64 {
     qualify_stellar_span_counted(
         motion,
+        motion.classify(),
         sample,
         epoch,
         magnitude,
@@ -344,7 +359,7 @@ mod tests {
             ),
         ] {
             let sample = motion.evaluate(years_since_j2000(epoch), 4.0);
-            qualify_stellar_span_counted(motion, sample, epoch, 4.0, maximum, &mut counts);
+            qualify_stellar_span_counted(motion, motion.classify(), sample, epoch, 4.0, maximum, &mut counts);
         }
         assert_eq!(
             (

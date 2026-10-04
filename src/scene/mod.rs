@@ -9,6 +9,7 @@ pub(crate) use bodies::select_dynamically_named_stars;
 mod overlays;
 mod panel;
 pub mod pixels;
+pub(crate) mod prepared;
 pub mod raster_text;
 
 pub use appearance::{
@@ -60,6 +61,16 @@ pub(crate) fn draw_sky_scene_with_times(
     sky: &ProjectedSky<'_>,
     times: &mut crate::timing::StepTimes,
 ) {
+    draw_sky_scene_prepared(canvas, options, sky, times, None);
+}
+
+pub(crate) fn draw_sky_scene_prepared(
+    canvas: &mut Canvas,
+    options: &RenderOptions,
+    sky: &ProjectedSky<'_>,
+    times: &mut crate::timing::StepTimes,
+    prepared: Option<&prepared::PreparedScene>,
+) {
     times.measure("Canvas initialization", || canvas.clear());
 
     // the horizon first in the facing view, so objects are drawn on top of it
@@ -68,7 +79,9 @@ pub(crate) fn draw_sky_scene_with_times(
     }
 
     // celestial objects
-    times.measure("Raster stars", || draw_stars(canvas, options, sky));
+    times.measure("Raster stars", || {
+        bodies::draw_stars_prepared(canvas, options, sky, prepared)
+    });
     if options.constellations {
         times.measure("Raster constellations", || draw_constellations(canvas, options, sky));
     }

@@ -51,6 +51,13 @@ impl Renderer {
             }
         }
     }
+    pub fn prepare_catalog(&mut self, catalog: std::sync::Arc<crate::sky::SkyCatalog>, times: &mut StepTimes) {
+        match self {
+            Self::Chars(r) => r.scene_cache.prepare_catalog(catalog, times),
+            Self::Pixels(r) => r.scene_cache.prepare_catalog(catalog, times),
+        }
+    }
+
     pub fn set_cache_diagnostics(
         &mut self,
         observation: crate::cache::CacheStats,

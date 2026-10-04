@@ -25,6 +25,8 @@ type HorizonGeometry = (Vec<[Cell; 2]>, Vec<(Cell, &'static str)>);
 #[derive(Default)]
 pub struct ProjectionCache {
     config: CacheConfig,
+    prepared_figures: Vec<crate::sky::Constellation>,
+    prepared_endpoints: Vec<usize>,
     stars: Cache<StarKey, Vec<(usize, Cell)>>,
     order: Cache<Vec<(usize, f64, crate::catalog::StarId)>, Vec<usize>>,
     draw_order_scratch: Vec<DrawRecord>,
@@ -39,6 +41,21 @@ impl ProjectionCache {
             ..Self::default()
         }
     }
+    /// Retain the already prepared endpoint union. Public callers may replace figures; those use a fallback.
+    pub fn prepare_catalog(&mut self, catalog: &crate::sky::SkyCatalog, times: &mut StepTimes) {
+        times.measure("Constellation topology", || {
+            self.prepared_figures = catalog.constellations.clone();
+            self.prepared_endpoints = catalog.endpoint_indices.to_vec();
+        });
+        times.describe("Constellation topology", || {
+            format!(
+                "figures={}; reused unique sorted endpoints={}; no per-frame endpoint sort for matching figures",
+                self.prepared_figures.len(),
+                self.prepared_endpoints.len()
+            )
+        });
+    }
+
     pub fn invalidate_view(&mut self) {
         self.stars.invalidate();
         self.bodies.invalidate();
@@ -130,13 +147,19 @@ impl ProjectionCache {
         times.describe("Body projection", || format!("input Sun/planets={}; visible={}; hidden={}; input Moon=1; visible Moon={}; body list retains hidden records; cache={:?}", sky.planets.len(), self.bodies.value().0.iter().filter(|p| p.cell.is_some()).count(), self.bodies.value().0.iter().filter(|p| p.cell.is_none()).count(), usize::from(self.bodies.value().1.cell.is_some()), self.bodies.stats));
         times.measure("Constellation projection", || {
             // Only endpoint geometry affects arcs, not the other stars in the selected region.
-            let mut required: Vec<_> = sky
-                .constellations
-                .iter()
-                .flat_map(|figure| figure.segments.iter().flatten().copied())
-                .collect();
-            required.sort_unstable();
-            required.dedup();
+            let mut fallback = Vec::new();
+            let required = if sky.constellations == self.prepared_figures {
+                &self.prepared_endpoints
+            } else {
+                fallback.extend(
+                    sky.constellations
+                        .iter()
+                        .flat_map(|figure| figure.segments.iter().flatten().copied()),
+                );
+                fallback.sort_unstable();
+                fallback.dedup();
+                &fallback
+            };
             let endpoints = required
                 .iter()
                 .filter_map(|index| {
@@ -462,5 +485,43 @@ mod draw_order_tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod preparation_tests {
+    use super::*;
+
+    #[test]
+    fn prepared_topology_matches_reference_and_handles_changed_figures() {
+        let mut sky = ObservedSky::from_catalog(&crate::catalog::load_embedded_catalog().unwrap());
+        let mut cache = ProjectionCache::default();
+        let mut startup = StepTimes::with_trace(true);
+        cache.prepare_catalog(&sky.catalog, &mut startup);
+        let endpoint_storage = cache.prepared_endpoints.as_ptr();
+        for phase in 0..4 {
+            match phase {
+                1 => sky.constellations.reverse(),
+                2 => sky.constellations.truncate(1),
+                3 => sky.constellations.clear(),
+                _ => {}
+            }
+            let view = View::default();
+            let viewport = Viewport { width: 80, height: 40 };
+            let actual = cache.project(&sky, &view, viewport, 0.0, &mut StepTimes::default());
+            let expected = crate::projection::project_sky(&sky, &view, viewport);
+            assert_eq!(actual, expected);
+            assert_eq!(cache.prepared_endpoints.as_ptr(), endpoint_storage);
+        }
+        assert_eq!(
+            startup
+                .trace()
+                .unwrap()
+                .steps
+                .iter()
+                .filter(|s| s.name == "Constellation topology")
+                .count(),
+            1
+        );
     }
 }

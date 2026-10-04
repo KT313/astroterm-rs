@@ -60,7 +60,7 @@ fn complete_scenes_match_for_mixed_radii_and_large_canvas_fallback() {
         let projected = project_sky(&sky, &view, Viewport { width, height });
         let actual = draw_pixel_sky(&projected, &options(10.0), &mut StepTimes::default()).unwrap();
         let expected =
-            draw_pixel_sky_with_star_path(&projected, &options(10.0), &mut StepTimes::default(), false).unwrap();
+            draw_pixel_sky_with_star_path(&projected, &options(10.0), &mut StepTimes::default(), false, None).unwrap();
         assert_eq!(actual, expected, "{width}x{height}");
     }
 }
@@ -101,7 +101,7 @@ fn compare_minimum_star_rasterizers() {
                     let mut times = StepTimes::default();
                     let start = Instant::now();
                     images[mode] =
-                        draw_pixel_sky_with_star_path(&projected, &options(threshold), &mut times, mode == 1);
+                        draw_pixel_sky_with_star_path(&projected, &options(threshold), &mut times, mode == 1, None);
                     let elapsed = start.elapsed().as_secs_f64() * 1000.0;
                     if frame > 0 {
                         durations[mode].push(elapsed);

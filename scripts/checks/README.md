@@ -216,3 +216,7 @@ The PTY check uses only embedded BSC at `-t 5`: ASCII, Unicode with frame timing
 through halfblocks, Sixel, iTerm2 and compressed Kitty. It verifies automatic one-frame exit, plain ordered
 report after terminal restoration, repeated simulation calls, exact requested UTC, and one image placement.
 It uses Python’s standard library on Unix; this validates transport, not physical display timing.
+
+Startup preparation is checked by `singleframe.py`: exactly one `Frame preparation` and its catalog-only passes
+must precede `Simulation`, including when runtime caching is disabled. Prepared/unprepared model, raster and label
+output equivalence, catalog replacement, and changed constellation definitions are also covered by Rust tests.
