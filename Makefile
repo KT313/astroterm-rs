@@ -5,7 +5,8 @@
 #   make build-aggressive-pgo                 additionally train/apply PGO and BOLT, into target/aggressive-pgo
 #   make run -- -i Tokyo -cCu           run the last built binary with arguments
 #   make build-run -- -i Tokyo -m       rebuild if needed, then run with arguments
-#   make test                           run all tests (unit, integration and doc tests)
+#   make test                           run correctness tests and compile benchmark targets
+#   make test-benchmarks                execute benchmark smoke checks (includes 2.5M stars)
 #
 # The `--` stops make from reading the arguments as its own options. For values with spaces or `=`, use ARGS:
 #   make run ARGS='-i "Rio de Janeiro" --fov=90'
@@ -32,7 +33,7 @@ RUN_ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
 	@:
 endif
 
-.PHONY: build build-aggressive build-aggressive-pgo check-aggressive-pgo-tools run build-run test
+.PHONY: build build-aggressive build-aggressive-pgo check-aggressive-pgo-tools run build-run test test-benchmarks
 
 build:
 	cargo build --release
@@ -65,6 +66,12 @@ run:
 
 build-run: build run
 
+# libtest schedules independent tests in parallel; each test's calculations stay sequential.
+# Criterion smoke checks include large workloads, so compile them here and run them separately.
 test:
-	cargo test --all-targets
+	cargo test --lib --bins --tests --examples
 	cargo test --doc
+	cargo test --benches --no-run
+
+test-benchmarks:
+	cargo test --bench frame --bench spatial

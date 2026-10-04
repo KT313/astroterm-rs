@@ -6,8 +6,8 @@ use astroterm::{
     projection::{ProjectionKind, View, ViewCenter, Viewport, project_sky},
     scene::{RenderOptions, draw_sky_scene},
     sky::{
-        FrameTime, ObservedSky, ObservedStar, SimulationState, SkyCatalog, observe_sky, prepare_observation,
-        update_simulation,
+        FrameTime, ObservedSky, ObservedStar, ObserverState, SimulationState, SkyCatalog, observe_sky,
+        prepare_observation, update_simulation,
     },
     timing::StepTimes,
 };
@@ -64,16 +64,32 @@ fn catalog() -> Arc<SkyCatalog> {
         .clone()
 }
 
-fn compare(date: f64, view: View, threshold: f64, refraction: bool, latitude: f64, longitude: f64) {
+fn prepare_case(date: f64, latitude: f64, longitude: f64) -> (SimulationState, ObserverState) {
     let time = FrameTime::from_utc(date);
     let mut simulation = SimulationState::exact();
-    let mut timing = StepTimes::default();
-    update_simulation(&mut simulation, time, &[], &mut timing).unwrap();
+    update_simulation(&mut simulation, time, &[], &mut StepTimes::default()).unwrap();
     let observer = prepare_observation(&mut simulation, time, Observer { latitude, longitude }).unwrap();
+    (simulation, observer)
+}
+
+fn compare(date: f64, view: View, threshold: f64, refraction: bool, latitude: f64, longitude: f64) {
+    let (simulation, observer) = prepare_case(date, latitude, longitude);
+    compare_prepared(&simulation, &observer, view, threshold, refraction);
+}
+
+fn compare_prepared(
+    simulation: &SimulationState,
+    observer: &ObserverState,
+    view: View,
+    threshold: f64,
+    refraction: bool,
+) {
+    let time = observer.time;
+    let mut timing = StepTimes::default();
     let mut selected = ObservedSky::new(catalog());
     observe_sky(
-        &simulation,
-        &observer,
+        simulation,
+        observer,
         threshold,
         refraction,
         view.sky_region(),
@@ -135,50 +151,118 @@ fn compare(date: f64, view: View, threshold: f64, refraction: bool, latitude: f6
     }
 }
 
-#[test]
-fn boundary_dates_and_extreme_fields_of_view_match_full_scan() {
-    for date in [
-        COMPUTATIONAL_INTERVAL.start_tt - 1.0,
-        COMPUTATIONAL_INTERVAL.start_tt,
-        J2000,
-        COMPUTATIONAL_INTERVAL.end_tt.next_down(),
-        COMPUTATIONAL_INTERVAL.end_tt,
-    ] {
-        for fov in [1.0, 180.0, 300.0, 359.0, 360.0] {
-            for refraction in [false, true] {
-                compare(
-                    date,
-                    View {
-                        fov_degrees: fov,
-                        projection: ProjectionKind::Equidistant,
-                        center: ViewCenter::Facing {
-                            azimuth: 0.0,
-                            tilt: 0.0,
-                        },
+fn check_boundary_date(date: f64) {
+    let (simulation, observer) = prepare_case(date, 0.0, 0.0);
+    for fov in [1.0, 180.0, 300.0, 359.0, 360.0] {
+        for refraction in [false, true] {
+            compare_prepared(
+                &simulation,
+                &observer,
+                View {
+                    fov_degrees: fov,
+                    projection: ProjectionKind::Equidistant,
+                    center: ViewCenter::Facing {
+                        azimuth: 0.0,
+                        tilt: 0.0,
                     },
-                    5.0,
-                    refraction,
-                    0.0,
-                    0.0,
-                );
-            }
+                },
+                5.0,
+                refraction,
+            );
         }
     }
 }
 
-proptest! {
-    #![proptest_config(ProptestConfig::with_cases(128))]
-    #[test]
-    fn random_regions_epochs_and_thresholds_preserve_exact_visible_sets(
-        date in (COMPUTATIONAL_INTERVAL.start_tt-365250.0)..(COMPUTATIONAL_INTERVAL.end_tt+365250.0),
-        azimuth in 0.0_f64..std::f64::consts::TAU, tilt in -std::f64::consts::FRAC_PI_2..std::f64::consts::FRAC_PI_2,
-        fov in 1.0_f64..359.0, threshold in -2.0_f64..14.0, refraction in any::<bool>(),
-        latitude in -std::f64::consts::FRAC_PI_2..std::f64::consts::FRAC_PI_2, longitude in -std::f64::consts::PI..std::f64::consts::PI,
-        equidistant in any::<bool>(),
-    ) {
-        compare(date,View { center:ViewCenter::Facing { azimuth,tilt },fov_degrees:fov,
-            projection: if equidistant { ProjectionKind::Equidistant } else { ProjectionKind::Stereographic } },threshold,refraction,latitude,longitude);
-    }
+#[test]
+fn views_before_interval_match_full_scan() {
+    check_boundary_date(COMPUTATIONAL_INTERVAL.start_tt - 1.0);
+}
+
+#[test]
+fn views_at_interval_start_match_full_scan() {
+    check_boundary_date(COMPUTATIONAL_INTERVAL.start_tt);
+}
+
+#[test]
+fn views_at_j2000_match_full_scan() {
+    check_boundary_date(J2000);
+}
+
+#[test]
+fn views_just_before_interval_end_match_full_scan() {
+    check_boundary_date(COMPUTATIONAL_INTERVAL.end_tt.next_down());
+}
+
+#[test]
+fn views_at_interval_end_match_full_scan() {
+    check_boundary_date(COMPUTATIONAL_INTERVAL.end_tt);
+}
+
+// Four independent property tests retain 128 cases in total and guarantee coverage of both projections
+// with and without refraction. Each runner remains sequential and retains proptest shrinking/replay.
+macro_rules! test_random_regions {
+    ($name:ident, $projection:expr, $refraction:expr) => {
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(32))]
+            #[test]
+            fn $name(
+                date in (COMPUTATIONAL_INTERVAL.start_tt-365250.0)..(COMPUTATIONAL_INTERVAL.end_tt+365250.0),
+                azimuth in 0.0_f64..std::f64::consts::TAU,
+                tilt in -std::f64::consts::FRAC_PI_2..std::f64::consts::FRAC_PI_2,
+                fov in 1.0_f64..359.0, threshold in -2.0_f64..14.0,
+                latitude in -std::f64::consts::FRAC_PI_2..std::f64::consts::FRAC_PI_2,
+                longitude in -std::f64::consts::PI..std::f64::consts::PI,
+            ) {
+                compare(date, View {
+                    center: ViewCenter::Facing { azimuth, tilt },
+                    fov_degrees: fov,
+                    projection: $projection,
+                }, threshold, $refraction, latitude, longitude);
+            }
+        }
+    };
+}
+
+test_random_regions!(
+    random_stereographic_airless_matches_full_scan,
+    ProjectionKind::Stereographic,
+    false
+);
+test_random_regions!(
+    random_stereographic_refracted_matches_full_scan,
+    ProjectionKind::Stereographic,
+    true
+);
+test_random_regions!(
+    random_equidistant_airless_matches_full_scan,
+    ProjectionKind::Equidistant,
+    false
+);
+test_random_regions!(
+    random_equidistant_refracted_matches_full_scan,
+    ProjectionKind::Equidistant,
+    true
+);
+
+// Preserve the concrete failure recorded in spatial_selection.proptest-regressions even when the
+// randomized strategy changes its input layout (the separate projection/refraction tests above).
+#[test]
+fn saved_stereographic_selection_regression_matches_full_scan() {
+    compare(
+        0.0,
+        View {
+            center: ViewCenter::Facing {
+                azimuth: 0.0,
+                tilt: 0.0,
+            },
+            fov_degrees: 170.70431445631192,
+            projection: ProjectionKind::Stereographic,
+        },
+        5.381495729624377,
+        false,
+        0.0,
+        0.0,
+    );
 }
 
 #[test]

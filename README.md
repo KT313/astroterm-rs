@@ -350,6 +350,18 @@ the report covers the named stages of the production frame pipeline, not every s
 cargo fmt --check && cargo clippy --all-targets && cargo test
 ```
 
+`make test` runs unit, integration, example and doc tests and compiles the benchmark targets. Rust's test harness
+runs independent tests concurrently; work inside an individual test stays sequential. Playback speeds, spatial
+boundary dates, and projection/refraction property checks are separate tests so these longer checks can use multiple cores. The spatial checks retain 128 random
+cases in total plus all 50 date/view/refraction boundary combinations. Use `RUST_TEST_THREADS=8 make test` to
+limit concurrent tests, or `RUST_TEST_THREADS=1 make test` for a serial run. Cargo still runs integration-test
+executables one after another; no extra test runner is required.
+
+`make test-benchmarks` executes the Criterion workload smoke checks, including the 2.5-million-star catalog.
+These check that benchmark workloads execute without errors; the correctness tests above compare against
+reference results. Benchmark smoke checks are separate because their large sequential workloads slow routine
+verification. Use `cargo bench` for actual performance measurements.
+
 Offline scene snapshots include colors and wide-glyph occupancy. Independent astronomy fixtures and the Boston
 reference audit are described in [scripts/reference/README.md](scripts/reference/README.md). Reproducible
 benchmarks and PTY checks are described in [scripts/checks/README.md](scripts/checks/README.md).

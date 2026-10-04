@@ -2,7 +2,7 @@
 use astroterm::astro::models::{BodyId, BodyState};
 use astroterm::astro::{COMPUTATIONAL_INTERVAL, Horizontal, J2000, Matrix3, Observer, Vector3};
 use astroterm::canvas::Canvas;
-use astroterm::catalog::load_embedded_catalog;
+use astroterm::catalog::{Catalog, load_embedded_catalog};
 use astroterm::projection::{View, Viewport, project_sky};
 use astroterm::scene::{RenderOptions, draw_sky_scene};
 use astroterm::sky::{
@@ -10,7 +10,7 @@ use astroterm::sky::{
     prepare_light_time_samples, prepare_observation, prepare_observer, update_simulation,
 };
 use astroterm::timing::StepTimes;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 fn angle(a: Vector3, b: Vector3) -> f64 {
     a.cross(b).length().atan2(a.dot(b)).to_degrees() * 3600.0
@@ -22,7 +22,10 @@ fn update(state: &mut SimulationState, tt: f64) {
     update_simulation(state, frame(tt), &[], &mut StepTimes::default()).unwrap();
 }
 fn catalog() -> Arc<SkyCatalog> {
-    Arc::new(SkyCatalog::from_catalog(&load_embedded_catalog().unwrap()))
+    static CATALOG: OnceLock<Arc<SkyCatalog>> = OnceLock::new();
+    CATALOG
+        .get_or_init(|| Arc::new(SkyCatalog::from_owned_catalog(load_embedded_catalog().unwrap())))
+        .clone()
 }
 fn observe(state: &SimulationState, time: f64, site: Observer, catalog: Arc<SkyCatalog>) -> ObservedSky {
     let mut prepared = state.clone();
@@ -170,41 +173,77 @@ fn frames_between_ticks_follow_exact_earth_spin() {
     assert_eq!(cached.refresh_counts, original);
 }
 
-#[test]
-fn cadence_tracks_forward_reverse_and_fast_playback_with_no_refresh_jump() {
-    let cat = catalog();
-    for speed in [1.0, 1000.0, 100000.0, -1.0, -1000.0, -100000.0] {
-        let mut cached = SimulationState::default();
-        let mut direct = SimulationState::exact();
-        for frame in 0..80 {
-            let tt = 2460676.5 + speed * frame as f64 / (24.0 * 86400.0);
-            update(&mut cached, tt);
-            update(&mut direct, tt);
-            let actual = observe(
-                &cached,
-                tt,
-                Observer {
-                    latitude: 0.5,
-                    longitude: -1.2,
-                },
-                cat.clone(),
-            );
-            let expected = observe(
-                &direct,
-                tt,
-                Observer {
-                    latitude: 0.5,
-                    longitude: -1.2,
-                },
-                cat.clone(),
-            );
-            for (a, b) in actual.planets.iter().zip(&expected.planets) {
-                assert!(angle(a.position, b.position) < 1.0);
-            }
-            assert!(angle(actual.moon.position, expected.moon.position) < 1.0);
+// This test asserts solar-system positions only; stellar observation has separate full-catalog coverage.
+fn check_playback_cadence(speed: f64) {
+    let cat = Arc::new(SkyCatalog::from_owned_catalog(Catalog::new(
+        Vec::new(),
+        Default::default(),
+        Vec::new(),
+    )));
+    let mut cached = SimulationState::default();
+    let mut direct = SimulationState::exact();
+    for frame in 0..80 {
+        let tt = 2460676.5 + speed * frame as f64 / (24.0 * 86400.0);
+        update(&mut cached, tt);
+        update(&mut direct, tt);
+        let actual = observe(
+            &cached,
+            tt,
+            Observer {
+                latitude: 0.5,
+                longitude: -1.2,
+            },
+            cat.clone(),
+        );
+        let expected = observe(
+            &direct,
+            tt,
+            Observer {
+                latitude: 0.5,
+                longitude: -1.2,
+            },
+            cat.clone(),
+        );
+        for (a, b) in actual.planets.iter().zip(&expected.planets) {
+            assert!(angle(a.position, b.position) < 1.0);
         }
-        println!("speed {speed}x, 80 frames: {:?}", cached.refresh_counts);
+        assert!(angle(actual.moon.position, expected.moon.position) < 1.0);
     }
+    println!("speed {speed}x, 80 frames: {:?}", cached.refresh_counts);
+}
+
+#[test]
+fn cadence_tracks_forward_playback() {
+    check_playback_cadence(1.0);
+}
+
+#[test]
+fn cadence_tracks_forward_fast_playback() {
+    check_playback_cadence(1000.0);
+}
+
+#[test]
+fn cadence_tracks_forward_very_fast_playback() {
+    check_playback_cadence(100000.0);
+}
+
+#[test]
+fn cadence_tracks_reverse_playback() {
+    check_playback_cadence(-1.0);
+}
+
+#[test]
+fn cadence_tracks_reverse_fast_playback() {
+    check_playback_cadence(-1000.0);
+}
+
+#[test]
+fn cadence_tracks_reverse_very_fast_playback() {
+    check_playback_cadence(-100000.0);
+}
+
+#[test]
+fn lunar_refresh_boundary_has_no_jump() {
     // Compare the expired extrapolation's limiting value with a fresh direct state, excluding real motion.
     let mut cached = SimulationState::default();
     update(&mut cached, J2000);

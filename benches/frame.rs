@@ -173,19 +173,14 @@ fn benchmark_model_families(criterion: &mut Criterion) {
         b.iter(|| black_box(compute_slow_orientation(black_box(J2000))))
     });
     let mut simulation = SimulationState::default();
-    update_simulation(
-        &mut simulation,
-        FrameTime::from_utc(J2000),
-        &[],
-        &mut StepTimes::default(),
-    )
-    .unwrap();
+    let time = FrameTime::from_utc(J2000);
+    update_simulation(&mut simulation, time, &[], &mut StepTimes::default()).unwrap();
     group.bench_function("cached_bodies", |b| {
         b.iter(|| {
             for body in BodyId::PLANETS.into_iter().chain([BodyId::Moon]) {
                 black_box(
                     simulation
-                        .evaluate_body(body, black_box(J2000 + 1.0 / 86400.0))
+                        .evaluate_body(body, black_box(time.tt + 1.0 / 86400.0))
                         .unwrap(),
                 );
             }
