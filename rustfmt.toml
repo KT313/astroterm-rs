@@ -1,1 +1,6 @@
 max_width = 120
+
+# Preserve the owner's manual layout throughout the project, including compact early
+# returns and aligned trailing comments. Rustfmt cannot enforce this exact style.
+# cargo fmt does not rewrite code or check formatting; compiler/Clippy/tests still apply.
+disable_all_formatting = true

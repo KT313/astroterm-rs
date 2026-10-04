@@ -100,9 +100,12 @@ Each module only depends on the ones above it:
 | `terminal` | Character/pixel renderer enum, protocol detection, text overlays, input and session restoration |
 | `cli` | Arguments, validated `Config` (simulation, view, render and terminal settings), bash completions |
 
-`src/main.rs` holds the processing flow: parse options → build the sky → per frame: poll input and apply controls,
-refresh simulation → prepare observer/emission samples → observe → project → render. The renderer enum selects
-characters or pixels; both read the same observed sky. Projection uses cell or pixel viewport units respectively.
+`src/main.rs` is the compact entry point: parse options → build the sky → render → report. Its startup,
+terminal-lifetime and reporting helpers live in `src/helpers.rs`. `src/pipeline.rs` keeps `prepare_frame_data`
+and `run_render_loop` together: prepare immutable inputs once, then per frame poll input and apply controls →
+refresh simulation → prepare observer/emission samples → observe → project → render. Both modules are private
+to the binary. The renderer enum selects characters or pixels; both read the same observed sky. Projection
+uses cell or pixel viewport units respectively.
 
 Within observation, `src/sky/observation.rs` explicitly sequences region filtering, conservative brightness bounds,
 body sampling, candidate validation, constellation endpoint inclusion, stellar motion, current brightness filtering,
@@ -291,7 +294,7 @@ make run -- -i Tokyo -d 2025-03-01T11:00:00 -t 5 -C --debug-singleframe
 make run -- -i Tokyo -d 2025-03-01T11:00:00 -t 5 -C --renderer pixels --debug-singleframe
 ```
 
-Before entering the frame loop, `main.rs::prepare_frame_data` prepares catalog-only inputs once: stellar motion
+Before entering the frame loop, `pipeline.rs::prepare_frame_data` prepares catalog-only inputs once: stellar motion
 classifications, reusable constellation endpoint topology, and per-star RGB/character colors plus name eligibility.
 The `Frame preparation` trace records these startup costs separately from frame timings. The additional fixed
 per-star tables use approximately six bytes per catalog star on a 64-bit build (about 15.4 MB for AT-HYG).
@@ -347,8 +350,12 @@ loading errors, not silently skipped rows. Library reference paths need not emit
 the report covers the named stages of the production frame pipeline, not every scalar math helper.
 
 ```sh
-cargo fmt --check && cargo clippy --all-targets && cargo test
+cargo clippy --all-targets && cargo test
 ```
+
+Formatting is manual throughout the project. `rustfmt.toml` sets `disable_all_formatting = true` to preserve
+compact control flow and aligned trailing comments. `cargo fmt` does not rewrite code, and `cargo fmt --check`
+does not validate layout. Compiler checks, Clippy and tests remain enabled.
 
 `make test` runs unit, integration, example and doc tests and compiles the benchmark targets. Rust's test harness
 runs independent tests concurrently; work inside an individual test stays sequential. Playback speeds, spatial
@@ -370,7 +377,7 @@ The four-stage implementation lives in `sky/simulation.rs`, `sky/observation.rs`
 Pure formulas and coefficients live in `astro/models/{stars,planets,moons,orientation}`. Body identity is independent
 of the formula used. Star inputs are shared across observers; projected output borrows the immutable observed sky.
 The legacy `update_sky_positions` API remains a direct, uncached reference convenience; the application uses the
-explicit stages in `main.rs`, with common runtime policy/validity code in `cache/` and typed cache owners in the
+explicit stages in `pipeline.rs`, with common runtime policy/validity code in `cache/` and typed cache owners in the
 observation, projection and scene modules. Observation accepts a renderer-neutral `SkyRegion`; use `All` when the same observed
 sky must support arbitrary subsequent camera views.
 
