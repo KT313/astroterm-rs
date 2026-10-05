@@ -1,11 +1,13 @@
 //! Reference-image checks and an opt-in real-catalog comparison for the minimum-star fast path.
+use crate::state::{SimulationState};
 use super::*;
-use crate::{
-    astro::Observer,
-    catalog::{Catalog, load_embedded_catalog},
-    projection::{View, Viewport, project_sky},
-    sky::{FrameTime, ObservedSky, SimulationState, SkyCatalog, observe_sky, prepare_observation, update_simulation},
-};
+use crate::astro::Observer;
+use crate::catalog::{Catalog, load_embedded_catalog};
+use crate::model::{ObservedSky, SkyCatalog};
+use crate::model::projection::{ProjectionViewport as Viewport, View};
+use crate::model::simulation::FrameTime;
+use crate::projection::project_sky;
+use crate::sky::{observe_sky, prepare_observation, update_simulation};
 use std::{sync::Arc, time::Instant};
 
 fn options(threshold: f64) -> RenderOptions {
@@ -35,7 +37,7 @@ fn observe(catalog: Arc<SkyCatalog>, threshold: f64) -> ObservedSky {
         &observer,
         threshold,
         false,
-        crate::sky::SkyRegion::All,
+        crate::model::SkyRegion::All,
         &mut sky,
         &mut StepTimes::default(),
     )
@@ -51,13 +53,14 @@ fn complete_scenes_match_for_mixed_radii_and_large_canvas_fallback() {
         star.magnitude = [2.0, 7.0, 7.03125, 7.03124, 8.0, 10.0][i % 6];
     }
     let catalog = Catalog::new(stars, source.names, source.constellations);
-    let sky = observe(Arc::new(SkyCatalog::from_owned_catalog(catalog)), 10.0);
+    let sky = observe(Arc::new(crate::sky::prepare_owned_catalog(catalog)), 10.0);
     for (width, height) in [(1, 1), (200, 200), (1102, 1102), (4097, 17), (17, 4097)] {
         let view = View {
             fov_degrees: 225.0,
             ..View::default()
         };
-        let projected = project_sky(&sky, &view, Viewport { width, height });
+        let projected_data = project_sky(&sky, &view, Viewport { width, height });
+        let projected = projected_data.view(&sky);
         let actual = draw_pixel_sky(&projected, &options(10.0), &mut StepTimes::default()).unwrap();
         let expected =
             draw_pixel_sky_with_star_path(&projected, &options(10.0), &mut StepTimes::default(), false, None).unwrap();
@@ -85,7 +88,7 @@ fn compare_minimum_star_rasterizers() {
                 fov_degrees: fov,
                 ..View::default()
             };
-            let projected = project_sky(
+            let projected_data = project_sky(
                 &sky,
                 &view,
                 Viewport {
@@ -93,6 +96,7 @@ fn compare_minimum_star_rasterizers() {
                     height: 1102,
                 },
             );
+            let projected = projected_data.view(&sky);
             let mut durations = [Vec::new(), Vec::new()];
             let mut star_durations = [Vec::new(), Vec::new()];
             for frame in 0..8 {

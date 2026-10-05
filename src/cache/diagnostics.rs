@@ -27,3 +27,7 @@ impl<K, V> Cache<K, V> {
 pub fn format_stats(stats: CacheStats) -> String {
     format!("H:{} R:{} B:{}", stats.hits, stats.refreshes, stats.bypasses)
 }
+
+/// How much of a described logical payload is known; independent of collector activation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Quality { ExactPayload, LowerBound, Unknown }

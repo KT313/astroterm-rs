@@ -115,6 +115,7 @@ source <(./target/release/astroterm --bash-completions)
 
 - `--debug-frametimes`: show the time spent calculating and drawing each frame.
 - `--debug-singleframe`: display one frame, then exit and print a detailed timing report.
+- Memory inspection: see [memory diagnostics](docs/memory-diagnostics.md) for the optional build feature and reports.
 - `--disable-cache`: recalculate runtime results every frame; keeps downloaded files and the catalog cache.
 - `--cache-config <path>`: use custom reuse settings; see [examples/cache.toml](examples/cache.toml).
 

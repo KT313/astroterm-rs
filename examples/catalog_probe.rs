@@ -1,16 +1,19 @@
 //! Measure dataset loading separately from sky construction and frame work (release builds).
 
+use astroterm::state::{SimulationState};
 use std::{hint::black_box, path::Path, time::Instant};
 
-use astroterm::{
-    astro::Observer,
-    canvas::Canvas,
-    catalog::load_athyg_catalog,
-    projection::{View, Viewport, project_sky},
-    scene::{RenderOptions, draw_sky_scene},
-    sky::{FrameTime, SimulationState, Sky, SkyCatalog, observe_sky, prepare_observation, update_simulation},
-    timing::StepTimes,
-};
+use astroterm::astro::Observer;
+use astroterm::canvas::Canvas;
+use astroterm::catalog::load_athyg_catalog;
+use astroterm::model::Sky;
+use astroterm::model::projection::{ProjectionViewport as Viewport, View};
+use astroterm::model::rendering::RenderOptions;
+use astroterm::model::simulation::FrameTime;
+use astroterm::projection::project_sky;
+use astroterm::scene::draw_sky_scene;
+use astroterm::sky::{observe_sky, prepare_observation, update_simulation};
+use astroterm::timing::StepTimes;
 
 fn main() {
     // measure loading separately from sky construction
@@ -25,7 +28,7 @@ fn main() {
 
     // prepare the fixed rendering workload
     let start = Instant::now();
-    let mut sky = Sky::new(std::sync::Arc::new(SkyCatalog::from_owned_catalog(catalog)));
+    let mut sky = Sky::new(std::sync::Arc::new(astroterm::sky::prepare_owned_catalog(catalog)));
     println!(
         "prepare_ms={:.3} singular={} always_checked={} endpoints={} precise={}",
         start.elapsed().as_secs_f64() * 1000.0,
@@ -61,7 +64,7 @@ fn main() {
     let mut update = |sky: &mut Sky| {
         update_simulation(&mut simulation, time, &[], &mut timing).unwrap();
         let site = prepare_observation(&mut simulation, time, observer).unwrap();
-        observe_sky(&simulation, &site, 5.0, false, view.sky_region(), sky, &mut timing).unwrap();
+        observe_sky(&simulation, &site, 5.0, false, astroterm::projection::select_view_region(&view), sky, &mut timing).unwrap();
     };
 
     // time position updates, then complete headless frames
@@ -74,7 +77,7 @@ fn main() {
     let start = Instant::now();
     for _ in 0..100 {
         update(black_box(&mut sky));
-        let projected = project_sky(
+        let projected_data = project_sky(
             &sky,
             &view,
             Viewport {
@@ -82,6 +85,7 @@ fn main() {
                 width: canvas.width(),
             },
         );
+        let projected = projected_data.view(&sky);
         draw_sky_scene(black_box(&mut canvas), &options, &projected);
     }
     println!(
@@ -104,7 +108,7 @@ fn measure_matrix(sky: &mut Sky) {
     let mut canvas = Canvas::new(41, 81);
     for (threshold, fov) in [(5.0, 180.0), (12.0, 10.0), (12.0, 180.0)] {
         let view = View {
-            center: astroterm::projection::ViewCenter::Facing {
+            center: astroterm::model::projection::ViewCenter::Facing {
                 azimuth: 225_f64.to_radians(),
                 tilt: 30_f64.to_radians(),
             },
@@ -139,15 +143,16 @@ fn measure_matrix(sky: &mut Sky) {
                             &observer,
                             threshold,
                             refraction,
-                            view.sky_region(),
+                            astroterm::projection::select_view_region(&view),
                             sky,
                             steps,
                         )
                         .unwrap();
                     });
-                    let projected = timing.measure("Projection", || {
+                    let projected_data = timing.measure("Projection", || {
                         project_sky(sky, &view, Viewport { height: 41, width: 81 })
                     });
+                    let projected = projected_data.view(sky);
                     timing.measure("Draw", || draw_sky_scene(&mut canvas, &options, &projected));
                     if frame >= 20 {
                         elapsed += start.elapsed().as_secs_f64();

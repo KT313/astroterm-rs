@@ -49,3 +49,6 @@ impl StarNames {
         std::str::from_utf8(self.text.get(name.start..name.end)?).ok()
     }
 }
+
+#[cfg(feature = "memory-diagnostics")]
+crate::cache::buffers::report_fields!(StarNames { text });

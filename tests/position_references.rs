@@ -6,11 +6,12 @@ mod baseline;
 
 use astroterm::astro::{Horizontal, ObjectClass, Observer, accuracy_target_arcseconds};
 use astroterm::catalog::load_embedded_catalog;
-use astroterm::sky::{Sky, update_sky_positions};
+use astroterm::model::Sky;
+use astroterm::sky::update_sky_positions;
 use astroterm::timing::StepTimes;
 
 fn boston_sky(julian_date_ut1: f64) -> Sky {
-    let mut sky = Sky::from_catalog(&load_embedded_catalog().unwrap());
+    let mut sky = astroterm::sky::create_sky_from_catalog(&load_embedded_catalog().unwrap());
     let observer = Observer {
         latitude: 42.3601_f64.to_radians(),
         longitude: -71.0589_f64.to_radians(),

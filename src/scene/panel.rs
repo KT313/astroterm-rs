@@ -1,7 +1,7 @@
 //! The metadata panel's layout: one line per field, values aligned at tab stops as in the original curses version.
 
 use crate::canvas::Canvas;
-use crate::metadata::MetadataField;
+use crate::model::metadata::MetadataField;
 
 /// Columns of the metadata panel, enough for the longest line (elapsed time).
 const PANEL_WIDTH: usize = 45;

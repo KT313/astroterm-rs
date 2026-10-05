@@ -1,0 +1,10 @@
+error[E0594]: cannot assign to `endpoints[_]`, which is behind a `&` reference
+ --> tests/ui/state_views/readonly_indices.rs:5:5
+  |
+5 |     endpoints[0] = 0;
+  |     ^^^^^^^^^^^^^^^^ `endpoints` is a `&` reference, so it cannot be written to
+  |
+help: consider changing this to be a mutable reference
+  |
+4 |     let endpoints: &[usize] = &mut catalog.endpoint_indices; // catalog indices are borrowed read-only
+  |                                +++

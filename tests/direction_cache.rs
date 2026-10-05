@@ -1,12 +1,13 @@
 //! Refresh calculations already populate directions; only cache hits restore saved coordinate-space results.
-use astroterm::{
-    astro::{J2000, Observer},
-    cache::CacheConfig,
-    catalog::load_embedded_catalog,
-    projection::View,
-    sky::{FrameTime, ObservationCache, ObservedSky, SimulationState, SkyCatalog, observe_sky, update_simulation},
-    timing::StepTimes,
-};
+use astroterm::state::{ObservationCache, SimulationState};
+use astroterm::astro::{J2000, Observer};
+use astroterm::cache::CacheConfig;
+use astroterm::catalog::load_embedded_catalog;
+use astroterm::model::{ObservedSky, SkyCatalog};
+use astroterm::model::projection::View;
+use astroterm::model::simulation::FrameTime;
+use astroterm::sky::{observe_sky, update_simulation};
+use astroterm::timing::StepTimes;
 use std::sync::Arc;
 
 struct Pipeline {
@@ -32,20 +33,16 @@ impl Pipeline {
         times.begin_frame();
         self.simulation.begin_frame();
         update_simulation(&mut self.simulation, time, &[], &mut times).unwrap();
-        let mut observer = self.observation.prepare_observer(&self.simulation, time, site).unwrap();
-        self.observation
-            .prepare_light_time(&mut self.simulation, &mut observer, &mut times)
+        let mut observer = astroterm::sky::prepare_cached_observer(&mut self.observation, &self.simulation, time, site).unwrap();
+        astroterm::sky::prepare_cached_light_time(&mut self.observation, &mut self.simulation, &mut observer, &mut times)
             .unwrap();
-        self.observation
-            .observe(
-                &self.simulation,
+        astroterm::sky::observe_cached_sky(&mut self.observation, &self.simulation,
                 &observer,
                 5.0,
                 refraction,
-                View::default().sky_region(),
+                astroterm::projection::select_view_region(&View::default()),
                 &mut self.sky,
-                &mut times,
-            )
+                &mut times)
             .unwrap();
         // Use the same sampled models so sample-holding differences cannot mask correction errors.
         let mut reference = ObservedSky::new(self.sky.catalog.clone());
@@ -54,7 +51,7 @@ impl Pipeline {
             &observer,
             5.0,
             refraction,
-            View::default().sky_region(),
+            astroterm::projection::select_view_region(&View::default()),
             &mut reference,
             &mut StepTimes::default(),
         )
@@ -98,7 +95,7 @@ fn assert_matching_sky(actual: &ObservedSky, expected: &ObservedSky) {
 
 #[test]
 fn direction_refreshes_skip_restoration_and_paused_hits_restore_exact_results() {
-    let catalog = Arc::new(SkyCatalog::from_owned_catalog(load_embedded_catalog().unwrap()));
+    let catalog = Arc::new(astroterm::sky::prepare_owned_catalog(load_embedded_catalog().unwrap()));
     let mut cached = Pipeline::new(catalog.clone(), CacheConfig::default());
     let first_site = Observer::default();
     let next_site = Observer {
@@ -143,7 +140,7 @@ fn direction_refreshes_skip_restoration_and_paused_hits_restore_exact_results() 
 
 #[test]
 fn bypass_always_calculates_without_restoring_even_when_paused() {
-    let catalog = Arc::new(SkyCatalog::from_owned_catalog(load_embedded_catalog().unwrap()));
+    let catalog = Arc::new(astroterm::sky::prepare_owned_catalog(load_embedded_catalog().unwrap()));
     let mut bypassed = Pipeline::new(catalog, CacheConfig::disabled());
     let mut expected = None;
     for _ in 0..3 {

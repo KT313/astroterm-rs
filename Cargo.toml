@@ -13,6 +13,20 @@ path = "src/lib.rs"
 name = "astroterm"
 path = "src/main.rs"
 
+[features]
+default = []
+memory-diagnostics = []
+
+[[test]]
+name = "memory_inventory"
+path = "tests/memory_inventory.rs"
+required-features = ["memory-diagnostics"]
+
+[[test]]
+name = "memory_trace"
+path = "tests/memory_trace.rs"
+required-features = ["memory-diagnostics"]
+
 [dependencies]
 base64-simd = "0.8"
 bytemuck = "1.25.2"
@@ -44,6 +58,7 @@ rustix = { version = "1.1.5", features = ["event"] }
 tz-rs = "0.7.3"
 
 [dev-dependencies]
+trybuild = "1"
 insta = "1"
 proptest = "1"
 criterion = "0.7"

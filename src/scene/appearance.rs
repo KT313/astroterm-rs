@@ -5,7 +5,7 @@ use std::borrow::Cow;
 use crate::astro::{MoonPhase, map_float_to_int_range};
 use crate::canvas::Color;
 use crate::catalog::StarNames;
-use crate::sky::{ObservedStarView as Star, PlanetKind};
+use crate::model::{ObservedStarView as Star, PlanetKind};
 
 /// Brightest and dimmest magnitudes in the star catalog, used to pick star glyphs.
 const BRIGHTEST_STAR_MAGNITUDE: f64 = -1.46;
@@ -15,14 +15,7 @@ const DIMMEST_STAR_MAGNITUDE: f64 = 7.96;
 const STAR_GLYPHS_UNICODE: [char; 10] = ['⬤', '●', '⦁', '•', '•', '∙', '⋅', '⋅', '⋅', '⋅'];
 const STAR_GLYPHS_ASCII: [char; 10] = ['0', '0', 'O', 'O', 'o', 'o', '.', '.', '.', '.'];
 
-/// How an object is drawn: a glyph for each character set, an optional label next to it, and an optional color.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Appearance<'a> {
-    pub ascii: char,
-    pub unicode: char,
-    pub label: Option<&'a str>,
-    pub color: Option<Color>,
-}
+use crate::model::rendering::Appearance;
 
 /// A star's look: a bigger glyph the brighter it is, its name, and a color from its spectral class.
 pub fn select_star_appearance<'a>(star: &Star, names: &'a StarNames) -> Appearance<'a> {
@@ -32,7 +25,7 @@ pub fn select_star_appearance<'a>(star: &Star, names: &'a StarNames) -> Appearan
 pub(crate) fn select_star_appearance_prepared<'a>(
     star: &Star,
     names: &'a StarNames,
-    prepared: Option<&super::prepared::PreparedScene>,
+    prepared: Option<&crate::model::rendering::PreparedScene>,
 ) -> Appearance<'a> {
     let glyph_index = select_star_glyph_index(star.magnitude);
     Appearance {
@@ -41,7 +34,7 @@ pub(crate) fn select_star_appearance_prepared<'a>(
         label: names.get(star.name()),
         color: prepared.map_or_else(
             || select_star_color(star.spectral_type(), star.color_index()),
-            |p| p.color(star),
+            |p| crate::scene::prepared::resolve_prepared_color(p, star),
         ),
     }
 }
@@ -133,7 +126,7 @@ fn select_star_glyph_index(magnitude: f64) -> usize {
 mod tests {
     use super::*;
     use crate::catalog::load_embedded_catalog;
-    use crate::sky::Sky;
+
 
     #[test]
     fn star_colors_follow_spectral_class() {
@@ -164,7 +157,7 @@ mod tests {
 
     #[test]
     fn bright_stars_get_their_names_and_spectral_colors() {
-        let sky = Sky::from_catalog(&load_embedded_catalog().expect("embedded catalog loads"));
+        let sky = crate::sky::create_sky_from_catalog(&load_embedded_catalog().expect("embedded catalog loads"));
         let star = |catalog_number: usize| {
             select_star_appearance(
                 &sky.star_views()
@@ -187,7 +180,7 @@ mod tests {
 
     #[test]
     fn stars_without_a_name_are_labelled_with_their_catalog_number() {
-        let sky = Sky::from_catalog(&load_embedded_catalog().expect("embedded catalog loads"));
+        let sky = crate::sky::create_sky_from_catalog(&load_embedded_catalog().expect("embedded catalog loads"));
         assert_eq!(
             format_star_label(
                 &sky.star_views().find(|star| star.id().0 == 7001).unwrap(),

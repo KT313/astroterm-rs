@@ -1,27 +1,24 @@
 //! Private passes owned by observe_sky_candidates. Its output buffer holds inertial directions during preparation;
 //! only the completed horizontal sky escapes the coordinator. No pass evaluates an ephemeris or sees a camera.
-use super::{LIGHT_SPEED_AU_DAY, ObserverState, apply_aberration, apply_unit_aberration, body_id};
+use crate::state::{SimulationState};
+use crate::model::ObserverState;
+use super::{LIGHT_SPEED_AU_DAY, apply_aberration, apply_unit_aberration, body_id};
 use crate::astro::{Matrix3, Vector3};
-use crate::sky::{ObservedSky, PlanetKind, SimulationError, SimulationState, SkyCatalog};
+use crate::model::{ObservedSky, PlanetKind, SkyCatalog};
+use crate::model::simulation::{SimulationError};
 
-#[derive(Clone, PartialEq)]
-pub(super) struct BodySamples {
-    planets: Vec<crate::astro::models::BodyState>,
-    moon: crate::astro::models::BodyState,
-}
+use crate::model::observation::BodySamples;
 
 pub(super) fn sample_body_states(
     simulation: &SimulationState,
     observer: &ObserverState,
 ) -> Result<BodySamples, SimulationError> {
     let planets = PlanetKind::ALL
-        .map(|kind| simulation.evaluate_body(body_id(kind), observer.emission_tt[body_id(kind) as usize]))
+        .map(|kind| crate::sky::simulation::evaluate_body(simulation, body_id(kind), observer.emission_tt[body_id(kind) as usize]))
         .into_iter()
         .collect::<Result<Vec<_>, _>>()?;
-    let moon = simulation.evaluate_body(
-        crate::astro::models::BodyId::Moon,
-        observer.emission_tt[crate::astro::models::BodyId::Moon as usize],
-    )?;
+    let moon = crate::sky::simulation::evaluate_body(simulation, crate::astro::models::BodyId::Moon,
+        observer.emission_tt[crate::astro::models::BodyId::Moon as usize])?;
     Ok(BodySamples { planets, moon })
 }
 
@@ -52,11 +49,7 @@ pub(super) fn include_constellation_endpoints(selected: Vec<usize>, output: &mut
     include_constellation_endpoints_with_times(selected, output, &mut crate::timing::StepTimes::default());
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) struct SelectedStar {
-    pub source_index: usize,
-    pub drawable: bool,
-}
+use crate::model::observation::SelectedStar;
 
 pub(super) fn include_constellation_endpoints_with_times(
     selected: Vec<usize>,
@@ -79,10 +72,17 @@ pub(super) fn merge_constellation_endpoints(
     times: &mut crate::timing::StepTimes,
 ) -> Vec<SelectedStar> {
     let input = selected.len();
+    let before = times.inspect_memory(|| crate::timing::memory::BufferShape::vector(&selected, crate::timing::memory::IndexDomain::Catalog));
     times.measure("Candidate index sort and dedup", || {
         selected.sort_unstable();
         selected.dedup();
     });
+    {
+        use crate::timing::memory::{Access, BufferId, BufferShape, IndexDomain, MemoryEvent, Operation};
+        if let Some(shape) = before { times.record_memory(times.last_memory_step(), || MemoryEvent::borrow(BufferId::ValidatedCandidates, Access::Writable, shape)); }
+        times.record_memory(times.last_memory_step(), || MemoryEvent::operation(BufferId::ValidatedCandidates, Operation::Write,
+            before, Some(BufferShape::vector(&selected, IndexDomain::Catalog)), None, None)); // sort/dedup writes depend on comparisons
+    }
     times.describe("Candidate index sort and dedup", || {
         format!(
             "input indices={input}; duplicates removed={}; output indices={}",
@@ -90,6 +90,7 @@ pub(super) fn merge_constellation_endpoints(
             selected.len()
         )
     });
+    let input_shape = times.inspect_memory(|| crate::timing::memory::BufferShape::vector(&selected, crate::timing::memory::IndexDomain::Catalog));
     let working = times.measure("Endpoint index merge", || {
         let mut working = Vec::with_capacity(selected.len() + endpoints.len());
         let mut candidates = selected.into_iter().peekable();
@@ -114,6 +115,12 @@ pub(super) fn merge_constellation_endpoints(
         }
         working
     });
+    {
+        use crate::timing::memory::{Access, BufferId, BufferShape, IndexDomain, MemoryEvent};
+        if let Some(shape) = input_shape { times.record_memory(times.last_memory_step(), || MemoryEvent::borrow(BufferId::ValidatedCandidates, Access::ReadOnly, shape)); }
+        times.record_borrow(BufferId::CatalogEndpoints, Access::ReadOnly, || BufferShape::slice(endpoints, IndexDomain::Catalog));
+        times.record_build(BufferId::WorkingStars, || BufferShape::vector(&working, IndexDomain::Working));
+    }
     times.describe("Endpoint index merge", || {
         format!(
             "output selected indices/flags={}; element bytes={}; catalog metadata copied=0",
@@ -166,7 +173,7 @@ pub(super) fn update_moon_illumination(relative_moon: Vector3, relative_sun: Vec
         relative_sun,
         crate::astro::models::orientation::j2000_ecliptic_north(),
     );
-    output.moon.phase = output.moon.illumination.named_phase();
+    output.moon.phase = crate::sky::name_moon_phase(output.moon.illumination);
 }
 
 pub(super) fn apply_sky_aberration(velocity: Vector3, output: &mut ObservedSky) {
@@ -195,10 +202,10 @@ pub(super) fn select_correction_indices(
     sources: impl ExactSizeIterator<Item = usize>,
     drawable: &[bool],
     endpoints: &[usize],
-) -> (Vec<usize>, crate::sky::CorrectionStats) {
+) -> (Vec<usize>, crate::model::CorrectionStats) {
     let mut endpoints = endpoints.iter().copied().peekable();
     let mut indices = Vec::with_capacity(sources.len());
-    let mut stats = crate::sky::CorrectionStats {
+    let mut stats = crate::model::CorrectionStats {
         evaluated: sources.len(),
         ..Default::default()
     };

@@ -515,7 +515,7 @@ mod tests {
             abbreviation: "Test",
             segments: vec![[2491, 99999]],
         }];
-        let sky = crate::sky::Sky::from_catalog(&catalog);
+        let sky = crate::sky::create_sky_from_catalog(&catalog);
         drop(catalog);
         let bright = sky.star_views().find(|star| star.id() == StarId(1)).unwrap();
         assert_eq!(sky.star_name(&bright), Some("Bright"));
@@ -528,7 +528,7 @@ mod tests {
     #[test]
     fn distance_unknown_polar_star_preserves_tangential_ra_motion() {
         let source = parse_motion_row("12,90,1,,,,,,,,1000,,");
-        let star = crate::sky::Star::from_catalog_star(&source);
+        let star = crate::sky::prepare_star(&source);
         assert!(star.motion.distance_pc.is_none());
         assert!((star.motion.w.y + 1000.0 * MILLIARCSECONDS_TO_RADIANS).abs() < 1e-15);
         assert!(star.motion.evaluate(10.0, star.magnitude).direction.y < 0.0);
@@ -554,7 +554,7 @@ mod tests {
         );
         let source = star.space_motion.unwrap();
         assert!((source.velocity.y - 117.51 * (365.25 * 86400.0 / 3.085677581491367e13)).abs() < 1e-15);
-        let prepared = crate::sky::Star::from_catalog_star(&star);
+        let prepared = crate::sky::prepare_star(&star);
         let expected = Equatorial {
             right_ascension: star.right_ascension,
             declination: star.declination,

@@ -1,14 +1,17 @@
 //! Phase-6 model/correction probe. Reads TT/UT1 epochs from stdin; never an independent reference.
+use astroterm::state::{SimulationState};
 use astroterm::astro::{
     Observer,
     models::{BodyId, moons::evaluate_moon, orientation::*, planets::evaluate_planets},
 };
-use astroterm::sky::{FrameTime, SimulationState, Sky, SkyRegion, observe_sky, prepare_observation, update_simulation};
+use astroterm::model::SkyRegion;
+use astroterm::model::simulation::FrameTime;
+use astroterm::sky::{observe_sky, prepare_observation, update_simulation};
 use astroterm::timing::StepTimes;
 use std::io::{self, BufRead};
 fn main() {
     let cat = astroterm::catalog::load_embedded_catalog().unwrap();
-    let mut sky = Sky::from_catalog(&cat);
+    let mut sky = astroterm::sky::create_sky_from_catalog(&cat);
     for line in io::stdin().lock().lines() {
         let line = line.unwrap();
         let fields: Vec<f64> = line.split_whitespace().map(|v| v.parse().unwrap()).collect();

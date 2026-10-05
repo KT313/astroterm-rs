@@ -3,7 +3,7 @@ use super::{StarStorage, decode_motion, expand};
 use crate::{
     astro::{Vector3, models::stars::StellarMotion},
     catalog::{EncodedDesignation, NameId},
-    sky::ObservedStar,
+    model::ObservedStar,
 };
 
 pub(crate) struct ObservationFields<'a> {
@@ -76,10 +76,7 @@ impl StarStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sky::{
-        SkyCatalog,
-        cache::{catalog_fingerprint, load_cached_catalog, write_cached_catalog},
-    };
+    use crate::sky::cache::{catalog_fingerprint, load_cached_catalog, write_cached_catalog};
 
     #[test]
     fn borrowed_owned_and_mapped_fields_match_full_records() {
@@ -93,7 +90,7 @@ mod tests {
                 z: 0.0,
             },
         });
-        let owned = SkyCatalog::from_owned_catalog(parsed);
+        let owned = crate::sky::prepare_owned_catalog(parsed);
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("catalog");
         let fingerprint = catalog_fingerprint();
@@ -106,7 +103,7 @@ mod tests {
                 let full = catalog.stars.get(index);
                 let observed = fields.create_observed_star(index, true);
                 assert_eq!(observed, ObservedStar::from_star(&full, index, Vector3::default()));
-                let view = crate::sky::ObservedStarView {
+                let view = crate::model::ObservedStarView {
                     state: &observed,
                     catalog: &catalog.stars,
                 };

@@ -1,16 +1,17 @@
 //! Spatial and brightness selection against an independent full scan of the same immutable stored trajectories.
-use astroterm::{
-    astro::{COMPUTATIONAL_INTERVAL, J2000, JULIAN_YEAR_DAYS, Observer, Vector3, refract_direction},
-    canvas::Canvas,
-    catalog::{CatalogStar, SpaceMotion, StarId, load_embedded_catalog},
-    projection::{ProjectionKind, View, ViewCenter, Viewport, project_sky},
-    scene::{RenderOptions, draw_sky_scene},
-    sky::{
-        FrameTime, ObservedSky, ObservedStar, ObserverState, SimulationState, SkyCatalog, observe_sky,
-        prepare_observation, update_simulation,
-    },
-    timing::StepTimes,
-};
+use astroterm::state::{SimulationState};
+use astroterm::astro::{COMPUTATIONAL_INTERVAL, J2000, JULIAN_YEAR_DAYS, Observer, Vector3, refract_direction};
+use astroterm::canvas::Canvas;
+use astroterm::catalog::{CatalogStar, SpaceMotion, StarId, load_embedded_catalog};
+use astroterm::model::{ObservedSky, ObserverState, SkyCatalog};
+use astroterm::model::objects::ObservedStar;
+use astroterm::model::projection::{ProjectionKind, ProjectionViewport as Viewport, View, ViewCenter};
+use astroterm::model::rendering::RenderOptions;
+use astroterm::model::simulation::FrameTime;
+use astroterm::projection::project_sky;
+use astroterm::scene::draw_sky_scene;
+use astroterm::sky::{observe_sky, prepare_observation, update_simulation};
+use astroterm::timing::StepTimes;
 use proptest::prelude::*;
 use std::sync::{Arc, OnceLock};
 
@@ -59,7 +60,7 @@ fn catalog() -> Arc<SkyCatalog> {
                     has_data: true,
                 });
             }
-            Arc::new(SkyCatalog::from_owned_catalog(catalog))
+            Arc::new(astroterm::sky::prepare_owned_catalog(catalog))
         })
         .clone()
 }
@@ -92,7 +93,7 @@ fn compare_prepared(
         observer,
         threshold,
         refraction,
-        view.sky_region(),
+        astroterm::projection::select_view_region(&view),
         &mut selected,
         &mut timing,
     )
@@ -123,8 +124,10 @@ fn compare_prepared(
         })
         .collect();
     let viewport = Viewport { height: 81, width: 161 };
-    let a = project_sky(&selected, &view, viewport);
-    let b = project_sky(&full, &view, viewport);
+    let a_data = project_sky(&selected, &view, viewport);
+    let a = a_data.view(&selected);
+    let b_data = project_sky(&full, &view, viewport);
+    let b = b_data.view(&full);
     assert_eq!(
         a.stars.iter().map(|s| (s.star.id(), s.cell)).collect::<Vec<_>>(),
         b.stars.iter().map(|s| (s.star.id(), s.cell)).collect::<Vec<_>>()
@@ -353,7 +356,7 @@ fn seam_threshold_horizon_fast_mover_and_view_edge_cases_are_not_culled() {
             });
             parsed.stars.push(star);
         }
-        let catalog = Arc::new(SkyCatalog::from_owned_catalog(parsed));
+        let catalog = Arc::new(astroterm::sky::prepare_owned_catalog(parsed));
         let time = FrameTime::from_utc(J2000 + years * JULIAN_YEAR_DAYS);
         let mut simulation = SimulationState::exact();
         let mut timing = StepTimes::default();
@@ -367,12 +370,13 @@ fn seam_threshold_horizon_fast_mover_and_view_edge_cases_are_not_culled() {
             &observer,
             5.0,
             refraction,
-            view.sky_region(),
+            astroterm::projection::select_view_region(&view),
             &mut sky,
             &mut timing,
         )
         .unwrap();
-        let projected = project_sky(&sky, &view, Viewport { height: 81, width: 161 });
+        let projected_data = project_sky(&sky, &view, Viewport { height: 81, width: 161 });
+        let projected = projected_data.view(&sky);
         let expected: Vec<_> = sky
             .catalog
             .stars
@@ -384,8 +388,7 @@ fn seam_threshold_horizon_fast_mover_and_view_edge_cases_are_not_culled() {
                 } else {
                     sample.direction
                 };
-                let visible = astroterm::projection::CartesianCamera::new(&view)
-                    .project(position)
+                let visible = astroterm::projection::project_camera(astroterm::projection::prepare_camera(&view), position)
                     .is_some_and(|p| p.is_visible());
                 (sample.magnitude <= 5.0 && visible).then_some(s.id)
             })

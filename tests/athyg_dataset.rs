@@ -4,7 +4,7 @@
 use std::path::Path;
 
 use astroterm::catalog::{Catalog, CatalogStar, load_athyg_catalog, load_embedded_catalog};
-use astroterm::sky::{SkyCatalog, Star};
+use astroterm::model::SkyCatalog;
 
 const DATASET: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/datasets/athyg_40.csv.gz");
 
@@ -39,7 +39,7 @@ fn athyg_matches_the_embedded_catalog() {
     }
 
     // nearly all constellation figures find their stars
-    let sky = SkyCatalog::from_catalog(&athyg);
+    let sky = astroterm::sky::prepare_catalog(&athyg);
     assert_eq!(sky.constellations.len(), 88);
     assert_eq!(
         sky.constellations
@@ -54,12 +54,12 @@ fn athyg_matches_the_embedded_catalog() {
 #[ignore = "needs datasets/athyg_40.csv.gz; release quantization audit"]
 fn real_catalog_quantization_stays_within_half_an_arcsecond() {
     let source = load_athyg_catalog(Path::new(DATASET)).unwrap();
-    let stored = SkyCatalog::from_catalog(&source);
+    let stored = astroterm::sky::prepare_catalog(&source);
     let (start, end) = astroterm::astro::models::stars::computational_years();
     let mut maximum = 0.0_f64;
     for star in stored.stars.iter() {
         let i = source.stars.binary_search_by_key(&star.id, |s| s.id).unwrap();
-        let mut original = Star::from_catalog_star(&source.stars[i]).motion;
+        let mut original = astroterm::sky::prepare_star(&source.stars[i]).motion;
         original.remove_singular_distance();
         for t in [start, end, original.closest_approach(start, end).0] {
             let a = original.evaluate(t, star.magnitude).direction;
@@ -78,18 +78,16 @@ fn real_catalog_quantization_stays_within_half_an_arcsecond() {
 #[test]
 #[ignore = "needs datasets/athyg_40.csv.gz; release cache roundtrip"]
 fn real_catalog_cache_preserves_the_rendered_frame() {
-    use astroterm::{
-        astro::{J2000, Observer},
-        canvas::Canvas,
-        projection::{View, Viewport, project_sky},
-        scene::{RenderOptions, draw_sky_scene},
-        sky::{
-            Sky,
-            cache::{catalog_fingerprint, load_cached_catalog, write_cached_catalog},
-            update_sky_positions,
-        },
-        timing::StepTimes,
-    };
+    use astroterm::astro::{J2000, Observer};
+    use astroterm::canvas::Canvas;
+    use astroterm::model::Sky;
+    use astroterm::model::projection::{ProjectionViewport as Viewport, View};
+    use astroterm::model::rendering::RenderOptions;
+    use astroterm::projection::project_sky;
+    use astroterm::scene::draw_sky_scene;
+    use astroterm::sky::update_sky_positions;
+    use astroterm::sky::cache::{catalog_fingerprint, load_cached_catalog, write_cached_catalog};
+    use astroterm::timing::StepTimes;
     fn frame(catalog: SkyCatalog) -> Canvas {
         let mut sky = Sky::new(std::sync::Arc::new(catalog));
         update_sky_positions(&mut sky, J2000, &Observer::default(), 5.0, &mut StepTimes::default());
@@ -107,11 +105,11 @@ fn real_catalog_cache_preserves_the_rendered_frame() {
         draw_sky_scene(
             &mut canvas,
             &options,
-            &project_sky(&sky, &View::default(), Viewport { height: 41, width: 81 }),
+            &project_sky(&sky, &View::default(), Viewport { height: 41, width: 81 }).view(&sky),
         );
         canvas
     }
-    let catalog = SkyCatalog::from_owned_catalog(load_athyg_catalog(Path::new(DATASET)).unwrap());
+    let catalog = astroterm::sky::prepare_owned_catalog(load_athyg_catalog(Path::new(DATASET)).unwrap());
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("cache");
     let fingerprint = catalog_fingerprint();

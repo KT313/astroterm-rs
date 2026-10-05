@@ -20,12 +20,12 @@ pub struct Arguments {
 
     /// Renderer: characters (default) or true-color pixels. Constellations, grid, thresholds, labels,
     /// refraction and metadata apply to both; --color, --unicode and --braille affect characters only.
-    #[arg(long, value_enum, default_value_t = crate::terminal::RendererKind::Chars)]
-    pub renderer: crate::terminal::RendererKind,
+    #[arg(long, value_enum, default_value_t = crate::model::config::RendererKind::Chars)]
+    pub renderer: crate::model::config::RendererKind,
 
     /// Pixel protocol (normally detected). Force one to test terminal support; halfblocks needs no graphics protocol.
-    #[arg(long, value_enum, default_value_t = crate::terminal::GraphicsProtocol::Auto)]
-    pub graphics_protocol: crate::terminal::GraphicsProtocol,
+    #[arg(long, value_enum, default_value_t = crate::model::config::GraphicsProtocol::Auto)]
+    pub graphics_protocol: crate::model::config::GraphicsProtocol,
 
     /// Raster text scale relative to terminal cells [0.25–4], for Sixel/Kitty/iTerm2 only. 1 restores the
     /// terminal-cell-sized layout; characters and native half-block text are unaffected.
@@ -158,6 +158,11 @@ pub struct Arguments {
     /// Present one frame, restore the terminal, then print ordered pipeline timings and data counts
     #[arg(long)]
     pub debug_singleframe: bool,
+
+    /// Report bounded memory inventories and instrumented operations after quitting; combine with --debug-singleframe for one frame.
+    /// Requires: cargo build --features memory-diagnostics --bin astroterm. Does not enable the on-screen timing panel
+    #[arg(long)]
+    pub debug_memory: bool,
 
     /// Print this help message
     #[arg(short = 'h', long, action = ArgAction::Help)]

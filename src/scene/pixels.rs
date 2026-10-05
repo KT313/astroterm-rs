@@ -3,15 +3,15 @@ mod minimum_star;
 #[cfg(test)]
 mod validation;
 use image::RgbaImage;
+use crate::{timing::memory::{Access, BufferId, BufferShape, IndexDomain, Operation} };
+
 use minimum_star::{MINIMUM_STAR_RADIUS, draw_minimum_star};
 use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Stroke, Transform};
 
-use super::RenderOptions;
-use crate::{
-    projection::{ProjectedSky, ScreenPoint},
-    sky::{ObservedStarView, PlanetKind},
-    timing::StepTimes,
-};
+use crate::model::rendering::RenderOptions;
+use crate::model::objects::{ObservedStarView, PlanetKind};
+use crate::model::projection::{ProjectedSky, ScreenPoint};
+use crate::timing::StepTimes;
 
 pub const BACKGROUND: [u8; 4] = [3, 6, 14, 255];
 
@@ -23,7 +23,7 @@ pub(crate) fn draw_pixel_sky_prepared(
     sky: &ProjectedSky<'_>,
     options: &RenderOptions,
     times: &mut StepTimes,
-    prepared: Option<&super::prepared::PreparedScene>,
+    prepared: Option<&crate::model::rendering::PreparedScene>,
 ) -> Option<RgbaImage> {
     draw_pixel_sky_with_star_path(sky, options, times, true, prepared)
 }
@@ -33,23 +33,42 @@ fn draw_pixel_sky_with_star_path(
     options: &RenderOptions,
     times: &mut StepTimes,
     fast_stars: bool,
-    prepared: Option<&super::prepared::PreparedScene>,
+    prepared: Option<&crate::model::rendering::PreparedScene>,
 ) -> Option<RgbaImage> {
     // initialize once, then build the scene back to front with independently timed passes
     let mut canvas = times.measure("Canvas initialization", || initialize_pixel_canvas(sky.viewport))?;
+    times.record_shape(BufferId::PixelScene, Operation::Build, None, || BufferShape::slice(canvas.data(), IndexDomain::Bytes)); // new pixmap, not retained-capacity reuse
     times.measure("Raster horizon", || draw_pixel_horizon(&mut canvas, sky));
+    {
+        times.record_borrow(BufferId::ProjectedHorizon, Access::ReadOnly, || BufferShape::slice(sky.horizon, IndexDomain::Cells));
+        times.record_borrow(BufferId::PixelScene, Access::Writable, || BufferShape::slice(canvas.data(), IndexDomain::Bytes));
+    }
     times.measure("Raster stars", || {
         draw_pixel_stars(&mut canvas, sky, options, fast_stars, prepared)
     });
+    {
+        times.record_borrow(BufferId::ProjectedView, Access::ReadOnly, || BufferShape::unknown(IndexDomain::DrawOrder));
+        if let Some(prepared) = prepared { times.record_borrow(BufferId::PreparedDisplay, Access::ReadOnly, || BufferShape::vector(&prepared.stars, IndexDomain::Catalog)); }
+        times.record_borrow(BufferId::PixelScene, Access::Writable, || BufferShape::slice(canvas.data(), IndexDomain::Bytes));
+    }
     times.measure("Raster constellations", || {
         draw_pixel_constellations(&mut canvas, sky, options)
     });
+    {
+        times.record_borrow(BufferId::ProjectedFigures, Access::ReadOnly, || BufferShape::slice(sky.constellations, IndexDomain::Objects));
+        times.record_borrow(BufferId::PixelScene, Access::Writable, || BufferShape::slice(canvas.data(), IndexDomain::Bytes));
+    }
     times.measure("Raster planets", || draw_pixel_planets(&mut canvas, sky));
+    {
+        times.record_borrow(BufferId::ProjectedBodies, Access::ReadOnly, || BufferShape::slice(sky.planets, IndexDomain::Objects));
+        times.record_borrow(BufferId::PixelScene, Access::Writable, || BufferShape::slice(canvas.data(), IndexDomain::Bytes));
+    }
     times.measure("Raster moon", || draw_pixel_moon(&mut canvas, sky));
     times.measure("Raster grid", || draw_pixel_grid(&mut canvas, sky, options));
     let image = times.measure("Raster finalization", || {
         RgbaImage::from_raw(canvas.width(), canvas.height(), canvas.take())
     });
+    if let Some(image) = &image { times.record_shape(BufferId::PixelScene, Operation::Move, None, || BufferShape::vector(image.as_raw(), IndexDomain::Bytes)); }
     super::diagnostics::describe_scene(sky, options, times);
     times.describe("Raster stars", || {
         let tiny = sky
@@ -70,7 +89,7 @@ fn draw_pixel_sky_with_star_path(
     image
 }
 
-fn initialize_pixel_canvas(viewport: crate::projection::Viewport) -> Option<Pixmap> {
+fn initialize_pixel_canvas(viewport: crate::model::projection::ProjectionViewport) -> Option<Pixmap> {
     let (width, height) = (
         u32::try_from(viewport.width).ok()?,
         u32::try_from(viewport.height).ok()?,
@@ -84,7 +103,7 @@ fn initialize_pixel_canvas(viewport: crate::projection::Viewport) -> Option<Pixm
 }
 
 fn draw_pixel_horizon(canvas: &mut Pixmap, sky: &ProjectedSky<'_>) {
-    for &[a, b] in &sky.horizon {
+    for &[a, b] in sky.horizon {
         draw_segment(canvas, a, b, [80, 110, 150], 1.2);
     }
 }
@@ -94,9 +113,9 @@ fn draw_pixel_stars(
     sky: &ProjectedSky<'_>,
     options: &RenderOptions,
     fast_stars: bool,
-    prepared: Option<&super::prepared::PreparedScene>,
+    prepared: Option<&crate::model::rendering::PreparedScene>,
 ) {
-    for star in &sky.stars {
+    for star in sky.stars.iter() {
         if star.star.magnitude > options.magnitude_threshold {
             continue;
         }
@@ -116,7 +135,7 @@ fn draw_pixel_stars(
 
 fn draw_pixel_constellations(canvas: &mut Pixmap, sky: &ProjectedSky<'_>, options: &RenderOptions) {
     if options.constellations {
-        for figure in &sky.constellations {
+        for figure in sky.constellations {
             if figure.maximum_magnitude > options.magnitude_threshold {
                 continue;
             }

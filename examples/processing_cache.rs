@@ -1,13 +1,15 @@
 //! Controlled headless cache comparison. Optional dataset path; JSON lines exclude terminal encoding/presentation.
-use astroterm::{
-    astro::Observer,
-    cache::CacheConfig,
-    catalog::datasets::{Dataset, DatasetDirectories},
-    projection::{ProjectionCache, View, Viewport},
-    scene::{RenderOptions, cached::SceneCache},
-    sky::{FrameTime, ObservationCache, ObservedSky, SimulationState, cache::load_sky_catalog, update_simulation},
-    timing::StepTimes,
-};
+use astroterm::state::{ObservationCache, ProjectionCache, SceneCache, SimulationState};
+use astroterm::astro::Observer;
+use astroterm::cache::CacheConfig;
+use astroterm::catalog::datasets::{Dataset, DatasetDirectories};
+use astroterm::model::ObservedSky;
+use astroterm::model::projection::{ProjectionViewport as Viewport, View};
+use astroterm::model::rendering::RenderOptions;
+use astroterm::model::simulation::FrameTime;
+use astroterm::sky::update_simulation;
+use astroterm::sky::cache::load_sky_catalog;
+use astroterm::timing::StepTimes;
 use std::{hint::black_box, sync::Arc, time::Instant};
 fn main() {
     let dataset = std::env::args_os().nth(1).map(|p| Dataset::Path(p.into()));
@@ -76,27 +78,24 @@ fn main() {
                         + simulation.refresh_counts.moon
                         + simulation.refresh_counts.orientation;
                     let start = Instant::now();
-                    let mut observer = observation.prepare_observer(&simulation, time, site).unwrap();
-                    observation
-                        .prepare_light_time(&mut simulation, &mut observer, &mut times)
+                    let mut observer = astroterm::sky::prepare_cached_observer(&mut observation, &simulation, time, site).unwrap();
+                    astroterm::sky::prepare_cached_light_time(&mut observation, &mut simulation, &mut observer, &mut times)
                         .unwrap();
-                    observation
-                        .observe(
-                            &simulation,
+                    astroterm::sky::observe_cached_sky(&mut observation, &simulation,
                             &observer,
                             10.0,
                             false,
-                            view.sky_region(),
+                            astroterm::projection::select_view_region(&view),
                             &mut sky,
-                            &mut times,
-                        )
+                            &mut times)
                         .unwrap();
                     elapsed[1] = start.elapsed().as_secs_f64();
                     let start = Instant::now();
-                    let projected = projection.project(&sky, &view, viewport, time.tt, &mut times);
+                    astroterm::projection::project_cached_sky(&mut projection, &sky, &view, viewport, time.tt, &mut times);
+                    let projected = astroterm::projection::borrow_projected(&projection, &sky, &view, viewport);
                     elapsed[2] = start.elapsed().as_secs_f64();
                     let start = Instant::now();
-                    black_box(raster.draw_pixels(&projected, &options, time.tt, &mut times).unwrap());
+                    black_box(astroterm::scene::cached::draw_pixels(&mut raster, &projected, &options, time.tt, &mut times).unwrap());
                     elapsed[3] = start.elapsed().as_secs_f64();
                     let current = [
                         simulation_after,

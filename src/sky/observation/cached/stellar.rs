@@ -4,149 +4,196 @@ use super::*;
 
 const BATCH_SIZE: usize = 1024;
 
-struct StellarWork {
-    source_index: usize,
-    magnitude: f64,
-    refresh: bool,
-    motion: Option<StellarMotion>,
-    class: Option<crate::astro::models::stars::StellarClass>,
-    sample: Option<StellarSample>,
-    valid_seconds: f64,
-    calculated_at: f64,
-}
+use crate::model::observation::{StellarWork, ValidityCounts};
+#[cfg(test)]
+use crate::model::observation::SelectedStar;
 
-#[derive(Default)]
-struct ValidityCounts {
-    positive: usize,
-    outside_interval: usize,
-    singular: usize,
-    moving_distance: usize,
-    zero_limit: usize,
-    boundary_or_bound: usize,
-    probe_evaluations: usize,
-}
-
-impl ObservationCache {
-    pub(super) fn update_stellar_motion(&mut self, output: &mut ObservedSky, epoch: f64, times: &mut StepTimes) {
-        let maximum = self.config.age_seconds(Group::StellarState);
-        let reuse = self.config.allows(Group::StellarState);
-        let refresh = times.measure("Motion cache decision", || {
-            self.motion
-                .needs_refresh(&self.working.generation, epoch, Some(maximum), reuse)
+pub(super) fn update_stellar_motion(storage: crate::state::observation::StellarMotionBuffers<'_>, catalog_stars: &crate::model::storage::StarStorage, epoch: f64, times: &mut StepTimes) -> usize {
+    times.with_memory(|times| {
+        let step = times.active_memory_step();
+        times.record_memory(step, || MemoryEvent::borrow(BufferId::WorkingStars, Access::ReadOnly, BufferShape::vector(storage.working.value(), IndexDomain::Working)));
+        times.record_memory(step, || MemoryEvent::borrow(BufferId::StellarScratch, Access::Writable, BufferShape::vector(storage.scratch, IndexDomain::Working)));
+        times.record_memory(step, || MemoryEvent::borrow(BufferId::StellarSamples, Access::Writable, BufferShape::unknown(IndexDomain::Catalog)));
+        if let Some(classes) = storage.prepared_classes {
+            times.record_memory(step, || MemoryEvent::borrow(BufferId::CatalogClassifications, Access::ReadOnly, BufferShape::slice(classes, IndexDomain::Catalog)));
+        }
+    });
+    let maximum = storage.config.age_seconds(Group::StellarState);
+    let reuse = storage.config.allows(Group::StellarState);
+    let refresh = times.measure("Motion cache decision", || {
+        storage.motion
+            .needs_refresh(&storage.working.generation, epoch, Some(maximum), reuse)
+    });
+    times.record_memory(times.last_memory_step(), || MemoryEvent::unknown_operation(BufferId::MotionSamples,
+        if refresh { Operation::Refresh(storage.motion.stats.last_reason.expect("refresh reason")) } else { Operation::Reuse }));
+    times.describe("Motion cache decision", || {
+        format!(
+            "refresh={refresh}; working generation={}; requested maximum={maximum} s",
+            storage.working.generation
+        )
+    });
+    if refresh {
+        let years = years_since_j2000(epoch);
+        let trajectories = catalog_stars.borrow_trajectory_fields();
+        let mut values = times.measure("Motion output allocation", || {
+            Vec::with_capacity(storage.working.value().len())
         });
-        times.describe("Motion cache decision", || {
+        times.record_memory(times.last_memory_step(), || MemoryEvent::operation(BufferId::MotionSamples, Operation::Reserve,
+            None, Some(BufferShape::vector(&values, IndexDomain::Working)), Some(values.capacity()), None));
+        times.describe("Motion output allocation", || {
             format!(
-                "refresh={refresh}; working generation={}; requested maximum={maximum} s",
-                self.working.generation
+                "reserved results={}; element bytes={}",
+                values.capacity(),
+                std::mem::size_of::<(Vector3, f64)>()
             )
         });
-        if refresh {
-            let years = years_since_j2000(epoch);
-            let trajectories = output.catalog.stars.borrow_trajectory_fields();
-            let mut values = times.measure("Motion output allocation", || {
-                Vec::with_capacity(self.working.value().len())
-            });
-            times.describe("Motion output allocation", || {
-                format!(
-                    "reserved results={}; element bytes={}",
-                    values.capacity(),
-                    std::mem::size_of::<(Vector3, f64)>()
-                )
-            });
-            let mut singular_count = 0;
-            let mut validity = maximum;
-            let mut refreshed = 0;
-            let mut reused = 0;
-            let mut counts = ValidityCounts::default();
-            let mut scratch = times.measure("Stellar scratch allocation", || Vec::with_capacity(BATCH_SIZE));
+        let mut singular_count = 0;
+        let mut validity = maximum;
+        let mut refreshed = 0;
+        let mut reused = 0;
+        let mut counts = ValidityCounts::default();
+        let scratch = &mut *storage.scratch;
+        let scratch_before = times.inspect_memory(|| BufferShape::vector(scratch, IndexDomain::Working));
+        times.measure("Stellar scratch preparation", || {
+            scratch.clear();
+            scratch.reserve(BATCH_SIZE);
+        });
 
-            // Keep large data in its owners; only bounded intermediate samples cross these passes.
-            times.measure_batches("Stellar batches", |batches| {
-                for stars in self.working.value().chunks(BATCH_SIZE) {
-                    batches.measure("Stellar cache lookup and decisions", || {
-                        scratch.clear();
-                        for star in stars {
-                            let entry = self.stellar.entry(star.source_index).or_default();
-                            let before = entry.stats;
-                            let refresh = entry.needs_refresh(&(), epoch, Some(maximum), reuse);
-                            self.stellar_stats.hits += entry.stats.hits - before.hits;
-                            self.stellar_stats.bypasses += entry.stats.bypasses - before.bypasses;
-                            refreshed += usize::from(refresh);
-                            reused += usize::from(!refresh);
-                            scratch.push(StellarWork {
-                                source_index: star.source_index,
-                                magnitude: output.catalog.stars.magnitude(star.source_index),
-                                refresh,
-                                motion: None,
-                                class: None,
-                                sample: (!refresh).then(|| *entry.value()),
-                                valid_seconds: entry.valid_seconds,
-                                calculated_at: entry.calculated_at.unwrap_or(epoch),
-                            });
-                        }
+        times.with_memory(|times| {
+            times.record_memory(times.last_memory_step(), || MemoryEvent::operation(BufferId::StellarScratch, Operation::Clear,
+                scratch_before, None, scratch_before.and_then(|s| s.len), None));
+            times.record_memory(times.last_memory_step(), || MemoryEvent::operation(BufferId::StellarScratch, Operation::Reserve,
+                scratch_before, Some(BufferShape::vector(scratch, IndexDomain::Working)), Some(BATCH_SIZE), None));
+        });
+
+        // Keep large data in its owners; only bounded intermediate samples cross these passes.
+        times.measure_batches("Stellar batches", |batches| {
+            for stars in storage.working.value().chunks(BATCH_SIZE) {
+                let batch_before = batches.inspect_memory(|| (refreshed, reused, BufferShape::vector(scratch, IndexDomain::Working)));
+                batches.measure("Stellar cache lookup and decisions", || {
+                    scratch.clear();
+                    for star in stars {
+                        let entry = storage.stellar.entry(star.source_index).or_default();
+                        let before = entry.stats;
+                        let refresh = entry.needs_refresh(&(), epoch, Some(maximum), reuse);
+                        storage.stats.hits += entry.stats.hits - before.hits;
+                        storage.stats.bypasses += entry.stats.bypasses - before.bypasses;
+                        refreshed += usize::from(refresh);
+                        reused += usize::from(!refresh);
+                        scratch.push(StellarWork {
+                            source_index: star.source_index,
+                            magnitude: catalog_stars.magnitude(star.source_index),
+                            refresh,
+                            motion: None,
+                            class: None,
+                            sample: (!refresh).then(|| *entry.value()),
+                            valid_seconds: entry.valid_seconds,
+                            calculated_at: entry.calculated_at.unwrap_or(epoch),
+                        });
+                    }
+                });
+                if let Some((_, previous_reuses, before)) = batch_before {
+                    let step = batches.last_memory_step();
+                    batches.record_memory(step, || MemoryEvent::borrow(BufferId::WorkingStars, Access::ReadOnly, BufferShape::slice(stars, IndexDomain::Working)));
+                    batches.record_memory(step, || MemoryEvent::operation(BufferId::StellarScratch, Operation::Clear, Some(before), None, before.len, None));
+                    batches.record_memory(step, || {
+                        let shape = BufferShape::vector(scratch, IndexDomain::Working);
+                        MemoryEvent::operation(BufferId::StellarScratch, Operation::Build, None, Some(shape), shape.len, shape.logical_bytes())
                     });
-                    batches.measure("Trajectory reads", || {
-                        for item in scratch.iter_mut().filter(|s| s.refresh) {
-                            let motion = trajectories.motion(item.source_index);
-                            item.class = Some(
-                                self.prepared_classes
-                                    .as_ref()
-                                    .map_or_else(|| motion.classify(), |classes| classes[item.source_index]),
-                            );
-                            item.motion = Some(motion);
-                        }
-                    });
-                    batches.measure("Motion and magnitude calculation", || {
-                        for item in scratch.iter_mut().filter(|s| s.refresh) {
-                            item.sample = Some(item.motion.unwrap().evaluate_classified(
-                                years,
-                                item.magnitude,
-                                item.class.unwrap(),
-                            ));
-                        }
-                    });
-                    batches.measure("Stellar validity qualification", || {
-                        for item in scratch.iter_mut().filter(|s| s.refresh) {
-                            item.valid_seconds = qualify_stellar_span_counted(
-                                item.motion.unwrap(),
-                                item.class.unwrap(),
-                                item.sample.unwrap(),
-                                epoch,
-                                item.magnitude,
-                                maximum,
-                                &mut counts,
-                            );
-                            item.calculated_at = epoch;
-                        }
-                    });
-                    batches.measure("Stellar cache stores", || {
-                        for item in scratch.iter().filter(|s| s.refresh) {
-                            let entry = self.stellar.get_mut(&item.source_index).expect("cache entry prepared");
-                            let before = entry.stats.refreshes;
-                            entry.store((), epoch, item.valid_seconds, item.sample.unwrap());
-                            self.stellar_stats.refreshes += entry.stats.refreshes - before;
-                        }
-                    });
-                    batches.measure("Motion output assembly", || {
-                        for item in &scratch {
-                            validity = validity
-                                .min((item.valid_seconds - (epoch - item.calculated_at).abs() * 86400.0).max(0.0));
-                            let sample = item.sample.unwrap();
-                            values.push((sample.direction, sample.magnitude));
-                            singular_count += usize::from(sample.used_singular_fallback);
-                        }
-                    });
+                    batches.record_memory(step, || MemoryEvent::operation(BufferId::StellarSamples, Operation::Reuse, None, None, Some(reused - previous_reuses), None));
                 }
-            });
-            times.describe("Stellar batches", || format!("input/output stars={}; refreshed={refreshed}; reused={reused}; batch limit={BATCH_SIZE}; scratch capacity={} records ({} bytes); refreshed samples with positive validity={}; zero validity: outside interval={}, singular={}, moving with distance={}, zero configured limit={}, boundary/angular bound={}; validity probe evaluations={}; resulting batch validity={validity} s", values.len(), scratch.capacity(), scratch.capacity()*std::mem::size_of::<StellarWork>(), counts.positive, counts.outside_interval, counts.singular, counts.moving_distance, counts.zero_limit, counts.boundary_or_bound, counts.probe_evaluations));
-            times.measure("Motion cache store", || {
-                self.motion
-                    .store(self.working.generation, epoch, validity, (values, singular_count))
-            });
-            times.measure("Stellar scratch release", || drop(scratch));
-        }
-        output.runtime_singular_count = self.motion.value().1;
+                batches.measure("Trajectory reads", || {
+                    for item in scratch.iter_mut().filter(|s| s.refresh) {
+                        let motion = trajectories.motion(item.source_index);
+                        item.class = Some(
+                            storage.prepared_classes
+                                .map_or_else(|| motion.classify(), |classes| classes[item.source_index]),
+                        );
+                        item.motion = Some(motion);
+                    }
+                });
+                if batch_before.is_some() {
+                    batches.record_memory(batches.last_memory_step(), || MemoryEvent::borrow(BufferId::CatalogTrajectories, Access::ReadOnly, BufferShape::unknown(IndexDomain::Catalog)));
+                }
+                batches.measure("Motion and magnitude calculation", || {
+                    for item in scratch.iter_mut().filter(|s| s.refresh) {
+                        item.sample = Some(item.motion.unwrap().evaluate_classified(
+                            years,
+                            item.magnitude,
+                            item.class.unwrap(),
+                        ));
+                    }
+                });
+                if let Some((previous_refreshes, _, _)) = batch_before {
+                    batches.record_memory(batches.last_memory_step(), || MemoryEvent::operation(BufferId::StellarScratch, Operation::Build, None, None, Some(refreshed - previous_refreshes), None));
+                }
+                batches.measure("Stellar validity qualification", || {
+                    for item in scratch.iter_mut().filter(|s| s.refresh) {
+                        item.valid_seconds = qualify_stellar_span_counted(
+                            item.motion.unwrap(),
+                            item.class.unwrap(),
+                            item.sample.unwrap(),
+                            epoch,
+                            item.magnitude,
+                            maximum,
+                            &mut counts,
+                        );
+                        item.calculated_at = epoch;
+                    }
+                });
+                if let Some((previous_refreshes, _, _)) = batch_before {
+                    batches.record_memory(batches.last_memory_step(), || MemoryEvent::operation(BufferId::StellarScratch, Operation::Write, None, None, Some(refreshed - previous_refreshes), None));
+                }
+                let mut store_counts = batches.inspect_memory(|| (0_usize, 0_usize));
+                batches.measure("Stellar cache stores", || {
+                    for item in scratch.iter().filter(|s| s.refresh) {
+                        let entry = storage.stellar.get_mut(&item.source_index).expect("cache entry prepared");
+                        let before = entry.stats.refreshes;
+                        let outcome = entry.store((), epoch, item.valid_seconds, item.sample.unwrap());
+                        if let Some((changed, equal)) = &mut store_counts {
+                            if outcome.value_changed { *changed += 1; } else { *equal += 1; }
+                        }
+                        storage.stats.refreshes += entry.stats.refreshes - before;
+                    }
+                });
+                if let Some((changed, equal)) = store_counts {
+                    let step = batches.last_memory_step();
+                    if changed + equal != 0 {
+                        batches.record_memory(step, || MemoryEvent::unknown_operation(BufferId::StellarSamples, Operation::Compare));
+                    }
+                    for (count, value_changed) in [(changed, true), (equal, false)] {
+                        if count != 0 {
+                            batches.record_memory(step, || MemoryEvent::operation(BufferId::StellarSamples,
+                                Operation::Store { value_changed }, None, None, Some(count), None));
+                        }
+                    }
+                }
+                let output_before = batches.inspect_memory(|| BufferShape::vector(&values, IndexDomain::Working));
+                batches.measure("Motion output assembly", || {
+                    for item in scratch.iter() {
+                        validity = validity
+                            .min((item.valid_seconds - (epoch - item.calculated_at).abs() * 86400.0).max(0.0));
+                        let sample = item.sample.unwrap();
+                        values.push((sample.direction, sample.magnitude));
+                        singular_count += usize::from(sample.used_singular_fallback);
+                    }
+                });
+                batches.record_memory(batches.last_memory_step(), || MemoryEvent::operation(BufferId::MotionSamples, Operation::Append,
+                    output_before, Some(BufferShape::vector(&values, IndexDomain::Working)), Some(scratch.len()), scratch.len().checked_mul(std::mem::size_of::<(Vector3, f64)>())));
+            }
+        });
+        times.describe("Stellar batches", || format!("input/output stars={}; refreshed={refreshed}; reused={reused}; batch limit={BATCH_SIZE}; scratch capacity={} records ({} bytes); refreshed samples with positive validity={}; zero validity: outside interval={}, singular={}, moving with distance={}, zero configured limit={}, boundary/angular bound={}; validity probe evaluations={}; resulting batch validity={validity} s", values.len(), scratch.capacity(), scratch.capacity()*std::mem::size_of::<StellarWork>(), counts.positive, counts.outside_interval, counts.singular, counts.moving_distance, counts.zero_limit, counts.boundary_or_bound, counts.probe_evaluations));
+        let outcome = times.measure("Motion cache store", || {
+            storage.motion
+                .store(storage.working.generation, epoch, validity, (values, singular_count))
+        });
+        times.record_store(BufferId::MotionSamples, outcome);
+        let scratch_before = times.inspect_memory(|| BufferShape::vector(scratch, IndexDomain::Working));
+        times.measure("Stellar scratch clear", || scratch.clear());
+        times.record_memory(times.last_memory_step(), || MemoryEvent::operation(BufferId::StellarScratch, Operation::Clear,
+            scratch_before, Some(BufferShape::vector(scratch, IndexDomain::Working)), scratch_before.and_then(|s| s.len), None));
     }
+    storage.motion.value().1
 }
 
 /// Keep the same conservative rule and arithmetic as the original fused loop. Reasons are mutually exclusive.
@@ -288,13 +335,14 @@ mod tests {
                 z: 0.0,
             },
         });
-        let base = ObservedSky::from_catalog(&parsed);
+        let base = crate::sky::create_sky_from_catalog(&parsed);
         assert!(base.stars.len() > BATCH_SIZE * 2);
         for config in [CacheConfig::default(), CacheConfig::disabled()] {
             let mut fused = ObservationCache::new(config.clone());
             let mut batched = ObservationCache::new(config);
             let mut a = base.clone();
             let mut b = base.clone();
+            let mut scratch_allocation = None;
             for (frame, offset) in [0.0, 0.0, 0.001, -0.001, 0.25, 0.25].into_iter().enumerate() {
                 let epoch = crate::astro::J2000 + offset;
                 let stars: Vec<_> = if frame < 4 {
@@ -319,7 +367,14 @@ mod tests {
                 batched.working.store(frame as u64, epoch, 0.0, stars);
                 update_fused(&mut fused, &mut a, epoch);
                 let mut times = StepTimes::with_trace(true);
-                batched.update_stellar_motion(&mut b, epoch, &mut times);
+                b.runtime_singular_count = update_stellar_motion(batched.borrow_stellar_motion(), &b.catalog.stars, epoch, &mut times);
+                assert!(batched.stellar_scratch.is_empty());
+                assert!(batched.stellar_scratch.capacity() >= BATCH_SIZE);
+                let allocation = (batched.stellar_scratch.as_ptr(), batched.stellar_scratch.capacity());
+                if let Some(previous) = scratch_allocation {
+                    assert_eq!(allocation, previous, "paused, changed time/membership and bypass reuse the same scratch allocation");
+                }
+                scratch_allocation = Some(allocation);
                 assert_eq!(fused.motion, batched.motion);
                 assert_eq!(fused.stellar, batched.stellar);
                 assert_eq!(fused.stellar_stats, batched.stellar_stats);

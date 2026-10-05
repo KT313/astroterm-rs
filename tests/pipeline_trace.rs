@@ -1,14 +1,17 @@
 //! Single-frame diagnostics must describe production results without changing them.
-use astroterm::{
-    astro::{J2000, Observer},
-    cache::CacheConfig,
-    catalog::datasets::{Dataset, DatasetDirectories},
-    cli::{Arguments, build_config},
-    projection::{ProjectionCache, View, Viewport},
-    scene::{RenderOptions, pixels::draw_pixel_sky},
-    sky::{FrameTime, ObservationCache, SimulationState, Sky, cache::load_sky_catalog_with_times, update_simulation},
-    timing::StepTimes,
-};
+use astroterm::state::{ObservationCache, ProjectionCache, SimulationState};
+use astroterm::astro::{J2000, Observer};
+use astroterm::cache::CacheConfig;
+use astroterm::catalog::datasets::{Dataset, DatasetDirectories};
+use astroterm::cli::{Arguments, build_config};
+use astroterm::model::Sky;
+use astroterm::model::projection::{ProjectionViewport as Viewport, View};
+use astroterm::model::rendering::RenderOptions;
+use astroterm::model::simulation::FrameTime;
+use astroterm::scene::pixels::draw_pixel_sky;
+use astroterm::sky::update_simulation;
+use astroterm::sky::cache::load_sky_catalog_with_times;
+use astroterm::timing::StepTimes;
 use clap::Parser;
 use std::sync::Arc;
 
@@ -54,7 +57,7 @@ fn source_and_mapped_loads_report_actual_work_and_ordered_skip_reasons() {
 
 #[test]
 fn tracing_preserves_observation_projection_and_raster_with_cache_or_bypass() {
-    let catalog = Arc::new(astroterm::sky::SkyCatalog::from_owned_catalog(
+    let catalog = Arc::new(astroterm::sky::prepare_owned_catalog(
         astroterm::catalog::load_embedded_catalog().unwrap(),
     ));
     let options = RenderOptions {
@@ -80,33 +83,21 @@ fn tracing_preserves_observation_projection_and_raster_with_cache_or_bypass() {
             let time = FrameTime::from_utc(J2000);
             let view = View::default();
             update_simulation(&mut simulation, time, &[], &mut times).unwrap();
-            let mut observer = observation
-                .prepare_observer(&simulation, time, Observer::default())
+            let mut observer = astroterm::sky::prepare_cached_observer(&mut observation, &simulation, time, Observer::default())
                 .unwrap();
-            observation
-                .prepare_light_time(&mut simulation, &mut observer, &mut times)
+            astroterm::sky::prepare_cached_light_time(&mut observation, &mut simulation, &mut observer, &mut times)
                 .unwrap();
-            observation
-                .observe(
-                    &simulation,
+            astroterm::sky::observe_cached_sky(&mut observation, &simulation,
                     &observer,
                     5.0,
                     true,
-                    view.sky_region(),
+                    astroterm::projection::select_view_region(&view),
                     &mut sky,
-                    &mut times,
-                )
+                    &mut times)
                 .unwrap();
-            let projected = projection.project(
-                &sky,
-                &view,
-                Viewport {
-                    width: 160,
-                    height: 160,
-                },
-                time.tt,
-                &mut times,
-            );
+            let viewport = Viewport { width: 160, height: 160 };
+            astroterm::projection::project_cached_sky(&mut projection, &sky, &view, viewport, time.tt, &mut times);
+            let projected = astroterm::projection::borrow_projected(&projection, &sky, &view, viewport);
             let image = draw_pixel_sky(&projected, &options, &mut times).unwrap();
             let ids = projected
                 .stars

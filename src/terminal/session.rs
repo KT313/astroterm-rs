@@ -12,13 +12,14 @@ use crossterm::terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlt
 use crossterm::{execute, queue};
 
 use crate::canvas::Canvas;
+use crate::state::rendering::Presenter;
 
-use super::present::{Frame, Presenter, detect_cell_aspect_ratio, fit_square_viewport};
+use crate::model::rendering::Frame;
+use super::present::{detect_cell_aspect_ratio, fit_square_viewport};
 
 /// An open terminal session. The terminal is restored when this is dropped, including during a panic.
 pub struct TerminalSession {
     out: BufWriter<Stdout>,
-    presenter: Presenter,
 }
 
 /// Switch the terminal to raw mode and the alternate screen, with a hidden cursor.
@@ -27,7 +28,6 @@ pub fn open_terminal_session() -> io::Result<TerminalSession> {
     terminal::enable_raw_mode()?;
     let mut session = TerminalSession {
         out: BufWriter::new(io::stdout()),
-        presenter: Presenter::default(),
     };
     execute!(session.out, EnterAlternateScreen, Hide, Clear(ClearType::All))?;
     Ok(session)
@@ -44,7 +44,7 @@ impl TerminalSession {
     /// Size the canvases of a frame to the current terminal: a square, centered sky canvas and, with `with_panel`, an
     /// (initially empty) panel for the top left corner. `aspect_ratio` (cell height / width) overrides the detected
     /// one. The screen is cleared, so the next frame is drawn in full.
-    pub fn fit_frame(&mut self, aspect_ratio: Option<f64>, with_panel: bool) -> io::Result<Frame> {
+    pub fn fit_frame(&mut self, presenter: &mut Presenter, aspect_ratio: Option<f64>, with_panel: bool) -> io::Result<Frame> {
         // layout
         let (columns, rows) = terminal::size()?;
         let aspect_ratio = aspect_ratio.unwrap_or_else(detect_cell_aspect_ratio);
@@ -52,7 +52,7 @@ impl TerminalSession {
 
         // start over on a blank screen
         queue!(self.out, ResetColor, Clear(ClearType::All))?;
-        self.presenter.reset(rows, columns, viewport);
+        super::present::reset_presenter(presenter, rows, columns, viewport);
         let panel = with_panel.then(|| Canvas::new(0, 0));
         Ok(Frame {
             sky: Canvas::new(viewport.height, viewport.width),
@@ -61,8 +61,8 @@ impl TerminalSession {
     }
 
     /// Show the frame, writing only the cells that changed since the last one.
-    pub fn present(&mut self, frame: &Frame) -> io::Result<()> {
-        self.presenter.present(&mut self.out, frame)?;
+    pub fn present(&mut self, presenter: &mut Presenter, frame: &Frame) -> io::Result<()> {
+        super::present::present_frame_cells(presenter, &mut self.out, frame)?;
         self.out.flush()
     }
 }
@@ -95,4 +95,14 @@ fn install_panic_restore_hook() {
             previous_hook(info);
         }));
     });
+}
+
+#[cfg(feature = "memory-diagnostics")]
+impl crate::cache::buffers::ReportBuffers for TerminalSession {
+    fn report_buffers(&self, sink: &mut dyn crate::cache::buffers::BufferSink) {
+        if sink.enter("output_writer", std::mem::size_of_val(&self.out)) {
+            sink.payload(self.out.buffer().len(), self.out.capacity(), 1, crate::cache::Quality::ExactPayload, "external scoped BufWriter payload; terminal/OS internals excluded");
+            sink.leave();
+        }
+    }
 }

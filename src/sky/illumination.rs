@@ -3,29 +3,15 @@
 use crate::astro::{MoonPhase, Vector3, moon_age_to_phase};
 use std::f64::consts::{PI, TAU};
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct MoonIllumination {
-    pub illuminated_fraction: f64,
-    pub phase_angle: f64,
-    pub waxing: bool,
-}
-impl Default for MoonIllumination {
-    fn default() -> Self {
-        Self {
-            illuminated_fraction: 0.0,
-            phase_angle: PI,
-            waxing: true,
-        }
-    }
-}
-impl MoonIllumination {
-    pub fn named_phase(self) -> MoonPhase {
-        if self.phase_angle <= 0.03 * TAU {
-            return MoonPhase::Full;
-        } // phase latitude means exact i=0 is rare
-        let fraction = (PI - self.phase_angle) / TAU;
-        moon_age_to_phase(if self.waxing { fraction } else { 1.0 - fraction })
-    }
+use crate::model::MoonIllumination;
+
+/// Resolve the named phase from continuous phase angle and waxing direction.
+pub fn name_moon_phase(illumination: MoonIllumination) -> MoonPhase {
+    if illumination.phase_angle <= 0.03 * TAU {
+        return MoonPhase::Full;
+    } // phase latitude means exact i=0 is rare
+    let fraction = (PI - illumination.phase_angle) / TAU;
+    moon_age_to_phase(if illumination.waxing { fraction } else { 1.0 - fraction })
 }
 
 /// `moon` and `sun` are relative to the same observer at the same epoch. The observer-to-Moon vector is negated
@@ -60,11 +46,11 @@ mod tests {
             north,
         );
         let waning = compute_moon_illumination(moon, Vector3 { x: 1.0, y: 1.0, z: 0.0 }, north);
-        assert_eq!((full.illuminated_fraction, full.named_phase()), (1.0, MoonPhase::Full));
-        assert_eq!((new.illuminated_fraction, new.named_phase()), (0.0, MoonPhase::New));
+        assert_eq!((full.illuminated_fraction, crate::sky::name_moon_phase(full)), (1.0, MoonPhase::Full));
+        assert_eq!((new.illuminated_fraction, crate::sky::name_moon_phase(new)), (0.0, MoonPhase::New));
         assert_eq!(quarter.illuminated_fraction, 0.5);
-        assert_eq!(quarter.named_phase(), MoonPhase::FirstQuarter);
+        assert_eq!(crate::sky::name_moon_phase(quarter), MoonPhase::FirstQuarter);
         assert!(quarter.waxing && !waning.waxing);
-        assert_eq!(waning.named_phase(), MoonPhase::LastQuarter);
+        assert_eq!(crate::sky::name_moon_phase(waning), MoonPhase::LastQuarter);
     }
 }

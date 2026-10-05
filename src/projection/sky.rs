@@ -1,107 +1,59 @@
 //! Camera geometry only: maps an immutable observed sky to screen points and clipped segments. No simulation
 //! evaluation or astronomical corrections occur here. Character rendering consumes these prepared primitives.
-use super::{CartesianCamera, Polar, ScreenPoint, View, ViewCenter, draw_order::sort_stars_for_drawing};
+use crate::model::projection::{CartesianCamera, Polar, ScreenPoint, View, ViewCenter};
+use super::draw_order::prepare_draw_order;
 use crate::astro::{Horizontal, Vector3, offset_vector_towards};
-use crate::catalog::StarNames;
-use crate::sky::{ObservedSky, ObservedStarView, PlanetKind};
+use crate::model::ObservedSky;
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 const EDGE_TOLERANCE: f64 = 1e-6;
-pub type Cell = (i32, i32);
+use crate::model::projection::{Cell, ProjectedArc, ProjectedConstellation, ProjectedMoon, ProjectedPlanet, ProjectionViewport as Viewport};
+use crate::model::projection::ProjectionViewport;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Viewport {
-    pub height: usize,
-    pub width: usize,
-}
-impl Viewport {
-    pub fn to_cell_cartesian(self, point: ScreenPoint) -> Cell {
-        let snap = |v: f64| if v.abs() < 1e-12 { 0.0 } else { v };
-        let (ry, rx) = ((self.height as f64 - 1.0) / 2.0, (self.width as f64 - 1.0) / 2.0);
-        (
-            (-snap(point.y) * ry + ry).round() as i32,
-            (snap(point.x) * rx + rx).round() as i32,
-        )
-    }
-
-    pub fn to_cell(self, polar: Polar) -> Cell {
-        let radius_y = (self.height as f64 - 1.0) / 2.0;
-        let radius_x = (self.width as f64 - 1.0) / 2.0;
-        let snap = |value: f64| if value.abs() < 1e-12 { 0.0 } else { value };
-        let (s, c) = (snap(polar.theta.sin()), snap(polar.theta.cos()));
-        (
-            (polar.radius * -radius_y * s + radius_y).round() as i32,
-            (polar.radius * radius_x * c + radius_x).round() as i32,
-        )
-    }
+/// Map Cartesian projection coordinates to signed row/column cells.
+pub fn project_to_cell(viewport: ProjectionViewport, point: ScreenPoint) -> Cell {
+    let snap = |v: f64| if v.abs() < 1e-12 { 0.0 } else { v };
+    let (ry, rx) = ((viewport.height as f64 - 1.0) / 2.0, (viewport.width as f64 - 1.0) / 2.0);
+    (
+        (-snap(point.y) * ry + ry).round() as i32,
+        (snap(point.x) * rx + rx).round() as i32,
+    )
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct ProjectedStar<'a> {
-    pub star: ObservedStarView<'a>,
-    pub cell: Option<Cell>,
-}
-#[derive(Clone, Debug, PartialEq)]
-pub struct ProjectedPlanet {
-    pub kind: PlanetKind,
-    pub cell: Option<Cell>,
-}
-#[derive(Clone, Debug, PartialEq)]
-pub struct ProjectedMoon {
-    pub illumination: crate::sky::MoonIllumination,
-    pub phase: crate::astro::MoonPhase,
-    pub cell: Option<Cell>,
-    /// Unit direction toward the Sun: x right, y up. None at a degenerate projection.
-    pub light_direction: Option<ScreenPoint>,
-}
-#[derive(Clone, Debug, PartialEq)]
-pub struct ProjectedArc {
-    pub start: Cell,
-    pub end: Cell,
-    /// Sampled projected great-circle vertices, in this viewport (cells or pixels).
-    pub points: Vec<Cell>,
-    pub includes_start: bool,
-    pub includes_end: bool,
-}
-#[derive(Clone, Debug, PartialEq)]
-pub struct ProjectedConstellation {
-    pub maximum_magnitude: f64,
-    pub arcs: Vec<ProjectedArc>,
-}
-#[derive(Clone, Debug, PartialEq)]
-pub struct ProjectedSky<'a> {
-    pub outside_accuracy_range: bool,
-    pub selection: crate::sky::SelectionStats,
-    pub evaluated_stars: usize,
-    pub correction_stats: crate::sky::CorrectionStats,
-    pub catalog_singular_count: usize,
-    pub runtime_singular_count: usize,
-    pub stars: Vec<ProjectedStar<'a>>,
-    pub planets: Vec<ProjectedPlanet>,
-    pub moon: ProjectedMoon,
-    pub constellations: Vec<ProjectedConstellation>,
-    pub names: &'a StarNames,
-    pub facing: bool,
-    pub viewport: Viewport,
-    pub horizon: Vec<[Cell; 2]>,
-    pub horizon_labels: Vec<(Cell, &'static str)>,
+/// Map polar projection coordinates to signed row/column cells.
+pub fn polar_to_cell(viewport: ProjectionViewport, polar: Polar) -> Cell {
+    let radius_y = (viewport.height as f64 - 1.0) / 2.0;
+    let radius_x = (viewport.width as f64 - 1.0) / 2.0;
+    let snap = |value: f64| if value.abs() < 1e-12 { 0.0 } else { value };
+    let (s, c) = (snap(polar.theta.sin()), snap(polar.theta.cos()));
+    (
+        (polar.radius * -radius_y * s + radius_y).round() as i32,
+        (polar.radius * radius_x * c + radius_x).round() as i32,
+    )
 }
 
 /// Project without retaining timing diagnostics (reference fixtures and library callers).
-pub fn project_sky<'a>(sky: &'a ObservedSky, view: &View, viewport: Viewport) -> ProjectedSky<'a> {
+pub fn project_sky(sky: &ObservedSky, view: &View, viewport: Viewport) -> crate::model::projection::ProjectionData {
     project_sky_with_times(sky, view, viewport, &mut crate::timing::StepTimes::default())
 }
 
 /// Camera-stage coordinator. Exact visibility and draw order stay separate from observation's conservative filters.
-pub fn project_sky_with_times<'a>(
-    sky: &'a ObservedSky,
+pub fn project_sky_with_times(
+    sky: &ObservedSky,
     view: &View,
     viewport: Viewport,
     times: &mut crate::timing::StepTimes,
-) -> ProjectedSky<'a> {
-    let camera = CartesianCamera::new(view);
-    let mut stars = times.measure("Star projection", || project_visible_stars(sky, &camera, viewport));
-    times.measure("Star draw order", || sort_stars_for_drawing(&mut stars));
+) -> crate::model::projection::ProjectionData {
+    let camera = crate::projection::prepare_camera(view);
+    let stars = times.measure("Star projection", || project_visible_stars(sky, &camera, viewport));
+    let order = times.measure("Star draw order", || {
+        let mut records = Vec::new();
+        prepare_draw_order(&mut records, stars.iter().map(|&(index, _)| {
+            let star = sky.star_view(index);
+            (star.magnitude, star.id())
+        }));
+        records.into_iter().map(|record| record.projected_index).collect()
+    });
     let (planets, moon) = times.measure("Body projection", || project_bodies(sky, view, &camera, viewport));
     let constellations = times.measure("Constellation projection", || {
         project_constellations(sky, view, viewport)
@@ -112,7 +64,7 @@ pub fn project_sky_with_times<'a>(
             project_horizon_labels(view, viewport),
         )
     });
-    ProjectedSky {
+    crate::model::projection::ProjectionData {
         outside_accuracy_range: sky.outside_accuracy_range,
         selection: sky.selection,
         evaluated_stars: sky.corrections.evaluated,
@@ -120,10 +72,10 @@ pub fn project_sky_with_times<'a>(
         catalog_singular_count: sky.catalog.singular_count,
         runtime_singular_count: sky.runtime_singular_count,
         stars,
+        order,
         planets,
         moon,
         constellations,
-        names: &sky.names,
         facing: view.is_facing(),
         viewport,
         horizon,
@@ -132,27 +84,15 @@ pub fn project_sky_with_times<'a>(
 }
 
 pub(super) fn project_visible_cell(camera: &CartesianCamera, viewport: Viewport, position: Vector3) -> Option<Cell> {
-    camera
-        .project(position)
+    crate::projection::project_camera(*camera, position)
         .filter(|p| p.is_visible())
-        .map(|p| viewport.to_cell_cartesian(p))
+        .map(|p| crate::projection::project_to_cell(viewport, p))
 }
 
-fn project_visible_stars<'a>(
-    sky: &'a ObservedSky,
-    camera: &CartesianCamera,
-    viewport: Viewport,
-) -> Vec<ProjectedStar<'a>> {
-    let cell = |position| project_visible_cell(camera, viewport, position);
-    sky.star_views()
-        .filter(|star| star.drawable)
-        .filter_map(|star| {
-            cell(star.position).map(|point| ProjectedStar {
-                star,
-                cell: Some(point),
-            })
-        })
-        .collect()
+fn project_visible_stars(sky: &ObservedSky, camera: &CartesianCamera, viewport: Viewport) -> Vec<(usize, Cell)> {
+    sky.star_views().enumerate().filter(|(_, star)| star.drawable).filter_map(|(index, star)| {
+        project_visible_cell(camera, viewport, star.position).map(|cell| (index, cell))
+    }).collect()
 }
 
 pub(super) fn project_bodies(
@@ -220,9 +160,9 @@ pub(super) fn project_constellations(
 
 /// Screen direction towards the Sun, shared by lunar raster lighting and character glyph orientation.
 pub fn project_light_direction(view: &View, moon: Vector3, sun: Vector3) -> Option<ScreenPoint> {
-    let camera = CartesianCamera::new(view);
+    let camera = crate::projection::prepare_camera(view);
     let offset = offset_vector_towards(moon, sun, 1_f64.to_radians());
-    let (a, b) = (camera.project(moon)?, camera.project(offset)?);
+    let (a, b) = (crate::projection::project_camera(camera, moon)?, crate::projection::project_camera(camera, offset)?);
     let (x, y) = (b.x - a.x, b.y - a.y);
     let length = x.hypot(y);
     (length.is_finite() && length > 0.0).then(|| ScreenPoint {
@@ -235,20 +175,19 @@ pub fn project_light_direction(view: &View, moon: Vector3, sun: Vector3) -> Opti
 /// consume this geometry; endpoints keep their star markers, while inserted vertices never create markers.
 pub fn project_constellation_segment(view: &View, viewport: Viewport, from: Vector3, to: Vector3) -> Vec<ProjectedArc> {
     let mut arcs = Vec::new();
-    let camera = CartesianCamera::new(view);
+    let camera = crate::projection::prepare_camera(view);
     let project = |angle| {
-        camera
-            .project(offset_vector_towards(from, to, angle))
+        crate::projection::project_camera(camera, offset_vector_towards(from, to, angle))
             .map(ScreenPoint::clamp_to_edge)
     };
-    for part in view.find_visible_arc_parts_vectors(from, to) {
+    for part in crate::projection::find_visible_arc_parts_vectors(view, from, to) {
         let (Some(start), Some(end)) = (project(part.start), project(part.end)) else {
             continue;
         };
-        let mut points = vec![viewport.to_cell_cartesian(start)];
+        let mut points = vec![crate::projection::project_to_cell(viewport, start)];
         sample_arc(&project, viewport, (part.start, start), (part.end, end), 0, &mut points);
-        let start = viewport.to_cell_cartesian(start);
-        let end = viewport.to_cell_cartesian(end);
+        let start = crate::projection::project_to_cell(viewport, start);
+        let end = crate::projection::project_to_cell(viewport, end);
         points.dedup();
         if points.len() == 1 {
             points.push(end);
@@ -282,7 +221,7 @@ fn sample_arc(
             return;
         }
     }
-    points.push(viewport.to_cell_cartesian(end.1));
+    points.push(crate::projection::project_to_cell(viewport, end.1));
 }
 
 /// Trace the visible part of the horizon in the facing view.
@@ -303,8 +242,8 @@ pub fn project_horizon_line(view: &View, viewport: Viewport) -> Vec<[Cell; 2]> {
     let sample_count = 4 * viewport.width as i32;
     let start_azimuth = facing_azimuth - half_range;
     let step = 2.0 * half_range / f64::from(sample_count);
-    let camera = CartesianCamera::new(view);
-    let project_horizon = |azimuth: f64| camera.project(Horizontal { azimuth, altitude: 0.0 }.to_unit_vector());
+    let camera = crate::projection::prepare_camera(view);
+    let project_horizon = |azimuth: f64| crate::projection::project_camera(camera, Horizontal { azimuth, altitude: 0.0 }.to_unit_vector());
 
     // join samples into segments once they are 4 columns or 2 rows apart (empirical), since the line functions can't
     // draw the slope of tiny segments
@@ -319,8 +258,8 @@ pub fn project_horizon_line(view: &View, viewport: Viewport) -> Vec<[Cell; 2]> {
             && let (Some(previous_point), Some(current_point)) = (previous, current)
         {
             let start =
-                *segment_start.get_or_insert_with(|| viewport.to_cell_cartesian(previous_point.clamp_to_edge()));
-            let end = viewport.to_cell_cartesian(current_point.clamp_to_edge());
+                *segment_start.get_or_insert_with(|| crate::projection::project_to_cell(viewport, previous_point.clamp_to_edge()));
+            let end = crate::projection::project_to_cell(viewport, current_point.clamp_to_edge());
             let far_enough = (end.1 - start.1).abs() >= 4 || (end.0 - start.0).abs() >= 2;
             if !visible || index == sample_count || far_enough {
                 if end != start {
@@ -340,19 +279,19 @@ pub fn project_horizon_labels(view: &View, viewport: Viewport) -> Vec<(Cell, &'s
         return Vec::new();
     }
     let mut labels = Vec::new();
-    let camera = CartesianCamera::new(view);
+    let camera = crate::projection::prepare_camera(view);
     const DIRECTIONS: [&str; 8] = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
 
     // the 8 main directions, except on the very edge where labels get cut off
     for (index, label) in DIRECTIONS.iter().enumerate() {
         let azimuth = index as f64 * TAU / DIRECTIONS.len() as f64;
-        let Some(point) = camera.project(Horizontal { azimuth, altitude: 0.0 }.to_unit_vector()) else {
+        let Some(point) = crate::projection::project_camera(camera, Horizontal { azimuth, altitude: 0.0 }.to_unit_vector()) else {
             continue;
         };
         if point.radius() >= 1.0 - EDGE_TOLERANCE {
             continue;
         }
-        let (row, col) = viewport.to_cell_cartesian(point);
+        let (row, col) = crate::projection::project_to_cell(viewport, point);
         labels.push(((row, col - (label.len() as i32 - 1) / 2), *label));
     }
 
@@ -361,13 +300,13 @@ pub fn project_horizon_labels(view: &View, viewport: Viewport) -> Vec<(Cell, &'s
         if (altitude + view.tilt()).abs() < EDGE_TOLERANCE {
             continue; // directly behind the view (tilt ±90° at fov 360°), it would sit on an arbitrary edge point
         }
-        let Some(point) = camera.project(Horizontal { azimuth: 0.0, altitude }.to_unit_vector()) else {
+        let Some(point) = crate::projection::project_camera(camera, Horizontal { azimuth: 0.0, altitude }.to_unit_vector()) else {
             continue;
         };
         if point.radius() > 1.0 + EDGE_TOLERANCE {
             continue;
         }
-        let (row, col) = viewport.to_cell_cartesian(point.clamp_to_edge());
+        let (row, col) = crate::projection::project_to_cell(viewport, point.clamp_to_edge());
         labels.push(((row, col - label.len() as i32 / 2), label));
     }
     labels
@@ -415,7 +354,7 @@ mod geometry_tests {
         let arc = &arcs[0];
         assert!(arc.includes_start && arc.includes_end);
         assert!(arc.points.len() > 2);
-        let midpoint = viewport.to_cell_cartesian(CartesianCamera::new(&view).project((a + b).normalized()).unwrap());
+        let midpoint = crate::projection::project_to_cell(viewport, crate::projection::project_camera(crate::projection::prepare_camera(&view), (a + b).normalized()).unwrap());
         assert!(
             arc.points
                 .iter()

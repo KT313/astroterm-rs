@@ -14,6 +14,9 @@ pub struct CacheStats {
     pub bypasses: u64,
     pub last_reason: Option<RefreshReason>,
 }
+/// Result of the existing value comparison; callers may ignore it without a second comparison.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StoreOutcome { pub value_changed: bool }
 #[derive(Clone, Debug, PartialEq)]
 pub struct Cache<K, V> {
     pub has_been_invalidated: bool,
@@ -72,8 +75,9 @@ impl<K: PartialEq, V: PartialEq> Cache<K, V> {
             false
         }
     }
-    pub fn store(&mut self, key: K, epoch: f64, valid_seconds: f64, value: V) {
-        if self.value.as_ref() != Some(&value) {
+    pub fn store(&mut self, key: K, epoch: f64, valid_seconds: f64, value: V) -> StoreOutcome {
+        let value_changed = self.value.as_ref() != Some(&value);
+        if value_changed {
             self.generation = self.generation.wrapping_add(1);
         }
         self.key = Some(key);
@@ -82,6 +86,7 @@ impl<K: PartialEq, V: PartialEq> Cache<K, V> {
         self.valid_seconds = valid_seconds;
         self.has_been_invalidated = false;
         self.stats.refreshes += 1;
+        StoreOutcome { value_changed }
     }
     pub fn get_or_update(&mut self, key: K, epoch: f64, enabled: bool, calculate: impl FnOnce() -> V) -> &V {
         if self.needs_refresh(&key, epoch, None, enabled) {
@@ -90,6 +95,15 @@ impl<K: PartialEq, V: PartialEq> Cache<K, V> {
         self.value()
     }
 }
+#[cfg(feature = "memory-diagnostics")]
+impl<K: super::buffers::ReportBuffers, V: super::buffers::ReportBuffers> super::buffers::ReportBuffers for Cache<K, V> {
+    const HAS_BUFFERS: bool = K::HAS_BUFFERS || V::HAS_BUFFERS;
+    fn report_buffers(&self, sink: &mut dyn super::buffers::BufferSink) {
+        super::buffers::report_field(sink, "key", &self.key);
+        super::buffers::report_field(sink, "value", &self.value); // invalidated results still own their allocations
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

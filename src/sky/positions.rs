@@ -1,6 +1,9 @@
 //! One-shot direct evaluation retained for reference fixtures and library compatibility. The runtime frame loop
 //! owns persistent SimulationState and invokes simulation, observation and projection explicitly.
-use super::{FrameTime, SimulationState, Sky, observe_sky, prepare_observation, update_simulation};
+use crate::state::{SimulationState};
+use crate::model::Sky;
+use crate::model::simulation::FrameTime;
+use super::{observe_sky, prepare_observation, update_simulation};
 use crate::astro::{Observer, refract_direction};
 use crate::timing::StepTimes;
 
@@ -20,7 +23,7 @@ pub fn update_sky_positions(
         &observer,
         magnitude_threshold,
         false,
-        crate::sky::SkyRegion::All,
+        crate::model::SkyRegion::All,
         sky,
         times,
     )
@@ -50,11 +53,12 @@ mod tests {
     use crate::astro::MoonPhase;
     use crate::astro::Observer;
     use crate::catalog::{Designation, load_embedded_catalog};
-    use crate::sky::{PlanetKind, Sky};
+    use crate::model::Sky;
+    use crate::model::objects::PlanetKind;
 
     #[test]
     fn brightness_candidates_and_endpoints_are_updated_and_refracted() {
-        let mut sky = Sky::from_catalog(&load_embedded_catalog().unwrap());
+        let mut sky = crate::sky::create_sky_from_catalog(&load_embedded_catalog().unwrap());
         let threshold = 5.0;
         let count = sky.count_bright_stars(threshold);
         let sentinel = crate::astro::Horizontal {
@@ -95,7 +99,7 @@ mod tests {
             latitude: 42.3601 * PI / 180.0,
             longitude: -71.0589 * PI / 180.0,
         };
-        let mut sky = Sky::from_catalog(&load_embedded_catalog().expect("embedded catalog loads"));
+        let mut sky = crate::sky::create_sky_from_catalog(&load_embedded_catalog().expect("embedded catalog loads"));
         update_sky_positions(&mut sky, julian_date, &boston, f64::INFINITY, &mut StepTimes::default());
         sky
     }

@@ -1,13 +1,11 @@
-use astroterm::{
-    astro::Vector3,
-    catalog::load_embedded_catalog,
-    sky::{ObservedSky, ObservedStar, ObservedStarView},
-};
+use astroterm::astro::Vector3;
+use astroterm::catalog::load_embedded_catalog;
+use astroterm::model::objects::{ObservedStar, ObservedStarView};
 use std::{mem::size_of, sync::Arc};
 
 #[test]
 fn filtered_and_reordered_states_borrow_their_own_catalog_metadata() {
-    let mut sky = ObservedSky::from_catalog(&load_embedded_catalog().unwrap());
+    let mut sky = astroterm::sky::create_sky_from_catalog(&load_embedded_catalog().unwrap());
     sky.stars = [100, 9, 1700, 1].map(|i| sky.stars[i].clone()).into();
     for (i, state) in sky.stars.iter_mut().enumerate() {
         state.magnitude = -0.0 + i as f64;
@@ -40,7 +38,7 @@ fn filtered_and_reordered_states_borrow_their_own_catalog_metadata() {
 
 #[test]
 fn borrowed_star_debug_does_not_expand_the_whole_catalog() {
-    let sky = ObservedSky::from_catalog(&load_embedded_catalog().unwrap());
+    let sky = astroterm::sky::create_sky_from_catalog(&load_embedded_catalog().unwrap());
     let debug = format!("{:?}", sky.star_view(0));
     assert!(debug.contains("ObservedStarView"));
     assert!(!debug.contains("StarStorage"));

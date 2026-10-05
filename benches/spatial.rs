@@ -1,13 +1,16 @@
 //! Phase-4 workload matrix. Set ASTROTERM_BENCH_DATASET to time a local AT-HYG file; otherwise use BSC5.
-use astroterm::{
-    astro::Observer,
-    canvas::Canvas,
-    catalog::{load_athyg_catalog, load_embedded_catalog},
-    projection::{View, ViewCenter, Viewport, project_sky},
-    scene::{RenderOptions, draw_sky_scene},
-    sky::{FrameTime, SimulationState, Sky, SkyCatalog, observe_sky, prepare_observation, update_simulation},
-    timing::StepTimes,
-};
+use astroterm::state::{SimulationState};
+use astroterm::astro::Observer;
+use astroterm::canvas::Canvas;
+use astroterm::catalog::{load_athyg_catalog, load_embedded_catalog};
+use astroterm::model::Sky;
+use astroterm::model::projection::{ProjectionViewport as Viewport, View, ViewCenter};
+use astroterm::model::rendering::RenderOptions;
+use astroterm::model::simulation::FrameTime;
+use astroterm::projection::project_sky;
+use astroterm::scene::draw_sky_scene;
+use astroterm::sky::{observe_sky, prepare_observation, update_simulation};
+use astroterm::timing::StepTimes;
 use criterion::{Criterion, SamplingMode, criterion_group, criterion_main};
 use std::{hint::black_box, path::Path, sync::Arc, time::Duration};
 
@@ -16,7 +19,7 @@ fn benchmark_spatial(criterion: &mut Criterion) {
         Some(path) => load_athyg_catalog(Path::new(&path)).unwrap(),
         None => load_embedded_catalog().unwrap(),
     };
-    let mut sky = Sky::new(Arc::new(SkyCatalog::from_owned_catalog(source)));
+    let mut sky = Sky::new(Arc::new(astroterm::sky::prepare_owned_catalog(source)));
     let mut simulation = SimulationState::default();
     let mut timing = StepTimes::default();
     let time = FrameTime::from_utc(2460736.9583333335);
@@ -66,7 +69,7 @@ fn benchmark_spatial(criterion: &mut Criterion) {
                             &observer,
                             threshold,
                             refraction,
-                            view.sky_region(),
+                            astroterm::projection::select_view_region(&view),
                             black_box(&mut sky),
                             &mut timing,
                         )
@@ -78,14 +81,15 @@ fn benchmark_spatial(criterion: &mut Criterion) {
                     &observer,
                     threshold,
                     refraction,
-                    view.sky_region(),
+                    astroterm::projection::select_view_region(&view),
                     &mut sky,
                     &mut timing,
                 )
                 .unwrap();
                 group.bench_function(format!("project_draw/{name}"), |b| {
                     b.iter(|| {
-                        let projected = project_sky(black_box(&sky), &view, Viewport { height: 41, width: 81 });
+                        let projected_data = project_sky(black_box(&sky), &view, Viewport { height: 41, width: 81 });
+                        let projected = projected_data.view(black_box(&sky));
                         draw_sky_scene(&mut canvas, &options, &projected);
                         black_box(&canvas);
                     })
@@ -95,17 +99,15 @@ fn benchmark_spatial(criterion: &mut Criterion) {
     }
     let mut indices = Vec::new();
     for (name, fov) in [("depth4", 180.0), ("depth6", 10.0)] {
-        let region = View {
+        let region = astroterm::projection::select_view_region(&View {
             fov_degrees: fov,
             ..View::default()
-        }
-        .sky_region();
+        });
         group.bench_function(format!("query_{name}"), |b| {
             b.iter(|| {
                 black_box(
-                    sky.catalog
-                        .grid
-                        .select(&sky.catalog.stars, region, &observer, 12.0, true, &mut indices),
+                    astroterm::sky::grid::select_grid(&sky.catalog
+                        .grid, &sky.catalog.stars, region, &observer, 12.0, true, &mut indices),
                 );
             })
         });

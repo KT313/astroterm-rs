@@ -3,10 +3,12 @@
 use std::borrow::Cow;
 
 use crate::canvas::{Canvas, draw_line_braille};
-use crate::projection::{ProjectedArc, ProjectedPlanet, ProjectedSky};
+use crate::model::projection::{ProjectedArc, ProjectedPlanet, ProjectedSky};
 
-use super::appearance::{Appearance, format_star_label, select_moon_appearance, select_planet_appearance};
-use super::{RenderOptions, draw_line};
+use crate::model::rendering::Appearance;
+use super::appearance::{format_star_label, select_moon_appearance, select_planet_appearance};
+use crate::model::rendering::RenderOptions;
+use super::draw_line;
 
 /// With dynamic names, the brightest stars in view are named until at least this many objects in view have labels.
 const DYNAMIC_NAME_COUNT: usize = 5;
@@ -21,7 +23,7 @@ pub(super) fn draw_stars_prepared(
     canvas: &mut Canvas,
     options: &RenderOptions,
     sky: &ProjectedSky<'_>,
-    prepared: Option<&super::prepared::PreparedScene>,
+    prepared: Option<&crate::model::rendering::PreparedScene>,
 ) {
     let dynamically_named = if options.dynamic_names {
         select_dynamically_named_stars(options, sky)
@@ -78,7 +80,7 @@ pub(crate) fn select_dynamically_named_stars(options: &RenderOptions, sky: &Proj
 
 /// Draw the stick figures of all constellations whose stars are all bright enough for the threshold.
 pub fn draw_constellations(canvas: &mut Canvas, options: &RenderOptions, sky: &ProjectedSky<'_>) {
-    for constellation in &sky.constellations {
+    for constellation in sky.constellations {
         if constellation.maximum_magnitude > options.magnitude_threshold {
             continue;
         }
@@ -149,8 +151,9 @@ mod tests {
 
     use super::*;
     use crate::astro::{Horizontal, offset_towards};
-    use crate::projection::{View, Viewport, project_constellation_segment, project_sky};
-    use crate::sky::Sky;
+    use crate::model::projection::{ProjectionViewport as Viewport, View};
+    use crate::projection::{project_constellation_segment, project_sky};
+    use crate::model::Sky;
     fn viewport(canvas: &Canvas) -> Viewport {
         Viewport {
             height: canvas.height(),
@@ -158,15 +161,16 @@ mod tests {
         }
     }
     fn draw_stars(canvas: &mut Canvas, view: &View, options: &RenderOptions, sky: &Sky) {
-        super::draw_stars(canvas, options, &project_sky(sky, view, viewport(canvas)));
+        super::draw_stars(canvas, options, &project_sky(sky, view, viewport(canvas)).view(sky));
     }
     fn select_dynamically_named_stars(view: &View, options: &RenderOptions, sky: &Sky) -> Vec<usize> {
-        let projected = project_sky(sky, view, Viewport { height: 41, width: 81 });
+        let projected_data = project_sky(sky, view, Viewport { height: 41, width: 81 });
+        let projected = projected_data.view(sky);
         super::select_dynamically_named_stars(options, &projected)
             .into_iter()
             .map(|index| {
                 sky.star_views()
-                    .position(|star| star.id() == projected.stars[index].star.id())
+                    .position(|star| star.id() == projected.stars.get(index).star.id())
                     .unwrap()
             })
             .collect()
@@ -184,11 +188,11 @@ mod tests {
     }
     fn is_lit_on_right(view: &View, moon: Horizontal, sun: Horizontal) -> bool {
         let offset = offset_towards(moon, sun, 1_f64.to_radians());
-        view.project(offset).to_cartesian().0 > view.project(moon).to_cartesian().0
+        crate::projection::project_horizontal(view, offset).to_cartesian().0 > crate::projection::project_horizontal(view, moon).to_cartesian().0
     }
 
     use crate::catalog::load_embedded_catalog;
-    use crate::projection::ViewCenter;
+    use crate::model::projection::ViewCenter;
 
     #[test]
     fn lit_side_follows_the_sun_on_screen() {
@@ -309,7 +313,7 @@ mod tests {
     /// The real sky with every object at the nadir (out of the overhead view), except the given stars, which are placed
     /// on a ring around the zenith.
     fn place_in_view(visible: &[usize]) -> Sky {
-        let mut sky = Sky::from_catalog(&load_embedded_catalog().expect("embedded catalog loads"));
+        let mut sky = crate::sky::create_sky_from_catalog(&load_embedded_catalog().expect("embedded catalog loads"));
         let nadir = horizontal(0.0, -90.0).to_unit_vector();
         sky.stars.iter_mut().for_each(|star| star.position = nadir);
         sky.planets.iter_mut().for_each(|planet| planet.position = nadir);
@@ -378,7 +382,7 @@ mod tests {
         for star in &mut catalog.stars {
             star.name = None;
         }
-        sky.catalog = std::sync::Arc::new(crate::sky::SkyCatalog::from_catalog(&catalog));
+        sky.catalog = std::sync::Arc::new(crate::sky::prepare_catalog(&catalog));
         for (step, &index) in indices.iter().enumerate() {
             sky.stars[index].magnitude = 4.0 - step as f64;
             assert!(sky.star_view(index).name().is_none());

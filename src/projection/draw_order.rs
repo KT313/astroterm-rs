@@ -1,23 +1,17 @@
 //! Compact comparison inputs for exact current-magnitude draw order. Sorting never follows observed-star
 //! references; both the cached pipeline and stateless projection use the same comparison semantics.
-use super::ProjectedStar;
+#[cfg(test)]
+use crate::model::projection::ProjectedStar;
 use crate::catalog::StarId;
 use std::cmp::Ordering;
+use crate::timing::memory::{BufferId, BufferShape, IndexDomain, MemoryEvent, Operation};
 
-#[derive(Clone, Copy, Debug)]
-pub(super) struct DrawRecord {
-    magnitude: f64,
-    id: StarId,
-    pub projected_index: usize,
-}
-
-impl DrawRecord {
-    fn compare_for_drawing(&self, other: &Self) -> Ordering {
-        if self.magnitude == other.magnitude {
-            self.id.cmp(&other.id) // includes +0.0 and -0.0; preserve the original equality check
-        } else {
-            other.magnitude.total_cmp(&self.magnitude)
-        }
+use crate::model::projection::DrawRecord;
+fn compare_for_drawing(record: &DrawRecord, other: &DrawRecord) -> Ordering {
+    if record.magnitude == other.magnitude {
+        record.id.cmp(&other.id) // includes +0.0 and -0.0; preserve the original equality check
+    } else {
+        other.magnitude.total_cmp(&record.magnitude)
     }
 }
 
@@ -30,6 +24,7 @@ pub(super) fn prepare_draw_order_with_times(
     stars: impl IntoIterator<Item = (f64, StarId)>,
     times: &mut crate::timing::StepTimes,
 ) {
+    let before = times.inspect_memory(|| BufferShape::vector(records, IndexDomain::Visible));
     times.measure("Sort record construction", || {
         records.clear(); // retained capacity is scratch space, never a cached result
         records.extend(
@@ -43,11 +38,20 @@ pub(super) fn prepare_draw_order_with_times(
                 }),
         );
     });
-    times.measure("Magnitude and ID sort", || {
-        records.sort_unstable_by(DrawRecord::compare_for_drawing)
-    });
+    {
+        let step = times.last_memory_step();
+        times.record_memory(step, || MemoryEvent::operation(BufferId::DrawOrderScratch, Operation::Clear, before, before.map(|mut shape| { shape.len = Some(0); shape }), before.and_then(|shape| shape.len), None));
+        times.record_memory(step, || {
+            let after = BufferShape::vector(records, IndexDomain::Visible);
+            MemoryEvent::operation(BufferId::DrawOrderScratch, Operation::Build, before.map(|mut shape| { shape.len = Some(0); shape }), Some(after), after.len, after.logical_bytes())
+        });
+    }
+    times.measure("Magnitude and ID sort", || records.sort_unstable_by(compare_for_drawing));
+    times.record_memory(times.last_memory_step(), || MemoryEvent::operation(BufferId::DrawOrderScratch, Operation::Write, Some(BufferShape::vector(records, IndexDomain::Visible)), Some(BufferShape::vector(records, IndexDomain::DrawOrder)), None, None)); // sorting access counts are not measured
+
 }
 
+#[cfg(test)]
 pub(super) fn sort_stars_for_drawing(stars: &mut [ProjectedStar<'_>]) {
     let mut records = Vec::new();
     prepare_draw_order(
@@ -93,7 +97,7 @@ mod tests {
                         id: StarId(id),
                         projected_index: 0,
                     };
-                    assert_eq!(record(a, a_id).compare_for_drawing(&record(b, b_id)), expected);
+                    assert_eq!(compare_for_drawing(&record(a, a_id), &record(b, b_id)), expected);
                 }
             }
         }
@@ -102,7 +106,7 @@ mod tests {
     #[test]
     fn compact_sort_and_permutation_match_reference_with_ties_and_reused_scratch() {
         let catalog = crate::catalog::load_embedded_catalog().unwrap();
-        let mut sky = crate::sky::ObservedSky::from_catalog(&catalog);
+        let mut sky = crate::sky::create_sky_from_catalog(&catalog);
         sky.stars.truncate(128);
         let mut scratch = Vec::new();
         for count in [128, 3, 0, 17, 128] {
@@ -117,7 +121,7 @@ mod tests {
                 .iter()
                 .enumerate()
                 .map(|(index, star)| ProjectedStar {
-                    star: crate::sky::ObservedStarView {
+                    star: crate::model::ObservedStarView {
                         state: star,
                         catalog: &sky.catalog.stars,
                     },

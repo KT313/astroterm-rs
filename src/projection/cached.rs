@@ -1,296 +1,301 @@
 //! Owned geometry caches; borrowed star views are assembled only for the current render call.
+use super::memory::{record_key_build, record_cache_store, record_candidate_clear};
+use crate::state::ProjectionCache;
+use crate::timing::memory::{Access, BufferId, BufferShape, IndexDomain, MemoryEvent, Operation};
 use super::{
-    draw_order::{DrawRecord, prepare_draw_order_with_times},
+    draw_order::prepare_draw_order_with_times,
     sky::*,
     *,
 };
 use crate::{
-    astro::Vector3,
-    cache::{Cache, CacheConfig, Group},
-    sky::{ObservedSky, PlanetKind},
+    cache::Group,
+    model::ObservedSky,
     timing::StepTimes,
 };
 
-type StarKey = (Vec<(Vector3, bool)>, View, Viewport);
-type BodyKey = (Vec<(PlanetKind, Vector3)>, crate::sky::Moon, View, Viewport);
-type ConstellationKey = (
-    Vec<(usize, Vector3, f64)>,
-    Vec<crate::sky::Constellation>,
-    f64,
-    View,
-    Viewport,
-);
-type HorizonGeometry = (Vec<[Cell; 2]>, Vec<(Cell, &'static str)>);
 
-#[derive(Default)]
-pub struct ProjectionCache {
-    config: CacheConfig,
-    prepared_figures: Vec<crate::sky::Constellation>,
-    prepared_endpoints: Vec<usize>,
-    stars: Cache<StarKey, Vec<(usize, Cell)>>,
-    order: Cache<Vec<(usize, f64, crate::catalog::StarId)>, Vec<usize>>,
-    draw_order_scratch: Vec<DrawRecord>,
-    bodies: Cache<BodyKey, (Vec<ProjectedPlanet>, ProjectedMoon)>,
-    constellations: Cache<ConstellationKey, Vec<ProjectedConstellation>>,
-    horizon: Cache<(View, Viewport), HorizonGeometry>,
+#[cfg(test)]
+use crate::astro::Vector3;
+
+#[cfg(test)]
+use crate::{cache::{Cache, CacheConfig}, model::projection::DrawRecord};
+
+
+/// Retain the already prepared endpoint union. Public callers may replace figures; those use a fallback.
+pub fn prepare_projection_catalog(storage: &mut ProjectionCache, catalog: &crate::model::SkyCatalog, times: &mut StepTimes) {
+    times.measure("Constellation topology", || {
+        storage.prepared_figures = catalog.constellations.clone();
+        storage.prepared_endpoints = catalog.endpoint_indices.to_vec();
+    });
+    {
+        let step = times.last_memory_step();
+        times.record_memory(step, || MemoryEvent::borrow(BufferId::CatalogFigures, Access::ReadOnly, BufferShape::slice(&catalog.constellations, IndexDomain::Objects)));
+        times.record_memory(step, || MemoryEvent::operation(BufferId::PreparedFigures, Operation::Copy, None, Some(BufferShape::vector(&storage.prepared_figures, IndexDomain::Objects)), Some(storage.prepared_figures.len()), None)); // nested segment allocations are not included
+        times.record_memory(step, || MemoryEvent::borrow(BufferId::CatalogEndpoints, Access::ReadOnly, BufferShape::slice(&catalog.endpoint_indices, IndexDomain::Catalog)));
+        times.record_memory(step, || MemoryEvent::operation(BufferId::PreparedEndpoints, Operation::Copy, None, Some(BufferShape::vector(&storage.prepared_endpoints, IndexDomain::Catalog)), Some(storage.prepared_endpoints.len()), storage.prepared_endpoints.len().checked_mul(std::mem::size_of::<usize>())));
+    }
+    times.describe("Constellation topology", || {
+        format!(
+            "figures={}; reused unique sorted endpoints={}; no per-frame endpoint sort for matching figures",
+            storage.prepared_figures.len(),
+            storage.prepared_endpoints.len()
+        )
+    });
 }
-impl ProjectionCache {
-    pub fn new(config: CacheConfig) -> Self {
-        Self {
-            config,
-            ..Self::default()
+
+/// Refresh geometry and drawing order. Borrow the completed result with `borrow_projected` when needed.
+pub fn project_cached_sky(
+    storage: &mut ProjectionCache,
+    sky: &ObservedSky,
+    view: &View,
+    viewport: Viewport,
+    epoch: f64,
+    times: &mut StepTimes,
+) {
+    let camera = times.measure("Camera preparation", || crate::projection::prepare_camera(view));
+    let reuse = storage.config.allows(Group::Projection);
+    let rejected_projection = update_star_projection(storage.star_buffers(), sky, view, viewport, epoch, reuse, camera, times);
+    times.describe("Star projection", || {
+        let drawable = sky.stars.iter().filter(|s| s.drawable).count();
+        format!("input observed stars={}; rejected not drawable={}; projection inputs={drawable}; rejected singular/invalid={}; then rejected outside unit disk={}; output visible stars={}; viewport={}x{}; cache={:?} (rejection counts are newly executed work only)", sky.stars.len(), sky.stars.len()-drawable, rejected_projection[0], rejected_projection[1], storage.stars.value().len(), viewport.width, viewport.height, storage.stars.stats)
+    });
+    times.measure_steps("Star draw order", |times| {
+        update_draw_order_with_times(storage, sky, epoch, times)
+    });
+    times.describe("Star draw order", || format!("input/output stars={}; dimmest first, exact f64 magnitude then ascending ID; scratch capacity={}; cache={:?}", storage.order.value().len(), storage.draw_order_scratch.capacity(), storage.order.stats));
+    times.measure_with_memory("Body projection", |times| {
+        let key = (sky.planets.iter().map(|p| (p.kind, p.position)).collect(), sky.moon.clone(), *view, viewport);
+        {
+            let step = times.active_memory_step();
+            times.record_memory(step, || MemoryEvent::borrow(BufferId::ObservedBodies, Access::ReadOnly, BufferShape::slice(&sky.planets, IndexDomain::Objects)));
+            times.record_memory(step, || MemoryEvent::borrow(BufferId::ProjectedBodies, Access::Writable, BufferShape::unknown(IndexDomain::Objects)));
         }
-    }
-    /// Retain the already prepared endpoint union. Public callers may replace figures; those use a fallback.
-    pub fn prepare_catalog(&mut self, catalog: &crate::sky::SkyCatalog, times: &mut StepTimes) {
-        times.measure("Constellation topology", || {
-            self.prepared_figures = catalog.constellations.clone();
-            self.prepared_endpoints = catalog.endpoint_indices.to_vec();
-        });
-        times.describe("Constellation topology", || {
-            format!(
-                "figures={}; reused unique sorted endpoints={}; no per-frame endpoint sort for matching figures",
-                self.prepared_figures.len(),
-                self.prepared_endpoints.len()
-            )
-        });
-    }
-
-    pub fn invalidate_view(&mut self) {
-        self.stars.invalidate();
-        self.bodies.invalidate();
-        self.constellations.invalidate();
-        self.horizon.invalidate();
-    }
-    pub fn stats(&self) -> crate::cache::CacheStats {
-        let mut total = crate::cache::CacheStats::default();
-        for s in [
-            self.stars.stats,
-            self.order.stats,
-            self.bodies.stats,
-            self.constellations.stats,
-            self.horizon.stats,
-        ] {
-            total.hits += s.hits;
-            total.refreshes += s.refreshes;
-            total.bypasses += s.bypasses;
-        }
-        total
-    }
-    pub fn project<'a>(
-        &mut self,
-        sky: &'a ObservedSky,
-        view: &View,
-        viewport: Viewport,
-        epoch: f64,
-        times: &mut StepTimes,
-    ) -> ProjectedSky<'a> {
-        let camera = times.measure("Camera preparation", || CartesianCamera::new(view));
-        let mut rejected_projection = [0_usize; 2];
-        times.measure_steps("Star projection", |times| {
-            let key = times.measure("Projection cache key", || {
-                (
-                    sky.stars.iter().map(|s| (s.position, s.drawable)).collect(),
-                    *view,
-                    viewport,
-                )
-            });
-            let refresh = times.measure("Projection cache decision", || {
-                self.stars
-                    .needs_refresh(&key, epoch, None, self.config.allows(Group::Projection))
-            });
-            if refresh {
-                let cells = times.measure("Visible star calculation", || {
-                    sky.stars
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, s)| s.drawable)
-                        .filter_map(|(index, star)| {
-                            let Some(point) = camera.project(star.position) else {
-                                rejected_projection[0] += 1;
-                                return None;
-                            };
-                            if !point.is_visible() {
-                                rejected_projection[1] += 1;
-                                return None;
-                            }
-                            Some((index, viewport.to_cell_cartesian(point)))
-                        })
-                        .collect()
-                });
-                times.measure("Projection cache store", || self.stars.store(key, epoch, 0.0, cells));
-            } else {
-                times.measure("Unused projection key release", || drop(key));
-            }
-        });
-        times.describe("Star projection", || {
-            let drawable = sky.stars.iter().filter(|s| s.drawable).count();
-            format!("input observed stars={}; rejected not drawable={}; projection inputs={drawable}; rejected singular/invalid={}; then rejected outside unit disk={}; output visible stars={}; viewport={}x{}; cache={:?} (rejection counts are newly executed work only)", sky.stars.len(), sky.stars.len()-drawable, rejected_projection[0], rejected_projection[1], self.stars.value().len(), viewport.width, viewport.height, self.stars.stats)
-        });
-        times.measure_steps("Star draw order", |times| {
-            self.update_draw_order_with_times(sky, epoch, times)
-        });
-        times.describe("Star draw order", || format!("input/output stars={}; dimmest first, exact f64 magnitude then ascending ID; scratch capacity={}; cache={:?}", self.order.value().len(), self.draw_order_scratch.capacity(), self.order.stats));
-        times.measure("Body projection", || {
-            self.bodies.get_or_update(
-                (
-                    sky.planets.iter().map(|p| (p.kind, p.position)).collect(),
-                    sky.moon.clone(),
-                    *view,
-                    viewport,
-                ),
-                epoch,
-                self.config.allows(Group::Projection),
-                || project_bodies(sky, view, &camera, viewport),
-            );
-        });
-        times.describe("Body projection", || format!("input Sun/planets={}; visible={}; hidden={}; input Moon=1; visible Moon={}; body list retains hidden records; cache={:?}", sky.planets.len(), self.bodies.value().0.iter().filter(|p| p.cell.is_some()).count(), self.bodies.value().0.iter().filter(|p| p.cell.is_none()).count(), usize::from(self.bodies.value().1.cell.is_some()), self.bodies.stats));
-        times.measure("Constellation projection", || {
-            // Only endpoint geometry affects arcs, not the other stars in the selected region.
-            let mut fallback = Vec::new();
-            let required = if sky.constellations == self.prepared_figures {
-                &self.prepared_endpoints
-            } else {
-                fallback.extend(
-                    sky.constellations
-                        .iter()
-                        .flat_map(|figure| figure.segments.iter().flatten().copied()),
-                );
-                fallback.sort_unstable();
-                fallback.dedup();
-                &fallback
-            };
-            let endpoints = required
-                .iter()
-                .filter_map(|index| {
-                    sky.stars
-                        .binary_search_by_key(index, |star| star.source_index)
-                        .ok()
-                        .map(|i| {
-                            let star = &sky.stars[i];
-                            (star.source_index, star.position, star.magnitude)
-                        })
-                })
-                .collect();
-            self.constellations.get_or_update(
-                (
-                    endpoints,
-                    sky.constellations.clone(),
-                    sky.magnitude_threshold,
-                    *view,
-                    viewport,
-                ),
-                epoch,
-                self.config.allows(Group::Projection),
-                || project_constellations(sky, view, viewport),
-            );
-        });
-        times.describe("Constellation projection", || format!("input figures={}; source segments={}; output figures={}; clipped arcs={}; sampled vertices={}; computed regardless of draw toggle; cache={:?}", sky.constellations.len(), sky.constellations.iter().map(|c| c.segments.len()).sum::<usize>(), self.constellations.value().len(), self.constellations.value().iter().map(|c| c.arcs.len()).sum::<usize>(), self.constellations.value().iter().flat_map(|c| &c.arcs).map(|a| a.points.len()).sum::<usize>(), self.constellations.stats));
-        times.describe("Constellation projection", || {
-            let missing = sky.constellations.iter().filter(|figure| figure.segments.iter().flatten().any(|index| sky.stars.binary_search_by_key(index, |s| s.source_index).is_err())).count();
-            format!("rejected missing endpoints={missing}; then rejected figure magnitude > {}={}; retained figures with no visible arcs={}", sky.magnitude_threshold, sky.constellations.len()-missing-self.constellations.value().len(), self.constellations.value().iter().filter(|c| c.arcs.is_empty()).count())
-        });
-        times.measure("Horizon projection", || {
-            self.horizon.get_or_update(
-                (*view, viewport),
-                epoch,
-                self.config.allows(Group::ViewGeometry),
-                || {
-                    (
-                        project_horizon_line(view, viewport),
-                        project_horizon_labels(view, viewport),
-                    )
-                },
-            );
-        });
-        times.describe("Horizon projection", || {
-            format!(
-                "facing={}; output segments={}; labels={}; cache={:?}",
-                view.is_facing(),
-                self.horizon.value().0.len(),
-                self.horizon.value().1.len(),
-                self.horizon.stats
-            )
-        });
-        let projected = times.measure("Projected view assembly", || ProjectedSky {
-            outside_accuracy_range: sky.outside_accuracy_range,
-            selection: sky.selection,
-            evaluated_stars: sky.corrections.evaluated,
-            correction_stats: sky.corrections,
-            catalog_singular_count: sky.catalog.singular_count,
-            runtime_singular_count: sky.runtime_singular_count,
-            stars: self
-                .order
-                .value()
-                .iter()
-                .map(|&i| {
-                    let (index, cell) = self.stars.value()[i];
-                    ProjectedStar {
-                        star: sky.star_view(index),
-                        cell: Some(cell),
-                    }
-                })
-                .collect(),
-            planets: self.bodies.value().0.clone(),
-            moon: self.bodies.value().1.clone(),
-            constellations: self.constellations.value().clone(),
-            names: &sky.names,
-            facing: view.is_facing(),
-            viewport,
-            horizon: self.horizon.value().0.clone(),
-            horizon_labels: self.horizon.value().1.clone(),
-        });
-        times.describe("Projected view assembly", || format!("star reference/cell records={}; estimated star-view element bytes={}; body/constellation/horizon geometry cloned", projected.stars.len(), projected.stars.len()*std::mem::size_of::<ProjectedStar<'_>>()));
-        projected
-    }
-
-    #[cfg(test)]
-    fn update_draw_order(&mut self, sky: &ObservedSky, epoch: f64) {
-        self.update_draw_order_with_times(sky, epoch, &mut StepTimes::default());
-    }
-
-    fn update_draw_order_with_times(&mut self, sky: &ObservedSky, epoch: f64, times: &mut StepTimes) {
-        let key: Vec<_> = times.measure("Draw-order cache key", || {
-            self.stars
-                .value()
-                .iter()
-                .map(|&(index, _)| (index, sky.stars[index].magnitude, sky.star_view(index).id()))
-                .collect()
-        });
-        let refresh = times.measure("Draw-order cache decision", || {
-            self.order
-                .needs_refresh(&key, epoch, None, self.config.allows(Group::DrawOrder))
-        });
-        if refresh {
-            prepare_draw_order_with_times(
-                &mut self.draw_order_scratch,
-                key.iter().map(|&(_, magnitude, id)| (magnitude, id)),
-                times,
-            );
-            let order = times.measure("Draw-order index extraction", || {
-                self.draw_order_scratch
-                    .iter()
-                    .map(|record| record.projected_index)
-                    .collect()
-            });
-            times.measure("Draw-order cache store", || self.order.store(key, epoch, 0.0, order));
+        update_geometry_cache(&mut storage.bodies, key, epoch, storage.config.allows(Group::Projection), || project_bodies(sky, view, &camera, viewport), times,
+            (BufferId::ProjectionBodyCandidate, BufferId::ProjectedBodies));
+    });
+    times.describe("Body projection", || format!("input Sun/planets={}; visible={}; hidden={}; input Moon=1; visible Moon={}; body list retains hidden records; cache={:?}", sky.planets.len(), storage.bodies.value().0.iter().filter(|p| p.cell.is_some()).count(), storage.bodies.value().0.iter().filter(|p| p.cell.is_none()).count(), usize::from(storage.bodies.value().1.cell.is_some()), storage.bodies.stats));
+    times.measure_with_memory("Constellation projection", |times| {
+        // Only endpoint geometry affects arcs, not the other stars in the selected region.
+        let mut fallback = Vec::new();
+        let prepared = sky.constellations == storage.prepared_figures;
+        times.record_memory(times.active_memory_step(), || MemoryEvent::unknown_operation(BufferId::PreparedFigures, Operation::Compare));
+        let required = if prepared {
+            &storage.prepared_endpoints
         } else {
-            times.measure("Unused draw-order key release", || drop(key));
+            fallback.extend(
+                sky.constellations
+                    .iter()
+                    .flat_map(|figure| figure.segments.iter().flatten().copied()),
+            );
+            fallback.sort_unstable();
+            fallback.dedup();
+            &fallback
+        };
+        let endpoints = required
+            .iter()
+            .filter_map(|index| {
+                sky.stars
+                    .binary_search_by_key(index, |star| star.source_index)
+                    .ok()
+                    .map(|i| {
+                        let star = &sky.stars[i];
+                        (star.source_index, star.position, star.magnitude)
+                    })
+            })
+            .collect();
+        let key = (endpoints, sky.constellations.clone(), sky.magnitude_threshold, *view, viewport);
+        {
+            let step = times.active_memory_step();
+            times.record_memory(step, || MemoryEvent::borrow(BufferId::ObservedStars, Access::ReadOnly, BufferShape::slice(&sky.stars, IndexDomain::Observed)));
+            times.record_memory(step, || MemoryEvent::borrow(if prepared { BufferId::PreparedEndpoints } else { BufferId::ProjectionFigureCandidate }, Access::ReadOnly, BufferShape::slice(required, IndexDomain::Catalog)));
+            times.record_memory(step, || MemoryEvent::borrow(BufferId::ProjectedFigures, Access::Writable, BufferShape::unknown(IndexDomain::Objects)));
+            times.record_memory(step, || MemoryEvent::operation(BufferId::ProjectionFigureCandidate, Operation::Copy, None, Some(BufferShape::vector(&key.1, IndexDomain::Objects)), Some(key.1.len()), None)); // figures clone nested segment vectors
         }
+        update_geometry_cache(&mut storage.constellations, key, epoch, storage.config.allows(Group::Projection), || project_constellations(sky, view, viewport), times,
+            (BufferId::ProjectionFigureCandidate, BufferId::ProjectedFigures));
+    });
+    times.describe("Constellation projection", || format!("input figures={}; source segments={}; output figures={}; clipped arcs={}; sampled vertices={}; computed regardless of draw toggle; cache={:?}", sky.constellations.len(), sky.constellations.iter().map(|c| c.segments.len()).sum::<usize>(), storage.constellations.value().len(), storage.constellations.value().iter().map(|c| c.arcs.len()).sum::<usize>(), storage.constellations.value().iter().flat_map(|c| &c.arcs).map(|a| a.points.len()).sum::<usize>(), storage.constellations.stats));
+    times.describe("Constellation projection", || {
+        let missing = sky.constellations.iter().filter(|figure| figure.segments.iter().flatten().any(|index| sky.stars.binary_search_by_key(index, |s| s.source_index).is_err())).count();
+        format!("rejected missing endpoints={missing}; then rejected figure magnitude > {}={}; retained figures with no visible arcs={}", sky.magnitude_threshold, sky.constellations.len()-missing-storage.constellations.value().len(), storage.constellations.value().iter().filter(|c| c.arcs.is_empty()).count())
+    });
+    times.measure_with_memory("Horizon projection", |times| {
+        times.record_memory(times.active_memory_step(), || MemoryEvent::borrow(BufferId::ProjectedHorizon, Access::Writable, BufferShape::unknown(IndexDomain::Objects)));
+        update_geometry_cache(&mut storage.horizon, (*view, viewport), epoch, storage.config.allows(Group::ViewGeometry), || (project_horizon_line(view, viewport), project_horizon_labels(view, viewport)), times,
+            (BufferId::ProjectionHorizonCandidate, BufferId::ProjectedHorizon));
+    });
+    times.describe("Horizon projection", || {
+        format!(
+            "facing={}; output segments={}; labels={}; cache={:?}",
+            view.is_facing(),
+            storage.horizon.value().0.len(),
+            storage.horizon.value().1.len(),
+            storage.horizon.stats
+        )
+    });
+}
+
+/// Keep the existing dependency decision, calculation and commit order visible to the current trace step.
+fn update_geometry_cache<K: PartialEq, V: PartialEq>(cache: &mut crate::cache::Cache<K, V>, key: K, epoch: f64, reuse: bool, calculate: impl FnOnce() -> V,
+    times: &mut StepTimes,
+    ids: (BufferId, BufferId),
+) {
+    let step = times.active_memory_step();
+    times.record_memory(step, || MemoryEvent::unknown_operation(ids.0, Operation::Build)); // nested key payload is intentionally not scanned
+    let refresh = cache.needs_refresh(&key, epoch, None, reuse);
+    times.record_candidate_decision(step, ids.0, ids.1, refresh, cache.stats.last_reason);
+    if refresh {
+        let value = calculate();
+        times.record_memory(step, || MemoryEvent::unknown_operation(ids.1, Operation::Build));
+        let outcome = cache.store(key, epoch, 0.0, value);
+        {
+            times.record_memory(step, || MemoryEvent::unknown_operation(ids.1, Operation::Compare));
+            times.record_memory(step, || MemoryEvent::operation(ids.0, Operation::Move, None, None, None, Some(0)));
+            times.record_memory(step, || MemoryEvent::unknown_operation(ids.1, Operation::Store { value_changed: outcome.value_changed }));
+        }
+    } else {
+        drop(key); // complete the temporary-key release before recording it
+        times.record_memory(step, || MemoryEvent::unknown_operation(ids.0, Operation::Release)); // bounded geometry keys drop on a hit
     }
+}
+
+/// Borrow completed geometry; callers must finish consuming it before modifying its backing state.
+pub fn borrow_projected<'a>(storage: &'a ProjectionCache, sky: &'a ObservedSky, view: &View, viewport: Viewport) -> ProjectedSky<'a> {
+    ProjectedSky {
+        outside_accuracy_range: sky.outside_accuracy_range,
+        selection: sky.selection,
+        evaluated_stars: sky.corrections.evaluated,
+        correction_stats: sky.corrections,
+        catalog_singular_count: sky.catalog.singular_count,
+        runtime_singular_count: sky.runtime_singular_count,
+        stars: crate::model::projection::ProjectedStars::new(sky, storage.stars.value(), storage.order.value()),
+        planets: &storage.bodies.value().0,
+        moon: &storage.bodies.value().1,
+        constellations: storage.constellations.value(),
+        names: &sky.names,
+        facing: view.is_facing(),
+        viewport,
+        horizon: &storage.horizon.value().0,
+        horizon_labels: &storage.horizon.value().1,
+    }
+}
+
+#[cfg(test)]
+fn update_draw_order(storage: &mut ProjectionCache, sky: &ObservedSky, epoch: f64) {
+    update_draw_order_with_times(storage, sky, epoch, &mut StepTimes::default());
+}
+
+fn update_draw_order_with_times(storage: &mut ProjectionCache, sky: &ObservedSky, epoch: f64, times: &mut StepTimes) {
+    let reuse = storage.config.allows(Group::DrawOrder);
+    update_order_buffers(storage.order_buffers(), sky, epoch, reuse, times);
+}
+
+fn update_order_buffers(buffers: crate::state::projection::DrawOrderBuffers<'_>, sky: &ObservedSky, epoch: f64, reuse: bool, times: &mut StepTimes) {
+    {
+        let step = times.active_memory_step();
+        times.record_memory(step, || MemoryEvent::borrow(BufferId::ProjectedCells, Access::ReadOnly, BufferShape::slice(buffers.cells, IndexDomain::Visible)));
+        times.record_memory(step, || MemoryEvent::borrow(BufferId::ObservedStars, Access::ReadOnly, BufferShape::slice(&sky.stars, IndexDomain::Observed)));
+        times.record_memory(step, || MemoryEvent::borrow(BufferId::CatalogStars, Access::ReadOnly, BufferShape::unknown(IndexDomain::Catalog))); // stable IDs are read through catalog views
+        times.record_memory(step, || MemoryEvent::borrow(BufferId::DrawOrderCandidate, Access::Writable, BufferShape::vector(buffers.candidate, IndexDomain::Visible)));
+        times.record_memory(step, || MemoryEvent::borrow(BufferId::DrawOrderScratch, Access::Writable, BufferShape::vector(buffers.scratch, IndexDomain::Visible)));
+        times.record_memory(step, || MemoryEvent::borrow(BufferId::DrawOrder, Access::Writable, BufferShape::unknown(IndexDomain::DrawOrder)));
+    }
+    let before_key = times.inspect_memory(|| BufferShape::vector(buffers.candidate, IndexDomain::Visible));
+    times.measure("Draw-order cache key", || {
+        buffers.candidate.clear();
+        buffers.candidate.extend(buffers.cells.iter().map(|&(index, _)| {
+            (index, sky.stars[index].magnitude, sky.star_view(index).id())
+        }));
+    });
+    record_key_build(times, BufferId::DrawOrderCandidate, before_key, buffers.candidate, IndexDomain::Visible);
+    let key = &*buffers.candidate;
+    let refresh = times.measure("Draw-order cache decision", || {
+        buffers.order.needs_refresh(key, epoch, None, reuse)
+    });
+    times.record_candidate_decision(times.last_memory_step(), BufferId::DrawOrderCandidate, BufferId::DrawOrder, refresh, buffers.order.stats.last_reason);
+    if refresh {
+        prepare_draw_order_with_times(buffers.scratch, key.iter().map(|&(_, magnitude, id)| (magnitude, id)), times);
+        let order = times.measure("Draw-order index extraction", || {
+            buffers.scratch.iter().map(|record| record.projected_index).collect::<Vec<_>>()
+        });
+        times.record_memory(times.last_memory_step(), || {
+            let shape = BufferShape::vector(&order, IndexDomain::DrawOrder);
+            MemoryEvent::operation(BufferId::DrawOrder, Operation::Build, None, Some(shape), shape.len, shape.logical_bytes())
+        });
+        let before_move = times.inspect_memory(|| BufferShape::vector(buffers.candidate, IndexDomain::Visible));
+        let outcome = times.measure("Draw-order cache store", || buffers.order.store(std::mem::take(buffers.candidate), epoch, 0.0, order));
+        record_cache_store(times, BufferId::DrawOrderCandidate, BufferId::DrawOrder, before_move, || BufferShape::vector(buffers.candidate, IndexDomain::Visible), outcome);
+    } else {
+        let before_clear = times.inspect_memory(|| BufferShape::vector(buffers.candidate, IndexDomain::Visible));
+        times.measure("Draw-order candidate clear", || buffers.candidate.clear());
+        record_candidate_clear(times, BufferId::DrawOrderCandidate, before_clear, buffers.candidate, IndexDomain::Visible);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn update_star_projection(buffers: crate::state::projection::StarProjectionBuffers<'_>, sky: &ObservedSky, view: &View, viewport: Viewport, epoch: f64, reuse: bool, camera: CartesianCamera, times: &mut StepTimes) -> [usize; 2] {
+    let mut rejected = [0; 2];
+    times.measure_steps("Star projection", |times| {
+        {
+            let step = times.active_memory_step();
+            times.record_memory(step, || MemoryEvent::borrow(BufferId::ObservedStars, Access::ReadOnly, BufferShape::slice(&sky.stars, IndexDomain::Observed)));
+            times.record_memory(step, || MemoryEvent::borrow(BufferId::ProjectionCandidate, Access::Writable, BufferShape::vector(&buffers.candidate.0, IndexDomain::Observed)));
+            times.record_memory(step, || MemoryEvent::borrow(BufferId::ProjectedCells, Access::Writable, BufferShape::unknown(IndexDomain::Visible)));
+        }
+        let before_key = times.inspect_memory(|| BufferShape::vector(&buffers.candidate.0, IndexDomain::Observed));
+        times.measure("Projection cache key", || {
+            buffers.candidate.0.clear();
+            buffers.candidate.0.extend(sky.stars.iter().map(|s| (s.position, s.drawable)));
+            buffers.candidate.1 = *view;
+            buffers.candidate.2 = viewport;
+        });
+        record_key_build(times, BufferId::ProjectionCandidate, before_key, &buffers.candidate.0, IndexDomain::Observed);
+        let refresh = times.measure("Projection cache decision", || {
+            buffers.cells.needs_refresh(buffers.candidate, epoch, None, reuse)
+        });
+        times.record_candidate_decision(times.last_memory_step(), BufferId::ProjectionCandidate, BufferId::ProjectedCells, refresh, buffers.cells.stats.last_reason);
+        if refresh {
+            let cells = times.measure("Visible star calculation", || {
+                sky.stars.iter().enumerate().filter(|(_, s)| s.drawable).filter_map(|(index, star)| {
+                    let Some(point) = crate::projection::project_camera(camera, star.position) else {
+                        rejected[0] += 1;
+                        return None;
+                    };
+                    if !point.is_visible() {
+                        rejected[1] += 1;
+                        return None;
+                    }
+                    Some((index, crate::projection::project_to_cell(viewport, point)))
+                }).collect::<Vec<_>>()
+            });
+            times.record_memory(times.last_memory_step(), || {
+                let shape = BufferShape::vector(&cells, IndexDomain::Visible);
+                MemoryEvent::operation(BufferId::ProjectedCells, Operation::Build, None, Some(shape), shape.len, shape.logical_bytes())
+            });
+            let before_move = times.inspect_memory(|| BufferShape::vector(&buffers.candidate.0, IndexDomain::Observed));
+            let outcome = times.measure("Projection cache store", || buffers.cells.store(std::mem::take(buffers.candidate), epoch, 0.0, cells));
+            record_cache_store(times, BufferId::ProjectionCandidate, BufferId::ProjectedCells, before_move, || BufferShape::vector(&buffers.candidate.0, IndexDomain::Observed), outcome);
+        } else {
+            let before_clear = times.inspect_memory(|| BufferShape::vector(&buffers.candidate.0, IndexDomain::Observed));
+            times.measure("Projection candidate clear", || buffers.candidate.0.clear());
+            record_candidate_clear(times, BufferId::ProjectionCandidate, before_clear, &buffers.candidate.0, IndexDomain::Observed);
+        }
+    });
+    rejected
 }
 
 #[cfg(test)]
 mod draw_order_tests {
     use super::*;
-    use crate::{catalog::StarId, scene::RenderOptions};
+    use crate::catalog::StarId;
+    use crate::model::rendering::RenderOptions;
 
     fn create_sky() -> ObservedSky {
         let mut parsed = crate::catalog::load_embedded_catalog().unwrap();
         for star in &mut parsed.stars {
             star.name = None;
         }
-        ObservedSky::from_catalog(&parsed)
+        crate::sky::create_sky_from_catalog(&parsed)
     }
 
     #[test]
@@ -359,13 +364,12 @@ mod draw_order_tests {
                 let expected_ids: Vec<_> = expected.iter().map(|s| s.id()).collect();
                 let expected_names: Vec<_> = expected_ids.iter().rev().take(5).copied().collect();
                 for _ in 0..2 {
-                    let projected = cache.project(
-                        &sky,
+                    crate::projection::project_cached_sky(&mut cache, &sky,
                         &View::default(),
                         viewport,
                         phase as f64,
-                        &mut StepTimes::default(),
-                    );
+                        &mut StepTimes::default());
+                    let projected = crate::projection::borrow_projected(&cache, &sky, &View::default(), viewport);
                     assert_eq!(
                         projected.stars.iter().map(|s| s.star.id()).collect::<Vec<_>>(),
                         expected_ids
@@ -374,7 +378,7 @@ mod draw_order_tests {
                     assert_eq!(
                         names
                             .into_iter()
-                            .map(|i| projected.stars[i].star.id())
+                            .map(|i| projected.stars.get(i).star.id())
                             .collect::<Vec<_>>(),
                         expected_names
                     );
@@ -419,7 +423,7 @@ mod draw_order_tests {
                         star
                     })
                     .collect();
-                sky = ObservedSky::from_catalog(&crate::catalog::Catalog::new(entries, Default::default(), vec![]));
+                sky = crate::sky::create_sky_from_catalog(&crate::catalog::Catalog::new(entries, Default::default(), vec![]));
                 sky.stars
                     .sort_unstable_by_key(|star| sky.catalog.stars.id(star.source_index)); // restore synthetic ID order after catalog preparation
                 (0..synthetic_count).map(|i| (i * 2, (0, 0))).collect()
@@ -460,7 +464,7 @@ mod draw_order_tests {
                             });
                             black_box(legacy.value());
                         } else {
-                            compact.update_draw_order(&sky, iteration as f64);
+                            update_draw_order(&mut compact, &sky, iteration as f64);
                             black_box(compact.order.value());
                         }
                         if iteration >= 2 {
@@ -494,10 +498,10 @@ mod preparation_tests {
 
     #[test]
     fn prepared_topology_matches_reference_and_handles_changed_figures() {
-        let mut sky = ObservedSky::from_catalog(&crate::catalog::load_embedded_catalog().unwrap());
+        let mut sky = crate::sky::create_sky_from_catalog(&crate::catalog::load_embedded_catalog().unwrap());
         let mut cache = ProjectionCache::default();
         let mut startup = StepTimes::with_trace(true);
-        cache.prepare_catalog(&sky.catalog, &mut startup);
+        crate::projection::prepare_projection_catalog(&mut cache, &sky.catalog, &mut startup);
         let endpoint_storage = cache.prepared_endpoints.as_ptr();
         for phase in 0..4 {
             match phase {
@@ -508,8 +512,10 @@ mod preparation_tests {
             }
             let view = View::default();
             let viewport = Viewport { width: 80, height: 40 };
-            let actual = cache.project(&sky, &view, viewport, 0.0, &mut StepTimes::default());
-            let expected = crate::projection::project_sky(&sky, &view, viewport);
+            crate::projection::project_cached_sky(&mut cache, &sky, &view, viewport, 0.0, &mut StepTimes::default());
+            let actual = crate::projection::borrow_projected(&cache, &sky, &view, viewport);
+            let expected_data = crate::projection::project_sky(&sky, &view, viewport);
+            let expected = expected_data.view(&sky);
             assert_eq!(actual, expected);
             assert_eq!(cache.prepared_endpoints.as_ptr(), endpoint_storage);
         }
@@ -523,5 +529,77 @@ mod preparation_tests {
                 .count(),
             1
         );
+    }
+}
+
+#[cfg(test)]
+mod ownership_tests {
+    use super::*;
+
+    fn fixture() -> ObservedSky {
+        let mut parsed = crate::catalog::load_embedded_catalog().unwrap();
+        parsed.stars.truncate(6);
+        let mut sky = crate::sky::create_sky_from_catalog(&crate::catalog::Catalog::new(parsed.stars, parsed.names, vec![]));
+        for (index, star) in sky.stars.iter_mut().enumerate() {
+            star.position = Vector3 { x: 0.0, y: 0.0, z: 1.0 };
+            star.magnitude = index as f64;
+            star.drawable = true;
+        }
+        sky
+    }
+
+    #[test]
+    fn candidates_retain_hit_capacity_and_transfer_on_refresh_without_changing_generations() {
+        let mut sky = fixture();
+        let mut storage = ProjectionCache::default();
+        let view = View::default();
+        let viewport = Viewport { width: 80, height: 40 };
+        let mut times = StepTimes::default();
+        project_cached_sky(&mut storage, &sky, &view, viewport, 0.0, &mut times);
+        assert_eq!(storage.star_candidate.0.capacity(), 0); // successful refresh transfers the candidate
+        assert_eq!(storage.order_candidate.capacity(), 0);
+        let generations = (storage.stars.generation, storage.order.generation);
+
+        project_cached_sky(&mut storage, &sky, &view, viewport, 0.0, &mut times);
+        let star_buffer = storage.star_candidate.0.as_ptr();
+        let order_buffer = storage.order_candidate.as_ptr();
+        let capacities = (storage.star_candidate.0.capacity(), storage.order_candidate.capacity());
+        assert!(capacities.0 >= sky.stars.len() && capacities.1 >= sky.stars.len());
+        for _ in 0..3 {
+            project_cached_sky(&mut storage, &sky, &view, viewport, 0.0, &mut times);
+            assert!(storage.star_candidate.0.is_empty() && storage.order_candidate.is_empty());
+            assert_eq!((storage.star_candidate.0.as_ptr(), storage.order_candidate.as_ptr()), (star_buffer, order_buffer));
+            assert_eq!((storage.stars.generation, storage.order.generation), generations);
+        }
+
+        storage.invalidate_view();
+        project_cached_sky(&mut storage, &sky, &view, viewport, 0.0, &mut times);
+        assert_eq!(storage.star_candidate.0.capacity(), 0);
+        assert_eq!((storage.stars.generation, storage.order.generation), generations); // equal geometry does not advance generations
+        sky.stars[0].magnitude -= 1.0; // changed sort inputs still produce the same order
+        project_cached_sky(&mut storage, &sky, &view, viewport, 0.0, &mut times);
+        assert_eq!(storage.order_candidate.capacity(), 0);
+        assert_eq!(storage.order.generation, generations.1);
+    }
+
+    #[test]
+    fn projected_views_borrow_geometry_and_observed_rows_across_resizes() {
+        let sky = fixture();
+        let mut storage = ProjectionCache::default();
+        let view = View::default();
+        for viewport in [Viewport { width: 40, height: 20 }, Viewport { width: 160, height: 80 }, Viewport { width: 40, height: 20 }] {
+            project_cached_sky(&mut storage, &sky, &view, viewport, 0.0, &mut StepTimes::default());
+            let projected = borrow_projected(&storage, &sky, &view, viewport);
+            assert_eq!(projected.planets.as_ptr(), storage.bodies.value().0.as_ptr());
+            assert!(std::ptr::eq(projected.moon, &storage.bodies.value().1));
+            assert_eq!(projected.constellations.as_ptr(), storage.constellations.value().as_ptr());
+            assert_eq!(projected.horizon.as_ptr(), storage.horizon.value().0.as_ptr());
+            for (index, entry) in projected.stars.iter().enumerate() {
+                let observed = storage.stars.value()[storage.order.value()[index]].0;
+                assert!(std::ptr::eq(entry.star.state, &sky.stars[observed]));
+            }
+            let reference = crate::projection::project_sky(&sky, &view, viewport);
+            assert_eq!(projected, reference.view(&sky));
+        }
     }
 }

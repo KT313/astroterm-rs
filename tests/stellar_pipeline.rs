@@ -1,16 +1,16 @@
 //! 3D motion, conservative selection, current-magnitude ordering and endpoint independence.
-use astroterm::{
-    astro::{Horizontal, J2000, JULIAN_YEAR_DAYS, Matrix3, Observer},
-    canvas::Canvas,
-    catalog::{Catalog, CatalogStar, ConstellationFigure, SpaceMotion, StarId, StarNames},
-    projection::{View, ViewCenter, Viewport, project_sky},
-    scene::{RenderOptions, draw_sky_scene},
-    sky::{
-        FrameTime, ObservedSky, SimulationState, SkyCatalog, observe_sky, observe_sky_candidates, prepare_observation,
-        update_simulation,
-    },
-    timing::StepTimes,
-};
+use astroterm::state::{SimulationState};
+use astroterm::astro::{Horizontal, J2000, JULIAN_YEAR_DAYS, Matrix3, Observer};
+use astroterm::canvas::Canvas;
+use astroterm::catalog::{Catalog, CatalogStar, ConstellationFigure, SpaceMotion, StarId, StarNames};
+use astroterm::model::{ObservedSky, SkyCatalog};
+use astroterm::model::projection::{ProjectionViewport as Viewport, View, ViewCenter};
+use astroterm::model::rendering::RenderOptions;
+use astroterm::model::simulation::FrameTime;
+use astroterm::projection::project_sky;
+use astroterm::scene::draw_sky_scene;
+use astroterm::sky::{observe_sky, observe_sky_candidates, prepare_observation, update_simulation};
+use astroterm::timing::StepTimes;
 use std::sync::Arc;
 
 fn star(id: u64, mag: f32, h: Horizontal, radial: f64) -> CatalogStar {
@@ -37,7 +37,7 @@ fn star(id: u64, mag: f32, h: Horizontal, radial: f64) -> CatalogStar {
     }
 }
 fn catalog(stars: Vec<CatalogStar>, segments: Vec<[u32; 2]>) -> Arc<SkyCatalog> {
-    Arc::new(SkyCatalog::from_catalog(&Catalog::new(
+    Arc::new(astroterm::sky::prepare_catalog(&Catalog::new(
         stars,
         StarNames::default(),
         vec![ConstellationFigure {
@@ -46,7 +46,7 @@ fn catalog(stars: Vec<CatalogStar>, segments: Vec<[u32; 2]>) -> Arc<SkyCatalog> 
         }],
     )))
 }
-fn setup(years: f64) -> (SimulationState, astroterm::sky::ObserverState) {
+fn setup(years: f64) -> (SimulationState, astroterm::model::ObserverState) {
     let tt = J2000 + years * JULIAN_YEAR_DAYS;
     let time = FrameTime { utc: tt, ut1: tt, tt };
     let mut simulation = SimulationState::exact();
@@ -93,12 +93,13 @@ fn threshold_crossing_uses_interval_key_then_current_magnitude() {
             &observer,
             5.0,
             false,
-            astroterm::sky::SkyRegion::All,
+            astroterm::model::SkyRegion::All,
             &mut sky,
             &mut StepTimes::default(),
         )
         .unwrap();
-        let projected = project_sky(&sky, &View::default(), Viewport { height: 41, width: 81 });
+        let projected_data = project_sky(&sky, &View::default(), Viewport { height: 41, width: 81 });
+        let projected = projected_data.view(&sky);
         assert_eq!(!projected.stars.is_empty(), drawn, "year offset {years}");
         if years == 20000.0 {
             assert_eq!(sky.runtime_singular_count, 1);
@@ -147,12 +148,13 @@ fn visible_drawing_order_is_current_magnitude_then_stable_id() {
             &observer,
             6.0,
             false,
-            astroterm::sky::SkyRegion::All,
+            astroterm::model::SkyRegion::All,
             &mut sky,
             &mut StepTimes::default(),
         )
         .unwrap();
-        let projected = project_sky(&sky, &View::default(), Viewport { height: 41, width: 81 });
+        let projected_data = project_sky(&sky, &View::default(), Viewport { height: 41, width: 81 });
+        let projected = projected_data.view(&sky);
         assert_eq!(
             projected.stars.iter().map(|p| p.star.id().0).collect::<Vec<_>>(),
             expected
@@ -178,7 +180,7 @@ fn refracted_constellation_endpoint_outside_selection_matches_full_observation()
         &observer,
         5.0,
         true,
-        astroterm::sky::SkyRegion::All,
+        astroterm::model::SkyRegion::All,
         &mut full,
         &mut StepTimes::default(),
     )
@@ -215,8 +217,8 @@ fn refracted_constellation_endpoint_outside_selection_matches_full_observation()
     };
     let viewport = Viewport { height: 41, width: 81 };
     let (mut a, mut b) = (Canvas::new(41, 81), Canvas::new(41, 81));
-    draw_sky_scene(&mut a, &options(5.0), &project_sky(&full, &view, viewport));
-    draw_sky_scene(&mut b, &options(5.0), &project_sky(&restricted, &view, viewport));
+    draw_sky_scene(&mut a, &options(5.0), &project_sky(&full, &view, viewport).view(&full));
+    draw_sky_scene(&mut b, &options(5.0), &project_sky(&restricted, &view, viewport).view(&restricted));
     assert_eq!(a.to_lines(), b.to_lines());
 }
 
@@ -244,12 +246,13 @@ fn singular_trajectories_and_fast_motion_are_reported_in_prepared_state() {
         &observer,
         5.0,
         false,
-        astroterm::sky::SkyRegion::All,
+        astroterm::model::SkyRegion::All,
         &mut sky,
         &mut StepTimes::default(),
     )
     .unwrap();
-    let projected = project_sky(&sky, &View::default(), Viewport { height: 41, width: 81 });
+    let projected_data = project_sky(&sky, &View::default(), Viewport { height: 41, width: 81 });
+    let projected = projected_data.view(&sky);
     assert_eq!(projected.catalog_singular_count, 1);
     assert_eq!(projected.runtime_singular_count, 0);
     assert!(sky.stars.iter().all(|star| star.position.x.is_finite()));

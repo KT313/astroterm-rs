@@ -1,0 +1,40 @@
+use astroterm::{
+    canvas::Canvas,
+    catalog::{Catalog, StarNames},
+    model::{ObservedSky, projection::{ProjectionViewport, View}, rendering::{Frame, RenderOptions}},
+    projection::{borrow_projected, project_cached_sky},
+    scene::cached::draw_characters,
+    state::{ObservationCache, ProjectionCache, RenderingState, RunState, SceneCache, SimulationState},
+    timing::StepTimes,
+};
+use std::sync::Arc;
+
+fn main() {
+    let catalog = Catalog::new(Vec::new(), StarNames::default(), Vec::new());
+    let sky = ObservedSky::new(Arc::new(astroterm::sky::prepare_owned_catalog(catalog)));
+    let mut run = RunState {
+        sky, simulation: SimulationState::default(), observation: ObservationCache::default(),
+        projection: ProjectionCache::default(), rendering: RenderingState::Pending,
+    };
+    let mut frame = Frame { sky: Canvas::new(8, 8), panel: Some(Canvas::new(1, 8)) };
+    let mut scene = SceneCache::default();
+    let mut times = StepTimes::default();
+    let view = View::default();
+    let viewport = ProjectionViewport { width: 8, height: 8 };
+    let options = RenderOptions {
+        unicode: false, braille: false, color: false, constellations: false, grid: false,
+        magnitude_threshold: 5.0, label_threshold: 0.0, dynamic_names: false,
+    };
+
+    let RunState { sky, projection, simulation, .. } = &mut run;
+    project_cached_sky(projection, sky, &view, viewport, 2451545.0, &mut times); // source is read while output is written
+    let projected = borrow_projected(projection, sky, &view, viewport);
+    simulation.begin_frame(); // changing a disjoint state owner does not invalidate the borrowed projection
+    draw_characters(&mut scene, &mut frame.sky, &projected, &options, 2451545.0);
+
+    let pixels = &frame.sky;
+    frame.panel.as_mut().unwrap().clear(); // one frame canvas can be changed while the other remains borrowed
+    assert_eq!(pixels.height(), 8);
+    assert!(projected.stars.is_empty());
+    assert_eq!(run.sky.catalog.stars.len(), 0);
+}

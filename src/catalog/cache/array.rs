@@ -80,3 +80,17 @@ impl<T: Pod> CatalogArray<T> {
         self.owned_mut().shrink_to_fit();
     }
 }
+
+#[cfg(feature = "memory-diagnostics")]
+impl<T: Pod + crate::cache::buffers::ReportBuffers> crate::cache::buffers::ReportBuffers for CatalogArray<T> {
+    fn report_buffers(&self, sink: &mut dyn crate::cache::buffers::BufferSink) {
+        use crate::cache::buffers::report_field;
+        match self {
+            Self::Owned(values) => report_field(sink, "owned", values),
+            Self::Mapped { catalog, .. } => {
+                sink.borrowed(self.len(), std::mem::size_of::<T>(), "validated mapped section; view bytes already belong to the shared mapping");
+                report_field(sink, "mapped_owner", catalog);
+            },
+        }
+    }
+}

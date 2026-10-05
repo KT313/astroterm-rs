@@ -13,14 +13,7 @@ use crate::canvas::{Canvas, Color};
 /// Cell aspect ratio assumed when it can't be detected.
 const DEFAULT_CELL_ASPECT_RATIO: f64 = 2.0;
 
-/// Where the canvas sits on the screen.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Viewport {
-    pub origin_row: u16,
-    pub origin_col: u16,
-    pub height: usize,
-    pub width: usize,
-}
+use crate::model::rendering::TerminalViewport as Viewport;
 
 /// The largest viewport that looks square on screen, centered in a terminal of `rows` x `columns` cells.
 /// `aspect_ratio` is the cell height divided by the cell width.
@@ -61,56 +54,31 @@ pub fn detect_cell_aspect_ratio() -> f64 {
     }
 }
 
-/// The canvases drawn each frame: the square sky view, and an optional panel drawn over it in the top left corner of
-/// the screen (cut off at the screen edges).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Frame {
-    pub sky: Canvas,
-    pub panel: Option<Canvas>,
+use crate::model::rendering::Frame;
+
+use crate::state::rendering::Presenter;
+
+/// Start over on a screen of `rows` x `columns` with the sky at `viewport`; the next frame is written in full.
+pub fn reset_presenter(state: &mut Presenter, rows: u16, columns: u16, viewport: Viewport) {
+    state.screen = Canvas::new(rows as usize, columns as usize);
+    state.previous = None;
+    state.sky_origin = (viewport.origin_row, viewport.origin_col);
 }
 
-/// Composes frames onto a screen-sized canvas and writes them to the terminal, skipping cells that are unchanged
-/// since the previous frame.
-#[derive(Debug)]
-pub struct Presenter {
-    screen: Canvas,
-    previous: Option<Canvas>,
-    sky_origin: (u16, u16),
-}
-
-impl Default for Presenter {
-    fn default() -> Presenter {
-        Presenter {
-            screen: Canvas::new(0, 0),
-            previous: None,
-            sky_origin: (0, 0),
-        }
-    }
-}
-
-impl Presenter {
-    /// Start over on a screen of `rows` x `columns` with the sky at `viewport`; the next frame is written in full.
-    pub fn reset(&mut self, rows: u16, columns: u16, viewport: Viewport) {
-        self.screen = Canvas::new(rows as usize, columns as usize);
-        self.previous = None;
-        self.sky_origin = (viewport.origin_row, viewport.origin_col);
+/// Queue the changed cells of the frame to `out`. The panel is drawn over the sky.
+pub fn present_frame_cells(state: &mut Presenter, out: &mut impl Write, frame: &Frame) -> io::Result<()> {
+    // compose the screen
+    state.screen.clear();
+    state.screen
+        .blit(&frame.sky, i32::from(state.sky_origin.0), i32::from(state.sky_origin.1));
+    if let Some(panel) = &frame.panel {
+        state.screen.blit(panel, 0, 0);
     }
 
-    /// Queue the changed cells of the frame to `out`. The panel is drawn over the sky.
-    pub fn present(&mut self, out: &mut impl Write, frame: &Frame) -> io::Result<()> {
-        // compose the screen
-        self.screen.clear();
-        self.screen
-            .blit(&frame.sky, i32::from(self.sky_origin.0), i32::from(self.sky_origin.1));
-        if let Some(panel) = &frame.panel {
-            self.screen.blit(panel, 0, 0);
-        }
-
-        // write what changed
-        queue_changed_cells(out, &self.screen, self.previous.as_ref())?;
-        self.previous = Some(self.screen.clone());
-        Ok(())
-    }
+    // write what changed
+    queue_changed_cells(out, &state.screen, state.previous.as_ref())?;
+    state.previous = Some(state.screen.clone());
+    Ok(())
 }
 
 /// Queue every cell of `screen` that differs from `previous` (all cells without one).
@@ -159,9 +127,28 @@ fn to_terminal_color(color: Color) -> style::Color {
     }
 }
 
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resize_resets_previous_frame_and_cell_geometry() {
+        let mut presenter = Presenter::default();
+        for (rows, columns) in [(2, 4), (40, 80), (2, 4)] {
+            let viewport = fit_square_viewport(rows, columns, 2.0);
+            reset_presenter(&mut presenter, rows, columns, viewport);
+            assert!(presenter.previous.is_none());
+            assert_eq!((presenter.screen.height(), presenter.screen.width()), (rows as usize, columns as usize));
+            let frame = Frame { sky: Canvas::new(viewport.height, viewport.width), panel: None };
+            let mut output = Vec::new();
+            present_frame_cells(&mut presenter, &mut output, &frame).unwrap();
+            assert!(!output.is_empty());
+            output.clear();
+            present_frame_cells(&mut presenter, &mut output, &frame).unwrap();
+            assert!(output.is_empty());
+        }
+    }
 
     #[test]
     fn viewport_is_limited_by_height_on_wide_terminals() {
@@ -186,23 +173,23 @@ mod tests {
             height: 2,
             width: 3,
         };
-        presenter.reset(2, 5, viewport);
+        reset_presenter(&mut presenter, 2, 5, viewport);
         let mut frame = Frame {
             sky: Canvas::new(2, 3),
             panel: None,
         };
 
         let mut first = Vec::new();
-        presenter.present(&mut first, &frame).unwrap();
+        present_frame_cells(&mut presenter, &mut first, &frame).unwrap();
         assert!(!first.is_empty());
 
         let mut unchanged = Vec::new();
-        presenter.present(&mut unchanged, &frame).unwrap();
+        present_frame_cells(&mut presenter, &mut unchanged, &frame).unwrap();
         assert!(unchanged.is_empty());
 
         frame.sky.put_char(1, 2, '*', Some(Color::Red));
         let mut changed = Vec::new();
-        presenter.present(&mut changed, &frame).unwrap();
+        present_frame_cells(&mut presenter, &mut changed, &frame).unwrap();
         let written = String::from_utf8(changed).unwrap();
         assert!(written.contains('*') && !written.contains(' '));
         assert_eq!(presenter.screen.to_lines(), ["     ", "   * "]);
@@ -211,7 +198,7 @@ mod tests {
     #[test]
     fn panel_is_drawn_over_the_sky() {
         let mut presenter = Presenter::default();
-        presenter.reset(
+        reset_presenter(&mut presenter,
             2,
             4,
             Viewport {
@@ -226,8 +213,7 @@ mod tests {
         let mut panel = Canvas::new(1, 2);
         panel.put_char(0, 0, 'x', None);
 
-        presenter
-            .present(
+        present_frame_cells(&mut presenter,
                 &mut Vec::new(),
                 &Frame {
                     sky,

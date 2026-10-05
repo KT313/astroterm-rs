@@ -1,7 +1,6 @@
 //! Kitty RGB transport. Upload the back image outside synchronization, then atomically place it and delete
 //! the previous image. Two IDs bound terminal storage; no Unicode placeholder cells are required.
 use std::{
-    borrow::Cow,
     fmt::Write as _,
     io::{self, Write as _},
 };
@@ -19,18 +18,29 @@ pub fn other_image_id(id: u32) -> u32 {
 /// Encode only an upload, without changing the visible placement. The caller supplies an already composed,
 /// opaque RGB image; alpha blending belongs to rasterization, before this boundary.
 pub fn encode_upload(image: &RgbImage, id: u32, compress: bool, tmux: bool) -> io::Result<Vec<u8>> {
+    let mut compressed = Vec::new();
+    let mut output = String::new();
+    encode_upload_into(image, id, compress, tmux, &mut compressed, &mut output)?;
+    Ok(output.into_bytes())
+}
+
+/// Populate application-owned compression and upload buffers after the prior upload has finished.
+pub fn encode_upload_into(image: &RgbImage, id: u32, compress: bool, tmux: bool, compressed: &mut Vec<u8>, output: &mut String) -> io::Result<()> {
+    compressed.clear();
+    output.clear();
     let raw = image.as_raw();
     let bytes = if compress {
-        let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+        let mut encoder = flate2::write::ZlibEncoder::new(&mut *compressed, flate2::Compression::fast());
         encoder.write_all(raw)?;
-        Cow::Owned(encoder.finish()?)
+        encoder.finish()?;
+        compressed.as_slice()
     } else {
-        Cow::Borrowed(raw.as_slice())
+        raw.as_slice()
     };
 
     // Base64 chunks may contain at most 4096 bytes, corresponding to 3072 input bytes.
     let (start, escape, end) = Parser::tmux_start_escape_end(tmux);
-    let mut output = String::with_capacity(bytes.len().div_ceil(3) * 4 + bytes.len().div_ceil(3072) * 32 + 128);
+    output.reserve(bytes.len().div_ceil(3) * 4 + bytes.len().div_ceil(3072) * 32 + 128);
     let chunks = bytes.chunks(3072);
     let count = chunks.len();
     for (index, chunk) in chunks.enumerate() {
@@ -46,16 +56,23 @@ pub fn encode_upload(image: &RgbImage, id: u32, compress: bool, tmux: bool) -> i
             .unwrap();
         }
         write!(output, "m={};", u8::from(index + 1 < count)).unwrap();
-        base64_simd::STANDARD.encode_append(chunk, &mut output);
+        base64_simd::STANDARD.encode_append(chunk, output);
         write!(output, "{escape}\\{end}").unwrap();
     }
-    Ok(output.into_bytes())
+    Ok(())
 }
 
 /// Place the completed back image before deleting the front image. The synchronization block contains no
 /// image data, so uploading or decompressing a new image does not prolong the visible frame switch.
 pub fn serialize_swap(id: u32, area: Rect, tmux: bool) -> io::Result<Vec<u8>> {
     let mut output = Vec::new();
+    serialize_swap_into(id, area, tmux, &mut output)?;
+    Ok(output)
+}
+
+/// Populate the small synchronized swap command buffer; upload bytes stay outside it.
+pub fn serialize_swap_into(id: u32, area: Rect, tmux: bool, output: &mut Vec<u8>) -> io::Result<()> {
+    output.clear();
     crossterm::queue!(
         output,
         crossterm::terminal::BeginSynchronizedUpdate,
@@ -67,9 +84,9 @@ pub fn serialize_swap(id: u32, area: Rect, tmux: bool) -> io::Result<Vec<u8>> {
         "{start}{escape}_Ga=p,i={id},p=1,c={},r={},C=1,q=2;{escape}\\{end}",
         area.width, area.height
     )?;
-    write_deletion(&mut output, other_image_id(id), tmux)?;
+    write_deletion(output, other_image_id(id), tmux)?;
     crossterm::queue!(output, crossterm::terminal::EndSynchronizedUpdate)?;
-    Ok(output)
+    Ok(())
 }
 
 pub(super) fn clear_images(out: &mut impl io::Write, tmux: bool) -> io::Result<()> {
@@ -88,6 +105,27 @@ fn write_deletion(out: &mut impl io::Write, id: u32, tmux: bool) -> io::Result<(
 mod tests {
     use super::*;
     use std::io::Read;
+
+    #[test]
+    fn owned_transport_scratch_reuses_capacity_without_stale_payload() {
+        let large = RgbImage::from_fn(127, 83, |x, y| image::Rgb([x as u8, y as u8, (x * y) as u8]));
+        let small = RgbImage::from_pixel(2, 2, image::Rgb([1, 2, 3]));
+        let mut compressed = Vec::new();
+        let mut upload = String::new();
+        encode_upload_into(&large, IMAGE_IDS[0], true, false, &mut compressed, &mut upload).unwrap();
+        let capacities = (compressed.capacity(), upload.capacity());
+        encode_upload_into(&small, IMAGE_IDS[1], false, false, &mut compressed, &mut upload).unwrap();
+        assert!(compressed.is_empty());
+        assert_eq!((compressed.capacity(), upload.capacity()), capacities);
+        assert_eq!(upload.as_bytes(), encode_upload(&small, IMAGE_IDS[1], false, false).unwrap());
+        assert!(!upload.contains("o=z,") && !upload.contains("s=127,"));
+        let mut swap = Vec::new();
+        serialize_swap_into(IMAGE_IDS[0], Rect::new(0, 0, 80, 40), false, &mut swap).unwrap();
+        let capacity = swap.capacity();
+        serialize_swap_into(IMAGE_IDS[1], Rect::new(0, 0, 2, 2), false, &mut swap).unwrap();
+        assert_eq!(swap.capacity(), capacity);
+        assert_eq!(swap, serialize_swap(IMAGE_IDS[1], Rect::new(0, 0, 2, 2), false).unwrap());
+    }
 
     #[test]
     fn rgb_transfers_round_trip_with_and_without_compression_and_tmux() {

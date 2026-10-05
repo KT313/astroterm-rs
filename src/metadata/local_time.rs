@@ -11,49 +11,43 @@ pub struct LocalTime {
     pub zone: String,
 }
 
-/// Zone rules loaded once for a fixed observer. Historical/future rules are those provided by the IANA database.
-pub struct ObserverTimeZone {
+use crate::model::metadata::ObserverTimeZone;
+
+pub fn resolve_observer_timezone(observer: &Observer) -> ObserverTimeZone {
     #[cfg(unix)]
-    zone: Option<tz::TimeZone>,
+    {
+        use std::sync::LazyLock;
+        static FINDER: LazyLock<tzf_rs::EmbeddedFinder> = LazyLock::new(tzf_rs::EmbeddedFinder::new);
+        let name = FINDER.get_tz_name(observer.longitude.to_degrees(), observer.latitude.to_degrees());
+        let zone = if name.is_empty() {
+            None
+        } else {
+            tz::TimeZone::from_posix_tz(name).ok()
+        };
+        ObserverTimeZone { zone }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = observer;
+        ObserverTimeZone {}
+    }
 }
 
-impl ObserverTimeZone {
-    pub fn new(observer: &Observer) -> Self {
-        #[cfg(unix)]
-        {
-            use std::sync::LazyLock;
-            static FINDER: LazyLock<tzf_rs::EmbeddedFinder> = LazyLock::new(tzf_rs::EmbeddedFinder::new);
-            let name = FINDER.get_tz_name(observer.longitude.to_degrees(), observer.latitude.to_degrees());
-            let zone = if name.is_empty() {
-                None
-            } else {
-                tz::TimeZone::from_posix_tz(name).ok()
-            };
-            Self { zone }
-        }
-        #[cfg(not(unix))]
-        {
-            let _ = observer;
-            Self {}
-        }
+pub fn convert_observer_time(state: &ObserverTimeZone, utc: DateTime<Utc>) -> LocalTime {
+    #[cfg(unix)]
+    if let Some((offset, zone)) = state
+        .zone
+        .as_ref()
+        .and_then(|zone| describe_zone_at(zone, utc.timestamp()))
+    {
+        return LocalTime {
+            time: utc.with_timezone(&offset),
+            zone,
+        };
     }
-
-    pub fn convert(&self, utc: DateTime<Utc>) -> LocalTime {
-        #[cfg(unix)]
-        if let Some((offset, zone)) = self
-            .zone
-            .as_ref()
-            .and_then(|zone| describe_zone_at(zone, utc.timestamp()))
-        {
-            return LocalTime {
-                time: utc.with_timezone(&offset),
-                zone,
-            };
-        }
-        LocalTime {
-            time: utc.fixed_offset(),
-            zone: "UTC (no timezone found)".to_string(),
-        }
+    LocalTime {
+        time: utc.fixed_offset(),
+        zone: "UTC (no timezone found)".to_string(),
     }
 }
 
@@ -87,7 +81,7 @@ mod tests {
                 latitude: latitude.to_radians(),
                 longitude: longitude.to_radians(),
             };
-            let local = ObserverTimeZone::new(&observer).convert(utc);
+            let local = convert_observer_time(&resolve_observer_timezone(&observer), utc);
             assert_eq!(local.zone, zone);
             assert_eq!(local.time.offset().local_minus_utc(), seconds);
         }
@@ -98,7 +92,7 @@ mod tests {
         let utc = DateTime::parse_from_rfc3339("2025-07-02T12:00:00Z")
             .unwrap()
             .with_timezone(&Utc);
-        let local = ObserverTimeZone { zone: None }.convert(utc);
+        let local = convert_observer_time(&ObserverTimeZone { zone: None }, utc);
         assert_eq!(local.zone, "UTC (no timezone found)");
         assert_eq!(local.time, utc.fixed_offset());
     }
@@ -112,7 +106,7 @@ mod tests {
         let utc = DateTime::parse_from_rfc3339("2025-07-02T12:00:00Z")
             .unwrap()
             .with_timezone(&Utc);
-        let local = ObserverTimeZone::new(&observer).convert(utc);
+        let local = convert_observer_time(&resolve_observer_timezone(&observer), utc);
         // tzf's ocean polygons assign nautical Etc/GMT zones; a missing system rule must instead be labelled UTC.
         assert!(
             local.time.offset().local_minus_utc() == -9 * 3600 || local.zone == "UTC (no timezone found)",

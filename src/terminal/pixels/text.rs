@@ -1,9 +1,10 @@
 //! Shared text layout in cells, painted into the final bitmap for graphics protocols or merged into half-block cells.
-use crate::{
-    metadata::MetadataField,
-    projection::ProjectedSky,
-    scene::{RenderOptions, format_star_label, pixels::planet_rgb, select_dynamically_named_stars},
-};
+use crate::model::metadata::MetadataField;
+use crate::model::projection::ProjectedSky;
+use crate::model::rendering::RenderOptions;
+use crate::scene::{format_star_label, select_dynamically_named_stars};
+use crate::scene::pixels::planet_rgb;
+use crate::{timing::memory::{Access, BufferId, BufferShape, IndexDomain, Operation} };
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -20,11 +21,12 @@ pub(super) fn compose_text(
     fields: &[MetadataField],
     notice: Option<&str>,
     times: &mut crate::timing::StepTimes,
-    prepared: Option<&crate::scene::prepared::PreparedScene>,
+    prepared: Option<&crate::model::rendering::PreparedScene>,
     named_candidates: Option<&[usize]>,
 ) -> Buffer {
     // assemble every text layer in memory before either image encoding or terminal output
     let mut buffer = times.measure("Text canvas", || Buffer::empty(screen));
+    times.record_shape(BufferId::TextCells, Operation::Build, None, || BufferShape::vector(&buffer.content, IndexDomain::Cells)); // new ratatui storage, symbol heap payload is not counted
     times.describe("Text canvas", || {
         format!(
             "output text grid={}x{}; cells={}",
@@ -36,6 +38,10 @@ pub(super) fn compose_text(
     let (eligible, submitted, visited) = times.measure("Star labels", || {
         draw_star_labels(&mut buffer, sky, options, area, prepared, named_candidates)
     });
+    {
+        times.record_borrow(BufferId::TextCells, Access::Writable, || BufferShape::vector(&buffer.content, IndexDomain::Cells));
+        if let Some(indices) = named_candidates { times.record_borrow(BufferId::NamedCandidates, Access::ReadOnly, || BufferShape::slice(indices, IndexDomain::DrawOrder)); }
+    }
     times.describe("Star labels", || format!("input stars={}; label candidates={eligible}; skipped by label rules or missing cell={}; clipped label origins={}; submitted labels={submitted}; label threshold={}; dynamic names={}", sky.stars.len(), sky.stars.len()-eligible, eligible-submitted, options.label_threshold, options.dynamic_names));
     times.describe("Star labels", || format!("prepared named candidates={:?}; visited candidates={visited}; dynamic candidates selected separately; labels retain projected draw order", named_candidates.map(<[usize]>::len)));
     times.measure("Body labels", || draw_body_labels(&mut buffer, sky, area));
@@ -60,6 +66,10 @@ pub(super) fn compose_text(
         )
     });
     times.measure("Metadata panel", || draw_metadata(&mut buffer, screen, fields));
+    {
+        times.record_borrow(BufferId::MetadataFields, Access::ReadOnly, || BufferShape::slice(fields, IndexDomain::Objects));
+        times.record_borrow(BufferId::TextCells, Access::Writable, || BufferShape::vector(&buffer.content, IndexDomain::Cells));
+    }
     times.describe("Metadata panel", || {
         format!(
             "input fields={}; drawn rows={}; clipped rows={}; transparent background",
@@ -85,7 +95,7 @@ fn draw_star_labels(
     sky: &ProjectedSky<'_>,
     options: &RenderOptions,
     area: Rect,
-    prepared: Option<&crate::scene::prepared::PreparedScene>,
+    prepared: Option<&crate::model::rendering::PreparedScene>,
     named_candidates: Option<&[usize]>,
 ) -> (usize, usize, usize) {
     let mut eligible = 0;
@@ -105,7 +115,7 @@ fn draw_star_labels(
     let count = candidates.as_ref().map_or(sky.stars.len(), Vec::len);
     for slot in 0..count {
         let index = candidates.as_ref().map_or(slot, |indices| indices[slot]);
-        let entry = &sky.stars[index];
+        let entry = &sky.stars.get(index);
         let Some(position) = entry.cell else {
             continue;
         };
@@ -144,7 +154,7 @@ fn draw_body_labels(buffer: &mut Buffer, sky: &ProjectedSky<'_>, area: Rect) {
 fn draw_orientation_labels(buffer: &mut Buffer, sky: &ProjectedSky<'_>, options: &RenderOptions, area: Rect) {
     let cell = |position| map_pixel_to_cell(sky, area, position);
     if sky.facing {
-        for &(position, label) in &sky.horizon_labels {
+        for &(position, label) in sky.horizon_labels {
             let (row, col) = cell(position);
             put_label(buffer, area, row, col, label, Color::LightBlue);
         }
@@ -233,14 +243,12 @@ fn put_label(buffer: &mut Buffer, area: Rect, row: i32, col: i32, text: &str, co
 #[cfg(test)]
 mod prepared_tests {
     use super::*;
-    use crate::{
-        astro::Horizontal,
-        catalog::{Catalog, StarNames, load_embedded_catalog},
-        projection::{View, Viewport, project_sky},
-        scene::cached::SceneCache,
-        sky::Sky,
-        timing::StepTimes,
-    };
+    use crate::astro::Horizontal;
+    use crate::catalog::{Catalog, StarNames, load_embedded_catalog};
+    use crate::model::projection::{ProjectionViewport as Viewport, View};
+    use crate::projection::project_sky;
+    use crate::state::SceneCache;
+    use crate::timing::StepTimes;
 
     #[test]
     fn prepared_label_candidates_preserve_order_clipping_and_dynamic_names() {
@@ -252,7 +260,7 @@ mod prepared_tests {
             star.name = (i % 3 == 0).then_some(name);
             star.magnitude = i as f32 * 0.25;
         }
-        let mut sky = Sky::from_catalog(&Catalog::new(parsed.stars, names, vec![]));
+        let mut sky = crate::sky::create_sky_from_catalog(&Catalog::new(parsed.stars, names, vec![]));
         for star in &mut sky.stars {
             star.position = Horizontal {
                 azimuth: 0.5,
@@ -261,7 +269,7 @@ mod prepared_tests {
             .to_unit_vector();
         }
         let mut cache = SceneCache::default();
-        cache.prepare_catalog(sky.catalog.clone(), &mut StepTimes::default());
+        crate::scene::cached::prepare_scene_catalog(&mut cache, sky.catalog.clone(), &mut StepTimes::default());
         let area = Rect::new(0, 0, 40, 20);
         let mut options = RenderOptions {
             unicode: true,
@@ -280,23 +288,22 @@ mod prepared_tests {
             match phase {
                 1 => options.label_threshold = 5.0,
                 2 => options.dynamic_names = false,
-                3 => projected.stars.reverse(),
+                3 => projected.order.reverse(),
                 4 => {
-                    projected.stars[0].cell = None;
-                    projected.stars[1].cell = Some((0, 0));
+                    projected.order.remove(0);
+                    projected.stars[projected.order[0]].1 = (0, 0);
                 }
-                5 => projected.stars.clear(),
+                5 => projected.order.clear(),
                 _ => {}
             }
-            cache
-                .draw_pixels(&projected, &options, 0.0, &mut StepTimes::default())
+            crate::scene::cached::draw_pixels(&mut cache, &projected.view(&sky), &options, 0.0, &mut StepTimes::default())
                 .unwrap();
             let mut expected = Buffer::empty(area);
             let mut actual = Buffer::empty(area);
-            let expected_counts = draw_star_labels(&mut expected, &projected, &options, area, None, None);
+            let expected_counts = draw_star_labels(&mut expected, &projected.view(&sky), &options, area, None, None);
             let actual_counts = draw_star_labels(
                 &mut actual,
-                &projected,
+                &projected.view(&sky),
                 &options,
                 area,
                 cache.prepared(),

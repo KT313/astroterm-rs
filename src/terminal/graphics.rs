@@ -78,14 +78,23 @@ pub fn compose_halfblocks(protocol: &Protocol, screen: Rect, area: Rect, text: &
 
 /// Serialize a single completed cell buffer, containing either the image protocol or merged half-block/text cells.
 pub fn serialize_frame(image: &Buffer) -> io::Result<Vec<u8>> {
-    crossterm::style::force_color_output(true); // retain true-color output when serialized to a memory buffer
     let mut frame = Vec::new();
+    let mut blank = Buffer::empty(Rect::default());
+    serialize_frame_into(image, &mut blank, &mut frame)?;
+    Ok(frame)
+}
+
+/// Fill application-owned serialization scratch after the previous frame has been written and flushed.
+pub fn serialize_frame_into(image: &Buffer, blank: &mut Buffer, frame: &mut Vec<u8>) -> io::Result<()> {
+    crossterm::style::force_color_output(true);
+    frame.clear();
+    blank.resize(image.area);
+    blank.reset();
     crossterm::queue!(frame, crossterm::terminal::BeginSynchronizedUpdate)?;
-    let blank = Buffer::empty(image.area);
-    let mut backend = CrosstermBackend::new(&mut frame);
+    let mut backend = CrosstermBackend::new(&mut *frame);
     backend.draw(blank.diff(image).into_iter())?;
     crossterm::queue!(frame, crossterm::terminal::EndSynchronizedUpdate)?;
-    Ok(frame)
+    Ok(())
 }
 
 /// Publish one already assembled frame. A short write is retried by write_all; a failed write/flush attempts to
@@ -118,6 +127,27 @@ mod tests {
     };
 
     #[test]
+    fn serialization_scratch_handles_small_large_small_frames() {
+        let mut blank = Buffer::empty(Rect::default());
+        let mut bytes = Vec::new();
+        let mut expected = Vec::new();
+        let mut retained = 0;
+        for (step, (width, height)) in [(2, 2), (60, 30), (2, 2)].into_iter().enumerate() {
+            let mut frame = Buffer::empty(Rect::new(0, 0, width, height));
+            frame[(0, 0)].set_symbol("λ");
+            serialize_frame_into(&frame, &mut blank, &mut bytes).unwrap();
+            assert_eq!(blank.area, frame.area);
+            assert!(blank.content.iter().all(|cell| cell.symbol() == " "));
+            if step == 0 { expected.clone_from(&bytes); }
+            if step == 1 { retained = blank.content.capacity(); }
+            if step == 2 {
+                assert_eq!(bytes, expected);
+                assert_eq!(blank.content.capacity(), retained);
+            }
+        }
+    }
+
+    #[test]
     fn graphics_transmits_raster_text_and_halfblocks_merge_native_text_before_serialization() {
         let area = Rect::new(0, 0, 24, 2);
         let label = "RASTER_TEXT_SENTINEL";
@@ -125,12 +155,12 @@ mod tests {
         Paragraph::new(label)
             .style(Style::default().fg(Color::White).bg(Color::Black))
             .render(area, &mut text);
-        let mut raster = crate::scene::raster_text::TextRasterizer::new().unwrap();
+        let mut raster = crate::scene::raster_text::create_text_rasterizer().unwrap();
         for protocol in [ProtocolType::Halfblocks, ProtocolType::Sixel, ProtocolType::Iterm2] {
             let mut image = image::RgbaImage::from_pixel(240, 40, image::Rgba([20, 40, 80, 255]));
             let before = image.clone();
             if protocol != ProtocolType::Halfblocks {
-                raster.paint_buffer(&mut image, &text, (10, 20));
+                crate::scene::raster_text::paint_text_buffer(&mut raster, &mut image, &text, (10, 20));
                 assert_ne!(image, before);
             }
             let encoded = encode_image(DynamicImage::ImageRgba8(image), area, protocol, false).unwrap();

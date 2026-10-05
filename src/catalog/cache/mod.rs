@@ -154,3 +154,11 @@ pub(crate) fn write_sections(path: &Path, fingerprint: &[u8; 32], sections: &[&[
     temporary.persist(path).map_err(|error| error.error)?;
     Ok(())
 }
+
+#[cfg(feature = "memory-diagnostics")]
+impl crate::cache::buffers::ReportBuffers for MappedCatalog {
+    fn report_buffers(&self, sink: &mut dyn crate::cache::buffers::BufferSink) {
+        sink.mapping(self.mapping.as_ptr() as usize, self.mapping.len());
+        crate::cache::buffers::report_field(sink, "section_ranges", &self.sections);
+    }
+}

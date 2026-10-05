@@ -1,9 +1,10 @@
 //! Prepared-catalog cache schema, fingerprints and semantic checks. I/O lives here above the pure models;
 //! only immutable catalog arrays are mapped, never simulation samples or frame buffers.
-use super::{
-    Constellation, SkyCatalog, StarStorage,
-    grid::{CELL_COUNT, SkyGrid, stored_cell},
-};
+use crate::model::SkyCatalog;
+use crate::model::grid::{CELL_COUNT, SkyGrid};
+use crate::model::objects::Constellation;
+use crate::model::StarStorage;
+use super::grid::stored_cell;
 use crate::catalog::{
     StarNames,
     cache::{CatalogArray, MappedCatalog, invalid, supported, write_sections},
@@ -32,11 +33,11 @@ pub fn catalog_fingerprint() -> [u8; 32] {
         crate::astro::JULIAN_YEAR_DAYS,
         crate::astro::models::stars::SINGULAR_RATIO,
         crate::astro::models::stars::ALWAYS_CHECKED_ANGLE,
-        super::storage::QUANTIZATION_MARGIN,
+        crate::model::storage::QUANTIZATION_MARGIN,
     ] {
         hash.update(value.to_le_bytes());
     }
-    hash.update([super::grid::GRID_DEPTH]);
+    hash.update([crate::model::grid::GRID_DEPTH]);
     for source in [
         include_bytes!("../catalog/athyg.rs").as_slice(),
         include_bytes!("../catalog/space_motion.rs").as_slice(),
@@ -50,7 +51,11 @@ pub fn catalog_fingerprint() -> [u8; 32] {
         include_bytes!("../catalog/designation.rs").as_slice(),
         include_bytes!("../catalog/cache/encoding.rs").as_slice(),
         include_bytes!("../catalog/cache/mod.rs").as_slice(),
-        include_bytes!("storage.rs").as_slice(),
+        include_bytes!("../model/storage/mod.rs").as_slice(),
+        include_bytes!("../model/storage/views.rs").as_slice(),
+        include_bytes!("../model/grid.rs").as_slice(),
+        include_bytes!("../model/catalog.rs").as_slice(),
+        include_bytes!("../model/objects.rs").as_slice(),
         include_bytes!("grid.rs").as_slice(),
         include_bytes!("mod.rs").as_slice(),
         include_bytes!("cache.rs").as_slice(),
@@ -176,7 +181,7 @@ pub fn load_sky_catalog_with_times(
 
 fn prepare_catalog(parsed: crate::catalog::Catalog, times: &mut crate::timing::StepTimes) -> SkyCatalog {
     let input = parsed.stars.len();
-    let catalog = times.measure("Catalog preparation", || SkyCatalog::from_owned_catalog(parsed));
+    let catalog = times.measure("Catalog preparation", || crate::sky::prepare_owned_catalog(parsed));
     times.describe("Catalog preparation", || format!("input entries={input}; removed placeholders={}; output stars={}; grid cells={CELL_COUNT}; always-checked={}; unique constellation endpoints={}", input - catalog.stars.len(), catalog.stars.len(), catalog.always_checked.len(), catalog.endpoint_indices.len()));
     catalog
 }
@@ -334,18 +339,19 @@ fn decode_figures(bytes: &[u8]) -> io::Result<Vec<Constellation>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        astro::{J2000, Observer},
-        canvas::Canvas,
-        projection::{View, Viewport, project_sky},
-        scene::{RenderOptions, draw_sky_scene},
-        sky::{Sky, update_sky_positions},
-        timing::StepTimes,
-    };
+    use crate::astro::{J2000, Observer};
+    use crate::canvas::Canvas;
+    use crate::model::Sky;
+    use crate::model::projection::{ProjectionViewport as Viewport, View};
+    use crate::model::rendering::RenderOptions;
+    use crate::projection::project_sky;
+    use crate::scene::draw_sky_scene;
+    use crate::sky::update_sky_positions;
+    use crate::timing::StepTimes;
     use std::sync::Arc;
 
     fn prepared() -> SkyCatalog {
-        SkyCatalog::from_owned_catalog(load_embedded_catalog().unwrap())
+        crate::sky::prepare_owned_catalog(load_embedded_catalog().unwrap())
     }
     fn render(catalog: SkyCatalog, threshold: f64, date: f64) -> Canvas {
         let mut sky = Sky::new(Arc::new(catalog));
@@ -371,7 +377,7 @@ mod tests {
         draw_sky_scene(
             &mut canvas,
             &options,
-            &project_sky(&sky, &View::default(), Viewport { height: 41, width: 81 }),
+            &project_sky(&sky, &View::default(), Viewport { height: 41, width: 81 }).view(&sky),
         );
         canvas
     }
@@ -614,7 +620,7 @@ mod tests {
                 has_data: true,
             });
         }
-        let catalog = SkyCatalog::from_owned_catalog(input);
+        let catalog = crate::sky::prepare_owned_catalog(input);
         assert_eq!(catalog.stars.precise_count(), 7);
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("cache");

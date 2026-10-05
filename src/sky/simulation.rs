@@ -2,201 +2,32 @@
 //! Linear intervals control interpolation error only, not the underlying ephemerides' astronomical accuracy.
 //! Bounded samples cover reception and per-body emission epochs; extra disjoint requests fail explicitly.
 
+use crate::state::SimulationState;
 use crate::astro::models::{
     BodyId, BodyState, moons::evaluate_moon, orientation::compute_slow_orientation, planets::evaluate_planets,
 };
 use crate::astro::{COMPUTATIONAL_INTERVAL, Matrix3};
 use crate::timing::StepTimes;
-use std::fmt;
+use crate::timing::memory::{BufferId, BufferShape, IndexDomain};
+mod memory;
+use memory::record_sample_family;
 
-/// UTC input approximates UT1; TT includes the Espenak–Meeus estimate of ΔT.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct FrameTime {
-    pub utc: f64,
-    pub ut1: f64,
-    pub tt: f64,
-}
-impl FrameTime {
-    pub fn from_utc(utc: f64) -> Self {
-        Self {
-            utc,
-            ut1: utc,
-            tt: crate::astro::ut1_to_tt(utc),
-        }
+use crate::model::simulation::{FrameTime, ModelFamily, SimulationError, StateRequest};
+use crate::model::simulation::Sample;
+
+/// Read-only same-time evaluation; missing coverage is a coordinator error, never a hidden ephemeris call.
+pub fn evaluate_body(storage: &SimulationState, body: BodyId, tt: f64) -> Result<BodyState, SimulationError> {
+    if body == BodyId::Moon {
+        let sample = find_sample(&storage.moon, tt, ModelFamily::Moon)?;
+        let relative = sample.value.evaluate(tt - sample.epoch);
+        return Ok(relative.add_parent(evaluate_body(storage, BodyId::Earth, tt)?));
     }
+    let sample = find_sample(&storage.planets, tt, ModelFamily::Planets)?;
+    Ok(sample.value[body as usize].evaluate(tt - sample.epoch))
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ModelFamily {
-    Planets,
-    Moon,
-    Orientation,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct StateRequest {
-    pub body: BodyId,
-    pub tt: f64,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum SimulationError {
-    InvalidTime,
-    MissingCoverage { family: ModelFamily, tt: f64 },
-    TooManyEpochs(ModelFamily),
-    NonFiniteState(ModelFamily),
-}
-impl fmt::Display for SimulationError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "simulation state unavailable: {self:?}")
-    }
-}
-impl std::error::Error for SimulationError {}
-
-/// Per-family interpolation limits, measured against direct model evaluation. These do not include the physical
-/// theory's error. Lunar limits are parent-relative; common-frame composition adds the parent's error. For the
-/// Earth observer, the same-time parent position cancels before the direction is formed.
-#[derive(Clone, Copy, Debug)]
-pub struct InterpolationLimits {
-    pub position_au: f64,
-    pub velocity_au_day: f64,
-    pub orientation_arcseconds: f64,
-}
-pub const PLANET_LIMITS: InterpolationLimits = InterpolationLimits {
-    position_au: 3e-8,
-    velocity_au_day: 5e-5,
-    orientation_arcseconds: 0.0,
-};
-pub const MOON_LIMITS: InterpolationLimits = InterpolationLimits {
-    position_au: 1e-9,
-    velocity_au_day: 1e-6,
-    orientation_arcseconds: 0.0,
-};
-pub const ORIENTATION_LIMITS: InterpolationLimits = InterpolationLimits {
-    position_au: 0.0,
-    velocity_au_day: 0.0,
-    orientation_arcseconds: 0.2,
-};
-
-/// Sampled interpolation policy, days either side of the sample. Outside the computational interval only an exact
-/// sample is accepted. Bounds are qualified by the cadence sweep, separate from physical accuracy targets.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct CachePolicy {
-    pub planets_days: f64,
-    pub moon_days: f64,
-    pub orientation_days: f64,
-}
-impl Default for CachePolicy {
-    fn default() -> Self {
-        Self {
-            planets_days: 30.0 / 86400.0,
-            moon_days: 12.0 / 86400.0,
-            orientation_days: 60.0 / 86400.0,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct RefreshCounts {
-    pub planets: u64,
-    pub moon: u64,
-    pub orientation: u64,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct Sample<T> {
-    epoch: f64,
-    half_span: f64,
-    value: T,
-}
-impl<T> Sample<T> {
-    fn covers(&self, tt: f64) -> bool {
-        tt == self.epoch || (COMPUTATIONAL_INTERVAL.contains(tt) && (tt - self.epoch).abs() <= self.half_span)
-    }
-}
-
-/// Concrete family caches, with parent-relative lunar storage. Replacing a lunar theory/settings only clears
-/// lunar samples. Orientation model changes also invalidate the Moon's mean-of-date adapter.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct SimulationState {
-    planets: Vec<Sample<[BodyState; 9]>>,
-    moon: Vec<Sample<BodyState>>,
-    orientation: Vec<Sample<Matrix3>>,
-    policy: CachePolicy,
-    pub refresh_counts: RefreshCounts,
-    versions: [u64; 3],
-}
-impl SimulationState {
-    /// Apply validated policies once at startup. A zero span keeps exact within-frame samples only.
-    pub fn configure_cache(&mut self, config: &crate::cache::CacheConfig) {
-        use crate::cache::Group;
-        self.policy = CachePolicy {
-            planets_days: config.age_seconds(Group::PlanetarySamples) / 86400.0,
-            moon_days: config.age_seconds(Group::LunarSamples) / 86400.0,
-            orientation_days: config.age_seconds(Group::SlowOrientation) / 86400.0,
-        };
-        self.planets.clear();
-        self.moon.clear();
-        self.orientation.clear();
-    }
-    /// Clear bypassed families once per frame, not between reception and emission requests.
-    pub fn begin_frame(&mut self) {
-        if self.policy.planets_days == 0.0 {
-            self.planets.clear();
-        }
-        if self.policy.moon_days == 0.0 {
-            self.moon.clear();
-        }
-        if self.policy.orientation_days == 0.0 {
-            self.orientation.clear();
-        }
-    }
-    pub fn model_versions(&self) -> [u64; 3] {
-        self.versions
-    }
-
-    /// Direct per-frame evaluation, used as the reference for cache qualification.
-    pub fn exact() -> Self {
-        Self {
-            policy: CachePolicy {
-                planets_days: 0.0,
-                moon_days: 0.0,
-                orientation_days: 0.0,
-            },
-            ..Self::default()
-        }
-    }
-
-    pub fn set_model_version(&mut self, family: ModelFamily, version: u64) {
-        let index = family as usize;
-        if self.versions[index] == version {
-            return;
-        }
-        self.versions[index] = version;
-        match family {
-            ModelFamily::Planets => self.planets.clear(),
-            ModelFamily::Moon => self.moon.clear(),
-            ModelFamily::Orientation => {
-                self.orientation.clear();
-                self.moon.clear();
-            }
-        }
-    }
-
-    /// Read-only same-time evaluation; missing coverage is a coordinator error, never a hidden ephemeris call.
-    pub fn evaluate_body(&self, body: BodyId, tt: f64) -> Result<BodyState, SimulationError> {
-        if body == BodyId::Moon {
-            let sample = find_sample(&self.moon, tt, ModelFamily::Moon)?;
-            let relative = sample.value.evaluate(tt - sample.epoch);
-            return Ok(relative.add_parent(self.evaluate_body(BodyId::Earth, tt)?));
-        }
-        let sample = find_sample(&self.planets, tt, ModelFamily::Planets)?;
-        Ok(sample.value[body as usize].evaluate(tt - sample.epoch))
-    }
-
-    pub fn evaluate_orientation(&self, tt: f64) -> Result<Matrix3, SimulationError> {
-        Ok(find_sample(&self.orientation, tt, ModelFamily::Orientation)?.value)
-    }
+pub fn evaluate_orientation(storage: &SimulationState, tt: f64) -> Result<Matrix3, SimulationError> {
+    Ok(find_sample(&storage.orientation, tt, ModelFamily::Orientation)?.value)
 }
 
 fn find_sample<T>(samples: &[Sample<T>], tt: f64, family: ModelFamily) -> Result<&Sample<T>, SimulationError> {
@@ -226,7 +57,8 @@ pub fn update_simulation(
         }
     }
     let before = state.refresh_counts;
-    times.measure("Planet samples", || {
+    let memory_before = times.inspect_memory(|| BufferShape::vector(&state.planets, IndexDomain::ModelSamples));
+    let result = times.measure("Planet samples", || {
         prepare_samples(
             &mut state.planets,
             &planet_epochs,
@@ -242,9 +74,12 @@ pub fn update_simulation(
                 }
             },
         )
-    })?;
+    });
+    record_sample_family(times, BufferId::PlanetSamples, memory_before, &state.planets, state.refresh_counts.planets - before.planets, result.is_ok());
+    result?;
     times.describe("Planet samples", || format!("requested epochs={}; new sample blocks={}; retained blocks={}; half-span={} days; each evaluation supplies all planetary states", planet_epochs.len(), state.refresh_counts.planets - before.planets, state.planets.len(), state.policy.planets_days));
-    times.measure("Lunar samples", || {
+    let memory_before = times.inspect_memory(|| BufferShape::vector(&state.moon, IndexDomain::ModelSamples));
+    let result = times.measure("Lunar samples", || {
         prepare_samples(
             &mut state.moon,
             &moon_epochs,
@@ -260,7 +95,9 @@ pub fn update_simulation(
                 }
             },
         )
-    })?;
+    });
+    record_sample_family(times, BufferId::LunarSamples, memory_before, &state.moon, state.refresh_counts.moon - before.moon, result.is_ok());
+    result?;
     times.describe("Lunar samples", || {
         format!(
             "requested epochs={}; new sample blocks={}; retained blocks={}; half-span={} days",
@@ -270,7 +107,8 @@ pub fn update_simulation(
             state.policy.moon_days
         )
     });
-    times.measure("Orientation samples", || {
+    let memory_before = times.inspect_memory(|| BufferShape::vector(&state.orientation, IndexDomain::ModelSamples));
+    let result = times.measure("Orientation samples", || {
         prepare_samples(
             &mut state.orientation,
             &[time.tt],
@@ -286,7 +124,9 @@ pub fn update_simulation(
                 }
             },
         )
-    })?;
+    });
+    record_sample_family(times, BufferId::OrientationSamples, memory_before, &state.orientation, state.refresh_counts.orientation - before.orientation, result.is_ok());
+    result?;
     times.describe("Orientation samples", || format!("requested epochs=1; new sample blocks={}; retained blocks={}; half-span={} days; output slow orientation matrices", state.refresh_counts.orientation - before.orientation, state.orientation.len(), state.policy.orientation_days));
     Ok(())
 }
@@ -357,15 +197,18 @@ fn prepare_samples<T: Clone>(
     Ok(())
 }
 
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::astro::{J2000, Observer, Vector3};
     use crate::canvas::Canvas;
     use crate::catalog::load_embedded_catalog;
-    use crate::projection::{View, Viewport, project_sky};
-    use crate::scene::{RenderOptions, draw_sky_scene};
-    use crate::sky::{Sky, observe_sky, prepare_observer};
+    use crate::model::projection::{ProjectionViewport as Viewport, View};
+    use crate::projection::project_sky;
+    use crate::model::rendering::RenderOptions;
+    use crate::scene::draw_sky_scene;
+    use crate::sky::{observe_sky, prepare_observer};
 
     fn linear_parent(tt: f64) -> Result<BodyState, SimulationError> {
         Ok(BodyState {
@@ -497,7 +340,7 @@ mod tests {
         update_simulation(&mut simulation, time, &[], &mut StepTimes::default()).unwrap();
         let planets = simulation.planets.clone();
         let observer = prepare_observer(&simulation, time, Observer::default()).unwrap();
-        let mut sky = Sky::from_catalog(&load_embedded_catalog().unwrap());
+        let mut sky = crate::sky::create_sky_from_catalog(&load_embedded_catalog().unwrap());
         let options = RenderOptions {
             unicode: true,
             braille: true,
@@ -520,13 +363,14 @@ mod tests {
                 &observer,
                 5.0,
                 false,
-                crate::sky::SkyRegion::All,
+                crate::model::SkyRegion::All,
                 &mut sky,
                 &mut StepTimes::default(),
             )
             .unwrap();
             observed_positions.push(sky.moon.position);
-            let projected = project_sky(&sky, &View::default(), Viewport { height: 41, width: 81 });
+            let projected_data = project_sky(&sky, &View::default(), Viewport { height: 41, width: 81 });
+            let projected = projected_data.view(&sky);
             draw_sky_scene(&mut Canvas::new(41, 81), &options, &projected);
             assert_eq!(simulation.planets, planets);
         }

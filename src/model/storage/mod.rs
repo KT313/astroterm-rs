@@ -421,6 +421,9 @@ impl StarStorage {
     }
 }
 
+#[cfg(feature = "memory-diagnostics")]
+crate::cache::buffers::report_fields!(StarStorage { u0, w, magnitude, brightness_key, distance, motion_bound, ids, names, name_table, designations, spectral_types, colors, flags, precise_indices, precise_motions });
+
 #[cfg(test)]
 mod tests {
     use super::*;

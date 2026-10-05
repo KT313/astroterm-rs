@@ -1,16 +1,19 @@
 //! Fixed-seed catalogs and fixed observer/date/view. Setup and sorting are outside timed loops.
 
+use astroterm::state::{SimulationState};
 use std::hint::black_box;
 use std::time::Duration;
 
 use astroterm::astro::{J2000, Observer};
 use astroterm::canvas::Canvas;
 use astroterm::catalog::{Catalog, CatalogStar, load_embedded_catalog};
-use astroterm::projection::{View, ViewCenter, Viewport, project_sky};
-use astroterm::scene::{RenderOptions, draw_sky_scene};
-use astroterm::sky::{
-    FrameTime, SimulationState, Sky, observe_sky, prepare_observation, update_simulation, update_sky_positions,
-};
+use astroterm::model::projection::{ProjectionViewport as Viewport, View, ViewCenter};
+use astroterm::projection::project_sky;
+use astroterm::model::rendering::RenderOptions;
+use astroterm::scene::draw_sky_scene;
+use astroterm::model::Sky;
+use astroterm::model::simulation::FrameTime;
+use astroterm::sky::{observe_sky, prepare_observation, update_simulation, update_sky_positions};
 use astroterm::timing::StepTimes;
 use criterion::{Criterion, SamplingMode, criterion_group, criterion_main};
 
@@ -70,7 +73,7 @@ fn benchmark_frames(criterion: &mut Criterion) {
         ("synthetic_100k", 100_000),
         ("synthetic_2500k", 2_500_000),
     ] {
-        let mut sky = Sky::new(std::sync::Arc::new(astroterm::sky::SkyCatalog::from_owned_catalog(
+        let mut sky = Sky::new(std::sync::Arc::new(astroterm::sky::prepare_owned_catalog(
             build_catalog(count),
         )));
         let mut timing = StepTimes::default();
@@ -96,7 +99,7 @@ fn benchmark_frames(criterion: &mut Criterion) {
                             &observer_state,
                             threshold,
                             refracted,
-                            astroterm::sky::SkyRegion::All,
+                            astroterm::model::SkyRegion::All,
                             black_box(&mut sky),
                             &mut timing,
                         )
@@ -134,7 +137,7 @@ fn benchmark_frames(criterion: &mut Criterion) {
                         format!("project_draw_{view_name}_t{threshold}_constellations_{constellations}"),
                         |bencher| {
                             bencher.iter(|| {
-                                let projected = project_sky(
+                                let projected_data = project_sky(
                                     black_box(&sky),
                                     &view,
                                     Viewport {
@@ -142,6 +145,7 @@ fn benchmark_frames(criterion: &mut Criterion) {
                                         width: canvas.width(),
                                     },
                                 );
+                                let projected = projected_data.view(black_box(&sky));
                                 draw_sky_scene(&mut canvas, &options, &projected);
                                 black_box(&canvas);
                             });
@@ -179,8 +183,7 @@ fn benchmark_model_families(criterion: &mut Criterion) {
         b.iter(|| {
             for body in BodyId::PLANETS.into_iter().chain([BodyId::Moon]) {
                 black_box(
-                    simulation
-                        .evaluate_body(body, black_box(time.tt + 1.0 / 86400.0))
+                    astroterm::sky::simulation::evaluate_body(&simulation, body, black_box(time.tt + 1.0 / 86400.0))
                         .unwrap(),
                 );
             }

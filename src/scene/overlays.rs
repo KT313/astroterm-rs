@@ -5,7 +5,8 @@ use std::cmp::Reverse;
 
 use crate::canvas::{Canvas, Color};
 
-use super::{RenderOptions, draw_line};
+use crate::model::rendering::RenderOptions;
+use super::draw_line;
 
 /// Draw spokes from the center to the edge every few degrees of azimuth, labelled with their angle. The spacing
 /// adapts to the canvas size.
@@ -89,7 +90,8 @@ fn greatest_common_divisor(mut a: i32, mut b: i32) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::projection::{View, ViewCenter, Viewport, project_horizon_labels, project_horizon_line};
+    use crate::model::projection::{ProjectionViewport as Viewport, View, ViewCenter};
+    use crate::projection::{project_horizon_labels, project_horizon_line};
     use std::f64::consts::{FRAC_PI_2, PI};
     fn draw_horizon_line(canvas: &mut Canvas, view: &View, options: &RenderOptions) {
         let lines = project_horizon_line(
@@ -115,7 +117,7 @@ mod tests {
         crate::projection::compute_visible_horizon_half_range(fov, tilt)
     }
 
-    use crate::projection::ProjectionKind;
+    use crate::model::projection::ProjectionKind;
 
     const OPTIONS: RenderOptions = RenderOptions {
         unicode: false,

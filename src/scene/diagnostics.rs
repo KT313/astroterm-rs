@@ -1,6 +1,7 @@
 //! Diagnostics describe submitted geometry; overdraw means this is not a count of distinct lit pixels.
-use super::RenderOptions;
-use crate::{projection::ProjectedSky, timing::StepTimes};
+use crate::model::rendering::RenderOptions;
+use crate::model::projection::ProjectedSky;
+use crate::timing::StepTimes;
 
 pub(super) fn describe_scene(sky: &ProjectedSky<'_>, options: &RenderOptions, times: &mut StepTimes) {
     times.describe("Canvas initialization", || {

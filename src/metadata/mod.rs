@@ -9,18 +9,14 @@ use crate::astro::{
     DegreesMinutesSeconds, ElapsedTime, MoonPhase, Observer, SimulationClock, ZodiacSign, azimuth_to_compass,
     julian_date_to_utc,
 };
-use crate::projection::{ProjectionKind, View, ViewCenter};
+use crate::model::projection::{ProjectionKind, View, ViewCenter};
 use crate::timing::StepTime;
 
 use local_time::LocalTime;
-pub use local_time::ObserverTimeZone;
+use crate::model::metadata::ObserverTimeZone;
+pub use local_time::{convert_observer_time, resolve_observer_timezone};
 
-/// One line of metadata, e.g. label "Lunar Phase" and value "Waxing Crescent".
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MetadataField {
-    pub label: String,
-    pub value: String,
-}
+use crate::model::metadata::MetadataField;
 
 /// The metadata fields for the simulation time `julian_date_utc`. `unicode` allows symbols such as the zodiac sign's.
 pub fn collect_metadata_fields(
@@ -32,12 +28,26 @@ pub fn collect_metadata_fields(
     unicode: bool,
     time_zone: &ObserverTimeZone,
 ) -> Vec<MetadataField> {
-    let local_time = julian_date_to_utc(julian_date_utc).map(|utc| time_zone.convert(utc));
-    format_metadata_fields(local_time, julian_date_utc, clock, moon_phase, observer, view, unicode)
+    let mut fields = Vec::with_capacity(10);
+    fill_metadata_fields(&mut fields, julian_date_utc, clock, moon_phase, observer, view, unicode, time_zone);
+    fields
 }
 
-/// The fields, given the simulation time in the local timezone (`None` if it can't be represented).
-fn format_metadata_fields(
+/// Replace metadata entries while retaining the destination vector's capacity. Field strings are rebuilt.
+#[allow(clippy::too_many_arguments)]
+pub fn fill_metadata_fields(
+    fields: &mut Vec<MetadataField>, julian_date_utc: f64, clock: &SimulationClock, moon_phase: MoonPhase,
+    observer: &Observer, view: &View, unicode: bool, time_zone: &ObserverTimeZone,
+) {
+    let local_time = julian_date_to_utc(julian_date_utc).map(|utc| convert_observer_time(time_zone, utc));
+    fields.clear();
+    append_metadata_fields(fields, local_time, julian_date_utc, clock, moon_phase, observer, view, unicode);
+}
+
+/// Append fields for the local simulation time (`None` if it cannot be represented).
+#[allow(clippy::too_many_arguments)]
+fn append_metadata_fields(
+    fields: &mut Vec<MetadataField>,
     local_time: Option<LocalTime>,
     julian_date_utc: f64,
     clock: &SimulationClock,
@@ -45,9 +55,7 @@ fn format_metadata_fields(
     observer: &Observer,
     view: &View,
     unicode: bool,
-) -> Vec<MetadataField> {
-    let mut fields = Vec::with_capacity(10);
-
+) {
     // calendar: local date and time, and the zodiac sign of that date
     match local_time {
         Some(LocalTime { time, zone }) => {
@@ -113,25 +121,30 @@ fn format_metadata_fields(
     if view.projection == ProjectionKind::Equidistant {
         fields.push(create_field("Projection", "equidistant"));
     }
-    fields
 }
 
 /// Fields for the smoothed frame step durations: their total, then each step (indented), in milliseconds.
 pub fn format_step_time_fields(steps: &[StepTime]) -> Vec<MetadataField> {
+    let mut fields = Vec::with_capacity(steps.len() + 1);
+    append_step_time_fields(&mut fields, steps);
+    fields
+}
+
+/// Append timing entries directly, including their total; existing metadata stays before them.
+pub fn append_step_time_fields(fields: &mut Vec<MetadataField>, steps: &[StepTime]) {
     let format_ms = |seconds: f64| format!("{:.3} ms", seconds * 1000.0);
     let total = steps
         .iter()
         .filter(|step| step.depth == 0)
         .map(|step| step.average_seconds)
         .sum();
-    let mut fields = vec![create_field("Frame Time", format_ms(total))];
+    fields.push(create_field("Frame Time", format_ms(total)));
     for step in steps {
         fields.push(create_field(
             format!("{}{}", "  ".repeat(step.depth + 1), step.name),
             format_ms(step.average_seconds),
         ));
     }
-    fields
 }
 
 fn create_field(label: impl Into<String>, value: impl Into<String>) -> MetadataField {
@@ -168,6 +181,40 @@ fn format_speed(speed: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn format_metadata_fields(local_time: Option<LocalTime>, date: f64, clock: &SimulationClock, phase: MoonPhase, observer: &Observer, view: &View, unicode: bool) -> Vec<MetadataField> {
+        let mut fields = Vec::new();
+        append_metadata_fields(&mut fields, local_time, date, clock, phase, observer, view, unicode);
+        fields
+    }
+
+    #[test]
+    fn refilling_metadata_and_timings_retains_vector_capacity_without_stale_entries() {
+        let observer = Observer::default();
+        let zone = resolve_observer_timezone(&observer);
+        let clock = SimulationClock::start(crate::astro::J2000, 0.0);
+        let mut fields = Vec::with_capacity(64);
+        let mut timing_fields = Vec::with_capacity(32);
+        let field_pointer = fields.as_ptr();
+        let timing_pointer = timing_fields.as_ptr();
+        let capacities = (fields.capacity(), timing_fields.capacity());
+        let steps = [StepTime { name: "Draw", depth: 0, average_seconds: 0.001 }];
+        for view in [View { fov_degrees: 90.0, ..View::default() }, View::default()] {
+            fill_metadata_fields(&mut fields, crate::astro::J2000, &clock, MoonPhase::Full, &observer, &view, true, &zone);
+            let expected = collect_metadata_fields(crate::astro::J2000, &clock, MoonPhase::Full, &observer, &view, true, &zone);
+            assert_eq!(fields, expected);
+            assert_eq!(fields.as_ptr(), field_pointer);
+            timing_fields.clear();
+            append_step_time_fields(&mut timing_fields, &steps);
+            assert_eq!(timing_fields.as_ptr(), timing_pointer);
+            assert_eq!(timing_fields, format_step_time_fields(&steps));
+            fields.append(&mut timing_fields);
+            assert_eq!(fields[expected.len()].label, "Frame Time");
+            assert!(timing_fields.is_empty());
+            assert_eq!(timing_fields.as_ptr(), timing_pointer);
+        }
+        assert_eq!((fields.capacity(), timing_fields.capacity()), capacities);
+    }
 
     #[test]
     fn metadata_panel_snapshot_uses_an_explicit_zone_and_frozen_clock() {
@@ -278,7 +325,7 @@ mod tests {
                 &Observer::default(),
                 view,
                 false,
-                &ObserverTimeZone::new(&Observer::default()),
+                &resolve_observer_timezone(&Observer::default()),
             )
             .len()
         };

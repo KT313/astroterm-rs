@@ -9,21 +9,12 @@ use ratatui_image::{
 };
 use std::io;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) enum CompressionSupport {
-    Supported,
-    Unsupported,
-    #[default]
-    Unknown,
-}
-
-impl CompressionSupport {
-    pub(super) fn metadata(self) -> &'static str {
-        match self {
-            Self::Supported => "Enabled (zlib)",
-            Self::Unsupported => "Not supported by terminal; using RGB",
-            Self::Unknown => "Support not confirmed; using RGB",
-        }
+use crate::state::rendering::CompressionSupport;
+pub(super) fn describe_compression(value: CompressionSupport) -> &'static str {
+    match value {
+        CompressionSupport::Supported => "Enabled (zlib)",
+        CompressionSupport::Unsupported => "Not supported by terminal; using RGB",
+        CompressionSupport::Unknown => "Support not confirmed; using RGB",
     }
 }
 
@@ -195,10 +186,9 @@ mod tests {
             assert_eq!((font.width, font.height), (10, 20));
         }
         assert!(
-            CompressionSupport::Unsupported
-                .metadata()
+            describe_compression(CompressionSupport::Unsupported)
                 .contains("Not supported by terminal")
         );
-        assert!(CompressionSupport::Unknown.metadata().contains("not confirmed"));
+        assert!(describe_compression(CompressionSupport::Unknown).contains("not confirmed"));
     }
 }

@@ -17,7 +17,7 @@ fn main() {
             use clap::Parser;
             let arguments = Arguments::parse_from(["probe", "--renderer", "pixels", "--graphics-protocol", "kitty"]);
             let config = build_config(arguments, &[]).unwrap();
-            let mut renderer = Renderer::open(
+            let (mut renderer, mut rendering) = Renderer::open(
                 config.renderer,
                 config.graphics_protocol,
                 config.render,
@@ -25,11 +25,13 @@ fn main() {
                 config.text_scale,
             )
             .unwrap();
-            let sky = astroterm::sky::Sky::from_catalog(&astroterm::catalog::load_embedded_catalog().unwrap());
-            let projected = astroterm::projection::project_sky(&sky, &config.view, renderer.viewport());
+            let sky = astroterm::sky::create_sky_from_catalog(&astroterm::catalog::load_embedded_catalog().unwrap());
+            let projected_data = astroterm::projection::project_sky(&sky, &config.view, renderer.viewport(&rendering));
+    let projected = projected_data.view(&sky);
             let clock = astroterm::astro::SimulationClock::start(config.simulation.start_julian_date, 0.0);
             renderer
                 .render_frame(
+                    &mut rendering,
                     &projected,
                     &config.view,
                     clock.julian_date(),

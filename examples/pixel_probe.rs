@@ -38,7 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Paragraph::new("Pixel prototype — text over image")
         .style(Style::default().fg(Color::White).bg(Color::Black))
         .render(Rect::new(0, 0, 40, 1), &mut text);
-    let mut raster_text = astroterm::scene::raster_text::TextRasterizer::new()?;
+    let mut raster_text = astroterm::scene::raster_text::create_text_rasterizer()?;
     for protocol in [
         ProtocolType::Kitty,
         ProtocolType::Sixel,
@@ -48,7 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let start = Instant::now();
         let mut frame_image = image.clone();
         if protocol != ProtocolType::Halfblocks {
-            raster_text.paint_buffer(&mut frame_image, &text, (10, 20));
+            astroterm::scene::raster_text::paint_text_buffer(&mut raster_text, &mut frame_image, &text, (10, 20));
         }
         if protocol == ProtocolType::Kitty {
             let rgb = DynamicImage::ImageRgba8(frame_image).into_rgb8();

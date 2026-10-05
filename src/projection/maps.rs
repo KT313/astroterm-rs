@@ -8,26 +8,7 @@ use crate::astro::Horizontal;
 
 /// A point on the projection plane: radius and angle measured counterclockwise from the positive x-axis (right).
 /// Radius 1 is the edge of the rendered circle.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct Polar {
-    pub radius: f64,
-    pub theta: f64,
-}
-
-impl Polar {
-    /// Cartesian (x right, y up) coordinates.
-    pub fn to_cartesian(self) -> (f64, f64) {
-        (self.radius * self.theta.cos(), self.radius * self.theta.sin())
-    }
-
-    /// Polar coordinates of a cartesian point.
-    pub fn from_cartesian(x: f64, y: f64) -> Polar {
-        Polar {
-            radius: x.hypot(y),
-            theta: y.atan2(x),
-        }
-    }
-}
+use crate::model::projection::Polar;
 
 /// Stereographic projection centered on the North pole of a sphere with radius `sphere_radius`, given spherical
 /// coordinates (θ North of East, Φ from the pole). The equator lands on the circle with radius `sphere_radius`.

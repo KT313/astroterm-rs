@@ -1,11 +1,16 @@
 //! Observer-dependent transformations and corrections. The preparation coordinator requests emission coverage;
 //! observation itself reads immutable samples and never evaluates a model or sees a camera.
-mod cached;
+use crate::state::SimulationState;
+pub(crate) mod cached;
 mod stages;
-pub use cached::ObservationCache;
+mod memory;
+
 use stages::*;
 
-use super::{FrameTime, ObservedSky, PlanetKind, SimulationError, SimulationState, refract_sky_positions};
+use crate::model::ObservedSky;
+use crate::model::objects::PlanetKind;
+use crate::model::simulation::{FrameTime, SimulationError};
+use super::refract_sky_positions;
 use crate::astro::models::{
     BodyId, BodyState,
     orientation::{compute_body_fixed_rotation, compute_horizon_rotation, compute_site_state},
@@ -13,52 +18,32 @@ use crate::astro::models::{
 use crate::astro::{Matrix3, Observer, Vector3};
 use crate::timing::StepTimes;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Anchor {
-    Earth,
-}
+use crate::model::{Anchor, ObserverState};
 
-/// A frame's observer in the common inertial frame. Site coordinates are body-fixed; full orientation (slow and
-/// fast) transforms the WGS84 sea-level site vector and its rotation velocity.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ObserverState {
-    pub anchor: Anchor,
-    pub site: Observer,
-    pub height_m: f64,
-    pub time: FrameTime,
-    pub state: BodyState,
-    pub inertial_to_fixed: Matrix3,
-    pub inertial_to_horizon: Matrix3,
-    pub atmosphere: bool,
-    pub emission_tt: [f64; 10],
-}
-impl ObserverState {
-    /// Compose a body's translation and complete orientation with a body-fixed site state. This geometry also
-    /// serves synthetic anchors in tests; it assumes neither an Earth orbit nor spin around inertial Z.
-    pub fn from_anchor_state(
-        time: FrameTime,
-        site: Observer,
-        anchor_state: BodyState,
-        inertial_to_fixed: Matrix3,
-        site_fixed: BodyState,
-        atmosphere: bool,
-    ) -> Self {
-        let fixed_to_inertial = inertial_to_fixed.transpose();
-        let offset = BodyState {
-            position: fixed_to_inertial.apply(site_fixed.position),
-            velocity: fixed_to_inertial.apply(site_fixed.velocity),
-        };
-        Self {
-            anchor: Anchor::Earth,
-            site,
-            height_m: 0.0,
-            time,
-            state: offset.add_parent(anchor_state),
-            inertial_to_fixed,
-            inertial_to_horizon: compute_horizon_rotation(&site).compose(inertial_to_fixed),
-            atmosphere,
-            emission_tt: [time.tt; 10],
-        }
+/// Combine the anchor and site states, then derive the observer's fixed and horizon rotations.
+pub fn compose_observer_state(
+    time: FrameTime,
+    site: Observer,
+    anchor_state: BodyState,
+    inertial_to_fixed: Matrix3,
+    site_fixed: BodyState,
+    atmosphere: bool,
+) -> ObserverState {
+    let fixed_to_inertial = inertial_to_fixed.transpose();
+    let offset = BodyState {
+        position: fixed_to_inertial.apply(site_fixed.position),
+        velocity: fixed_to_inertial.apply(site_fixed.velocity),
+    };
+    ObserverState {
+        anchor: Anchor::Earth,
+        site,
+        height_m: 0.0,
+        time,
+        state: offset.add_parent(anchor_state),
+        inertial_to_fixed,
+        inertial_to_horizon: compute_horizon_rotation(&site).compose(inertial_to_fixed),
+        atmosphere,
+        emission_tt: [time.tt; 10],
     }
 }
 
@@ -67,10 +52,10 @@ pub fn prepare_observer(
     time: FrameTime,
     site: Observer,
 ) -> Result<ObserverState, SimulationError> {
-    let earth = simulation.evaluate_body(BodyId::Earth, time.tt)?;
-    let slow = simulation.evaluate_orientation(time.tt)?;
+    let earth = crate::sky::simulation::evaluate_body(simulation, BodyId::Earth, time.tt)?;
+    let slow = crate::sky::simulation::evaluate_orientation(simulation, time.tt)?;
     let orientation = compute_body_fixed_rotation(slow, time.ut1);
-    Ok(ObserverState::from_anchor_state(
+    Ok(crate::sky::compose_observer_state(
         time,
         site,
         earth,
@@ -98,10 +83,10 @@ pub fn prepare_light_time_samples(
             .chain([BodyId::Moon])
             .filter(|b| *b != BodyId::Earth)
         {
-            let target = simulation.evaluate_body(body, observer.emission_tt[body as usize])?;
+            let target = crate::sky::simulation::evaluate_body(simulation, body, observer.emission_tt[body as usize])?;
             let tt = observer.time.tt - (target.position - observer.state.position).length() / LIGHT_SPEED_AU_DAY;
             observer.emission_tt[body as usize] = tt;
-            requests.push(super::StateRequest { body, tt });
+            requests.push(crate::model::simulation::StateRequest { body, tt });
         }
         super::update_simulation(simulation, observer.time, &requests, times)?;
     }
@@ -149,24 +134,21 @@ pub fn observe_sky(
     observer: &ObserverState,
     magnitude_threshold: f64,
     refraction: bool,
-    region: super::SkyRegion,
+    region: crate::model::SkyRegion,
     output: &mut ObservedSky,
     times: &mut StepTimes,
 ) -> Result<(), SimulationError> {
     let mut candidates = std::mem::take(&mut output.candidate_indices);
     let selected_region = times.measure("Region filtering", || {
-        output
+        crate::sky::grid::select_region(&output
             .catalog
-            .grid
-            .select_region(region, observer, refraction && observer.atmosphere)
+            .grid, region, observer, refraction && observer.atmosphere)
     });
     output.selection = times.measure("Brightness bounds", || {
-        output.catalog.grid.select_brightness(
-            &output.catalog.stars,
+        crate::sky::grid::select_brightness(&output.catalog.grid, &output.catalog.stars,
             &selected_region,
             magnitude_threshold,
-            &mut candidates,
-        )
+            &mut candidates)
     });
     let result = observe_sky_candidates(
         simulation,

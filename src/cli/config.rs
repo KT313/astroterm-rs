@@ -7,42 +7,13 @@ use crate::astro::{
     Observer, compass_point_to_azimuth, current_julian_date, datetime_to_julian_date, parse_utc_datetime,
 };
 use crate::catalog::{City, find_city, suggest_cities};
-use crate::projection::{ProjectionKind, View, ViewCenter};
-use crate::scene::RenderOptions;
-use crate::terminal::TerminalSettings;
+use crate::model::projection::{ProjectionKind, View, ViewCenter};
+use crate::model::rendering::RenderOptions;
+use crate::model::config::TerminalSettings;
 
 use super::Arguments;
 
-/// Everything the application needs to run.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Config {
-    pub debug_singleframe: bool,
-    pub cache: crate::cache::CacheConfig,
-    /// Raster text size and spacing relative to terminal cells; ignored by native text renderers.
-    pub text_scale: f64,
-    pub renderer: crate::terminal::RendererKind,
-    pub graphics_protocol: crate::terminal::GraphicsProtocol,
-    pub simulation: SimulationSettings,
-    /// The view to start with, and to reset to.
-    pub view: View,
-    pub render: RenderOptions,
-    pub terminal: TerminalSettings,
-    /// Frames per second.
-    pub fps: u32,
-    /// Star dataset to load instead of the embedded catalog.
-    pub dataset: Option<Dataset>,
-}
-
-/// What is simulated: where, from when, how fast, and with which corrections.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct SimulationSettings {
-    pub observer: Observer,
-    pub start_julian_date: f64,
-    /// Simulated days per real day.
-    pub speed: f64,
-    /// Lift objects by atmospheric refraction.
-    pub refraction: bool,
-}
+use crate::model::config::{Config, SimulationSettings};
 
 /// An invalid argument, with a message for the user.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -58,6 +29,10 @@ impl std::error::Error for ConfigError {}
 
 /// Validate the arguments and convert them to a [`Config`]. `cities` resolves `--city`.
 pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, ConfigError> {
+    #[cfg(not(feature = "memory-diagnostics"))]
+    if arguments.debug_memory {
+        return Err(ConfigError("--debug-memory requires rebuilding with cargo build --features memory-diagnostics".into()));
+    }
     if !arguments.text_scale.is_finite() || !(0.25..=4.0).contains(&arguments.text_scale) {
         return Err(ConfigError("Text scale must be finite and between 0.25 and 4".into()));
     }
@@ -86,8 +61,8 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
 
     // frame rate and view
     let default_fps = match arguments.renderer {
-        crate::terminal::RendererKind::Chars => 24,
-        crate::terminal::RendererKind::Pixels => 12,
+        crate::model::config::RendererKind::Chars => 24,
+        crate::model::config::RendererKind::Pixels => 12,
     };
     let fps = u32::try_from(arguments.fps.unwrap_or(default_fps))
         .ok()
@@ -120,6 +95,7 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
     };
     Ok(Config {
         debug_singleframe: arguments.debug_singleframe,
+        debug_memory: arguments.debug_memory,
         cache: crate::cache::CacheConfig::load(arguments.cache_config.as_deref(), arguments.disable_cache)
             .map_err(|e| ConfigError(e.to_string()))?,
         text_scale: arguments.text_scale,
