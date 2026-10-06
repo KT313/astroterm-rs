@@ -93,6 +93,8 @@ fn bound_quantization(original: StellarMotion, compact: StellarMotion) -> f64 {
 impl StarStorage {
     /// Borrow the prepared columns without copying their contents.
     pub fn columns(&self) -> StarRowSlice<'_> { self.rows.as_slice() }
+    /// Inspect original owned columns, including their allocated capacities.
+    pub(crate) fn owned_columns(&self) -> &StarRowVec { &self.rows }
     fn rows_mut(&mut self) -> &mut StarRowVec { &mut self.rows }
     /// Name byte ranges addressed by the `name` column (1-based; 0 means unnamed).
     pub(crate) fn name_table(&self) -> &CatalogArray<[u64; 2]> {

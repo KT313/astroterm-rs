@@ -1,6 +1,6 @@
 //! One listing per owner struct: which fields are tables and which cache group governs them.
 //! Read top-down: root → persistent / cache / timings → each stage → its fields.
-use super::{Bytes, Named, Opaque, Single, TableVisitor, Tables, join};
+use super::{Bytes, Opaque, Single, TimingSteps, TableVisitor, Tables, join};
 use crate::cache::Group;
 use crate::model::{ObservedSky, SceneKey, SkyCatalog};
 use crate::state::{
@@ -17,24 +17,11 @@ list_tables!(Caches { leaves: [], scalars: [], groups: [sky, simulation, observa
 
 // --- persistent ------------------------------------------------------------------------------------------------
 
-/// The star columns are listed one by one; the two vector columns use their N×3 views.
+/// The original star table retains its complete schema and allocation capacities.
 impl Tables for SkyCatalog {
     fn visit_tables(&self, prefix: &str, visit: &mut TableVisitor<'_>) {
-        let c = self.stars.columns();
         let path = |name: &str| join(prefix, name);
-        visit(&path("stars.u0"), &Named(self.stars.directions(), &["x", "y", "z"]), None);
-        visit(&path("stars.w"), &Named(self.stars.motions(), &["x", "y", "z"]), None);
-        visit(&path("stars.magnitude"), &c.magnitude, None);
-        visit(&path("stars.brightness_key"), &c.brightness_key, None);
-        visit(&path("stars.distance"), &c.distance, None);
-        visit(&path("stars.motion_bound"), &c.motion_bound, None);
-        visit(&path("stars.id"), &c.id, None);
-        visit(&path("stars.name"), &c.name, None);
-        visit(&path("stars.designation"), &c.designation, None);
-        visit(&path("stars.spectral_type"), &c.spectral_type, None);
-        visit(&path("stars.color"), &c.color, None);
-        visit(&path("stars.flags"), &c.flags, None);
-        visit(&path("stars.precise_index"), &c.precise_index, None);
+        visit(&path("stars"), &self.stars, None);
         visit(&path("stars.name_table"), self.stars.name_table(), None);
         visit(&path("stars.precise_motions"), self.stars.precise_motions(), None);
         visit(&path("grid.offsets"), &self.grid.offsets, None);
@@ -170,7 +157,7 @@ impl Tables for SceneKey {
 /// Smoothed step averages and, when tracing is on, the recorded trace steps.
 impl Tables for StepTimes {
     fn visit_tables(&self, prefix: &str, visit: &mut TableVisitor<'_>) {
-        visit(&join(prefix, "steps"), &self.steps(), None);
+        visit(&join(prefix, "steps"), &TimingSteps(self), None);
         if let Some(trace) = self.trace() { visit(&join(prefix, "trace.steps"), &trace.steps, None); }
     }
 }

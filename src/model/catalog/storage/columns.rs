@@ -41,3 +41,5 @@ pub(super) mod section {
 }
 /// Number of star-storage sections in the cache file; catalog-level sections start here.
 pub const STAR_SECTIONS: usize = 15;
+
+crate::rows::row_columns!(StarRow { u0, w, magnitude, brightness_key, distance, motion_bound, id, name, designation, spectral_type, color, flags, precise_index });

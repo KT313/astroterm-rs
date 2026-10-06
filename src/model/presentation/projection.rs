@@ -187,6 +187,7 @@ pub struct ProjectedArc {
     pub includes_start: bool,
     pub includes_end: bool,
 }
+row_columns!(ProjectedArc { start, end, points, includes_start, includes_end });
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProjectedConstellation {
     pub maximum_magnitude: f64,

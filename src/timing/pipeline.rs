@@ -101,6 +101,9 @@ impl StepTimes {
         })
     }
 
+    /// Allocated slots in the original timing table, including spare capacity.
+    pub(crate) fn step_capacity(&self) -> usize { self.steps.capacity() }
+
     /// The steps measured so far, with their averages.
     pub fn steps(&self) -> &[StepTime] {
         &self.steps

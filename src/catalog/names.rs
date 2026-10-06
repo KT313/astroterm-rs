@@ -26,6 +26,7 @@ pub struct StarNames {
 }
 
 impl StarNames {
+    pub(crate) fn capacity(&self) -> usize { self.text.capacity() }
     pub(crate) fn bytes(&self) -> &[u8] {
         &self.text
     }

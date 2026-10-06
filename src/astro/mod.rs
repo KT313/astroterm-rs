@@ -201,6 +201,8 @@ pub fn map_float_to_int_range(min_float: f64, max_float: f64, min_int: i32, max_
     min_int + (f64::from(max_int - min_int) * percent).round() as i32
 }
 
+crate::rows::debug_preview!(Matrix3);
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -229,3 +231,5 @@ mod tests {
         assert_eq!(map_float_to_int_range(0.0, 10.0, 0, 100, 7.5), 75);
     }
 }
+
+crate::rows::debug_preview!(Observer, MoonPhase);

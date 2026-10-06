@@ -4,6 +4,9 @@
 //! compiler-checked because the macro destructures `Self { a, b, c }`. Primitives, arrays, tuples and `Option`s
 //! are one unnamed column each, or one per tuple element. Types are named by `std::any::type_name` and shortened
 //! for display by `short_type_name`.
+mod formatting;
+pub use formatting::{Preview, CellWriter, preview, preview_text, preview_chars, MAX_CELL_CHARS, MAX_NESTED_ITEMS, MAX_PREVIEW_DEPTH};
+pub(crate) use formatting::debug_preview;
 use std::fmt::Debug;
 
 /// One column of a table row: the field name (empty for a plain value) and its Rust type.
@@ -14,11 +17,11 @@ pub struct Column {
 }
 
 /// A type that can be one row of a logged table.
-pub trait Row: Debug {
+pub trait Row: Debug + Preview {
     /// Names and types in field order.
     fn columns() -> Vec<Column>;
-    /// One text per column, in the same order; the default is the whole row's Debug text.
-    fn cells(&self) -> Vec<String> { vec![format!("{self:?}")] }
+    /// Bounded text per column, in the same order; the default previews one plain value.
+    fn cells(&self) -> Vec<String> { vec![preview(self)] }
 }
 
 /// The type name of a field without needing a value: the closure is never called.
@@ -45,13 +48,26 @@ pub fn short_type_name(full: &str) -> String {
 /// feature-gated fields). Generic rows take their parameters as `Name<T>`.
 macro_rules! row_columns {
     (@impl $type:ident $(<$($generic:ident),+>)? { $($field:ident),+ } [$($rest:tt)*]) => {
-        impl$(<$($generic: ::std::fmt::Debug),+>)? $crate::rows::Row for $type$(<$($generic),+>)? {
+        impl$(<$($generic: ::std::fmt::Debug + $crate::rows::Preview),+>)? $crate::rows::Preview for $type$(<$($generic),+>)? {
+            fn write_preview(&self, out: &mut $crate::rows::CellWriter, depth: usize) -> ::std::fmt::Result {
+                use ::std::fmt::Write;
+                if depth >= $crate::rows::MAX_PREVIEW_DEPTH { return out.write_str(concat!(stringify!($type), " { … }")); }
+                out.write_str(concat!(stringify!($type), " { "))?;
+                let Self { $($field),+ $($rest)* } = self;
+                let mut separator = "";
+                $(out.write_str(separator)?; out.write_str(concat!(stringify!($field), ": "))?;
+                  $crate::rows::Preview::write_preview($field, out, depth + 1)?; separator = ", ";)+
+                let _ = separator;
+                out.write_str(" }")
+            }
+        }
+        impl$(<$($generic: ::std::fmt::Debug + $crate::rows::Preview),+>)? $crate::rows::Row for $type$(<$($generic),+>)? {
             fn columns() -> Vec<$crate::rows::Column> {
                 vec![$($crate::rows::Column { name: stringify!($field), dtype: $crate::rows::field_type(|row: &Self| &row.$field) }),+]
             }
             fn cells(&self) -> Vec<String> {
                 let Self { $($field),+ $($rest)* } = self; // every field must be listed above, or the build fails here
-                vec![$(format!("{:?}", $field)),+]
+                vec![$($crate::rows::preview($field)),+]
             }
         }
     };
@@ -76,10 +92,10 @@ pub(crate) use plain_rows;
 
 plain_rows!(bool, char, u8, u16, u32, u64, usize, i32, i64, f32, f64, &'static str, String);
 
-impl<T: Debug, const N: usize> Row for [T; N] {
+impl<T: Debug + Preview, const N: usize> Row for [T; N] {
     fn columns() -> Vec<Column> { plain_column::<Self>() }
 }
-impl<T: Debug> Row for Option<T> {
+impl<T: Debug + Preview> Row for Option<T> {
     fn columns() -> Vec<Column> { plain_column::<Self>() }
 }
 
@@ -87,11 +103,11 @@ impl<T: Debug> Row for Option<T> {
 macro_rules! tuple_rows {
     ($( ($($element:ident),+) ),+ $(,)?) => { $(
         #[allow(non_snake_case)]
-        impl<$($element: Debug),+> Row for ($($element,)+) {
+        impl<$($element: Debug + Preview),+> Row for ($($element,)+) {
             fn columns() -> Vec<Column> { vec![$(Column { name: "", dtype: std::any::type_name::<$element>() }),+] }
             fn cells(&self) -> Vec<String> {
                 let ($($element,)+) = self;
-                vec![$(format!("{:?}", $element)),+]
+                vec![$(preview($element)),+]
             }
         }
     )+ };

@@ -6,7 +6,7 @@ a measurement of physical RAM traffic. Normal builds omit the collection and sto
 
 ## Quick dump without the feature
 
-Any build can write every table the state holds (catalog columns, caches, rendering buffers) with their shape,
+Any build can write the original tables held by state (catalog, caches, rendering buffers) with their shape,
 used and reserved bytes, cache policy and metadata, column names and types, and the first and last ten rows:
 
 ```text
@@ -23,8 +23,18 @@ state.log_data(None, None)?;                                                    
 ```
 
 Use a file path when the frame loop is running: the terminal owns stdout and the alternate screen is active.
-The dump is the quick overview; the inventory below is the precise accounting of shared allocations, mappings,
-coverage and per-step operations.
+The star catalog is one `persistent.catalog.stars` table with all 13 columns. Long headers and rows wrap between
+columns; each cell has a bounded preview. Name ranges and precise motions are separate side tables because they
+have different row counts. The main table's byte counts cover its columns only, excluding those side tables.
+
+Used bytes describe live payload; reserved bytes include spare capacity. Both come from the original owners,
+not slices of their data. Unknown sizes print `unknown`; notes identify partial counts such as nested allocations
+and hash-table overhead. These entries are not a deduplicated process-memory total. The feature-gated inventory
+below supplies detailed shared-owner accounting and per-step operations.
+
+Preview ordering is prepared once per table. Only the first and last ten rows are formatted; nested collections
+show at most four items, nesting is limited, and cell text is capped at 160 characters plus an omission marker.
+These limits apply before hidden data is expanded. Every table column remains visible on continuation lines.
 
 Catalogs, including prepared-cache hits, use owned arrays. The disk cache is still used to avoid CSV parsing, but
 its bytes are read, validated and decoded into arrays; no file mapping backs the tables. The temporary file-byte

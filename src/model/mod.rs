@@ -39,3 +39,6 @@ pub(crate) use catalog::{interleave, direction};
 
 #[cfg(feature = "memory-diagnostics")]
 pub(crate) use catalog::CellCap;
+
+// Fixed-size leaf records used by bounded table previews.
+crate::rows::debug_preview!(Anchor, FrameTime, MoonIllumination, PlanetKind, ProjectionViewport, View, SelectionStats, ProjectedMoon, CorrectionStats);

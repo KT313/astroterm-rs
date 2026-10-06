@@ -307,3 +307,5 @@ mod tests {
         }
     }
 }
+
+crate::rows::debug_preview!(StellarClass, StellarMotion);

@@ -199,6 +199,8 @@ pub fn load_embedded_cities() -> Result<Vec<City>, CatalogError> {
     parse_cities(CITIES_TEXT)
 }
 
+crate::rows::debug_preview!(StarId);
+
 #[cfg(test)]
 mod tests {
     use super::*;

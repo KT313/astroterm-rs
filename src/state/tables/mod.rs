@@ -1,13 +1,13 @@
 //! One flat listing of every data table the state holds, for memory debugging.
 //!
 //! Two traits do all the work:
-//! - `Table`: one rectangular container (a Vec, a column, a cache's stored value, an image, ...). It answers
-//!   "what shape, how many bytes, and what does row `i` look like".
+//! - `Table`: one original container (the star table, a Vec, a cached result, an image, ...). It reports
+//!   shape, allocation sizes and one bounded preview.
 //! - `Tables`: something that owns tables. It visits each of them with a dotted path such as
 //!   `cache.observation.motion`, descending into sub-owners.
 //!
 //! Every owner struct gets one listing: either a `list_tables!` line (field names plus the cache `Group` that governs
-//! them) or a short hand-written `visit_tables` when a field needs a view or a wrapper. `log.rs` walks the whole
+//! them) or a short hand-written `visit_tables` when a field needs a whole-owner adapter. `log.rs` walks the whole
 //! tree from `ApplicationState` and prints it; see `ApplicationState::log_data`.
 //!
 //! Rule: a concrete type implements `Table` or `Tables`, never both, so the pass-through impls (`Option`, `Box`,
@@ -16,26 +16,38 @@
 mod leaves;
 mod log;
 
-pub(crate) use leaves::{Bytes, Named, Opaque, ScalarCache, Single};
+pub(crate) use leaves::{Bytes, Opaque, ScalarCache, Single, TimingSteps};
 use crate::cache::Group;
 use crate::rows::Column;
 
-/// One rectangular container: rows of one element type, or a byte buffer in fixed-size chunks.
+/// Payload extent, not RSS. Unknown storage is never represented by zero.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TableBytes {
+    pub used: Option<usize>,
+    pub reserved: Option<usize>,
+}
+impl TableBytes {
+    pub(crate) fn known(used: usize, reserved: usize) -> Self { Self { used: Some(used), reserved: Some(reserved) } }
+    pub(crate) fn vector<T>(values: &Vec<T>) -> Self {
+        Self { used: values.len().checked_mul(std::mem::size_of::<T>()), reserved: values.capacity().checked_mul(std::mem::size_of::<T>()) }
+    }
+}
+
+pub const EDGE_ROWS: usize = 10;
+/// Source indices of the non-overlapping first and last rows.
+pub(crate) fn preview_indices(count: usize) -> impl Iterator<Item = usize> {
+    (0..count.min(EDGE_ROWS)).chain(count.min(EDGE_ROWS).max(count.saturating_sub(EDGE_ROWS))..count)
+}
+
+/// One original table. Previewing borrows its owner; only the selected rows are formatted.
 pub trait Table {
-    /// Logical extent: `[rows]`, `[rows, columns]` or `[height, width, channels]`.
     fn shape(&self) -> Vec<usize>;
-    /// How many rows `row` can format; usually the first entry of `shape`.
     fn rows(&self) -> usize;
-    /// Debug text of one row; the writer truncates long rows.
-    fn row(&self, index: usize) -> String;
-    /// Bytes holding live rows.
-    fn used_bytes(&self) -> usize;
-    /// Bytes allocated for this table, including the used ones.
-    fn reserved_bytes(&self) -> usize;
-    /// Extra facts: cache metadata, "rows own further allocations", mapped-section markers.
-    fn note(&self) -> Option<String> { None }
-    /// Column names and types of one row; empty when unknown (opaque payloads, caches holding nothing).
+    fn bytes(&self) -> TableBytes;
     fn columns(&self) -> Vec<Column> { Vec::new() }
+    fn note(&self) -> Option<String> { None }
+    /// One preparation per dump: map implementations sort once before formatting the edge rows.
+    fn preview(&self) -> Vec<(usize, Vec<String>)>;
 }
 
 /// Callback for one table: its dotted path, the table and, for cached results, the policy group.
@@ -51,34 +63,31 @@ pub(crate) fn join(prefix: &str, name: &str) -> String {
     if prefix.is_empty() { name.to_string() } else { format!("{prefix}.{name}") }
 }
 
-/// Pass a borrowed table on (needed so `&&[T]`, a borrowed column, coerces to `&dyn Table`).
+/// Forward the original owner, including its capacity and custom preview preparation.
 impl<T: Table + ?Sized> Table for &T {
     fn shape(&self) -> Vec<usize> { (**self).shape() }
     fn rows(&self) -> usize { (**self).rows() }
-    fn row(&self, index: usize) -> String { (**self).row(index) }
-    fn used_bytes(&self) -> usize { (**self).used_bytes() }
-    fn reserved_bytes(&self) -> usize { (**self).reserved_bytes() }
+    fn bytes(&self) -> TableBytes { (**self).bytes() }
     fn note(&self) -> Option<String> { (**self).note() }
     fn columns(&self) -> Vec<Column> { (**self).columns() }
+    fn preview(&self) -> Vec<(usize, Vec<String>)> { (**self).preview() }
 }
 impl<T: Table + ?Sized> Table for Box<T> {
     fn shape(&self) -> Vec<usize> { (**self).shape() }
     fn rows(&self) -> usize { (**self).rows() }
-    fn row(&self, index: usize) -> String { (**self).row(index) }
-    fn used_bytes(&self) -> usize { (**self).used_bytes() }
-    fn reserved_bytes(&self) -> usize { (**self).reserved_bytes() }
+    fn bytes(&self) -> TableBytes { (**self).bytes() }
     fn note(&self) -> Option<String> { (**self).note() }
     fn columns(&self) -> Vec<Column> { (**self).columns() }
+    fn preview(&self) -> Vec<(usize, Vec<String>)> { (**self).preview() }
 }
-/// `None` is an empty table, so optional buffers keep their path in the listing.
+/// Absent buffers keep their path and have no allocated payload.
 impl<T: Table> Table for Option<T> {
     fn shape(&self) -> Vec<usize> { self.as_ref().map_or(vec![0], Table::shape) }
     fn rows(&self) -> usize { self.as_ref().map_or(0, Table::rows) }
-    fn row(&self, index: usize) -> String { self.as_ref().map_or_else(String::new, |t| t.row(index)) }
-    fn used_bytes(&self) -> usize { self.as_ref().map_or(0, Table::used_bytes) }
-    fn reserved_bytes(&self) -> usize { self.as_ref().map_or(0, Table::reserved_bytes) }
+    fn bytes(&self) -> TableBytes { self.as_ref().map_or(TableBytes::known(0, 0), Table::bytes) }
     fn note(&self) -> Option<String> { self.as_ref().map_or_else(|| Some("none".into()), Table::note) }
     fn columns(&self) -> Vec<Column> { self.as_ref().map_or_else(Vec::new, Table::columns) }
+    fn preview(&self) -> Vec<(usize, Vec<String>)> { self.as_ref().map_or_else(Vec::new, Table::preview) }
 }
 impl<T: Tables + ?Sized> Tables for std::sync::Arc<T> {
     fn visit_tables(&self, prefix: &str, visit: &mut TableVisitor<'_>) {

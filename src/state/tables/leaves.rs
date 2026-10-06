@@ -1,352 +1,372 @@
-//! `Table` for the containers the state actually stores: vectors and slices, catalog arrays, N×3 views,
-//! caches, hash maps, canvases, images, terminal buffers and byte buffers. Each impl formats single rows only;
-//! nothing here prints a whole container.
-use super::Table;
-use crate::astro::Vector3;
-use crate::rows::{Column, Row, plain_column};
+//! Original table owners and bounded previews. No catalog columns are split into separate borrowed tables.
+use super::{Table, TableBytes, preview_indices};
+use crate::rows::{Column, Row, Preview, preview, preview_text, preview_chars, plain_column};
+use crate::astro::{Vector3, models::stars::StellarSample};
 use crate::cache::Cache;
 use crate::canvas::Canvas;
 use crate::catalog::{StarNames, cache::CatalogArray};
-use crate::model::{
-    BodySamples, CharacterStarKey, CorrectionSelection, Glyph, Moon, PixelStarKey, ProjectedMoon, ProjectionViewport,
-    SelectedRegion, SelectionStats, StarKeys, View,
-};
-use crate::astro::models::stars::StellarSample;
+use crate::model::{BodySamples, CharacterStarKey, CorrectionSelection, Glyph, Moon, PixelStarKey, ProjectedMoon,
+    ProjectionViewport, SelectedRegion, SelectionStats, StarKeys, StarStorage, StarRow, StarRowVec, View};
+use crate::timing::StepTimes;
 use bytemuck::Pod;
 use image::{ImageBuffer, Pixel};
-use ndarray::ArrayView2;
-use std::collections::HashMap;
-use std::any::type_name;
-use std::fmt::Debug;
-use std::mem::{needs_drop, size_of, size_of_val};
+use std::{any::type_name, collections::HashMap, mem::{needs_drop, size_of}};
 
-/// One row's cells joined for display.
-fn join_cells(row: &impl Row) -> String { row.cells().join(" | ") }
-
-// --- plain rows -------------------------------------------------------------------------------------------------
-
-impl<T: Row> Table for [T] {
-    fn shape(&self) -> Vec<usize> { vec![self.len()] }
-    fn rows(&self) -> usize { self.len() }
-    fn row(&self, index: usize) -> String { join_cells(&self[index]) }
-    fn used_bytes(&self) -> usize { size_of_val(self) }
-    fn reserved_bytes(&self) -> usize { size_of_val(self) }
-    fn note(&self) -> Option<String> { nested_note::<T>() }
-    fn columns(&self) -> Vec<Column> { T::columns() }
+fn preview_slice<T: Row>(values: &[T]) -> Vec<(usize, Vec<String>)> {
+    preview_indices(values.len()).map(|i| (i, values[i].cells())).collect()
+}
+fn nested_note<T>() -> Option<String> {
+    needs_drop::<T>().then(|| "direct row payload only; nested allocations not counted".into())
 }
 impl<T: Row> Table for Vec<T> {
     fn shape(&self) -> Vec<usize> { vec![self.len()] }
     fn rows(&self) -> usize { self.len() }
-    fn row(&self, index: usize) -> String { join_cells(&self[index]) }
-    fn used_bytes(&self) -> usize { self.len() * size_of::<T>() }
-    fn reserved_bytes(&self) -> usize { self.capacity() * size_of::<T>() }
-    fn note(&self) -> Option<String> { nested_note::<T>() }
+    fn bytes(&self) -> TableBytes { TableBytes::vector(self) }
     fn columns(&self) -> Vec<Column> { T::columns() }
+    fn preview(&self) -> Vec<(usize, Vec<String>)> { preview_slice(self) }
+    fn note(&self) -> Option<String> { nested_note::<T>() }
 }
-/// Strings, nested vectors and the like live outside the row buffer and are not counted here.
-fn nested_note<T>() -> Option<String> {
-    needs_drop::<T>().then(|| "rows own further allocations, not counted".to_string())
-}
-
 impl<T: Pod + Row> Table for CatalogArray<T> {
     fn shape(&self) -> Vec<usize> { vec![self.len()] }
     fn rows(&self) -> usize { self.len() }
-    fn row(&self, index: usize) -> String { join_cells(&self[index]) }
-    fn used_bytes(&self) -> usize { self.len() * size_of::<T>() }
-    fn reserved_bytes(&self) -> usize {
-        self.capacity() * size_of::<T>()
-    }
+    fn bytes(&self) -> TableBytes { TableBytes::known(self.len() * size_of::<T>(), self.capacity() * size_of::<T>()) }
     fn columns(&self) -> Vec<Column> { T::columns() }
+    fn preview(&self) -> Vec<(usize, Vec<String>)> { preview_slice(self) }
 }
 
-/// Vector columns (`u0`, `w`) as one N×3 table; wrap in `Named` to label the columns.
-impl Table for ArrayView2<'_, f32> {
-    fn shape(&self) -> Vec<usize> { ArrayView2::shape(self).to_vec() }
-    fn rows(&self) -> usize { self.nrows() }
-    fn row(&self, index: usize) -> String {
-        self.index_axis(ndarray::Axis(0), index).iter().map(|v| format!("{v:?}")).collect::<Vec<_>>().join(" | ")
+/// StarRow is a schema, not an array-of-structs allocation. Sum each owned column separately.
+impl Table for StarStorage {
+    fn shape(&self) -> Vec<usize> { vec![self.len(), StarRow::columns().len()] }
+    fn rows(&self) -> usize { self.len() }
+    fn columns(&self) -> Vec<Column> { StarRow::columns() }
+    fn bytes(&self) -> TableBytes {
+        let StarRowVec { u0, w, magnitude, brightness_key, distance, motion_bound, id, name, designation,
+            spectral_type, color, flags, precise_index } = self.owned_columns(); // adding a field requires accounting for it
+        let sizes = [TableBytes::vector(u0), TableBytes::vector(w), TableBytes::vector(magnitude),
+            TableBytes::vector(brightness_key), TableBytes::vector(distance), TableBytes::vector(motion_bound),
+            TableBytes::vector(id), TableBytes::vector(name), TableBytes::vector(designation),
+            TableBytes::vector(spectral_type), TableBytes::vector(color), TableBytes::vector(flags), TableBytes::vector(precise_index)];
+        TableBytes {
+            used: sizes.iter().try_fold(0_usize, |sum, size| sum.checked_add(size.used?)),
+            reserved: sizes.iter().try_fold(0_usize, |sum, size| sum.checked_add(size.reserved?)),
+        }
     }
-    fn used_bytes(&self) -> usize { self.len() * size_of::<f32>() }
-    fn reserved_bytes(&self) -> usize { self.len() * size_of::<f32>() }
-    fn columns(&self) -> Vec<Column> { vec![Column { name: "", dtype: type_name::<f32>() }; self.ncols()] }
-}
-
-/// The same table with its columns named position by position (for views without field names).
-pub(crate) struct Named<T: Table>(pub T, pub &'static [&'static str]);
-impl<T: Table> Table for Named<T> {
-    fn shape(&self) -> Vec<usize> { self.0.shape() }
-    fn rows(&self) -> usize { self.0.rows() }
-    fn row(&self, index: usize) -> String { self.0.row(index) }
-    fn used_bytes(&self) -> usize { self.0.used_bytes() }
-    fn reserved_bytes(&self) -> usize { self.0.reserved_bytes() }
-    fn note(&self) -> Option<String> { self.0.note() }
-    fn columns(&self) -> Vec<Column> {
-        self.0.columns().into_iter().enumerate().map(|(i, c)| Column { name: self.1.get(i).copied().unwrap_or(c.name), ..c }).collect()
+    fn preview(&self) -> Vec<(usize, Vec<String>)> {
+        let rows = self.owned_columns();
+        preview_indices(self.len()).map(|i| (i, rows.get(i).expect("validated star row").to_owned().cells())).collect()
     }
+    fn note(&self) -> Option<String> { Some("storage=owned; per-star columns only; side tables listed separately".into()) }
 }
 
-/// One record shown as a one-row table (the Moon, a cache's scalar value).
 pub(crate) struct Single<'a, T>(pub &'a T);
 impl<T: Row> Table for Single<'_, T> {
     fn shape(&self) -> Vec<usize> { vec![1] }
     fn rows(&self) -> usize { 1 }
-    fn row(&self, _index: usize) -> String { join_cells(self.0) }
-    fn used_bytes(&self) -> usize { size_of::<T>() }
-    fn reserved_bytes(&self) -> usize { size_of::<T>() }
+    fn bytes(&self) -> TableBytes { TableBytes::known(size_of::<T>(), size_of::<T>()) }
     fn columns(&self) -> Vec<Column> { T::columns() }
+    fn preview(&self) -> Vec<(usize, Vec<String>)> { vec![(0, self.0.cells())] }
+    fn note(&self) -> Option<String> { nested_note::<T>() }
 }
-
-/// Something whose size cannot be read (an encoded terminal-protocol payload).
 pub(crate) struct Opaque { pub present: bool, pub what: &'static str }
 impl Table for Opaque {
     fn shape(&self) -> Vec<usize> { Vec::new() }
     fn rows(&self) -> usize { 0 }
-    fn row(&self, _index: usize) -> String { String::new() }
-    fn used_bytes(&self) -> usize { 0 }
-    fn reserved_bytes(&self) -> usize { 0 }
-    fn note(&self) -> Option<String> {
-        Some(if self.present { format!("{}; size unknown", self.what) } else { "none".into() })
+    fn bytes(&self) -> TableBytes {
+        if self.present { TableBytes { used: None, reserved: None } } else { TableBytes::known(0, 0) }
     }
+    fn preview(&self) -> Vec<(usize, Vec<String>)> { Vec::new() }
+    fn note(&self) -> Option<String> { Some(if self.present { format!("{}; size unknown", self.what) } else { "none".into() }) }
 }
 
-// --- byte buffers ----------------------------------------------------------------------------------------------
-
-/// A byte buffer shown in 64-byte chunks: as text when it holds text, otherwise as decimal bytes.
-pub(crate) struct Bytes<'a> { bytes: &'a [u8], capacity: usize, text: bool }
+/// Adapters retain the original buffer owner so allocation capacity remains available.
+pub(crate) enum Bytes<'a> { Binary(&'a Vec<u8>), Text(&'a String) }
 const CHUNK: usize = 64;
 impl<'a> Bytes<'a> {
-    pub fn binary(bytes: &'a Vec<u8>) -> Self { Self { bytes, capacity: bytes.capacity(), text: false } }
-    pub fn string(text: &'a String) -> Self { Self { bytes: text.as_bytes(), capacity: text.capacity(), text: true } }
-    fn text(bytes: &'a [u8]) -> Self { Self { bytes, capacity: bytes.len(), text: true } }
+    pub fn binary(value: &'a Vec<u8>) -> Self { Self::Binary(value) }
+    pub fn string(value: &'a String) -> Self { Self::Text(value) }
+    fn data(&self) -> &[u8] { match self { Self::Binary(v) => v, Self::Text(v) => v.as_bytes() } }
+}
+fn preview_bytes(bytes: &[u8], text: bool) -> Vec<(usize, Vec<String>)> {
+    preview_indices(bytes.len().div_ceil(CHUNK)).map(|i| {
+        let boundary = |mut offset: usize| {
+            if text { while offset < bytes.len() && bytes[offset] & 0xc0 == 0x80 { offset += 1; } }
+            offset
+        };
+        let chunk = &bytes[boundary(i * CHUNK)..boundary(((i + 1) * CHUNK).min(bytes.len()))];
+        (i, vec![if text { preview(String::from_utf8_lossy(chunk).as_ref()) } else { preview(chunk) }])
+    }).collect()
 }
 impl Table for Bytes<'_> {
-    fn shape(&self) -> Vec<usize> { vec![self.bytes.len()] }
-    fn rows(&self) -> usize { self.bytes.len().div_ceil(CHUNK) }
-    fn row(&self, index: usize) -> String {
-        let chunk = &self.bytes[index * CHUNK..((index + 1) * CHUNK).min(self.bytes.len())];
-        if self.text { format!("{:?}", String::from_utf8_lossy(chunk)) } else { format!("{chunk:?}") }
+    fn shape(&self) -> Vec<usize> { vec![self.data().len()] }
+    fn rows(&self) -> usize { self.data().len().div_ceil(CHUNK) }
+    fn bytes(&self) -> TableBytes {
+        let capacity = match self { Self::Binary(v) => v.capacity(), Self::Text(v) => v.capacity() };
+        TableBytes::known(self.data().len(), capacity)
     }
-    fn used_bytes(&self) -> usize { self.bytes.len() }
-    fn reserved_bytes(&self) -> usize { self.capacity }
+    fn columns(&self) -> Vec<Column> { match self { Self::Text(_) => plain_column::<str>(), Self::Binary(_) => plain_column::<u8>() } }
+    fn preview(&self) -> Vec<(usize, Vec<String>)> { preview_bytes(self.data(), matches!(self, Self::Text(_))) }
     fn note(&self) -> Option<String> { Some(format!("rows are {CHUNK}-byte chunks")) }
-    fn columns(&self) -> Vec<Column> { if self.text { plain_column::<str>() } else { plain_column::<u8>() } }
 }
-/// The name string block; the per-star byte ranges are listed as `stars.name_table`.
 impl Table for StarNames {
-    fn shape(&self) -> Vec<usize> { Bytes::text(self.bytes()).shape() }
-    fn rows(&self) -> usize { Bytes::text(self.bytes()).rows() }
-    fn row(&self, index: usize) -> String { Bytes::text(self.bytes()).row(index) }
-    fn used_bytes(&self) -> usize { Bytes::text(self.bytes()).used_bytes() }
-    fn reserved_bytes(&self) -> usize { Bytes::text(self.bytes()).reserved_bytes() }
-    fn note(&self) -> Option<String> { Bytes::text(self.bytes()).note() }
-    fn columns(&self) -> Vec<Column> { Bytes::text(self.bytes()).columns() }
+    fn shape(&self) -> Vec<usize> { vec![self.bytes().len()] }
+    fn rows(&self) -> usize { self.bytes().len().div_ceil(CHUNK) }
+    fn bytes(&self) -> TableBytes { TableBytes::known(self.bytes().len(), self.capacity()) }
+    fn columns(&self) -> Vec<Column> { plain_column::<str>() }
+    fn preview(&self) -> Vec<(usize, Vec<String>)> { preview_bytes(self.bytes(), true) }
+    fn note(&self) -> Option<String> { Some(format!("rows are {CHUNK}-byte chunks")) }
+}
+pub(crate) struct TimingSteps<'a>(pub &'a StepTimes);
+impl Table for TimingSteps<'_> {
+    fn shape(&self) -> Vec<usize> { vec![self.0.steps().len()] }
+    fn rows(&self) -> usize { self.0.steps().len() }
+    fn bytes(&self) -> TableBytes { TableBytes::known(std::mem::size_of_val(self.0.steps()), self.0.step_capacity() * size_of::<crate::timing::StepTime>()) }
+    fn columns(&self) -> Vec<Column> { crate::timing::StepTime::columns() }
+    fn preview(&self) -> Vec<(usize, Vec<String>)> { preview_slice(self.0.steps()) }
 }
 
-// --- caches ----------------------------------------------------------------------------------------------------
-
-/// A cache whose value is a table: shape and rows come from the stored value, even when it is invalidated,
-/// because the allocation is still held. The note carries the cache metadata; the key is never printed here.
 impl<K, V: Table> Table for Cache<K, V> {
-    fn shape(&self) -> Vec<usize> { self.stored().map_or(vec![0], Table::shape) }
-    fn rows(&self) -> usize { self.stored().map_or(0, Table::rows) }
-    fn row(&self, index: usize) -> String { self.stored().map_or_else(String::new, |v| v.row(index)) }
-    fn used_bytes(&self) -> usize { self.stored().map_or(0, Table::used_bytes) }
-    fn reserved_bytes(&self) -> usize { self.stored().map_or(0, Table::reserved_bytes) }
+    fn shape(&self) -> Vec<usize> { self.stored().shape() }
+    fn rows(&self) -> usize { self.stored().rows() }
+    fn bytes(&self) -> TableBytes { self.stored().bytes() }
+    fn columns(&self) -> Vec<Column> { self.stored().columns() }
+    fn preview(&self) -> Vec<(usize, Vec<String>)> { self.stored().preview() }
     fn note(&self) -> Option<String> {
-        let inner = self.stored().and_then(Table::note).map_or_else(String::new, |n| format!("  {n}"));
-        Some(format!("{}{inner}", cache_note(self)))
+        Some(format!("{}; {}", cache_note(self), self.stored().and_then(Table::note).unwrap_or_default()))
     }
-    fn columns(&self) -> Vec<Column> { self.stored().map_or_else(Vec::new, Table::columns) }
 }
-/// A cache whose value is one record (observer geometry, light time, Moon lighting).
 pub(crate) struct ScalarCache<'a, K, V>(pub &'a Cache<K, V>);
 impl<K, V: Row> Table for ScalarCache<'_, K, V> {
-    fn shape(&self) -> Vec<usize> { vec![usize::from(self.0.stored().is_some())] }
+    fn shape(&self) -> Vec<usize> { vec![self.rows()] }
     fn rows(&self) -> usize { usize::from(self.0.stored().is_some()) }
-    fn row(&self, _index: usize) -> String { join_cells(self.0.stored().expect("row within rows()")) }
-    fn used_bytes(&self) -> usize { usize::from(self.0.stored().is_some()) * size_of::<V>() }
-    fn reserved_bytes(&self) -> usize { self.used_bytes() }
-    fn note(&self) -> Option<String> { Some(cache_note(self.0)) }
+    fn bytes(&self) -> TableBytes { TableBytes::known(self.rows() * size_of::<V>(), self.rows() * size_of::<V>()) }
     fn columns(&self) -> Vec<Column> { V::columns() }
+    fn preview(&self) -> Vec<(usize, Vec<String>)> { self.0.stored().map_or_else(Vec::new, |v| vec![(0, v.cells())]) }
+    fn note(&self) -> Option<String> { Some(cache_note(self.0)) }
 }
 fn cache_note<K, V>(cache: &Cache<K, V>) -> String {
     let s = cache.stats;
-    format!(
-        "invalid={} calculated_at={:?} valid={}s gen={} H:{} R:{} B:{}",
-        cache.has_been_invalidated, cache.calculated_at, cache.valid_seconds, cache.generation, s.hits, s.refreshes, s.bypasses,
-    )
+    format!("invalid={} calculated_at={:?} valid={}s gen={} H:{} R:{} B:{}",
+        cache.has_been_invalidated, cache.calculated_at, cache.valid_seconds, cache.generation, s.hits, s.refreshes, s.bypasses)
 }
 
-/// Per-star stellar samples; rows are sorted by catalog index so the output is stable.
+/// One ordering per preview. Only the edge rows invoke the formatting callback.
+fn preview_map<K: Ord + Copy + std::hash::Hash, V>(map: &HashMap<K, V>, mut cells: impl FnMut(K, &V) -> Vec<String>) -> Vec<(usize, Vec<String>)> {
+    let mut keys: Vec<_> = map.keys().copied().collect();
+    keys.sort_unstable();
+    preview_indices(keys.len()).map(|i| (i, cells(keys[i], &map[&keys[i]]))).collect()
+}
 impl Table for HashMap<usize, Cache<(), StellarSample>> {
     fn shape(&self) -> Vec<usize> { vec![self.len()] }
     fn rows(&self) -> usize { self.len() }
-    fn row(&self, index: usize) -> String {
-        let key = sorted_keys(self)[index];
-        let cache = &self[&key];
-        let sample = cache.stored().map_or_else(|| vec!["none".to_string(); StellarSample::columns().len()], Row::cells);
-        format!("{key} | {} | {}", sample.join(" | "), cache.has_been_invalidated)
-    }
-    fn used_bytes(&self) -> usize { self.len() * size_of::<(usize, Cache<(), StellarSample>)>() }
-    fn reserved_bytes(&self) -> usize { self.capacity() * size_of::<(usize, Cache<(), StellarSample>)>() }
-    fn note(&self) -> Option<String> { Some("hash map; reserved counts bucket slots".into()) }
+    fn bytes(&self) -> TableBytes { TableBytes::known(self.len() * size_of::<(usize, Cache<(), StellarSample>)>(), self.capacity() * size_of::<(usize, Cache<(), StellarSample>)>()) }
     fn columns(&self) -> Vec<Column> {
         let mut columns = vec![Column { name: "catalog_index", dtype: type_name::<usize>() }];
         columns.extend(StellarSample::columns());
         columns.push(Column { name: "invalid", dtype: type_name::<bool>() });
         columns
     }
+    fn preview(&self) -> Vec<(usize, Vec<String>)> {
+        preview_map(self, |key, cache| {
+            let mut cells = vec![key.to_string()];
+            cells.extend(cache.stored().map_or_else(|| vec!["none".into(); StellarSample::columns().len()], Row::cells));
+            cells.push(cache.has_been_invalidated.to_string());
+            cells
+        })
+    }
+    fn note(&self) -> Option<String> { Some("entry payload estimate; reserved excludes hash bucket/control overhead".into()) }
 }
-/// Rendered glyph masks per character; rows are sorted by character.
 impl Table for HashMap<char, Glyph> {
     fn shape(&self) -> Vec<usize> { vec![self.len()] }
     fn rows(&self) -> usize { self.len() }
-    fn row(&self, index: usize) -> String {
-        let key = sorted_keys(self)[index];
-        let glyph = &self[&key];
-        format!("{key:?} | {:?} | {}", glyph.metrics, glyph.coverage.len())
+    fn bytes(&self) -> TableBytes {
+        TableBytes::known(self.len() * size_of::<(char, Glyph)>() + self.values().map(|g| g.coverage.len()).sum::<usize>(),
+            self.capacity() * size_of::<(char, Glyph)>() + self.values().map(|g| g.coverage.capacity()).sum::<usize>())
     }
-    fn used_bytes(&self) -> usize { self.len() * size_of::<(char, Glyph)>() + self.values().map(|g| g.coverage.len()).sum::<usize>() }
-    fn reserved_bytes(&self) -> usize { self.capacity() * size_of::<(char, Glyph)>() + self.values().map(|g| g.coverage.capacity()).sum::<usize>() }
-    fn note(&self) -> Option<String> { Some("hash map entries plus their coverage bytes".into()) }
     fn columns(&self) -> Vec<Column> {
-        vec![
-            Column { name: "char", dtype: type_name::<char>() },
-            Column { name: "metrics", dtype: type_name::<fontdue::Metrics>() },
-            Column { name: "coverage_bytes", dtype: type_name::<usize>() },
-        ]
+        vec![Column { name: "char", dtype: type_name::<char>() }, Column { name: "metrics", dtype: type_name::<fontdue::Metrics>() }, Column { name: "coverage_bytes", dtype: type_name::<usize>() }]
     }
+    fn preview(&self) -> Vec<(usize, Vec<String>)> {
+        preview_map(self, |key, glyph| vec![preview(&key), preview(&glyph.metrics), glyph.coverage.len().to_string()])
+    }
+    fn note(&self) -> Option<String> { Some("entry payload estimate plus coverage; excludes hash bucket/control overhead".into()) }
 }
-fn sorted_keys<K: Ord + Copy, V>(map: &HashMap<K, V>) -> Vec<K> {
-    let mut keys: Vec<K> = map.keys().copied().collect();
-    keys.sort_unstable();
-    keys
-}
+crate::rows::debug_preview!(fontdue::Metrics);
 
-// --- tuples and small composites stored in caches ----------------------------------------------------------------
-
-/// Short text for the small values that ride along in cache tuples (counters, a view, the Moon record).
 pub(crate) trait Describe { fn describe(&self) -> String; }
-macro_rules! describe_by_debug {
-    ($($type:ty),* $(,)?) => { $( impl Describe for $type { fn describe(&self) -> String { format!("{self:?}") } } )* };
+macro_rules! describe_preview {
+    ($($ty:ty),+) => { $(impl Describe for $ty { fn describe(&self) -> String { preview(self) } })+ };
 }
-describe_by_debug!(usize, f64, Vector3, View, ProjectionViewport, Moon, ProjectedMoon, SelectionStats);
-/// A second vector in a tuple is summarized, never printed in full.
-impl<X: Debug> Describe for Vec<X> {
-    fn describe(&self) -> String { format!("[{} rows, first={:?}]", self.len(), self.first()) }
-}
-
-/// Rows come from the first vector; the other members go into the note.
+describe_preview!(usize, f64, Vector3, View, ProjectionViewport, Moon, ProjectedMoon, SelectionStats);
+impl<T: Preview> Describe for Vec<T> { fn describe(&self) -> String { preview(self) } }
 macro_rules! vector_tuples {
-    ($( ($($extra:ident),+) ),* $(,)?) => { $(
+    ($(($($extra:ident),+)),+) => { $(
         #[allow(non_snake_case)]
         impl<T: Row, $($extra: Describe),+> Table for (Vec<T>, $($extra),+) {
             fn shape(&self) -> Vec<usize> { self.0.shape() }
             fn rows(&self) -> usize { self.0.rows() }
-            fn row(&self, index: usize) -> String { self.0.row(index) }
-            fn used_bytes(&self) -> usize { self.0.used_bytes() }
-            fn reserved_bytes(&self) -> usize { self.0.reserved_bytes() }
+            fn bytes(&self) -> TableBytes { self.0.bytes() }
             fn columns(&self) -> Vec<Column> { self.0.columns() }
+            fn preview(&self) -> Vec<(usize, Vec<String>)> { self.0.preview() }
             fn note(&self) -> Option<String> {
                 let (_, $($extra),+) = self;
-                let extras = [$($extra.describe()),+].join(", ");
-                Some(match self.0.note() { Some(n) => format!("with {extras}; {n}"), None => format!("with {extras}") })
+                Some(format!("first vector payload only; auxiliary/nested allocations excluded; with {}", [$($extra.describe()),+].join(", ")))
             }
         }
-    )* };
+    )+ };
 }
 vector_tuples!((A), (A, B), (A, B, C), (A, B, C, D));
-
-/// Composites that are one vector plus a small record.
 macro_rules! vector_with_record {
-    ($( $type:ty { $vector:ident, $record:ident } ),* $(,)?) => { $(
-        impl Table for $type {
+    ($($ty:ty { $vector:ident, $record:ident }),+) => { $(
+        impl Table for $ty {
             fn shape(&self) -> Vec<usize> { self.$vector.shape() }
             fn rows(&self) -> usize { self.$vector.rows() }
-            fn row(&self, index: usize) -> String { self.$vector.row(index) }
-            fn used_bytes(&self) -> usize { self.$vector.used_bytes() }
-            fn reserved_bytes(&self) -> usize { self.$vector.reserved_bytes() }
-            fn note(&self) -> Option<String> { Some(format!("{}={:?}", stringify!($record), self.$record)) }
+            fn bytes(&self) -> TableBytes { self.$vector.bytes() }
             fn columns(&self) -> Vec<Column> { self.$vector.columns() }
+            fn preview(&self) -> Vec<(usize, Vec<String>)> { self.$vector.preview() }
+            fn note(&self) -> Option<String> { Some(format!("vector payload only; {}={}", stringify!($record), preview(&self.$record))) }
         }
-    )* };
+    )+ };
 }
-vector_with_record!(
-    CorrectionSelection { indices, stats },
-    BodySamples { planets, moon },
-    SelectedRegion { cells, brute_force },
-);
+vector_with_record!(CorrectionSelection { indices, stats }, BodySamples { planets, moon }, SelectedRegion { cells, brute_force });
 
-/// Star keys of a scene: pixel records, or character glyphs plus their labels.
 impl Table for StarKeys {
     fn shape(&self) -> Vec<usize> { vec![self.rows()] }
-    fn rows(&self) -> usize {
-        match self { Self::Pixels(keys) => keys.len(), Self::Characters { glyphs, .. } => glyphs.len() }
-    }
-    fn row(&self, index: usize) -> String {
-        match self { Self::Pixels(keys) => join_cells(&keys[index]), Self::Characters { glyphs, .. } => join_cells(&glyphs[index]) }
-    }
-    fn columns(&self) -> Vec<Column> {
-        match self { Self::Pixels(_) => PixelStarKey::columns(), Self::Characters { .. } => CharacterStarKey::columns() }
-    }
-    fn used_bytes(&self) -> usize {
+    fn rows(&self) -> usize { match self { Self::Pixels(v) => v.len(), Self::Characters { glyphs, .. } => glyphs.len() } }
+    fn columns(&self) -> Vec<Column> { match self { Self::Pixels(_) => PixelStarKey::columns(), Self::Characters { .. } => CharacterStarKey::columns() } }
+    fn preview(&self) -> Vec<(usize, Vec<String>)> { match self { Self::Pixels(v) => v.preview(), Self::Characters { glyphs, .. } => glyphs.preview() } }
+    fn bytes(&self) -> TableBytes {
         match self {
-            Self::Pixels(keys) => keys.used_bytes(),
-            Self::Characters { glyphs, labels } => glyphs.used_bytes() + labels.used_bytes() + labels.iter().map(|(_, l)| l.len()).sum::<usize>(),
-        }
-    }
-    fn reserved_bytes(&self) -> usize {
-        match self {
-            Self::Pixels(keys) => keys.reserved_bytes(),
-            Self::Characters { glyphs, labels } => glyphs.reserved_bytes() + labels.reserved_bytes() + labels.iter().map(|(_, l)| l.capacity()).sum::<usize>(),
+            Self::Pixels(v) => v.bytes(),
+            Self::Characters { glyphs, labels } => TableBytes::known(
+                glyphs.len() * size_of::<CharacterStarKey>() + labels.len() * size_of::<(usize, String)>() + labels.iter().map(|(_, l)| l.len()).sum::<usize>(),
+                glyphs.capacity() * size_of::<CharacterStarKey>() + labels.capacity() * size_of::<(usize, String)>() + labels.iter().map(|(_, l)| l.capacity()).sum::<usize>()),
         }
     }
     fn note(&self) -> Option<String> {
-        match self {
-            Self::Pixels(_) => Some("pixel star keys".into()),
-            Self::Characters { labels, .. } => Some(format!("character star keys with {} labels (label bytes included)", labels.len())),
-        }
+        Some(match self { Self::Pixels(_) => "pixel star keys".into(), Self::Characters { labels, .. } => format!("character star keys with {} labels (label bytes included)", labels.len()) })
     }
 }
-
-// --- rasters ---------------------------------------------------------------------------------------------------
-
-/// A character canvas: one text line per row.
 impl Table for Canvas {
     fn shape(&self) -> Vec<usize> { vec![self.height(), self.width()] }
     fn rows(&self) -> usize { self.height() }
-    fn row(&self, index: usize) -> String { self.to_lines().into_iter().nth(index).unwrap_or_default() }
-    fn used_bytes(&self) -> usize { self.height() * self.width() * size_of::<crate::canvas::Cell>() }
-    fn reserved_bytes(&self) -> usize { self.used_bytes() }
+    fn bytes(&self) -> TableBytes { TableBytes::known(self.height() * self.width() * size_of::<crate::canvas::Cell>(), self.allocated_cells() * size_of::<crate::canvas::Cell>()) }
     fn columns(&self) -> Vec<Column> { plain_column::<crate::canvas::Cell>() }
+    fn preview(&self) -> Vec<(usize, Vec<String>)> {
+        preview_indices(self.height()).map(|i| (i, vec![preview_chars(self.row(i).iter().filter(|c| !c.is_continuation()).map(|c| c.symbol))])).collect()
+    }
 }
-
-/// RGBA and RGB images: one pixel row per table row, showing the first few pixels.
 impl<P: Pixel<Subpixel = u8>> Table for ImageBuffer<P, Vec<u8>> {
     fn shape(&self) -> Vec<usize> { vec![self.height() as usize, self.width() as usize, P::CHANNEL_COUNT as usize] }
     fn rows(&self) -> usize { self.height() as usize }
-    fn row(&self, index: usize) -> String {
-        const SHOWN: usize = 8;
-        let Some(pixels) = self.rows().nth(index) else { return String::new(); };
-        let mut text: Vec<String> = pixels.take(SHOWN).map(|p| format!("{:?}", p.channels())).collect();
-        if self.width() as usize > SHOWN { text.push("…".into()); }
-        text.join(" ")
-    }
-    fn used_bytes(&self) -> usize { self.as_raw().len() }
-    fn reserved_bytes(&self) -> usize { self.as_raw().capacity() }
+    fn bytes(&self) -> TableBytes { TableBytes::vector(self.as_raw()) }
     fn columns(&self) -> Vec<Column> { plain_column::<P>() }
+    fn preview(&self) -> Vec<(usize, Vec<String>)> {
+        preview_indices(self.height() as usize).map(|i| {
+            let text = (0..self.width().min(8)).map(|x| preview(self.get_pixel(x, i as u32).channels())).collect::<Vec<_>>().join(" ");
+            (i, vec![preview_text([text.as_str(), if self.width() > 8 { " …" } else { "" }])])
+        }).collect()
+    }
 }
-
-/// A ratatui cell buffer: the symbols of one terminal line per row.
 impl Table for ratatui::buffer::Buffer {
     fn shape(&self) -> Vec<usize> { vec![self.area.height as usize, self.area.width as usize] }
     fn rows(&self) -> usize { self.area.height as usize }
-    fn row(&self, index: usize) -> String {
-        let width = self.area.width as usize;
-        self.content.get(index * width..(index + 1) * width).map_or_else(String::new, |cells| cells.iter().map(|c| c.symbol()).collect())
-    }
-    fn used_bytes(&self) -> usize { self.content.len() * size_of::<ratatui::buffer::Cell>() }
-    fn reserved_bytes(&self) -> usize { self.content.capacity() * size_of::<ratatui::buffer::Cell>() }
-    fn note(&self) -> Option<String> { Some("cell vector only; symbol strings stored outside a cell are not counted".into()) }
+    fn bytes(&self) -> TableBytes { TableBytes::vector(&self.content) }
     fn columns(&self) -> Vec<Column> { plain_column::<ratatui::buffer::Cell>() }
+    fn preview(&self) -> Vec<(usize, Vec<String>)> {
+        let width = self.area.width as usize;
+        preview_indices(self.rows()).map(|i| (i, vec![preview_text(self.content[i * width..(i + 1) * width].iter().map(|c| c.symbol()))])).collect()
+    }
+    fn note(&self) -> Option<String> { Some("cell vector only; external symbol strings not counted".into()) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{cell::Cell as Counter, cmp::Ordering};
+
+    thread_local! { static COMPARISONS: Counter<usize> = const { Counter::new(0) }; }
+    #[derive(Clone, Copy, PartialEq, Eq, Hash)]
+    struct Key(usize);
+    impl Ord for Key {
+        fn cmp(&self, other: &Self) -> Ordering {
+            COMPARISONS.with(|n| n.set(n.get() + 1));
+            self.0.cmp(&other.0)
+        }
+    }
+    impl PartialOrd for Key { fn partial_cmp(&self, other: &Self) -> Option<Ordering> { Some(self.cmp(other)) } }
+    #[test]
+    fn map_preview_sorts_once_and_formats_only_nonoverlapping_edges() {
+        for count in [0, 1, 10, 11, 20, 21, 1_000] {
+            let map: HashMap<_, _> = (0..count).map(|i| (Key(i), ())).collect();
+            let mut keys: Vec<_> = map.keys().copied().collect();
+            COMPARISONS.with(|n| n.set(0));
+            keys.sort_unstable();
+            let one_sort = COMPARISONS.with(Counter::get);
+            COMPARISONS.with(|n| n.set(0));
+            let mut calls = 0;
+            let rows = preview_map(&map, |key, _| { calls += 1; vec![key.0.to_string()] });
+            assert_eq!(COMPARISONS.with(Counter::get), one_sort);
+            assert_eq!(calls, count.min(20));
+            assert_eq!(rows.iter().map(|(i, _)| *i).collect::<Vec<_>>(), preview_indices(count).collect::<Vec<_>>());
+            for (index, values) in rows { assert_eq!(values, [index.to_string()]); }
+        }
+    }
+    #[test]
+    fn complete_star_table_counts_column_capacity_and_keeps_all_fields() {
+        let mut catalog = crate::sky::prepare_owned_catalog(crate::catalog::load_embedded_catalog().unwrap());
+        let stars = &mut catalog.stars;
+        stars.reserve(stars.len());
+        let size = Table::bytes(stars);
+        let packed_row_bytes = 2 * 12 + 4 * 4 + 8 + 4 + 16 + 2 + 4 + 1 + 4;
+        assert_eq!(size.used, Some(stars.len() * packed_row_bytes));
+        assert!(size.reserved.unwrap() > size.used.unwrap());
+        let columns = stars.columns();
+        let preview = Table::preview(stars);
+        assert_eq!(preview.len(), 20);
+        assert_eq!(<StarStorage as Table>::columns(stars).len(), 13);
+        for (i, cells) in preview {
+            assert_eq!(cells.len(), 13);
+            assert_eq!(cells[0], crate::rows::preview(&columns.u0[i]));
+            assert_eq!(cells[6], columns.id[i].to_string());
+            assert_eq!(cells[12], columns.precise_index[i].to_string());
+        }
+        assert_eq!(Table::bytes(stars), size); // inspection retains no data and changes no capacities
+    }
+    #[test]
+    fn sizes_preserve_spare_capacity_and_unknown_is_not_empty() {
+        let mut values = Vec::with_capacity(64);
+        values.extend([1_u64, 2, 3]);
+        assert_eq!(values.bytes(), TableBytes::known(24, values.capacity() * 8));
+        values.clear();
+        assert_eq!(values.bytes(), TableBytes::known(0, values.capacity() * 8));
+        let opaque = Opaque { present: true, what: "fixture" };
+        assert_eq!(opaque.bytes(), TableBytes { used: None, reserved: None });
+        assert_eq!(Opaque { present: false, ..opaque }.bytes(), TableBytes::known(0, 0));
+        let mut times = StepTimes::default();
+        times.measure("fixture", || ());
+        assert_eq!(TimingSteps(&times).bytes().reserved, Some(times.step_capacity() * size_of::<crate::timing::StepTime>()));
+    }
+    #[test]
+    fn canvas_previews_keep_wide_glyphs_and_only_requested_rows() {
+        let mut canvas = Canvas::new(50, 8);
+        canvas.put_char(0, 0, '界', None);
+        canvas.put_char(49, 1, 'é', None);
+        let expected = canvas.to_lines();
+        let rows = Table::preview(&canvas);
+        assert_eq!(rows.len(), 20);
+        for (i, cells) in rows { assert_eq!(cells, [expected[i].clone()]); }
+        assert_eq!(Table::bytes(&canvas).reserved, Some(canvas.allocated_cells() * size_of::<crate::canvas::Cell>()));
+    }
+    #[test]
+    fn text_chunk_boundaries_do_not_split_multibyte_characters() {
+        let original = format!("{}界é{}", "a".repeat(63), "b".repeat(65));
+        let rows = Bytes::string(&original).preview();
+        let mut reconstructed = String::new();
+        for (_, cells) in rows {
+            assert!(!cells[0].contains('�'));
+            reconstructed.push_str(&cells[0][1..cells[0].len() - 1]); // each short preview is a quoted string
+        }
+        assert_eq!(reconstructed, original);
+    }
+
 }

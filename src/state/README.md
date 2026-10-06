@@ -27,17 +27,17 @@ reference from one root field into another. Headless callers can instead own `Pr
 ### Table registry
 
 `tables/` lists every data table the root holds in one flat form, for memory debugging in any build. `Table` is one
-container (a column, a Vec, a cache's stored value, an image, a canvas); `Tables` is an owner that visits its tables
+original container (the complete star table, a Vec, a cache's stored value, an image, a canvas); `Tables` is an owner that visits its tables
 with dotted paths such as `cache.observation.motion`. Each owner has one listing in `tables/owners.rs`: a
 `list_tables!` line naming its fields and their cache `Group`, or a short hand-written `visit_tables` when a field
-needs a view or a wrapper. Add a field there when you add one to an owner; leaf impls for container types are in
+needs an adapter that borrows its complete owner. Add a field there when you add one to an owner; leaf impls for container types are in
 `tables/leaves.rs`. A type implements `Table` or `Tables`, never both.
 
 Row types declare their column names once, next to their struct, with `row_columns!(Name { a, b, c })` from the
 foundation `rows` module; the compiler fills in the types and fails the build when the list and the struct differ.
 
 `state.log_data(path, section)` writes the listing: path, shape, used and reserved bytes, the cache policy and
-metadata, a `columns: name: type | ...` line, then the first and last ten rows with one cell per column. `Some(path)` appends to that file (created if missing); `None` prints
+metadata, a `columns: name: type | ...` line, then the first and last ten rows with one cell per column. Headers and rows wrap between columns without losing later fields. `Some(path)` appends to that file (created if missing); `None` prints
 to stdout. Use a path inside the frame loop: the terminal session owns stdout and the alternate screen is active.
 
 
@@ -91,7 +91,9 @@ catalog; frame processing reads it. Catalog indices follow cell, conservative br
 | `names.text` | UTF-8 text block; labels resolve name ranges into it | Same |
 
 The per-star columns are declared once as `StarRow` (`model/catalog/storage/columns.rs`); `StarRowVec` owns one
-vector per column and `StarRowSlice` borrows them for processing.
+vector per column and `StarRowSlice` borrows them for processing. The logger receives the original `StarStorage`,
+not separate column views. Its `persistent.catalog.stars` entry reports all 13 fields and sums actual column
+lengths/capacities. Name ranges and precise motions have separate table entries; their bytes are not counted twice.
 
 Prepared disk caches are read into a temporary byte buffer, validated and decoded into owned vectors. They use the
 same representation as source-loaded catalogs. `CatalogArray` owns a vector; no catalog file mappings remain.
@@ -99,6 +101,10 @@ The byte snapshot is dropped before the loaded catalog is returned. Validation a
 loading may temporarily hold both encoded bytes and decoded arrays. The catalog's Arc handles share one allocation,
 counted once per feature-gated inventory. Names and constellation figures cloned into the observed sky, and
 projection's preparation copies, remain intentional owned copies.
+
+Table previews sort map keys once per dump, format only the edge rows, and stop nested/text formatting at named
+limits in `rows/`. Unknown sizes are labeled rather than reported as zero. The table listing is a quick view with
+explicit partial counts; the feature-gated inventory remains the detailed ownership/deduplication report.
 
 ## Simulation: samples of physical models
 

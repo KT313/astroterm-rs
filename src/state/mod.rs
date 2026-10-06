@@ -16,7 +16,7 @@ pub(crate) use processing::{
     StarProjectionBuffers, DrawOrderBuffers,
 };
 pub use rendering::{RenderingState, CompressionSupport, CharacterState, PixelState, Presenter, TextRasterizer};
-pub use tables::{Table, TableVisitor, Tables};
+pub use tables::{Table, TableBytes, TableVisitor, Tables};
 #[cfg(feature = "memory-diagnostics")]
 pub use memory::{
     InventoryCollector, KnownPayload, MAX_ROWS, MAX_DEPTH, MAX_CHILDREN, DETAIL_CHILDREN, MAX_VISITS,
