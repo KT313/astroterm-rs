@@ -26,6 +26,12 @@ Use a file path when the frame loop is running: the terminal owns stdout and the
 The dump is the quick overview; the inventory below is the precise accounting of shared allocations, mappings,
 coverage and per-step operations.
 
+Catalogs, including prepared-cache hits, use owned arrays. The disk cache is still used to avoid CSV parsing, but
+its bytes are read, validated and decoded into arrays; no file mapping backs the tables. The temporary file-byte
+buffer is released before loading returns. Loading can temporarily hold both bytes and decoded arrays, and name
+clones own separate storage. The source fingerprint changes once with this implementation, so existing prepared
+caches rebuild. Used/reserved bytes are allocation measurements, not physical RAM residency; OS swapping is allowed.
+
 ## Build and run
 
 Build support explicitly; passing the flag does not rebuild the binary:

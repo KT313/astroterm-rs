@@ -86,18 +86,19 @@ catalog; frame processing reads it. Catalog indices follow cell, conservative br
 | `stars` columns `u0`, `w` (N×3), `distance`; `precise_motions` side table | J2000 equatorial unit directions, normalized motion per Julian year (365.25 days), distance in parsecs; stellar propagation reads them through `columns()` or the `directions()`/`motions()` views | Immutable during the run; the `Arc` is swapped once at startup by `replace_catalog` |
 | `stars` columns `magnitude`, `brightness_key`, `motion_bound` | Starting magnitude, conservative brightest magnitude and angular drift in radians; selection/propagation read them | Same |
 | `stars` columns `id`, `name`, `designation`, `spectral_type`, `color`, `flags`; `name_table` side table | Stable identity and encoded display metadata; ordering, labels and appearance read them | Same |
-| `grid.offsets`, coarse/fine caps, `always_checked` | Catalog-region membership and conservative angular caps; region/brightness filtering reads them | Same; cap vectors are also built for mapped catalogs |
+| `grid.offsets`, coarse/fine caps, `always_checked` | Catalog-region membership and conservative angular caps; region/brightness filtering reads them | Same; cap vectors are also built for cache-loaded catalogs |
 | `endpoint_indices`, constellation figures/segments | Sorted catalog-index union and resolved endpoint pairs; endpoint merge and arc projection read them | Same |
 | `names.text` | UTF-8 text block; labels resolve name ranges into it | Same |
 
 The per-star columns are declared once as `StarRow` (`model/catalog/storage/columns.rs`); `StarRowVec` owns one
-vector per column and `StarRowSlice` borrows all of them, either from those vectors or from the sections of one
-`Arc<MappedCatalog>`. Side tables and grid arrays use `CatalogArray`, which likewise owns a vector or names a mapped
-section. The map's logical extent is counted once. The catalog's other Arc handles also share one allocation.
-Pointer deduplication applies within each inventory, never across captures.
+vector per column and `StarRowSlice` borrows them for processing.
 
-The names and constellation figures cloned into `ObservedSky`, and the projection preparation copies of figures
-and endpoints, are intentional retained copies. Owned name bytes can be copied; mapped names share the mapping.
+Prepared disk caches are read into a temporary byte buffer, validated and decoded into owned vectors. They use the
+same representation as source-loaded catalogs. `CatalogArray` owns a vector; no catalog file mappings remain.
+The byte snapshot is dropped before the loaded catalog is returned. Validation and atomic disk writes remain;
+loading may temporarily hold both encoded bytes and decoded arrays. The catalog's Arc handles share one allocation,
+counted once per feature-gated inventory. Names and constellation figures cloned into the observed sky, and
+projection's preparation copies, remain intentional owned copies.
 
 ## Simulation: samples of physical models
 

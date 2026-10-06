@@ -21,7 +21,7 @@ fn singleframe_is_independent_of_the_metadata_panel_and_cache_bypass() {
 }
 
 #[test]
-fn source_and_mapped_loads_report_actual_work_and_ordered_skip_reasons() {
+fn source_and_cached_loads_report_actual_work_and_ordered_skip_reasons() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("small.csv");
     std::fs::write(&path, "ra,dec,mag\n0,0,4\n1,2,5\n,0,-26\n1,,4\n1,2,\n0,0,-26\n").unwrap();
@@ -35,11 +35,11 @@ fn source_and_mapped_loads_report_actual_work_and_ordered_skip_reasons() {
             load_sky_catalog_with_times(Some(&Dataset::Path(path.clone())), &dirs, &mut Vec::new(), &mut times)
                 .unwrap();
         assert_eq!(catalog.stars.len(), 2);
-        assert_eq!(catalog.stars.is_mapped(), warm);
         let mut report = Vec::new();
         times.trace().unwrap().write_report(&mut report).unwrap();
         let report = String::from_utf8(report).unwrap();
         if warm {
+            assert!(report.contains("hit: validated owned stars=2"));
             assert!(report.contains("source CSV not read; original skipped-row counts unavailable"));
             assert!(!report.contains("CSV validation and parsing:"));
         } else {

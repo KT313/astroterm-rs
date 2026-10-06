@@ -1,10 +1,10 @@
 //! Prepared-catalog cache schema, fingerprints and semantic checks. I/O lives here above the pure models;
-//! only immutable catalog arrays are mapped, never simulation samples or frame buffers.
+//! prepared arrays are decoded into owned memory before publication.
 use crate::model::{SkyCatalog, CELL_COUNT, SkyGrid, Constellation, StarStorage, STAR_SECTIONS};
 use super::super::grid::stored_cell;
 use crate::catalog::{
     StarNames,
-    cache::{CatalogArray, MappedCatalog, invalid, write_sections},
+    cache::{PreparedCatalogBytes, invalid, write_sections},
     load_constellation_figures,
 };
 use sha2::{Digest, Sha256};
@@ -111,22 +111,23 @@ pub fn write_cached_catalog(path: &Path, catalog: &SkyCatalog, fingerprint: &[u8
 }
 
 pub fn load_cached_catalog(path: &Path, fingerprint: &[u8; 32]) -> io::Result<SkyCatalog> {
-    let mapping = MappedCatalog::open(path, fingerprint)?;
-    if mapping.section_count() != SECTION_COUNT {
+    let data = PreparedCatalogBytes::open(path, fingerprint)?;
+    if data.section_count() != SECTION_COUNT {
         return Err(invalid("catalog section count mismatch"));
     }
-    let stars = StarStorage::from_mapping(&mapping)?;
-    let names = StarNames::from_array(CatalogArray::from_mapping(&mapping, NAMES)?)?;
-    let constellations = decode_figures(mapping.slice(FIGURES)?)?;
+    let stars = StarStorage::from_prepared(&data)?;
+    let names = StarNames::from_array(data.decode(NAMES)?.into())?;
+    let constellations = decode_figures(data.section(FIGURES)?)?;
     let mut catalog = SkyCatalog {
         stars,
         names,
         constellations,
-        grid: SkyGrid::from_offsets(CatalogArray::from_mapping(&mapping, GRID_OFFSETS)?),
-        always_checked: CatalogArray::from_mapping(&mapping, ALWAYS_CHECKED)?,
-        endpoint_indices: CatalogArray::from_mapping(&mapping, ENDPOINTS)?,
+        grid: SkyGrid::from_offsets(data.decode(GRID_OFFSETS)?.into()),
+        always_checked: data.decode(ALWAYS_CHECKED)?.into(),
+        endpoint_indices: data.decode(ENDPOINTS)?.into(),
         singular_count: 0,
     };
+    drop(data); // release the file snapshot; the catalog owns every decoded column
     validate_catalog(&catalog, false)?;
     catalog.singular_count = catalog.stars.iter().filter(|s| s.singular_fallback).count();
     Ok(catalog)
@@ -292,27 +293,27 @@ mod tests {
         canvas
     }
     #[test]
-    fn mapped_roundtrip_preserves_data_threshold_edges_and_frames() {
+    fn owned_roundtrip_preserves_data_threshold_edges_and_frames() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("catalog");
         let source = prepared();
         let fingerprint = catalog_fingerprint();
         write_cached_catalog(&path, &source, &fingerprint).unwrap();
-        let mapped = load_cached_catalog(&path, &fingerprint).unwrap();
-        assert!(mapped.stars.is_mapped() && mapped.grid.offsets.is_mapped() && mapped.endpoint_indices.is_mapped());
-        assert_eq!(source, mapped);
+        let cached = load_cached_catalog(&path, &fingerprint).unwrap();
+        assert_eq!(source, cached);
         for threshold in [5_f32.next_down() as f64, 5.0, 5_f32.next_up() as f64] {
             for date in [J2000, J2000 + 1e6, crate::astro::COMPUTATIONAL_INTERVAL.end_tt] {
                 assert_eq!(
                     render(source.clone(), threshold, date),
-                    render(mapped.clone(), threshold, date)
+                    render(cached.clone(), threshold, date)
                 );
             }
         }
-        drop(mapped);
-        let mapped = load_cached_catalog(&path, &fingerprint).unwrap();
-        write_cached_catalog(&path, &source, &fingerprint).unwrap(); // atomic replacement leaves the old mapping intact
-        assert_eq!(mapped, source);
+        drop(cached);
+        let cached = load_cached_catalog(&path, &fingerprint).unwrap();
+        write_cached_catalog(&path, &source, &fingerprint).unwrap(); // atomic replacement cannot change already loaded data
+        fs::remove_file(&path).unwrap();
+        assert_eq!(cached, source); // no file or reader is needed after loading
     }
     fn section(bytes: &[u8], index: usize) -> usize {
         u64::from_le_bytes(bytes[64 + index * 16..72 + index * 16].try_into().unwrap()) as usize
@@ -396,12 +397,8 @@ mod tests {
         let mut notices = Vec::new();
         let expected = load_sky_catalog(Some(&dataset), &dirs, &mut notices).unwrap();
         let path = cache_path(&source, dirs.cache.as_ref().unwrap()).unwrap();
-        assert!(
-            load_sky_catalog(Some(&dataset), &dirs, &mut notices)
-                .unwrap()
-                .stars
-                .is_mapped()
-        );
+        assert_eq!(load_cached_catalog(&path, &super::super::loading::fingerprint_source(&Some(path.clone()))).unwrap(), expected);
+        assert_eq!(load_sky_catalog(Some(&dataset), &dirs, &mut notices).unwrap(), expected);
         fs::write(&path, b"broken cache").unwrap();
         let rebuilt = load_sky_catalog(Some(&dataset), &dirs, &mut notices).unwrap();
         assert_eq!(expected, rebuilt);
@@ -414,7 +411,6 @@ mod tests {
         };
         let uncached = load_sky_catalog(Some(&dataset), &dirs, &mut notices).unwrap();
         assert_eq!(uncached, expected);
-        assert!(!uncached.stars.is_mapped());
         assert!(String::from_utf8_lossy(&notices).contains("continuing without a cache"));
         assert_eq!(fs::read_dir(root.path()).unwrap().count(), 3); // no cache/partial file next to the source
     }
@@ -460,14 +456,13 @@ mod tests {
         fs::set_permissions(&cache, fs::Permissions::from_mode(0o755)).unwrap();
         let sky = result.unwrap();
         assert_eq!(sky.stars.len(), 1);
-        assert!(!sky.stars.is_mapped());
         assert!(String::from_utf8_lossy(&notices).contains("continuing without a cache"));
         assert_eq!(fs::read_dir(&data).unwrap().count(), 1);
         assert_eq!(fs::read_dir(&cache).unwrap().count(), 0);
     }
 
     #[test]
-    fn precision_exceptions_names_and_all_designations_survive_mapping() {
+    fn precision_exceptions_names_and_all_designations_survive_cached_loading() {
         use crate::astro::{Equatorial, Vector3};
         use crate::catalog::{CatalogStar, Designation, SpaceMotion, StarId};
         let mut input = load_embedded_catalog().unwrap();
@@ -536,9 +531,9 @@ mod tests {
         let path = dir.path().join("cache");
         let fingerprint = catalog_fingerprint();
         write_cached_catalog(&path, &catalog, &fingerprint).unwrap();
-        let mapped = load_cached_catalog(&path, &fingerprint).unwrap();
-        assert_eq!(mapped, catalog);
-        for storage in [&catalog.stars, &mapped.stars] {
+        let cached = load_cached_catalog(&path, &fingerprint).unwrap();
+        assert_eq!(cached, catalog);
+        for storage in [&catalog.stars, &cached.stars] {
             let trajectories = storage.borrow_trajectory_fields();
             for i in 0..storage.len() {
                 let full = storage.get(i);
@@ -547,7 +542,7 @@ mod tests {
             }
         }
 
-        assert_eq!(render(mapped, 5.0, J2000), render(catalog, 5.0, J2000));
+        assert_eq!(render(cached, 5.0, J2000), render(catalog, 5.0, J2000));
     }
 
     #[test]
@@ -585,7 +580,6 @@ mod tests {
         )
         .unwrap();
         let actual = load_sky_catalog(Some(&Dataset::Path(b)), &dirs, &mut notices).unwrap();
-        assert!(!actual.stars.is_mapped());
         assert_eq!(actual.stars.magnitude(0), 3.0);
         assert!(String::from_utf8_lossy(&notices).contains("fingerprint mismatch"));
     }

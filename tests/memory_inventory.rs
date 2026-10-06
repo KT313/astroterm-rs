@@ -110,30 +110,27 @@ fn bounded_nested_inspection_and_unknown_sizes_are_explicit() {
 }
 
 #[test]
-fn mapped_sections_and_name_clones_share_one_logical_mapping() {
+fn cached_catalog_owns_buffers_and_shared_catalog_is_counted_once() {
     use astroterm::catalog::datasets::{Dataset, DatasetDirectories};
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("stars.csv");
     std::fs::write(&path, "ra,dec,mag,proper\n0,0,1,One\n1,2,3,Two\n").unwrap();
     let dirs = DatasetDirectories { data: None, cache: Some(temp.path().join("cache")) };
     let dataset = Some(Dataset::Path(path));
-    let owned = astroterm::sky::load_sky_catalog(dataset.as_ref(), &dirs, &mut Vec::new()).unwrap();
-    assert!(!owned.stars.is_mapped());
-    let mapped = astroterm::sky::load_sky_catalog(dataset.as_ref(), &dirs, &mut Vec::new()).unwrap();
-    assert!(mapped.stars.is_mapped());
-    let catalog = Arc::new(mapped);
+    let source = astroterm::sky::load_sky_catalog(dataset.as_ref(), &dirs, &mut Vec::new()).unwrap();
+    let cached = astroterm::sky::load_sky_catalog(dataset.as_ref(), &dirs, &mut Vec::new()).unwrap();
+    assert_eq!(source, cached);
+    let catalog = Arc::new(cached);
+    let one = collect_inventory("one", &catalog);
+    let shared = collect_inventory("two references", &(catalog.clone(), catalog.clone()));
+    assert!(heap(&one, Owner::Shared).0 > 0);
+    assert_eq!(heap(&one, Owner::Shared), heap(&shared, Owner::Shared));
+    assert!(shared.rows.iter().any(|r| r.kind == Kind::Alias));
     let sky = astroterm::model::Sky::new(catalog.clone());
-    let snapshot = collect_inventory("mapped", &(catalog, sky));
-    let mappings: Vec<_> = snapshot.rows.iter().filter(|r| r.kind == Kind::Mapping).collect();
-    assert_eq!(mappings.len(), 1);
-    let cache_files: Vec<_> = std::fs::read_dir(dirs.cache.as_ref().unwrap()).unwrap()
-        .map(|entry| entry.unwrap().path()).collect();
-    assert_eq!(cache_files.len(), 1);
-    let mapped_length = usize::try_from(std::fs::metadata(&cache_files[0]).unwrap().len()).unwrap();
-    assert_eq!((mappings[0].used, mappings[0].reserved), (Some(mapped_length), Some(mapped_length)));
-    assert_eq!(mappings[0].quality, Quality::ExactPayload); // file extent, not resident pages or heap capacity
-    assert!(snapshot.rows.iter().filter(|r| r.kind == Kind::Alias).count() > 10);
-    assert!(!collect_inventory("owned", &owned).rows.iter().any(|r| r.kind == Kind::Mapping));
+    let snapshot = collect_inventory("owned", &(catalog, sky));
+    assert!(!snapshot.rows.iter().any(|r| r.kind == Kind::Mapping));
+    assert!(heap(&snapshot, Owner::Application).0 > heap(&one, Owner::Application).0); // sky owns its name/figure copies
+    assert_eq!(std::fs::read_dir(dirs.cache.as_ref().unwrap()).unwrap().count(), 1);
 }
 
 #[test]

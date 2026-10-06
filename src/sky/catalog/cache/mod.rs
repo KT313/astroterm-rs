@@ -1,4 +1,4 @@
-//! Prepared-catalog loading, source fingerprints and mapped-file validation.
+//! Prepared-catalog loading, source fingerprints and owned-file decoding and validation.
 mod pipeline;
 mod loading;
 mod format;

@@ -53,7 +53,7 @@ pub(super) fn try_load_prepared_catalog(path: &Option<PathBuf>, fingerprint: &[u
     if let Some(path) = path {
         let cached = times.measure("Prepared catalog lookup", || load_cached_catalog(path, fingerprint));
         times.describe("Prepared catalog lookup", || match &cached {
-            Ok(catalog) => format!("validated mapped stars={}; source CSV not read; original skipped-row counts unavailable in this cache format", catalog.stars.len()),
+            Ok(catalog) => format!("hit: validated owned stars={}; source CSV not read; original skipped-row counts unavailable in this cache format", catalog.stars.len()),
             Err(error) => format!("miss: {error}; parse source next"),
         });
         match cached {

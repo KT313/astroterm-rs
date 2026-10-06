@@ -116,10 +116,11 @@ XDG_DATA_HOME=/tmp/astroterm-data XDG_CACHE_HOME=/tmp/astroterm-cache target/rel
 XDG_DATA_HOME=/tmp/astroterm-data XDG_CACHE_HOME=/tmp/astroterm-cache target/release/examples/dataset_probe athyg
 ```
 
-The first run verifies and installs the download, prepares the catalog and writes the cache. The second reports
-`mapped=true`. A file path can be used instead of `athyg` to skip the download. To measure cold preprocessing,
+The first run verifies and installs the download, prepares the catalog and writes the cache. Both runs report
+`storage=owned`; the second reads the prepared cache rather than parsing the CSV. The single-frame trace
+identifies a prepared-cache hit explicitly. A file path can be used instead of `athyg` to skip the download. To measure cold preprocessing,
 use a fresh cache folder with an existing data file; record separately whether the OS page cache was dropped.
-Unit tests cover checksum/semantic corruption, atomic concurrent writes, read-only folders, mapped lifetimes,
+Unit tests cover checksum/semantic corruption, atomic concurrent writes, read-only folders, loaded-data independence from the file,
 name/path selection, verified streams and download cleanup. Cached and uncached frames must remain identical.
 
 

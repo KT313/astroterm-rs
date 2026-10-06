@@ -11,35 +11,21 @@ use crate::astro::{
     models::stars::{StellarMotion, computational_years},
 };
 use crate::catalog::cache::{
-    CatalogArray, MappedCatalog,
+    CatalogArray, PreparedCatalogBytes,
     encoding::{decode_designation, encode_designation},
     invalid,
 };
 use crate::catalog::{NameId, StarId};
-use bytemuck::Pod;
-use std::{io, sync::Arc};
+use std::io;
 
 /// The grid uses the effective stored trajectory, so this covers cell-direction rounding and f64 bound
 /// arithmetic, not the original catalog's quantization error. Model error is certified separately below.
 pub const QUANTIZATION_MARGIN: f64 = 0.1 * std::f64::consts::PI / (180.0 * 3600.0);
 const MAX_DIRECTION_ERROR: f64 = 0.5 * std::f64::consts::PI / (180.0 * 3600.0);
 
-/// Every per-star column, either built in memory or resolved from the validated sections of one mapping.
-#[derive(Clone, Debug)]
-#[allow(clippy::large_enum_variant)] // one instance per catalog, behind an Arc; never copied in bulk
-enum StarRows {
-    Owned(StarRowVec),
-    Mapped(Arc<MappedCatalog>),
-}
-impl Default for StarRows {
-    fn default() -> Self {
-        Self::Owned(StarRowVec::default())
-    }
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct StarStorage {
-    rows: StarRows,                          // the declared columns; see columns.rs
+    rows: StarRowVec,                       // the declared columns; see columns.rs
     name_table: CatalogArray<[u64; 2]>,      // side table addressed by the `name` column
     precise_motions: CatalogArray<[f64; 7]>, // sparse side table addressed by the `precise_index` column
 }
@@ -48,28 +34,6 @@ impl PartialEq for StarStorage {
         self.columns() == other.columns()
             && self.name_table == other.name_table
             && self.precise_motions == other.precise_motions
-    }
-}
-
-fn section_slice<T: Pod>(mapping: &MappedCatalog, index: usize) -> &[T] {
-    mapping.slice(index).expect("validated mapped section")
-}
-/// Resolve every column section of a validated mapping; `from_mapping` checked the casts once.
-fn mapped_columns(mapping: &MappedCatalog) -> StarRowSlice<'_> {
-    StarRowSlice {
-        u0: section_slice(mapping, section::U0),
-        w: section_slice(mapping, section::W),
-        magnitude: section_slice(mapping, section::MAGNITUDE),
-        brightness_key: section_slice(mapping, section::BRIGHTNESS_KEY),
-        distance: section_slice(mapping, section::DISTANCE),
-        motion_bound: section_slice(mapping, section::MOTION_BOUND),
-        id: section_slice(mapping, section::ID),
-        name: section_slice(mapping, section::NAME),
-        designation: section_slice(mapping, section::DESIGNATION),
-        spectral_type: section_slice(mapping, section::SPECTRAL_TYPE),
-        color: section_slice(mapping, section::COLOR),
-        flags: section_slice(mapping, section::FLAGS),
-        precise_index: section_slice(mapping, section::PRECISE_INDEX),
     }
 }
 
@@ -127,49 +91,9 @@ fn bound_quantization(original: StellarMotion, compact: StellarMotion) -> f64 {
 }
 
 impl StarStorage {
-    /// Borrow every column once. A mapped catalog resolves its sections here, not on each element access.
-    pub fn columns(&self) -> StarRowSlice<'_> {
-        match &self.rows {
-            StarRows::Owned(rows) => rows.as_slice(),
-            StarRows::Mapped(mapping) => mapped_columns(mapping),
-        }
-    }
-    /// One column for single-element reads; `section` and `owned` must name the same column.
-    fn column<T: Pod>(&self, section: usize, owned: fn(&StarRowVec) -> &[T]) -> &[T] {
-        match &self.rows {
-            StarRows::Owned(rows) => owned(rows),
-            StarRows::Mapped(mapping) => section_slice(mapping, section),
-        }
-    }
-    /// Writable columns; a mapped catalog is copied into owned vectors first.
-    fn rows_mut(&mut self) -> &mut StarRowVec {
-        if let StarRows::Mapped(_) = self.rows {
-            let c = self.columns();
-            self.rows = StarRows::Owned(StarRowVec {
-                u0: c.u0.to_vec(),
-                w: c.w.to_vec(),
-                magnitude: c.magnitude.to_vec(),
-                brightness_key: c.brightness_key.to_vec(),
-                distance: c.distance.to_vec(),
-                motion_bound: c.motion_bound.to_vec(),
-                id: c.id.to_vec(),
-                name: c.name.to_vec(),
-                designation: c.designation.to_vec(),
-                spectral_type: c.spectral_type.to_vec(),
-                color: c.color.to_vec(),
-                flags: c.flags.to_vec(),
-                precise_index: c.precise_index.to_vec(),
-            });
-        }
-        match &mut self.rows {
-            StarRows::Owned(rows) => rows,
-            StarRows::Mapped(_) => unreachable!(),
-        }
-    }
-
-    pub fn is_mapped(&self) -> bool {
-        matches!(self.rows, StarRows::Mapped(_))
-    }
+    /// Borrow the prepared columns without copying their contents.
+    pub fn columns(&self) -> StarRowSlice<'_> { self.rows.as_slice() }
+    fn rows_mut(&mut self) -> &mut StarRowVec { &mut self.rows }
     /// Name byte ranges addressed by the `name` column (1-based; 0 means unnamed).
     pub(crate) fn name_table(&self) -> &CatalogArray<[u64; 2]> {
         &self.name_table
@@ -199,25 +123,26 @@ impl StarStorage {
             self.precise_motions.bytes(),
         ]
     }
-    /// Check every column section's type and alignment once; `columns()` relies on that afterwards.
-    pub(crate) fn from_mapping(m: &Arc<MappedCatalog>) -> io::Result<Self> {
-        m.slice::<[f32; 3]>(section::U0)?;
-        m.slice::<[f32; 3]>(section::W)?;
-        m.slice::<f32>(section::MAGNITUDE)?;
-        m.slice::<f32>(section::BRIGHTNESS_KEY)?;
-        m.slice::<f32>(section::DISTANCE)?;
-        m.slice::<f32>(section::MOTION_BOUND)?;
-        m.slice::<u64>(section::ID)?;
-        m.slice::<u32>(section::NAME)?;
-        m.slice::<[u8; 16]>(section::DESIGNATION)?;
-        m.slice::<[u8; 2]>(section::SPECTRAL_TYPE)?;
-        m.slice::<f32>(section::COLOR)?;
-        m.slice::<u8>(section::FLAGS)?;
-        m.slice::<u32>(section::PRECISE_INDEX)?;
+    /// Load packed columns verbatim; do not quantize or reorder prepared data again.
+    pub(crate) fn from_prepared(data: &PreparedCatalogBytes) -> io::Result<Self> {
         Ok(Self {
-            rows: StarRows::Mapped(m.clone()),
-            name_table: CatalogArray::from_mapping(m, section::NAME_TABLE)?,
-            precise_motions: CatalogArray::from_mapping(m, section::PRECISE_MOTIONS)?,
+            rows: StarRowVec {
+                u0: data.decode(section::U0)?,
+                w: data.decode(section::W)?,
+                magnitude: data.decode(section::MAGNITUDE)?,
+                brightness_key: data.decode(section::BRIGHTNESS_KEY)?,
+                distance: data.decode(section::DISTANCE)?,
+                motion_bound: data.decode(section::MOTION_BOUND)?,
+                id: data.decode(section::ID)?,
+                name: data.decode(section::NAME)?,
+                designation: data.decode(section::DESIGNATION)?,
+                spectral_type: data.decode(section::SPECTRAL_TYPE)?,
+                color: data.decode(section::COLOR)?,
+                flags: data.decode(section::FLAGS)?,
+                precise_index: data.decode(section::PRECISE_INDEX)?,
+            },
+            name_table: data.decode(section::NAME_TABLE)?.into(),
+            precise_motions: data.decode(section::PRECISE_MOTIONS)?.into(),
         })
     }
     pub(crate) fn validate(&self, names: &crate::catalog::StarNames, full: bool) -> io::Result<()> {
@@ -306,7 +231,7 @@ impl StarStorage {
         Ok(())
     }
     pub fn len(&self) -> usize {
-        self.column(section::ID, |rows| rows.id.as_slice()).len()
+        self.rows.id.as_slice().len()
     }
     pub fn is_empty(&self) -> bool {
         self.len() == 0
@@ -315,29 +240,29 @@ impl StarStorage {
         self.precise_motions.len()
     }
     pub fn id(&self, i: usize) -> StarId {
-        StarId(self.column(section::ID, |rows| rows.id.as_slice())[i])
+        StarId(self.rows.id.as_slice()[i])
     }
     pub fn brightness_key(&self, i: usize) -> f64 {
-        self.column(section::BRIGHTNESS_KEY, |rows| rows.brightness_key.as_slice())[i] as f64
+        self.rows.brightness_key.as_slice()[i] as f64
     }
     pub fn motion_bound(&self, i: usize) -> f64 {
-        self.column(section::MOTION_BOUND, |rows| rows.motion_bound.as_slice())[i] as f64
+        self.rows.motion_bound.as_slice()[i] as f64
     }
     pub fn magnitude(&self, i: usize) -> f64 {
-        self.column(section::MAGNITUDE, |rows| rows.magnitude.as_slice())[i] as f64
+        self.rows.magnitude.as_slice()[i] as f64
     }
     pub fn stored_direction(&self, i: usize) -> Vector3 {
-        expand(self.column(section::U0, |rows| rows.u0.as_slice())[i])
+        expand(self.rows.u0.as_slice()[i])
     }
     pub fn motion(&self, i: usize) -> StellarMotion {
-        let precise = self.column(section::PRECISE_INDEX, |rows| rows.precise_index.as_slice())[i];
+        let precise = self.rows.precise_index.as_slice()[i];
         if precise != 0 {
             return decode_motion(self.precise_motions[precise as usize - 1]);
         }
-        let distance = self.column(section::DISTANCE, |rows| rows.distance.as_slice())[i];
+        let distance = self.rows.distance.as_slice()[i];
         StellarMotion {
-            u0: expand(self.column(section::U0, |rows| rows.u0.as_slice())[i]),
-            w: expand(self.column(section::W, |rows| rows.w.as_slice())[i]),
+            u0: expand(self.rows.u0.as_slice()[i]),
+            w: expand(self.rows.w.as_slice()[i]),
             distance_pc: (distance > 0.0).then_some(distance as f64),
         }
     }
@@ -450,52 +375,7 @@ impl StarStorage {
 }
 
 #[cfg(feature = "memory-diagnostics")]
-impl crate::cache::ReportBuffers for StarRows {
-    fn report_buffers(&self, sink: &mut dyn crate::cache::BufferSink) {
-        use crate::cache::report_field;
-        match self {
-            Self::Owned(rows) => {
-                report_field(sink, "u0", &rows.u0);
-                report_field(sink, "w", &rows.w);
-                report_field(sink, "magnitude", &rows.magnitude);
-                report_field(sink, "brightness_key", &rows.brightness_key);
-                report_field(sink, "distance", &rows.distance);
-                report_field(sink, "motion_bound", &rows.motion_bound);
-                report_field(sink, "id", &rows.id);
-                report_field(sink, "name", &rows.name);
-                report_field(sink, "designation", &rows.designation);
-                report_field(sink, "spectral_type", &rows.spectral_type);
-                report_field(sink, "color", &rows.color);
-                report_field(sink, "flags", &rows.flags);
-                report_field(sink, "precise_index", &rows.precise_index);
-            }
-            Self::Mapped(mapping) => {
-                // each column is a view into the one shared mapping; the mapping itself is counted once
-                fn column<T>(sink: &mut dyn crate::cache::BufferSink, name: &str, values: &[T], mapping: &Arc<MappedCatalog>) {
-                    if sink.enter(name, 0) {
-                        sink.borrowed(values.len(), std::mem::size_of::<T>(), "validated mapped section; view bytes already belong to the shared mapping");
-                        report_field(sink, "mapped_owner", mapping);
-                        sink.leave();
-                    }
-                }
-                let c = mapped_columns(mapping);
-                column(sink, "u0", c.u0, mapping);
-                column(sink, "w", c.w, mapping);
-                column(sink, "magnitude", c.magnitude, mapping);
-                column(sink, "brightness_key", c.brightness_key, mapping);
-                column(sink, "distance", c.distance, mapping);
-                column(sink, "motion_bound", c.motion_bound, mapping);
-                column(sink, "id", c.id, mapping);
-                column(sink, "name", c.name, mapping);
-                column(sink, "designation", c.designation, mapping);
-                column(sink, "spectral_type", c.spectral_type, mapping);
-                column(sink, "color", c.color, mapping);
-                column(sink, "flags", c.flags, mapping);
-                column(sink, "precise_index", c.precise_index, mapping);
-            }
-        }
-    }
-}
+crate::cache::report_fields!(StarRowVec { u0, w, magnitude, brightness_key, distance, motion_bound, id, name, designation, spectral_type, color, flags, precise_index });
 #[cfg(feature = "memory-diagnostics")]
 crate::cache::report_fields!(StarStorage { rows, name_table, precise_motions });
 
@@ -583,7 +463,7 @@ mod tests {
     }
 
     #[test]
-    fn columns_sections_and_mapping_follow_one_declaration_order() {
+    fn columns_sections_and_owned_rows_follow_one_declaration_order() {
         let mut storage = StarStorage::default();
         for i in 0..3_u32 {
             let mut entry = star(

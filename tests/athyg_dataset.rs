@@ -112,8 +112,7 @@ fn real_catalog_cache_preserves_the_rendered_frame() {
     let fingerprint = catalog_fingerprint();
     write_cached_catalog(&path, &catalog, &fingerprint).unwrap();
     let expected = frame(catalog);
-    let mapped = load_cached_catalog(&path, &fingerprint).unwrap();
-    assert!(mapped.stars.is_mapped());
-    assert!(mapped.stars.len() > 2_500_000);
-    assert_eq!(frame(mapped), expected);
+    let cached = load_cached_catalog(&path, &fingerprint).unwrap();
+    assert!(cached.stars.len() > 2_500_000);
+    assert_eq!(frame(cached), expected);
 }

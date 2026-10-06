@@ -17,7 +17,7 @@ pub fn load_sky_catalog(
     load_sky_catalog_with_times(dataset, directories, notices, &mut StepTimes::default())
 }
 
-/// The production loader with optional startup diagnostics; mapped catalogs are not reparsed for statistics.
+/// The production loader with optional startup diagnostics; cache-loaded catalogs are not reparsed for statistics.
 pub fn load_sky_catalog_with_times(
     dataset: Option<&Dataset>,
     directories: &DatasetDirectories,

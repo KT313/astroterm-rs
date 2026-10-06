@@ -54,12 +54,8 @@ impl<T: Pod + Row> Table for CatalogArray<T> {
     fn row(&self, index: usize) -> String { join_cells(&self[index]) }
     fn used_bytes(&self) -> usize { self.len() * size_of::<T>() }
     fn reserved_bytes(&self) -> usize {
-        match self {
-            Self::Owned(values) => values.capacity() * size_of::<T>(),
-            Self::Mapped { .. } => self.len() * size_of::<T>(),
-        }
+        self.capacity() * size_of::<T>()
     }
-    fn note(&self) -> Option<String> { self.is_mapped().then(|| "mapped section of the catalog cache file".to_string()) }
     fn columns(&self) -> Vec<Column> { T::columns() }
 }
 

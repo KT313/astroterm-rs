@@ -1,6 +1,6 @@
 //! Borrow validated columns once per processing pass. The vector columns get typed N×3 views; scalar columns
-//! are plain slices already. No ownership, validation, precision or cache-format changes.
-use super::{StarStorage, columns::section, decode_motion, expand};
+//! are plain slices already. The owner keeps the complete allocated columns; these views are processing inputs.
+use super::{StarStorage, decode_motion, expand};
 use crate::{
     astro::{Vector3, models::stars::StellarMotion},
     catalog::{EncodedDesignation, NameId},
@@ -42,23 +42,23 @@ impl TrajectoryFields<'_> {
     }
 }
 impl StarStorage {
-    /// Stored unit directions as an N×3 view, one row per catalog index; zero copy for owned and mapped data.
+    /// Stored unit directions as an N×3 view, one row per catalog index; zero copy for source and cache-loaded data.
     pub fn directions(&self) -> ArrayView2<'_, f32> {
-        ArrayView2::from(self.column(section::U0, |rows| rows.u0.as_slice()))
+        ArrayView2::from(self.rows.u0.as_slice())
     }
     /// Normalized motion per Julian year as an N×3 view; rows with a precise entry are zero.
     pub fn motions(&self) -> ArrayView2<'_, f32> {
-        ArrayView2::from(self.column(section::W, |rows| rows.w.as_slice()))
+        ArrayView2::from(self.rows.w.as_slice())
     }
     pub(crate) fn brightness_keys(&self) -> &[f32] {
-        self.column(section::BRIGHTNESS_KEY, |rows| rows.brightness_key.as_slice())
+        self.rows.brightness_key.as_slice()
     }
     pub(crate) fn motion_bounds(&self) -> &[f32] {
-        self.column(section::MOTION_BOUND, |rows| rows.motion_bound.as_slice())
+        self.rows.motion_bound.as_slice()
     }
     pub(crate) fn borrow_observation_fields(&self) -> ObservationFields<'_> {
         ObservationFields {
-            magnitude: self.column(section::MAGNITUDE, |rows| rows.magnitude.as_slice()),
+            magnitude: self.rows.magnitude.as_slice(),
         }
     }
     pub(crate) fn borrow_trajectory_fields(&self) -> TrajectoryFields<'_> {
@@ -72,18 +72,18 @@ impl StarStorage {
         }
     }
     pub fn name(&self, index: usize) -> Option<NameId> {
-        let name = self.column(section::NAME, |rows| rows.name.as_slice())[index];
+        let name = self.rows.name.as_slice()[index];
         (name != 0).then(|| NameId::from_range(self.name_table[name as usize - 1]))
     }
     pub fn designation(&self, index: usize) -> EncodedDesignation {
-        EncodedDesignation::from_validated_bytes(self.column(section::DESIGNATION, |rows| rows.designation.as_slice())[index])
+        EncodedDesignation::from_validated_bytes(self.rows.designation.as_slice()[index])
     }
     pub fn spectral_type(&self, index: usize) -> [u8; 2] {
-        self.column(section::SPECTRAL_TYPE, |rows| rows.spectral_type.as_slice())[index]
+        self.rows.spectral_type.as_slice()[index]
     }
     pub fn color_index(&self, index: usize) -> Option<f32> {
-        let flags = self.column(section::FLAGS, |rows| rows.flags.as_slice())[index];
-        (flags & 2 != 0).then_some(self.column(section::COLOR, |rows| rows.color.as_slice())[index])
+        let flags = self.rows.flags.as_slice()[index];
+        (flags & 2 != 0).then_some(self.rows.color.as_slice()[index])
     }
 }
 
@@ -93,7 +93,7 @@ mod tests {
     use crate::sky::{catalog_fingerprint, load_cached_catalog, write_cached_catalog};
 
     #[test]
-    fn borrowed_owned_and_mapped_fields_match_full_records() {
+    fn borrowed_source_and_cached_fields_match_full_records() {
         let mut parsed = crate::catalog::load_embedded_catalog().unwrap();
         parsed.stars[0].space_motion = Some(crate::catalog::SpaceMotion {
             distance_pc: 1.0,
@@ -109,8 +109,8 @@ mod tests {
         let path = directory.path().join("catalog");
         let fingerprint = catalog_fingerprint();
         write_cached_catalog(&path, &owned, &fingerprint).unwrap();
-        let mapped = load_cached_catalog(&path, &fingerprint).unwrap();
-        for catalog in [&owned, &mapped] {
+        let cached = load_cached_catalog(&path, &fingerprint).unwrap();
+        for catalog in [&owned, &cached] {
             let fields = catalog.stars.borrow_observation_fields();
             let trajectories = catalog.stars.borrow_trajectory_fields();
             let directions = catalog.stars.directions();

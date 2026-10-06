@@ -81,13 +81,13 @@ pub(super) fn load_catalog(state: &mut ApplicationState, directories: &DatasetDi
     state.timings.record_memory(state.timings.last_memory_step(), || {
         use astroterm::timing::{BufferId, BufferShape, IndexDomain, MemoryEvent, Operation};
         let shape = BufferShape { len: Some(catalog.stars.len()), ..BufferShape::unknown(IndexDomain::Catalog) };
-        MemoryEvent::operation(BufferId::CatalogStars, if catalog.stars.is_mapped() { Operation::Map } else { Operation::Build }, None, Some(shape), shape.len, None)
+        MemoryEvent::operation(BufferId::CatalogStars, Operation::Build, None, Some(shape), shape.len, None)
     });
 
     state.timings.describe("Dataset loading", || format!(
-        "output stars={}; constellation figures={}; unique endpoints={}; always-checked stars={}; tangential fallbacks={}; mapped={}",
+        "output stars={}; constellation figures={}; unique endpoints={}; always-checked stars={}; tangential fallbacks={}; storage=owned",
         catalog.stars.len(), catalog.constellations.len(), catalog.endpoint_indices.len(),
-        catalog.always_checked.len(), catalog.singular_count, catalog.stars.is_mapped(),
+        catalog.always_checked.len(), catalog.singular_count,
     ));
 
     eprintln!(

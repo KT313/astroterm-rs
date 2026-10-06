@@ -1,5 +1,5 @@
 //! The per-star columns, declared once. `StarRowVec` owns one vector per column; `StarRowSlice` borrows every
-//! column at once and is also what a memory-mapped catalog resolves its sections into.
+//! column at once. Prepared disk caches are decoded into the same owned vectors.
 use soa_derive::StructOfArray;
 
 /// One prepared star. Every field is plain old data, so each column is a castable cache section.
