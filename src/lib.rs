@@ -3,7 +3,7 @@
 //! The frame loop is visible in the binary's `pipeline.rs`: independently prepare simulation samples, observe
 //! them from a site, project the apparent sky, then draw and present it through [`terminal::Renderer`].
 //!
-//! Pure foundations ([`astro`], [`canvas`], [`catalog`], [`cache`] and [`timing`]) support the shared records in
+//! Pure foundations ([`astro`], [`canvas`], [`catalog`], [`cache`], [`rows`] and [`timing`]) support the shared records in
 //! [`model`]. Catalog and observed data, view settings, projected geometry and validated configuration live there;
 //! representation accessors and constructors do not depend on higher processing modules. [`sky`], [`projection`]
 //! and [`scene`] contain preparation, correction, geometric and drawing algorithms over restricted borrowed inputs.
@@ -30,6 +30,7 @@ pub mod controls;
 pub mod metadata;
 pub mod model;
 pub mod projection;
+pub mod rows;
 pub mod scene;
 pub mod sky;
 pub mod state;

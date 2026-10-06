@@ -1,6 +1,7 @@
 //! Straight-line J2000 stellar motion, f64. Directions and scaled velocities are dimensionless and per Julian year;
 //! distances are parsecs. Bounds and brightness keys cover the shared TT computational interval, not physical
 //! catalog accuracy. Missing/singular distances use tangential motion and constant brightness.
+use crate::rows::{row_columns, plain_rows};
 use crate::astro::{COMPUTATIONAL_INTERVAL, Equatorial, J2000, JULIAN_YEAR_DAYS, Vector3};
 
 pub const SINGULAR_RATIO: f64 = 1e-3;
@@ -9,6 +10,7 @@ pub const ALWAYS_CHECKED_ANGLE: f64 = std::f64::consts::PI / 720.0; // 15 arcmin
 /// Catalog-only motion properties. Epoch-dependent singular handling remains in evaluation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct StellarClass(u8);
+plain_rows!(StellarClass);
 impl StellarClass {
     pub fn is_stationary(self) -> bool {
         self.0 & 1 != 0
@@ -35,6 +37,7 @@ pub struct StellarSample {
     pub magnitude: f64,
     pub used_singular_fallback: bool,
 }
+row_columns!(StellarSample { direction, distance_ratio, magnitude, used_singular_fallback });
 
 pub fn years_since_j2000(julian_date_tt: f64) -> f64 {
     (julian_date_tt - J2000) / JULIAN_YEAR_DAYS

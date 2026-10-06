@@ -33,8 +33,11 @@ with dotted paths such as `cache.observation.motion`. Each owner has one listing
 needs a view or a wrapper. Add a field there when you add one to an owner; leaf impls for container types are in
 `tables/leaves.rs`. A type implements `Table` or `Tables`, never both.
 
+Row types declare their column names once, next to their struct, with `row_columns!(Name { a, b, c })` from the
+foundation `rows` module; the compiler fills in the types and fails the build when the list and the struct differ.
+
 `state.log_data(path, section)` writes the listing: path, shape, used and reserved bytes, the cache policy and
-metadata, then the first and last ten rows. `Some(path)` appends to that file (created if missing); `None` prints
+metadata, a `columns: name: type | ...` line, then the first and last ten rows with one cell per column. `Some(path)` appends to that file (created if missing); `None` prints
 to stdout. Use a path inside the frame loop: the terminal session owns stdout and the alternate screen is active.
 
 

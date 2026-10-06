@@ -1,4 +1,5 @@
 //! Camera settings and projected records; algorithms live in projection.
+use crate::rows::row_columns;
 use crate::astro::{Horizontal, Vector3};
 use std::f64::consts::{PI, FRAC_PI_2};
 use crate::model::{ObservedStarView, PlanetKind};
@@ -168,6 +169,7 @@ pub struct ProjectedPlanet {
     pub kind: PlanetKind,
     pub cell: Option<Cell>,
 }
+row_columns!(ProjectedPlanet { kind, cell });
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProjectedMoon {
     pub illumination: crate::model::MoonIllumination,
@@ -190,6 +192,7 @@ pub struct ProjectedConstellation {
     pub maximum_magnitude: f64,
     pub arcs: Vec<ProjectedArc>,
 }
+row_columns!(ProjectedConstellation { maximum_magnitude, arcs });
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProjectedSky<'a> {
     pub outside_accuracy_range: bool,
@@ -279,6 +282,7 @@ pub(crate) struct DrawRecord {
     pub(crate) id: StarId,
     pub projected_index: usize,
 }
+row_columns!(DrawRecord { magnitude, id, projected_index });
 
 pub(crate) type StarKey = (Vec<(Vector3, bool)>, View, ProjectionViewport);
 pub(crate) type BodyKey = (Vec<(PlanetKind, Vector3)>, crate::model::Moon, View, ProjectionViewport);

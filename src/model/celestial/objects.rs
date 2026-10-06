@@ -1,4 +1,5 @@
 //! Celestial objects: what they are and where they are. How they look is up to the renderer.
+use crate::rows::row_columns;
 use crate::astro::models::stars::StellarMotion;
 use crate::astro::{Horizontal, MoonPhase, Vector3};
 use crate::catalog::{Designation, NameId, StarId};
@@ -35,6 +36,7 @@ pub struct ObservedStar {
     /// Unit horizontal direction: East, North, Up; observer corrections have already been applied.
     pub position: Vector3,
 }
+row_columns!(ObservedStar { source_index, drawable, magnitude, position });
 impl ObservedStar {
     pub fn horizontal_position(&self) -> Horizontal {
         Horizontal::from_vector(self.position)
@@ -151,6 +153,7 @@ pub struct Planet {
     /// Unit horizontal direction: East, North, Up; observer corrections have already been applied.
     pub position: Vector3,
 }
+row_columns!(Planet { kind, position });
 
 /// The Moon.
 #[derive(Clone, Debug, PartialEq)]
@@ -160,6 +163,7 @@ pub struct Moon {
     /// Unit horizontal direction: East, North, Up; observer corrections have already been applied.
     pub position: Vector3,
 }
+row_columns!(Moon { phase, illumination, position });
 
 impl Planet {
     pub fn horizontal_position(&self) -> Horizontal {
@@ -178,6 +182,7 @@ pub struct Constellation {
     pub abbreviation: &'static str,
     pub segments: Vec<[usize; 2]>,
 }
+row_columns!(Constellation { abbreviation, segments });
 
 /// The Sun and the planets other than the Earth, ordered from the Sun outwards.
 pub fn create_planets() -> Vec<Planet> {

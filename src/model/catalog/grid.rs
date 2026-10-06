@@ -1,4 +1,5 @@
 //! Cube-map storage, representation construction and shared selection records.
+use crate::rows::row_columns;
 use crate::astro::Vector3;
 use std::f64::consts::PI;
 
@@ -44,6 +45,7 @@ pub(crate) struct CellCap {
     pub(crate) center: Vector3,
     pub(crate) radius: f64,
 }
+row_columns!(CellCap { center, radius });
 
 impl CellCap {
     pub(crate) fn intersects(self, center: Vector3, radius: f64) -> bool {

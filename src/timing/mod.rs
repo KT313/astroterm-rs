@@ -1,5 +1,6 @@
 //! Measure frame steps and expose opt-in, bounded execution and memory diagnostics.
 //! Use this module's exports; recording, history and event implementation remain private.
+use crate::rows::row_columns;
 
 mod pipeline;
 #[path = "recording/averages.rs"]
@@ -41,6 +42,7 @@ pub struct StepTime {
     pub depth: usize,
     pub average_seconds: f64,
 }
+row_columns!(StepTime { name, depth, average_seconds });
 
 /// Smoothed durations of named steps, one exponential moving average per step, in the order the steps first ran.
 #[derive(Clone, Debug, Default, PartialEq)]

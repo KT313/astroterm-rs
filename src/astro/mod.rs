@@ -31,6 +31,7 @@ mod notation;
 mod orbital;
 mod time;
 
+use crate::rows::row_columns;
 use std::f64::consts::TAU;
 
 pub use accuracy::{
@@ -81,6 +82,7 @@ pub struct Vector3 {
     pub y: f64,
     pub z: f64,
 }
+row_columns!(Vector3 { x, y, z });
 
 impl Horizontal {
     /// Unit vector pointing at this position, with x East, y North and z up.

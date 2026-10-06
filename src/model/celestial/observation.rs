@@ -1,4 +1,5 @@
 //! Observer and calculated sky records; corrections are applied by sky algorithms.
+use crate::rows::row_columns;
 use std::sync::Arc;
 use crate::model::{
     SkyCatalog, SelectionStats, ObservedStar, ObservedStarView, Planet, Moon, Constellation, create_planets,
@@ -119,6 +120,7 @@ pub struct ObserverState {
     pub atmosphere: bool,
     pub emission_tt: [f64; 10],
 }
+row_columns!(ObserverState { anchor, site, height_m, time, state, inertial_to_fixed, inertial_to_horizon, atmosphere, emission_tt });
 
 #[derive(Clone, PartialEq)]
 pub(crate) struct BodySamples {
@@ -131,6 +133,7 @@ pub(crate) struct SelectedStar {
     pub source_index: usize,
     pub drawable: bool,
 }
+row_columns!(SelectedStar { source_index, drawable });
 
 #[derive(Clone, PartialEq)]
 pub(crate) struct CorrectionSelection {
@@ -149,6 +152,7 @@ pub(crate) struct StellarWork {
     pub(crate) valid_seconds: f64,
     pub(crate) calculated_at: f64,
 }
+row_columns!(StellarWork { source_index, magnitude, refresh, motion, class, sample, valid_seconds, calculated_at });
 
 #[derive(Default)]
 pub(crate) struct ValidityCounts {

@@ -1,6 +1,6 @@
 //! One listing per owner struct: which fields are tables and which cache group governs them.
 //! Read top-down: root → persistent / cache / timings → each stage → its fields.
-use super::{Bytes, Opaque, Single, TableVisitor, Tables, join};
+use super::{Bytes, Named, Opaque, Single, TableVisitor, Tables, join};
 use crate::cache::Group;
 use crate::model::{ObservedSky, SceneKey, SkyCatalog};
 use crate::state::{
@@ -22,8 +22,8 @@ impl Tables for SkyCatalog {
     fn visit_tables(&self, prefix: &str, visit: &mut TableVisitor<'_>) {
         let c = self.stars.columns();
         let path = |name: &str| join(prefix, name);
-        visit(&path("stars.u0"), &self.stars.directions(), None);
-        visit(&path("stars.w"), &self.stars.motions(), None);
+        visit(&path("stars.u0"), &Named(self.stars.directions(), &["x", "y", "z"]), None);
+        visit(&path("stars.w"), &Named(self.stars.motions(), &["x", "y", "z"]), None);
         visit(&path("stars.magnitude"), &c.magnitude, None);
         visit(&path("stars.brightness_key"), &c.brightness_key, None);
         visit(&path("stars.distance"), &c.distance, None);

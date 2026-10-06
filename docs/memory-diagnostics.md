@@ -7,7 +7,15 @@ a measurement of physical RAM traffic. Normal builds omit the collection and sto
 ## Quick dump without the feature
 
 Any build can write every table the state holds (catalog columns, caches, rendering buffers) with their shape,
-used and reserved bytes, cache policy and metadata, and the first and last ten rows. From code:
+used and reserved bytes, cache policy and metadata, column names and types, and the first and last ten rows:
+
+```text
+cache.sky.stars    shape=[1319]  used=61.8 KiB  reserved=61.8 KiB
+  columns: source_index: usize | drawable: bool | magnitude: f64 | position: Vector3
+  [0] 1 | true | 4.67 | Vector3 { x: 0.567, y: -0.798, z: 0.199 }
+```
+
+From code:
 
 ```rust
 state.log_data(Some(Path::new("/tmp/astroterm-tables.log")), Some("after frame 3"))?;  // append a section

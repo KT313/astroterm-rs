@@ -1,4 +1,5 @@
 //! Opt-in, execution-ordered diagnostics. Ordinary frame timing never evaluates diagnostic closures.
+use crate::rows::row_columns;
 use super::StepTimes;
 use std::io::{self, Write};
 
@@ -38,6 +39,7 @@ pub struct TraceStep {
     #[cfg(feature = "memory-diagnostics")]
     pub(super) details_superseded: bool, // a later invocation with this name and parent was omitted
 }
+row_columns!(TraceStep { name, depth, seconds, details, direct_diagnostic_seconds, parent, .. });
 
 impl StepTimes {
     /// Keep one inventory per bounded segment (two for legacy single-frame traces); omitted callbacks stay lazy.

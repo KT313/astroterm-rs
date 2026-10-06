@@ -1,4 +1,5 @@
 //! Stored display fields and loaded observer timezone rules.
+use crate::rows::row_columns;
 
 /// Zone rules loaded once for a fixed observer. Historical/future rules are those provided by the IANA database.
 pub struct ObserverTimeZone {
@@ -12,6 +13,7 @@ pub struct MetadataField {
     pub label: String,
     pub value: String,
 }
+row_columns!(MetadataField { label, value });
 
 
 #[cfg(feature = "memory-diagnostics")]

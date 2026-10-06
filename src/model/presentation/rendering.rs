@@ -1,4 +1,5 @@
 //! Render settings and cached display/key records.
+use crate::rows::row_columns;
 use crate::canvas::{Canvas, Color};
 use crate::model::{ProjectedPlanet, ProjectedMoon, ProjectedConstellation, ProjectionViewport as Viewport, SkyCatalog};
 use std::sync::Arc;
@@ -69,6 +70,7 @@ pub(crate) struct PixelStarKey {
     pub(crate) magnitude: f64,
     pub(crate) color: [u8; 3],
 }
+row_columns!(PixelStarKey { cell, magnitude, color });
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct CharacterStarKey {
@@ -76,6 +78,7 @@ pub(crate) struct CharacterStarKey {
     pub(crate) glyph: char,
     pub(crate) color: Option<Color>,
 }
+row_columns!(CharacterStarKey { cell, glyph, color });
 
 #[derive(Clone, PartialEq)]
 pub(crate) enum StarKeys {
@@ -92,6 +95,7 @@ pub(crate) struct StarDisplay {
     pub(crate) color: Option<Color>,
     pub(crate) named: bool,
 }
+row_columns!(StarDisplay { rgb, color, named });
 
 pub(crate) struct PreparedScene {
     pub(crate) catalog: Arc<SkyCatalog>,

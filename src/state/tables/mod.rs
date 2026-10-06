@@ -16,8 +16,9 @@
 mod leaves;
 mod log;
 
-pub(crate) use leaves::{Bytes, Opaque, ScalarCache, Single};
+pub(crate) use leaves::{Bytes, Named, Opaque, ScalarCache, Single};
 use crate::cache::Group;
+use crate::rows::Column;
 
 /// One rectangular container: rows of one element type, or a byte buffer in fixed-size chunks.
 pub trait Table {
@@ -33,6 +34,8 @@ pub trait Table {
     fn reserved_bytes(&self) -> usize;
     /// Extra facts: cache metadata, "rows own further allocations", mapped-section markers.
     fn note(&self) -> Option<String> { None }
+    /// Column names and types of one row; empty when unknown (opaque payloads, caches holding nothing).
+    fn columns(&self) -> Vec<Column> { Vec::new() }
 }
 
 /// Callback for one table: its dotted path, the table and, for cached results, the policy group.
@@ -56,6 +59,7 @@ impl<T: Table + ?Sized> Table for &T {
     fn used_bytes(&self) -> usize { (**self).used_bytes() }
     fn reserved_bytes(&self) -> usize { (**self).reserved_bytes() }
     fn note(&self) -> Option<String> { (**self).note() }
+    fn columns(&self) -> Vec<Column> { (**self).columns() }
 }
 impl<T: Table + ?Sized> Table for Box<T> {
     fn shape(&self) -> Vec<usize> { (**self).shape() }
@@ -64,6 +68,7 @@ impl<T: Table + ?Sized> Table for Box<T> {
     fn used_bytes(&self) -> usize { (**self).used_bytes() }
     fn reserved_bytes(&self) -> usize { (**self).reserved_bytes() }
     fn note(&self) -> Option<String> { (**self).note() }
+    fn columns(&self) -> Vec<Column> { (**self).columns() }
 }
 /// `None` is an empty table, so optional buffers keep their path in the listing.
 impl<T: Table> Table for Option<T> {
@@ -73,6 +78,7 @@ impl<T: Table> Table for Option<T> {
     fn used_bytes(&self) -> usize { self.as_ref().map_or(0, Table::used_bytes) }
     fn reserved_bytes(&self) -> usize { self.as_ref().map_or(0, Table::reserved_bytes) }
     fn note(&self) -> Option<String> { self.as_ref().map_or_else(|| Some("none".into()), Table::note) }
+    fn columns(&self) -> Vec<Column> { self.as_ref().map_or_else(Vec::new, Table::columns) }
 }
 impl<T: Tables + ?Sized> Tables for std::sync::Arc<T> {
     fn visit_tables(&self, prefix: &str, visit: &mut TableVisitor<'_>) {

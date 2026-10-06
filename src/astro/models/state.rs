@@ -1,4 +1,5 @@
 //! Common geometric states and stable identity, independent of the selected ephemeris.
+use crate::rows::row_columns;
 use crate::astro::Vector3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -35,6 +36,7 @@ pub struct BodyState {
     pub position: Vector3,
     pub velocity: Vector3,
 }
+row_columns!(BodyState { position, velocity });
 
 impl BodyState {
     pub fn evaluate(self, days: f64) -> Self {

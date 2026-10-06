@@ -1,4 +1,5 @@
 //! Time, sampling and error records independent of simulation storage.
+use crate::rows::row_columns;
 use crate::astro::{COMPUTATIONAL_INTERVAL, models::BodyId};
 use std::fmt;
 
@@ -102,6 +103,7 @@ pub(crate) struct Sample<T> {
     pub(crate) half_span: f64,
     pub(crate) value: T,
 }
+row_columns!(Sample<T> { epoch, half_span, value });
 impl<T> Sample<T> {
     pub(crate) fn covers(&self, tt: f64) -> bool {
         tt == self.epoch || (COMPUTATIONAL_INTERVAL.contains(tt) && (tt - self.epoch).abs() <= self.half_span)

@@ -1,6 +1,7 @@
 //! Print every table the state holds: path, shape, bytes, cache metadata, the first and last rows.
 use super::Tables;
 use crate::cache::Group;
+use crate::rows::short_type_name;
 use crate::state::ApplicationState;
 use crate::timing::format_bytes;
 use std::fs::OpenOptions;
@@ -75,15 +76,27 @@ fn ttl_text(config: &crate::cache::CacheConfig, group: Group) -> String {
     }
 }
 
-/// All rows when there are few; otherwise the first and last `EDGE_ROWS` with an "omitted" line between.
+/// The `columns:` line, then all rows when there are few; otherwise the first and last `EDGE_ROWS` with an
+/// "omitted" line between.
 fn preview_rows(table: &dyn super::Table) -> Vec<String> {
+    let mut rows = Vec::new();
+    if let Some(columns) = describe_columns(table) { rows.push(format!("  columns: {}", truncate(&columns))); }
     let count = table.rows();
     let line = |index: usize| format!("  [{index}] {}", truncate(&table.row(index)));
-    if count <= 2 * EDGE_ROWS { return (0..count).map(line).collect(); }
-    let mut rows: Vec<String> = (0..EDGE_ROWS).map(line).collect();
+    if count <= 2 * EDGE_ROWS { rows.extend((0..count).map(line)); return rows; }
+    rows.extend((0..EDGE_ROWS).map(line));
     rows.push(format!("  ... {} rows omitted ...", count - 2 * EDGE_ROWS));
     rows.extend((count - EDGE_ROWS..count).map(line));
     rows
+}
+/// `name: dtype | name: dtype`; an unnamed column prints its dtype alone. None when the table has no columns.
+fn describe_columns(table: &dyn super::Table) -> Option<String> {
+    let columns = table.columns();
+    if columns.is_empty() { return None; }
+    Some(columns.iter().map(|c| {
+        let dtype = short_type_name(c.dtype);
+        if c.name.is_empty() { dtype } else { format!("{}: {dtype}", c.name) }
+    }).collect::<Vec<_>>().join(" | "))
 }
 fn truncate(text: &str) -> String {
     match text.char_indices().nth(MAX_TEXT) {
@@ -150,6 +163,9 @@ mod tests {
         }
         assert!(text.contains("cache.observation.motion") && text.contains("ttl=") && text.contains("invalid=true"));
         assert!(text.contains("cache.sky.moon") && text.contains("shape=[1]"));
+        assert!(text.contains("  columns: phase: MoonPhase | illumination: MoonIllumination | position: Vector3"));
+        let motion_lines: Vec<&str> = text.lines().skip_while(|l| !l.starts_with("cache.observation.motion ")).take(2).collect();
+        assert!(!motion_lines[1].contains("columns:"), "an empty cache has no value to describe: {motion_lines:?}");
     }
 
     /// Loaded catalog plus one headless observation and projection: columns, caches and previews are shown.
@@ -181,11 +197,25 @@ mod tests {
         let longest = text.lines().max_by_key(|l| l.chars().count()).unwrap();
         assert!(longest.chars().count() <= 60 + 2 * MAX_TEXT, "rows and notes are truncated: {longest}"); // path, header, cache note and a cut note
 
-        // no table prints more than the two edges plus the omitted line
+        // no table prints more than the columns line, the two edges and the omitted line
         let mut rows_in_table = 0;
         for line in text.lines() {
-            if line.starts_with(' ') { rows_in_table += 1; assert!(rows_in_table <= 2 * EDGE_ROWS + 1, "too many rows: {line}"); } else { rows_in_table = 0; }
+            if line.starts_with(' ') { rows_in_table += 1; assert!(rows_in_table <= 2 * EDGE_ROWS + 2, "too many rows: {line}"); } else { rows_in_table = 0; }
         }
+
+        // column names come from the row_columns! lines, types from the compiler
+        let after = |path: &str| -> Vec<&str> {
+            text.lines().skip_while(|l| !l.starts_with(&format!("{path} "))).skip(1).take_while(|l| l.starts_with(' ')).collect()
+        };
+        assert_eq!(after("cache.sky.stars")[0], "  columns: source_index: usize | drawable: bool | magnitude: f64 | position: Vector3");
+        let u0_rows = after("persistent.catalog.stars.u0");
+        assert_eq!(u0_rows[0], "  columns: x: f32 | y: f32 | z: f32");
+        assert_eq!(u0_rows[1].matches(" | ").count(), 2, "{}", u0_rows[1]);
+        assert_eq!(after("persistent.catalog.stars.magnitude")[0], "  columns: f32");
+        assert_eq!(after("cache.simulation.planets")[0], "  columns: epoch: f64 | half_span: f64 | value: [BodyState; 9]");
+        let trace = after("timings.trace.steps")[0];
+        assert!(trace.contains("parent: Option<usize>") && !trace.contains("memory_"), "{trace}");
+        assert!(after("cache.observation.stellar")[0].starts_with("  columns: catalog_index: usize | direction: Vector3 |"));
     }
 
     /// A file path appends; two calls give two sections in one file.
