@@ -7,7 +7,7 @@ mod rendering;
 #[cfg(feature = "memory-diagnostics")]
 mod memory;
 
-pub use application::{ApplicationState, RunState};
+pub use application::{ApplicationState, Persistent, Caches};
 pub use processing::{SimulationState, ObservationCache, ProjectionCache, SceneCache};
 pub(crate) use processing::{
     RegionCache, CandidateCache, SelectedCache, WorkingCache, MotionCache, EligibleCache, RelativeCache,

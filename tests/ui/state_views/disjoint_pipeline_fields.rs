@@ -3,14 +3,14 @@ use astroterm::catalog::{Catalog, StarNames};
 use astroterm::model::{ObservedSky, ProjectionViewport, View, Frame, RenderOptions};
 use astroterm::projection::{borrow_projected, project_cached_sky};
 use astroterm::scene::draw_characters;
-use astroterm::state::{ObservationCache, ProjectionCache, RenderingState, RunState, SceneCache, SimulationState};
+use astroterm::state::{ObservationCache, ProjectionCache, RenderingState, Caches, SceneCache, SimulationState};
 use astroterm::timing::StepTimes;
 use std::sync::Arc;
 
 fn main() {
     let catalog = Catalog::new(Vec::new(), StarNames::default(), Vec::new());
     let sky = ObservedSky::new(Arc::new(astroterm::sky::prepare_owned_catalog(catalog)));
-    let mut run = RunState {
+    let mut run = Caches {
         sky, simulation: SimulationState::default(), observation: ObservationCache::default(),
         projection: ProjectionCache::default(), rendering: RenderingState::Pending,
     };
@@ -24,7 +24,7 @@ fn main() {
         magnitude_threshold: 5.0, label_threshold: 0.0, dynamic_names: false,
     };
 
-    let RunState { sky, projection, simulation, .. } = &mut run;
+    let Caches { sky, projection, simulation, .. } = &mut run;
     project_cached_sky(projection, sky, &view, viewport, 2451545.0, &mut times); // source is read while output is written
     let projected = borrow_projected(projection, sky, &view, viewport);
     simulation.begin_frame(); // changing a disjoint state owner does not invalidate the borrowed projection

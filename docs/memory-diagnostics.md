@@ -56,7 +56,7 @@ A view grants access to existing data and usually allocates nothing itself.
 A small illustrative row:
 
 ```text
-state.run.observation.scratch [Application/Heap] len=0 capacity=1024; used 0 B; reserved 152.0 KiB
+state.cache.observation.scratch [Application/Heap] len=0 capacity=1024; used 0 B; reserved 152.0 KiB
 ```
 
 This scratch vector is empty now, but keeps room for its next batch. Clearing it removed its elements; it did not

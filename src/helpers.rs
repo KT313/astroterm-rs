@@ -75,7 +75,7 @@ pub(super) fn load_catalog(state: &mut ApplicationState, directories: &DatasetDi
             &mut io::stdout().lock(), &mut io::stderr().lock())),
     };
     state.replace_catalog(Arc::new(catalog));                                          // the single catalog install point
-    let catalog = &state.catalog;
+    let catalog = &state.persistent.catalog;
 
     #[cfg(feature = "memory-diagnostics")]
     state.timings.record_memory(state.timings.last_memory_step(), || {
@@ -104,9 +104,9 @@ pub(super) fn prepare_terminal(state: &mut ApplicationState) -> io::Result<Rende
         let config = &state.config;
         Renderer::open(config.renderer, config.graphics_protocol, config.render, config.terminal, config.text_scale)
     })?;
-    state.run.rendering = rendering;
+    state.cache.rendering = rendering;
     let config = &state.config;
-    state.timings.describe("Terminal setup", || format!("renderer={:?}; projection viewport={}x{}; metadata={}; frame-time panel={}; runtime cache enabled={}", config.renderer, renderer.viewport(&state.run.rendering).width, renderer.viewport(&state.run.rendering).height, config.terminal.metadata_panel, config.terminal.frame_times, config.cache.enabled));
+    state.timings.describe("Terminal setup", || format!("renderer={:?}; projection viewport={}x{}; metadata={}; frame-time panel={}; runtime cache enabled={}", config.renderer, renderer.viewport(&state.cache.rendering).width, renderer.viewport(&state.cache.rendering).height, config.terminal.metadata_panel, config.terminal.frame_times, config.cache.enabled));
     Ok(renderer)
 }
 
@@ -156,7 +156,7 @@ pub(super) fn capture_failed_frame_memory(state: &mut ApplicationState, renderer
         let Some(run) = state.timings.memory_run() else { return; };
         if !run.frame_active { return; }
         let tt = run.current_time.map(|time| time.1);
-        capture_memory(&state.config, &state.catalog, &state.run, renderer, &mut state.timings, "After incomplete frame", tt);
+        capture_memory(&state.config, &state.persistent.catalog, &state.cache, renderer, &mut state.timings, "After incomplete frame", tt);
     }
 }
 
@@ -278,9 +278,9 @@ pub(super) fn record_frame_duration(config: &Config, frame_start: Instant, time:
 #[allow(clippy::too_many_arguments)]
 #[cfg_attr(not(feature = "memory-diagnostics"), allow(unused_variables))]
 #[inline]
-pub(super) fn capture_memory(config: &Config, catalog: &Arc<astroterm::model::SkyCatalog>, run: &astroterm::state::RunState, renderer: &Renderer, times: &mut StepTimes, label: &'static str, tt: Option<f64>) {
+pub(super) fn capture_memory(config: &Config, catalog: &Arc<astroterm::model::SkyCatalog>, caches: &astroterm::state::Caches, renderer: &Renderer, times: &mut StepTimes, label: &'static str, tt: Option<f64>) {
     #[cfg(feature = "memory-diagnostics")]
-    if config.debug_memory { times.capture_memory(|times| astroterm::state::capture_run_inventory(config, catalog, run, renderer, times, label, tt)); }
+    if config.debug_memory { times.capture_memory(|times| astroterm::state::capture_run_inventory(config, catalog, caches, renderer, times, label, tt)); }
 }
 
 /// Record the actual read-only frame view, without creating another view or copying its geometry.

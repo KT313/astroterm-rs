@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use astroterm::astro::SimulationClock;
 use astroterm::terminal::{Renderer, poll_frame_input};
 use astroterm::timing::StepTimes;
-use astroterm::state::{ApplicationState, RunState};
+use astroterm::state::{ApplicationState, Caches};
 
 use crate::helpers::{
     apply_frame_controls, borrow_frame_projection, observe_frame, project_frame, record_frame_duration,
@@ -18,22 +18,22 @@ use crate::helpers::capture_memory;
 /// Draw frames at the configured rate until the user quits. Keys change the view and the simulation clock.
 pub(super) fn run_render_loop(state: &mut ApplicationState, renderer: &mut Renderer) -> io::Result<()> {
 
-    let ApplicationState { config, catalog, run, timings: step_times } = state;
+    let ApplicationState { config, persistent, cache, timings: step_times } = state;
 
     let frame_duration = Duration::from_secs_f64(1.0 / f64::from(config.fps));                            // set the target time between frames from the requested FPS
     let mut view = config.view;
     let simulation = &config.simulation;
 
-    renderer.configure_cache(&mut run.rendering, &config.cache);
+    renderer.configure_cache(&mut cache.rendering, &config.cache);
 
-    prepare_frame_data(run, renderer, step_times);                                                        // calculate values that stay the same for the whole run
-    capture_memory(config, catalog, run, renderer, step_times, "After preparation", None);                // inspect loaded/prepared buffers only when requested
+    prepare_frame_data(cache, renderer, step_times);                                                      // calculate values that stay the same for the whole run
+    capture_memory(config, &persistent.catalog, cache, renderer, step_times, "After preparation", None); // inspect loaded/prepared buffers only when requested
     let mut clock = SimulationClock::start(simulation.start_julian_date, simulation.speed);               // start simulated time after setup is complete
     step_times.reset_frame_timings();                                                                     // keep setup time out of the displayed frame timings
 
     loop {
         let frame_start = Instant::now();
-        let RunState { sky, simulation: simulation_state, observation: observation_cache, projection: projection_cache, rendering } = &mut *run;
+        let Caches { sky, simulation: simulation_state, observation: observation_cache, projection: projection_cache, rendering } = &mut *cache;
         step_times.begin_frame();
         step_times.begin_memory_frame();                                                                  // keep this frame separate from startup and the last completed frame
 
@@ -52,7 +52,7 @@ pub(super) fn run_render_loop(state: &mut ApplicationState, renderer: &mut Rende
         renderer.render_frame(rendering, &projected, &view, time.utc, &clock, &simulation.observer, step_times)?;  // draw the sky and text, then display them in the terminal
 
         let elapsed = record_frame_duration(config, frame_start, time, step_times);                       // record frame duration before the final memory inspection
-        capture_memory(config, catalog, run, renderer, step_times, "After presented frame", Some(time.tt));
+        capture_memory(config, &persistent.catalog, cache, renderer, step_times, "After presented frame", Some(time.tt));
 
         step_times.complete_memory_frame(elapsed);                                                        // retain completed diagnostics only after successful presentation
 
@@ -62,8 +62,8 @@ pub(super) fn run_render_loop(state: &mut ApplicationState, renderer: &mut Rende
 }
 
 /// Prepare values that depend only on this run's immutable catalog. Time and camera results stay in the loop.
-fn prepare_frame_data(run: &mut RunState, renderer: &mut Renderer, times: &mut StepTimes) {
-    let RunState { sky, observation, projection, rendering, .. } = run;
+fn prepare_frame_data(cache: &mut Caches, renderer: &mut Renderer, times: &mut StepTimes) {
+    let Caches { sky, observation, projection, rendering, .. } = cache;
     let catalog = &sky.catalog;
     times.measure_steps("Frame preparation", |times| {
         astroterm::sky::prepare_observation_catalog(observation, catalog.clone(), times);                 // record how each star's position and brightness can change

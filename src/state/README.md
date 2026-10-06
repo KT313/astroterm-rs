@@ -3,14 +3,15 @@
 Start with the public types in `mod.rs`; `ApplicationState` is defined in `application/mod.rs`. It is created once
 right after configuration validation, with every owner at its final type and an empty catalog; `replace_catalog`
 installs the prepared catalog before the frame loop and is the only catalog mutation.
-`pipeline.rs` borrows its fields separately for simulation, observation, projection and rendering. Algorithms live
+`pipeline.rs` borrows the `cache` fields separately for simulation, observation, projection and rendering. Algorithms live
 in those processing modules; this folder owns their stored inputs, results and designated scratch buffers.
 
 ```text
 ApplicationState
 ├── config                    validated settings and cache policy
-├── catalog                   Arc<SkyCatalog>: immutable catalog data, installed once by replace_catalog
-├── run
+├── persistent                data loaded once and never changed during the run
+│   └── catalog               Arc<SkyCatalog>: immutable catalog data, installed once by replace_catalog
+├── cache                     everything recomputed from the persistent data and the simulated time
 │   ├── sky                   observed objects ready for projection
 │   ├── simulation            samples of planet, Moon and Earth-orientation models
 │   ├── observation           selection, motion and correction caches
@@ -31,7 +32,7 @@ private; their layout is for navigation, not additional import paths.
 
 | Folder | Responsibility |
 |---|---|
-| `application/` | The complete application root and the fields of an active run. |
+| `application/` | The complete application root: `persistent` data, the `cache` stages and `timings`. |
 | `processing/` | Simulation samples, observation/projection/scene caches, and their restricted borrowed views. |
 | `rendering/` | Character/pixel frame buffers, terminal diff history and glyph storage. |
 | `memory/` | The inventory capture flow; collection and report helpers implement its bounded traversal and output. |
@@ -49,7 +50,7 @@ These are different positions in different arrays; they are not interchangeable:
    selects the catalog row. The working set includes required constellation endpoints.
 3. **Correction selection** stores working indices retained for drawing or constellation geometry; its order
    determines the observed output list.
-4. An **observed index** selects `run.sky.stars`, after that correction selection.
+4. An **observed index** selects `cache.sky.stars`, after that correction selection.
 5. A **visible index** selects projection's `(observed_index, Cell)` array.
 6. A **draw-order position** selects an entry in the order array; that entry holds a visible index. Rendering follows
    dimmest-first magnitude, then ascending stable ID.
@@ -121,7 +122,7 @@ catalog-identity replacement clears catalog-dependent caches, classes and scratc
 light-time caches. Explicit catalog preparation resets the full observation owner and then builds classifications.
 The two entry points deliberately have different lifecycles.
 
-`run.sky.stars` owns calculated records only, with catalog metadata borrowed through `ObservedStarView` on demand.
+`cache.sky.stars` owns calculated records only, with catalog metadata borrowed through `ObservedStarView` on demand.
 Correction selection clears/refills that vector; subsequent corrections write its positions. Planet/Moon fields are
 updated in place. The legacy `candidate_indices` vector remains owned here for the uncached observation path.
 

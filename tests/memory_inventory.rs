@@ -4,7 +4,7 @@ use astroterm::cache::{
     Cache, CacheConfig, BufferSink, InventorySnapshot, Kind, Owner, Quality, ReportBuffers, report_field,
 };
 use astroterm::state::{
-    ApplicationState, RunState, collect_inventory, write_inventory, MAX_ROWS, MAX_DEPTH, MAX_CHILDREN,
+    ApplicationState, Caches, collect_inventory, write_inventory, MAX_ROWS, MAX_DEPTH, MAX_CHILDREN,
 };
 use astroterm::cli::Arguments;
 use astroterm::cli::build_config;
@@ -144,11 +144,11 @@ fn inventory_does_not_change_output_or_cache_statistics() {
     let mut state = ApplicationState::new(config, astroterm::timing::StepTimes::with_trace(true));
     state.replace_catalog(Arc::new(astroterm::sky::prepare_owned_catalog(astroterm::catalog::load_embedded_catalog().unwrap())));
     for policy in [CacheConfig::default(), CacheConfig::disabled()] {
-        state.run.simulation.configure_cache(&policy);
-        state.run.observation = astroterm::state::ObservationCache::new(policy.clone());
-        state.run.projection = astroterm::state::ProjectionCache::new(policy);
-        let active = &mut state.run;
-        let RunState { sky, simulation, observation, projection, .. } = &mut *active;
+        state.cache.simulation.configure_cache(&policy);
+        state.cache.observation = astroterm::state::ObservationCache::new(policy.clone());
+        state.cache.projection = astroterm::state::ProjectionCache::new(policy);
+        let active = &mut state.cache;
+        let Caches { sky, simulation, observation, projection, .. } = &mut *active;
         let time = FrameTime::from_utc(J2000);
         astroterm::sky::update_simulation(simulation, time, &[], &mut state.timings).unwrap();
         let mut site = astroterm::sky::prepare_cached_observer(observation, simulation, time, Observer::default()).unwrap();
@@ -156,11 +156,11 @@ fn inventory_does_not_change_output_or_cache_statistics() {
         astroterm::sky::observe_cached_sky(observation, simulation, &site, 5.0, true, astroterm::model::SkyRegion::All, sky, &mut state.timings).unwrap();
         astroterm::projection::project_cached_sky(projection, sky, &astroterm::model::View::default(), Viewport { width: 80, height: 40 }, time.tt, &mut state.timings);
         let before = (sky.stars.clone(), observation.reports(), projection.stats());
-        let _ = collect_inventory("run", &*active);
+        let _ = collect_inventory("cache", &*active);
         assert_eq!(before, (active.sky.stars.clone(), active.observation.reports(), active.projection.stats()));
     }
-    assert!(!state.run.sky.stars.is_empty());
-    assert!(state.run.observation.stats().refreshes > 0); // completed working data remains inspectable in the root
+    assert!(!state.cache.sky.stars.is_empty());
+    assert!(state.cache.observation.stats().refreshes > 0); // completed working data remains inspectable in the root
 }
 
 #[test]
@@ -224,13 +224,15 @@ fn report_groups_working_data_and_distinguishes_references_from_owned_payload() 
     use astroterm::state::InventoryCollector;
     let mut collector = InventoryCollector::new("latest completed frame", Some(2451545.0));
     collector.enter("state", 64);
+    collector.enter("persistent", 8);
     collector.enter("catalog", 8);
     assert!(collector.begin_shared(123, 8));
     collector.payload(2, 4, 16, Quality::ExactPayload, "catalog payload");
     collector.mapping(456, 4096);
     collector.end_shared();
     collector.leave();
-    collector.enter("run", 32);
+    collector.leave();
+    collector.enter("cache", 32);
     for name in ["simulation", "observation", "projection", "rendering"] {
         collector.enter(name, 8);
         collector.payload(0, 16, 1, Quality::ExactPayload, "cleared retained scratch");
@@ -354,12 +356,12 @@ fn root_capture_keeps_diagnostic_and_external_payloads_separate() {
     times.capture_memory(|_| collect_inventory("prior fixture", &vec![0_u8; 32]));
     let state = ApplicationState::new(config, times); // the empty startup catalog is enough for a root capture
     let writer = Vec::<u8>::with_capacity(256); // stand-in for the external writer's known buffer
-    let snapshot = capture_run_inventory(&state.config, &state.catalog, &state.run, &writer, &state.timings, "root", None);
+    let snapshot = capture_run_inventory(&state.config, &state.persistent.catalog, &state.cache, &writer, &state.timings, "root", None);
     assert_eq!(snapshot.omitted_nodes, 0);
     assert!(sum_known_payload(&snapshot, Owner::Diagnostics).used.unwrap() > 0);
     assert_eq!(sum_known_payload(&snapshot, Owner::External).reserved, Some(writer.capacity()));
     assert!(sum_known_payload(&snapshot, Owner::External).unknown_records > 0);
     assert!(snapshot.rows.iter().filter(|row| row.path.starts_with("state.timings")).all(|row| row.owner == Owner::Diagnostics));
-    assert!(snapshot.rows.iter().any(|row| row.kind == Kind::Alias && row.path == "state.run.sky.catalog"));
+    assert!(snapshot.rows.iter().any(|row| row.kind == Kind::Alias && row.path == "state.cache.sky.catalog"));
     assert!(snapshot.rows.iter().any(|row| row.owner == Owner::External && row.note.contains("startup data")));
 }

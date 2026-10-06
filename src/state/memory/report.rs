@@ -29,11 +29,11 @@ fn classify_group(row: &BufferDescriptor) -> Group {
     if row.owner == Owner::Diagnostics { return Group::Diagnostics; }
     if row.owner == Owner::External { return Group::External; }
     let path = row.path.as_str();
-    if belongs_to(path, "state.catalog") { return Group::Catalog; }
-    if belongs_to(path, "state.run.simulation") { return Group::Simulation; }
-    if belongs_to(path, "state.run.sky") || belongs_to(path, "state.run.observation") { return Group::Observation; }
-    if belongs_to(path, "state.run.projection") { return Group::Projection; }
-    if belongs_to(path, "state.run.rendering") { return Group::Rendering; }
+    if belongs_to(path, "state.persistent.catalog") { return Group::Catalog; }
+    if belongs_to(path, "state.cache.simulation") { return Group::Simulation; }
+    if belongs_to(path, "state.cache.sky") || belongs_to(path, "state.cache.observation") { return Group::Observation; }
+    if belongs_to(path, "state.cache.projection") { return Group::Projection; }
+    if belongs_to(path, "state.cache.rendering") { return Group::Rendering; }
     if belongs_to(path, "state.config") { return Group::Configuration; }
     Group::Other
 }
