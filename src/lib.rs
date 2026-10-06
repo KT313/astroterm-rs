@@ -7,8 +7,9 @@
 //! [`model`]. Catalog and observed data, view settings, projected geometry and validated configuration live there;
 //! representation accessors and constructors do not depend on higher processing modules. [`sky`], [`projection`]
 //! and [`scene`] contain preparation, correction, geometric and drawing algorithms over restricted borrowed inputs.
-//! [`state::ApplicationState`] owns the catalog, processing caches, rendering buffers and designated scratch after
-//! catalog loading. Only the terminal writer/restoration guard stays scoped outside it. The optional
+//! [`state::ApplicationState`] owns the catalog, processing caches, rendering buffers and designated scratch from
+//! startup; the prepared catalog is installed through `replace_catalog`. Only the terminal writer/restoration guard
+//! stays scoped outside it. The optional
 //! `memory-diagnostics` feature inventories those owners without changing their calculations or cache policies.
 //!
 //! [`astro::models`] keeps independent star, planet, Moon and orientation formulas. [`controls`] changes views and

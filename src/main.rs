@@ -13,7 +13,7 @@ use astroterm::cli::Arguments;
 use astroterm::state::ApplicationState;
 
 use helpers::{
-    capture_failed_frame_memory, configure_memory_reporting, finish_rendering, load_catalog_sky, load_cities,
+    capture_failed_frame_memory, configure_memory_reporting, finish_rendering, load_catalog, load_cities,
     prepare_terminal, print_bash_completions, start_step_times, validate_arguments,
 };
 use pipeline::run_render_loop;
@@ -29,10 +29,10 @@ fn main() -> ExitCode {
 
     configure_memory_reporting(&config, &mut step_times);                                       // retain startup and frame diagnostics when requested
 
+    let mut state = ApplicationState::new(config, step_times);                                  // create every working-data owner before any data is loaded
     let directories = DatasetDirectories::for_user();                                           // locate dataset and cache on disk
-    let Ok(sky) = load_catalog_sky(&config, &directories, &mut step_times) else { return ExitCode::FAILURE; }; // load dataset
+    let Ok(()) = load_catalog(&mut state, &directories) else { return ExitCode::FAILURE; };    // load and prepare the dataset into the state
 
-    let mut state = ApplicationState::new(config, sky, step_times);                             // group validated settings and loaded working data
     let result = render_in_terminal(&mut state);                                                // run frames within the terminal's cleanup scope
     finish_rendering(result, &state)                                                            // report results after the terminal is restored
 }

@@ -141,8 +141,8 @@ fn inventory_does_not_change_output_or_cache_statistics() {
     use astroterm::astro::{J2000, Observer};
     use astroterm::model::{ProjectionViewport as Viewport, FrameTime};
     let config = build_config(Arguments::try_parse_from(["astroterm", "--debug-singleframe", "--debug-memory"]).unwrap(), &[]).unwrap();
-    let sky = astroterm::model::Sky::new(Arc::new(astroterm::sky::prepare_owned_catalog(astroterm::catalog::load_embedded_catalog().unwrap())));
-    let mut state = ApplicationState::new(config, sky, astroterm::timing::StepTimes::with_trace(true));
+    let mut state = ApplicationState::new(config, astroterm::timing::StepTimes::with_trace(true));
+    state.replace_catalog(Arc::new(astroterm::sky::prepare_owned_catalog(astroterm::catalog::load_embedded_catalog().unwrap())));
     for policy in [CacheConfig::default(), CacheConfig::disabled()] {
         state.run.simulation.configure_cache(&policy);
         state.run.observation = astroterm::state::ObservationCache::new(policy.clone());
@@ -348,13 +348,11 @@ fn saved_inventory_accounts_for_descriptors_without_recounting_the_subject() {
 fn root_capture_keeps_diagnostic_and_external_payloads_separate() {
     use astroterm::state::{capture_run_inventory, sum_known_payload};
     let config = build_config(Arguments::try_parse_from(["astroterm"]).unwrap(), &[]).unwrap();
-    let catalog = astroterm::sky::prepare_owned_catalog(astroterm::catalog::Catalog::new(vec![], Default::default(), vec![]));
-    let sky = astroterm::model::Sky::new(Arc::new(catalog));
     let mut times = astroterm::timing::StepTimes::with_trace(true);
     times.measure("fixture", || ());
     times.describe("fixture", || "retained diagnostic detail".into());
     times.capture_memory(|_| collect_inventory("prior fixture", &vec![0_u8; 32]));
-    let state = ApplicationState::new(config, sky, times);
+    let state = ApplicationState::new(config, times); // the empty startup catalog is enough for a root capture
     let writer = Vec::<u8>::with_capacity(256); // stand-in for the external writer's known buffer
     let snapshot = capture_run_inventory(&state.config, &state.catalog, &state.run, &writer, &state.timings, "root", None);
     assert_eq!(snapshot.omitted_nodes, 0);

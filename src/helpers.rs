@@ -54,45 +54,48 @@ pub(super) fn validate_arguments(arguments: Arguments, cities: &[City]) -> Resul
     build_config(arguments, cities).map_err(report_failure)
 }
 
-/// Load the selected catalog and record its startup diagnostics.
-pub(super) fn load_catalog_sky(
-    config: &Config,
-    directories: &DatasetDirectories,
-    step_times: &mut StepTimes,
-) -> Result<Sky, ExitCode> {
-    let catalog = step_times.measure_steps("Dataset loading", |times| {
+/// Load the selected catalog into the state and record its startup diagnostics.
+pub(super) fn load_catalog(state: &mut ApplicationState, directories: &DatasetDirectories) -> Result<(), ExitCode> {
+    let catalog = state.timings.measure_steps("Dataset loading", |times| {
         astroterm::sky::load_sky_catalog_with_times(
-            config.dataset.as_ref(),
+            state.config.dataset.as_ref(),
             directories,
             &mut io::stderr().lock(),
             times,
         )
     });
-    let sky = match catalog {
-        Ok(catalog) => Sky::new(Arc::new(catalog)),
-        Err(error) => return Err(finish_requested_report(Err(io::Error::other(error)), config, step_times,
+    let catalog = match catalog {
+        Ok(catalog) if catalog.stars.is_empty() => Err(io::Error::other("dataset contains no stars")), // an empty catalog is only valid before loading
+        Ok(catalog) => Ok(catalog),
+        Err(error) => Err(io::Error::other(error)),
+    };
+    let catalog = match catalog {
+        Ok(catalog) => catalog,
+        Err(error) => return Err(finish_requested_report(Err(error), &state.config, &state.timings,
             &mut io::stdout().lock(), &mut io::stderr().lock())),
     };
+    state.replace_catalog(Arc::new(catalog));                                          // the single catalog install point
+    let catalog = &state.catalog;
 
     #[cfg(feature = "memory-diagnostics")]
-    step_times.record_memory(step_times.last_memory_step(), || {
+    state.timings.record_memory(state.timings.last_memory_step(), || {
         use astroterm::timing::{BufferId, BufferShape, IndexDomain, MemoryEvent, Operation};
-        let shape = BufferShape { len: Some(sky.catalog.stars.len()), ..BufferShape::unknown(IndexDomain::Catalog) };
-        MemoryEvent::operation(BufferId::CatalogStars, if sky.catalog.stars.is_mapped() { Operation::Map } else { Operation::Build }, None, Some(shape), shape.len, None)
+        let shape = BufferShape { len: Some(catalog.stars.len()), ..BufferShape::unknown(IndexDomain::Catalog) };
+        MemoryEvent::operation(BufferId::CatalogStars, if catalog.stars.is_mapped() { Operation::Map } else { Operation::Build }, None, Some(shape), shape.len, None)
     });
 
-    step_times.describe("Dataset loading", || format!(
+    state.timings.describe("Dataset loading", || format!(
         "output stars={}; constellation figures={}; unique endpoints={}; always-checked stars={}; tangential fallbacks={}; mapped={}",
-        sky.catalog.stars.len(), sky.catalog.constellations.len(), sky.catalog.endpoint_indices.len(),
-        sky.catalog.always_checked.len(), sky.catalog.singular_count, sky.catalog.stars.is_mapped(),
+        catalog.stars.len(), catalog.constellations.len(), catalog.endpoint_indices.len(),
+        catalog.always_checked.len(), catalog.singular_count, catalog.stars.is_mapped(),
     ));
 
     eprintln!(
         "Catalog: {} stars use tangential motion after near-collision checks.",
-        sky.catalog.singular_count
+        catalog.singular_count
     );
 
-    Ok(sky)
+    Ok(())
 }
 
 /// Open the terminal, install its working buffers and describe setup before the caller starts the frame loop.

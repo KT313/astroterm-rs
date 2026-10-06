@@ -1,13 +1,15 @@
 # Working data and its owners
 
-Start with the public types in `mod.rs`; `ApplicationState` is defined in `application/mod.rs`. It is created once after configuration validation and catalog loading.
+Start with the public types in `mod.rs`; `ApplicationState` is defined in `application/mod.rs`. It is created once
+right after configuration validation, with every owner at its final type and an empty catalog; `replace_catalog`
+installs the prepared catalog before the frame loop and is the only catalog mutation.
 `pipeline.rs` borrows its fields separately for simulation, observation, projection and rendering. Algorithms live
 in those processing modules; this folder owns their stored inputs, results and designated scratch buffers.
 
 ```text
 ApplicationState
 ├── config                    validated settings and cache policy
-├── catalog                   Arc<SkyCatalog>: immutable catalog data
+├── catalog                   Arc<SkyCatalog>: immutable catalog data, installed once by replace_catalog
 ├── run
 │   ├── sky                   observed objects ready for projection
 │   ├── simulation            samples of planet, Moon and Earth-orientation models
@@ -63,7 +65,7 @@ catalog; frame processing reads it. Catalog indices follow cell, conservative br
 
 | Storage | Contents and readers | Lifetime |
 |---|---|---|
-| `stars.u0`, `w`, `distance`, precise-motion exceptions | J2000 equatorial unit directions, normalized motion per Julian year (365.25 days), distance in parsecs; stellar propagation reads them | Immutable during the run; replaced with the catalog |
+| `stars.u0`, `w`, `distance`, precise-motion exceptions | J2000 equatorial unit directions, normalized motion per Julian year (365.25 days), distance in parsecs; stellar propagation reads them | Immutable during the run; the `Arc` is swapped once at startup by `replace_catalog` |
 | `magnitude`, `brightness_key`, `motion_bound` | Starting magnitude, conservative brightest magnitude and angular drift in radians; selection/propagation read them | Same |
 | IDs, names/ranges, designations, spectral types, colors, flags | Stable identity and encoded display metadata; ordering, labels and appearance read them | Same |
 | `grid.offsets`, coarse/fine caps, `always_checked` | Catalog-region membership and conservative angular caps; region/brightness filtering reads them | Same; cap vectors are also built for mapped catalogs |
