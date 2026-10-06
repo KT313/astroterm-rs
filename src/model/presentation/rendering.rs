@@ -63,14 +63,14 @@ pub(crate) struct SceneKey {
     pub(crate) canvas_size: Option<(usize, usize)>,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct PixelStarKey {
     pub(crate) cell: (i32, i32),
     pub(crate) magnitude: f64,
     pub(crate) color: [u8; 3],
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct CharacterStarKey {
     pub(crate) cell: (i32, i32),
     pub(crate) glyph: char,
@@ -86,7 +86,7 @@ pub(crate) enum StarKeys {
     },
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct StarDisplay {
     pub(crate) rgb: [u8; 3],
     pub(crate) color: Option<Color>,

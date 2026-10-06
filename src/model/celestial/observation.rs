@@ -138,6 +138,7 @@ pub(crate) struct CorrectionSelection {
     pub(crate) stats: crate::model::CorrectionStats,
 }
 
+#[derive(Debug)]
 pub(crate) struct StellarWork {
     pub(crate) source_index: usize,
     pub(crate) magnitude: f64,

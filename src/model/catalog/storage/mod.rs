@@ -170,6 +170,14 @@ impl StarStorage {
     pub fn is_mapped(&self) -> bool {
         matches!(self.rows, StarRows::Mapped(_))
     }
+    /// Name byte ranges addressed by the `name` column (1-based; 0 means unnamed).
+    pub(crate) fn name_table(&self) -> &CatalogArray<[u64; 2]> {
+        &self.name_table
+    }
+    /// Full-precision motions addressed by the `precise_index` column (1-based; 0 means none).
+    pub(crate) fn precise_motions(&self) -> &CatalogArray<[f64; 7]> {
+        &self.precise_motions
+    }
     /// Column bytes in section order, followed by the two side tables.
     pub(crate) fn cache_sections(&self) -> Vec<&[u8]> {
         let c = self.columns();

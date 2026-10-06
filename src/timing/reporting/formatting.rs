@@ -7,4 +7,5 @@ pub(crate) fn format_bytes(value: Option<usize>) -> String {
     while n >= 1024.0 && unit < units.len() - 1 { n /= 1024.0; unit += 1; }
     if unit == 0 { format!("{value} B") } else { format!("{n:.1} {}", units[unit]) }
 }
+#[cfg(feature = "memory-diagnostics")]
 pub(crate) fn format_count(value: Option<usize>) -> String { value.map_or_else(|| "unknown".into(), |value| value.to_string()) }

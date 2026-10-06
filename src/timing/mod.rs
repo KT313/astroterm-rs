@@ -13,7 +13,6 @@ mod memory;
 #[cfg(feature = "memory-diagnostics")]
 #[path = "history/run.rs"]
 mod run;
-#[cfg(feature = "memory-diagnostics")]
 #[path = "reporting/formatting.rs"]
 mod formatting;
 #[cfg(feature = "memory-diagnostics")]
@@ -28,8 +27,9 @@ pub use memory::{RecordedMemoryEvent, MAX_MEMORY_EVENTS_PER_STEP};
 pub use run::{MemoryFrame, MemoryRun, StepAggregate, TraceBounds, MAX_TRACE_STEPS, MAX_TRACE_DEPTH,
     MAX_TRACE_EVENTS, MAX_TRACE_DETAILS, MAX_TRACE_TEXT_BYTES, MAX_DETAIL_BYTES, MAX_TRACE_INVENTORIES,
     MAX_TIMING_PATHS, MAX_AGGREGATE_PATHS};
+pub(crate) use formatting::format_bytes;
 #[cfg(feature = "memory-diagnostics")]
-pub(crate) use formatting::{format_bytes, format_count};
+pub(crate) use formatting::format_count;
 
 /// Weight of the previous average in the exponential moving average; the newest frame gets the rest.
 const EMA_FACTOR: f64 = 0.95;

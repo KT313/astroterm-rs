@@ -24,6 +24,19 @@ The terminal session is a separate scoped guard: it owns the output writer and r
 reports print. It does not own scene data. `ProjectedSky` is a local borrowed view, not another stored copy or a
 reference from one root field into another. Headless callers can instead own `ProjectionData` and borrow its view.
 
+### Table registry
+
+`tables/` lists every data table the root holds in one flat form, for memory debugging in any build. `Table` is one
+container (a column, a Vec, a cache's stored value, an image, a canvas); `Tables` is an owner that visits its tables
+with dotted paths such as `cache.observation.motion`. Each owner has one listing in `tables/owners.rs`: a
+`list_tables!` line naming its fields and their cache `Group`, or a short hand-written `visit_tables` when a field
+needs a view or a wrapper. Add a field there when you add one to an owner; leaf impls for container types are in
+`tables/leaves.rs`. A type implements `Table` or `Tables`, never both.
+
+`state.log_data(path, section)` writes the listing: path, shape, used and reserved bytes, the cache policy and
+metadata, then the first and last ten rows. `Some(path)` appends to that file (created if missing); `None` prints
+to stdout. Use a path inside the frame loop: the terminal session owns stdout and the alternate screen is active.
+
 
 ## Find an owner or a report
 
@@ -35,6 +48,7 @@ private; their layout is for navigation, not additional import paths.
 | `application/` | The complete application root: `persistent` data, the `cache` stages and `timings`. |
 | `processing/` | Simulation samples, observation/projection/scene caches, and their restricted borrowed views. |
 | `rendering/` | Character/pixel frame buffers, terminal diff history and glyph storage. |
+| `tables/` | The table registry and `log_data`: one flat listing of every table the root holds. |
 | `memory/` | The inventory capture flow; collection and report helpers implement its bounded traversal and output. |
 
 Shared records follow the same rule through `crate::model`: catalog representation is under `model/catalog/`,

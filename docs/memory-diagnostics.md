@@ -4,6 +4,20 @@
 performed by each pipeline step. It helps answer **“what data does this step work on?”** It is not a heap profiler or
 a measurement of physical RAM traffic. Normal builds omit the collection and storage engine; the lazy hook API compiles to no-ops.
 
+## Quick dump without the feature
+
+Any build can write every table the state holds (catalog columns, caches, rendering buffers) with their shape,
+used and reserved bytes, cache policy and metadata, and the first and last ten rows. From code:
+
+```rust
+state.log_data(Some(Path::new("/tmp/astroterm-tables.log")), Some("after frame 3"))?;  // append a section
+state.log_data(None, None)?;                                                            // print to stdout
+```
+
+Use a file path when the frame loop is running: the terminal owns stdout and the alternate screen is active.
+The dump is the quick overview; the inventory below is the precise accounting of shared allocations, mappings,
+coverage and per-step operations.
+
 ## Build and run
 
 Build support explicitly; passing the flag does not rebuild the binary:

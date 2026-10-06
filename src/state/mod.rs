@@ -4,6 +4,7 @@
 mod application;
 mod processing;
 mod rendering;
+mod tables;
 #[cfg(feature = "memory-diagnostics")]
 mod memory;
 
@@ -15,6 +16,7 @@ pub(crate) use processing::{
     StarProjectionBuffers, DrawOrderBuffers,
 };
 pub use rendering::{RenderingState, CompressionSupport, CharacterState, PixelState, Presenter, TextRasterizer};
+pub use tables::{Table, TableVisitor, Tables};
 #[cfg(feature = "memory-diagnostics")]
 pub use memory::{
     InventoryCollector, KnownPayload, MAX_ROWS, MAX_DEPTH, MAX_CHILDREN, DETAIL_CHILDREN, MAX_VISITS,

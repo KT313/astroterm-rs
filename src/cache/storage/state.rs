@@ -40,6 +40,16 @@ impl<K, V> Default for Cache<K, V> {
         }
     }
 }
+impl<K, V> Cache<K, V> {
+    /// The stored result, even when invalidated or expired: an invalidated entry still owns its allocation.
+    pub fn stored(&self) -> Option<&V> {
+        self.value.as_ref()
+    }
+    /// The key the stored result was calculated for, if any.
+    pub fn key(&self) -> Option<&K> {
+        self.key.as_ref()
+    }
+}
 impl<K: PartialEq, V: PartialEq> Cache<K, V> {
     pub fn invalidate(&mut self) {
         self.has_been_invalidated = true;
