@@ -34,9 +34,7 @@ impl SkyCatalog {
 
     /// Number of possible-brightness candidates across all cells for an inclusive threshold.
     pub fn count_bright_stars(&self, threshold: f64) -> usize {
-        (0..self.stars.len())
-            .filter(|&i| self.stars.brightness_key(i) <= threshold)
-            .count()
+        self.stars.brightness_keys().iter().filter(|&&key| f64::from(key) <= threshold).count()
     }
 
     /// Resolve a star's name from the sky-owned string block.

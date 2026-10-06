@@ -1,6 +1,6 @@
 //! Prepared-catalog cache schema, fingerprints and semantic checks. I/O lives here above the pure models;
 //! only immutable catalog arrays are mapped, never simulation samples or frame buffers.
-use crate::model::{SkyCatalog, CELL_COUNT, SkyGrid, Constellation, StarStorage};
+use crate::model::{SkyCatalog, CELL_COUNT, SkyGrid, Constellation, StarStorage, STAR_SECTIONS};
 use super::super::grid::stored_cell;
 use crate::catalog::{
     StarNames,
@@ -16,13 +16,19 @@ use std::{
     time::UNIX_EPOCH,
 };
 
-const SECTION_COUNT: usize = 24;
+// star-storage sections first, then grid offsets, always-checked indices, endpoints, names and figures
+const GRID_OFFSETS: usize = STAR_SECTIONS;
+const ALWAYS_CHECKED: usize = STAR_SECTIONS + 1;
+const ENDPOINTS: usize = STAR_SECTIONS + 2;
+const NAMES: usize = STAR_SECTIONS + 3;
+const FIGURES: usize = STAR_SECTIONS + 4;
+const SECTION_COUNT: usize = STAR_SECTIONS + 5;
 
 /// Covers the layout, all numerical contracts, parsing/selection policies and embedded supplemental data.
 /// Source hashes deliberately invalidate caches even for conservative implementation-only changes.
 pub fn catalog_fingerprint() -> [u8; 32] {
     let mut hash = Sha256::new();
-    hash.update(b"astroterm catalog v1; little-endian u64 indices; validation=1; HR=1; override=1; motion=1; quantization=1; cube-Morton=1");
+    hash.update(b"astroterm catalog v2; vector columns; little-endian u64 indices; validation=1; HR=1; override=1; motion=1; quantization=1; cube-Morton=1");
     for value in [
         crate::astro::COMPUTATIONAL_INTERVAL.start_tt,
         crate::astro::COMPUTATIONAL_INTERVAL.end_tt,
@@ -48,6 +54,7 @@ pub fn catalog_fingerprint() -> [u8; 32] {
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/catalog/cache/encoding.rs")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/catalog/cache/mod.rs")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/model/catalog/storage/mod.rs")).as_slice(),
+        include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/model/catalog/storage/columns.rs")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/model/catalog/storage/views.rs")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/model/catalog/grid.rs")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/model/catalog/records.rs")).as_slice(),
@@ -109,15 +116,15 @@ pub fn load_cached_catalog(path: &Path, fingerprint: &[u8; 32]) -> io::Result<Sk
         return Err(invalid("catalog section count mismatch"));
     }
     let stars = StarStorage::from_mapping(&mapping)?;
-    let names = StarNames::from_array(CatalogArray::from_mapping(&mapping, 22)?)?;
-    let constellations = decode_figures(mapping.slice(23)?)?;
+    let names = StarNames::from_array(CatalogArray::from_mapping(&mapping, NAMES)?)?;
+    let constellations = decode_figures(mapping.slice(FIGURES)?)?;
     let mut catalog = SkyCatalog {
         stars,
         names,
         constellations,
-        grid: SkyGrid::from_offsets(CatalogArray::from_mapping(&mapping, 19)?),
-        always_checked: CatalogArray::from_mapping(&mapping, 20)?,
-        endpoint_indices: CatalogArray::from_mapping(&mapping, 21)?,
+        grid: SkyGrid::from_offsets(CatalogArray::from_mapping(&mapping, GRID_OFFSETS)?),
+        always_checked: CatalogArray::from_mapping(&mapping, ALWAYS_CHECKED)?,
+        endpoint_indices: CatalogArray::from_mapping(&mapping, ENDPOINTS)?,
         singular_count: 0,
     };
     validate_catalog(&catalog, false)?;
@@ -335,12 +342,12 @@ mod tests {
                     bytes[start] ^= 1;
                 }
                 4 => {
-                    let start = section(&bytes, 22);
+                    let start = section(&bytes, NAMES);
                     bytes[start] = 255;
                 }
                 5 => {
                     let pair = source.grid.offsets.windows(2).find(|p| p[1] - p[0] >= 2).unwrap();
-                    let start = section(&bytes, 7) + pair[0] * 4;
+                    let start = section(&bytes, 3) + pair[0] * 4; // brightness keys
                     bytes[start..start + 4].copy_from_slice(&f32::MAX.to_le_bytes());
                 }
                 6 => {
@@ -348,24 +355,24 @@ mod tests {
                     bytes[start..start + 4].copy_from_slice(&f32::NAN.to_le_bytes());
                 }
                 7 => {
-                    let start = section(&bytes, 11);
+                    let start = section(&bytes, 7); // name indices
                     bytes[start..start + 4].copy_from_slice(&u32::MAX.to_le_bytes());
                 }
                 8 => {
-                    let start = section(&bytes, 10);
+                    let start = section(&bytes, 6); // stable IDs
                     let id = bytes[start..start + 8].to_vec();
                     bytes[start + 8..start + 16].copy_from_slice(&id);
                 }
                 9 => {
-                    let start = section(&bytes, 13);
+                    let start = section(&bytes, 8); // designations
                     bytes[start] = 255;
                 }
                 10 => {
-                    let start = section(&bytes, 19);
+                    let start = section(&bytes, GRID_OFFSETS);
                     bytes[start..start + 8].copy_from_slice(&1_u64.to_le_bytes());
                 }
                 _ => {
-                    let start = section(&bytes, 21);
+                    let start = section(&bytes, ENDPOINTS);
                     bytes[start..start + 8].copy_from_slice(&u64::MAX.to_le_bytes());
                 }
             }

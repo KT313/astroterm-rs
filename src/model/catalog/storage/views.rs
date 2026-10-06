@@ -1,10 +1,12 @@
-//! Borrow validated arrays once per processing pass. No ownership, validation, precision or cache-format changes.
-use super::{StarStorage, decode_motion, expand};
+//! Borrow validated columns once per processing pass. The vector columns get typed N×3 views; scalar columns
+//! are plain slices already. No ownership, validation, precision or cache-format changes.
+use super::{StarStorage, columns::section, decode_motion, expand};
 use crate::{
     astro::{Vector3, models::stars::StellarMotion},
     catalog::{EncodedDesignation, NameId},
     model::ObservedStar,
 };
+use ndarray::ArrayView2;
 
 pub(crate) struct ObservationFields<'a> {
     magnitude: &'a [f32],
@@ -20,8 +22,8 @@ impl ObservationFields<'_> {
     }
 }
 pub(crate) struct TrajectoryFields<'a> {
-    u0: [&'a [f32]; 3],
-    w: [&'a [f32]; 3],
+    u0: &'a [[f32; 3]],
+    w: &'a [[f32; 3]],
     distance: &'a [f32],
     precise_indices: &'a [u32],
     precise_motions: &'a [[f64; 7]],
@@ -33,43 +35,55 @@ impl TrajectoryFields<'_> {
             return decode_motion(self.precise_motions[precise as usize - 1]);
         }
         StellarMotion {
-            u0: expand(std::array::from_fn(|axis| self.u0[axis][index])),
-            w: expand(std::array::from_fn(|axis| self.w[axis][index])),
+            u0: expand(self.u0[index]),
+            w: expand(self.w[index]),
             distance_pc: (self.distance[index] > 0.0).then_some(f64::from(self.distance[index])),
         }
     }
 }
 impl StarStorage {
+    /// Stored unit directions as an N×3 view, one row per catalog index; zero copy for owned and mapped data.
+    pub fn directions(&self) -> ArrayView2<'_, f32> {
+        ArrayView2::from(self.column(section::U0, |rows| rows.u0.as_slice()))
+    }
+    /// Normalized motion per Julian year as an N×3 view; rows with a precise entry are zero.
+    pub fn motions(&self) -> ArrayView2<'_, f32> {
+        ArrayView2::from(self.column(section::W, |rows| rows.w.as_slice()))
+    }
+    pub(crate) fn brightness_keys(&self) -> &[f32] {
+        self.column(section::BRIGHTNESS_KEY, |rows| rows.brightness_key.as_slice())
+    }
+    pub(crate) fn motion_bounds(&self) -> &[f32] {
+        self.column(section::MOTION_BOUND, |rows| rows.motion_bound.as_slice())
+    }
     pub(crate) fn borrow_observation_fields(&self) -> ObservationFields<'_> {
         ObservationFields {
-            magnitude: &self.magnitude,
+            magnitude: self.column(section::MAGNITUDE, |rows| rows.magnitude.as_slice()),
         }
     }
-    pub fn name(&self, index: usize) -> Option<NameId> {
-        let name = self.names[index];
-        (name != 0).then(|| NameId::from_range(self.name_table[name as usize - 1]))
-    }
-    pub fn designation(&self, index: usize) -> EncodedDesignation {
-        EncodedDesignation::from_validated_bytes(self.designations[index])
-    }
-    pub fn spectral_type(&self, index: usize) -> [u8; 2] {
-        self.spectral_types[index]
-    }
-    pub fn color_index(&self, index: usize) -> Option<f32> {
-        (self.flags[index] & 2 != 0).then_some(self.colors[index])
-    }
-
     pub(crate) fn borrow_trajectory_fields(&self) -> TrajectoryFields<'_> {
+        let c = self.columns();
         TrajectoryFields {
-            u0: std::array::from_fn(|axis| &*self.u0[axis]),
-            w: std::array::from_fn(|axis| &*self.w[axis]),
-            distance: &self.distance,
-            precise_indices: &self.precise_indices,
+            u0: c.u0,
+            w: c.w,
+            distance: c.distance,
+            precise_indices: c.precise_index,
             precise_motions: &self.precise_motions,
         }
     }
-    pub(crate) fn brightness_keys(&self) -> &[f32] {
-        &self.brightness_key
+    pub fn name(&self, index: usize) -> Option<NameId> {
+        let name = self.column(section::NAME, |rows| rows.name.as_slice())[index];
+        (name != 0).then(|| NameId::from_range(self.name_table[name as usize - 1]))
+    }
+    pub fn designation(&self, index: usize) -> EncodedDesignation {
+        EncodedDesignation::from_validated_bytes(self.column(section::DESIGNATION, |rows| rows.designation.as_slice())[index])
+    }
+    pub fn spectral_type(&self, index: usize) -> [u8; 2] {
+        self.column(section::SPECTRAL_TYPE, |rows| rows.spectral_type.as_slice())[index]
+    }
+    pub fn color_index(&self, index: usize) -> Option<f32> {
+        let flags = self.column(section::FLAGS, |rows| rows.flags.as_slice())[index];
+        (flags & 2 != 0).then_some(self.column(section::COLOR, |rows| rows.color.as_slice())[index])
     }
 }
 
@@ -99,6 +113,8 @@ mod tests {
         for catalog in [&owned, &mapped] {
             let fields = catalog.stars.borrow_observation_fields();
             let trajectories = catalog.stars.borrow_trajectory_fields();
+            let directions = catalog.stars.directions();
+            assert_eq!(directions.shape(), &[catalog.stars.len(), 3]);
             for index in 0..catalog.stars.len() {
                 let full = catalog.stars.get(index);
                 let observed = fields.create_observed_star(index, true);
@@ -120,6 +136,8 @@ mod tests {
                     catalog.names.get(full.name)
                 );
                 assert_eq!(trajectories.motion(index), catalog.stars.motion(index));
+                let row = directions.row(index);
+                assert_eq!(expand([row[0], row[1], row[2]]), catalog.stars.stored_direction(index));
             }
         }
     }

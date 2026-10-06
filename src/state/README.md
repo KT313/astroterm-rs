@@ -65,16 +65,18 @@ catalog; frame processing reads it. Catalog indices follow cell, conservative br
 
 | Storage | Contents and readers | Lifetime |
 |---|---|---|
-| `stars.u0`, `w`, `distance`, precise-motion exceptions | J2000 equatorial unit directions, normalized motion per Julian year (365.25 days), distance in parsecs; stellar propagation reads them | Immutable during the run; the `Arc` is swapped once at startup by `replace_catalog` |
-| `magnitude`, `brightness_key`, `motion_bound` | Starting magnitude, conservative brightest magnitude and angular drift in radians; selection/propagation read them | Same |
-| IDs, names/ranges, designations, spectral types, colors, flags | Stable identity and encoded display metadata; ordering, labels and appearance read them | Same |
+| `stars` columns `u0`, `w` (N×3), `distance`; `precise_motions` side table | J2000 equatorial unit directions, normalized motion per Julian year (365.25 days), distance in parsecs; stellar propagation reads them through `columns()` or the `directions()`/`motions()` views | Immutable during the run; the `Arc` is swapped once at startup by `replace_catalog` |
+| `stars` columns `magnitude`, `brightness_key`, `motion_bound` | Starting magnitude, conservative brightest magnitude and angular drift in radians; selection/propagation read them | Same |
+| `stars` columns `id`, `name`, `designation`, `spectral_type`, `color`, `flags`; `name_table` side table | Stable identity and encoded display metadata; ordering, labels and appearance read them | Same |
 | `grid.offsets`, coarse/fine caps, `always_checked` | Catalog-region membership and conservative angular caps; region/brightness filtering reads them | Same; cap vectors are also built for mapped catalogs |
 | `endpoint_indices`, constellation figures/segments | Sorted catalog-index union and resolved endpoint pairs; endpoint merge and arc projection read them | Same |
 | `names.text` | UTF-8 text block; labels resolve name ranges into it | Same |
 
-A `CatalogArray` either owns its vector or holds a mapping handle and section range. All mapped sections can share
-one `Arc<MappedCatalog>`; the map's logical extent is counted once. The catalog's other Arc handles also share one
-allocation. Pointer deduplication applies within each inventory, never across captures.
+The per-star columns are declared once as `StarRow` (`model/catalog/storage/columns.rs`); `StarRowVec` owns one
+vector per column and `StarRowSlice` borrows all of them, either from those vectors or from the sections of one
+`Arc<MappedCatalog>`. Side tables and grid arrays use `CatalogArray`, which likewise owns a vector or names a mapped
+section. The map's logical extent is counted once. The catalog's other Arc handles also share one allocation.
+Pointer deduplication applies within each inventory, never across captures.
 
 The names and constellation figures cloned into `ObservedSky`, and the projection preparation copies of figures
 and endpoints, are intentional retained copies. Owned name bytes can be copied; mapped names share the mapping.

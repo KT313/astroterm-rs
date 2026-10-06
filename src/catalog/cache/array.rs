@@ -70,15 +70,6 @@ impl<T: Pod> CatalogArray<T> {
     pub(crate) fn push(&mut self, value: T) {
         self.owned_mut().push(value);
     }
-    pub(crate) fn swap(&mut self, a: usize, b: usize) {
-        self.owned_mut().swap(a, b);
-    }
-    pub(crate) fn reserve(&mut self, capacity: usize) {
-        self.owned_mut().reserve(capacity);
-    }
-    pub(crate) fn shrink_to_fit(&mut self) {
-        self.owned_mut().shrink_to_fit();
-    }
 }
 
 #[cfg(feature = "memory-diagnostics")]
