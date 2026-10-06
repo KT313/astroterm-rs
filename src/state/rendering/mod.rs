@@ -1,5 +1,9 @@
 //! Application-owned character/pixel rendering buffers. The terminal writer and cleanup guard live outside state.
-use crate::{astro::Observer, canvas::Canvas, model::{config::TerminalSettings, metadata::{MetadataField, ObserverTimeZone}, rendering::{Frame, Glyph, RenderOptions}, projection::ProjectionViewport as Viewport}};
+use crate::astro::Observer;
+use crate::canvas::Canvas;
+use crate::model::{
+    TerminalSettings, MetadataField, ObserverTimeZone, Frame, Glyph, RenderOptions, ProjectionViewport as Viewport,
+};
 use fontdue::Font;
 use std::collections::HashMap;
 use ratatui::layout::Rect;
@@ -104,32 +108,32 @@ pub struct TextRasterizer {
 }
 
 #[cfg(feature = "memory-diagnostics")]
-impl crate::cache::buffers::ReportBuffers for TextRasterizer {
-    fn report_buffers(&self, sink: &mut dyn crate::cache::buffers::BufferSink) {
-        crate::cache::buffers::report_field(sink, "glyphs", &self.glyphs);
+impl crate::cache::ReportBuffers for TextRasterizer {
+    fn report_buffers(&self, sink: &mut dyn crate::cache::BufferSink) {
+        crate::cache::report_field(sink, "glyphs", &self.glyphs);
         sink.unknown("fontdue Font internals are opaque; glyph coverage Vecs are counted above");
     }
 }
 
 
 #[cfg(feature = "memory-diagnostics")]
-crate::cache::buffers::report_fields!(Presenter { screen, previous });
+crate::cache::report_fields!(Presenter { screen, previous });
 
 #[cfg(feature = "memory-diagnostics")]
-impl crate::cache::buffers::ReportBuffers for RenderingState {
-    fn report_buffers(&self, sink: &mut dyn crate::cache::buffers::BufferSink) {
+impl crate::cache::ReportBuffers for RenderingState {
+    fn report_buffers(&self, sink: &mut dyn crate::cache::BufferSink) {
         match self {
             Self::Pending => {},
-            Self::Chars(value) => crate::cache::buffers::report_field(sink, "characters", value),
-            Self::Pixels(value) => crate::cache::buffers::report_field(sink, "pixels", value),
+            Self::Chars(value) => crate::cache::report_field(sink, "characters", value),
+            Self::Pixels(value) => crate::cache::report_field(sink, "pixels", value),
         }
     }
 }
 
 #[cfg(feature = "memory-diagnostics")]
-impl crate::cache::buffers::ReportBuffers for CharacterState {
-    fn report_buffers(&self, sink: &mut dyn crate::cache::buffers::BufferSink) {
-        use crate::cache::buffers::report_field;
+impl crate::cache::ReportBuffers for CharacterState {
+    fn report_buffers(&self, sink: &mut dyn crate::cache::BufferSink) {
+        use crate::cache::report_field;
         report_field(sink, "scene_cache", &self.scene_cache);
         report_field(sink, "cache_diagnostics", &self.cache_diagnostics);
         report_field(sink, "frame", &self.frame);
@@ -142,9 +146,9 @@ impl crate::cache::buffers::ReportBuffers for CharacterState {
 }
 
 #[cfg(feature = "memory-diagnostics")]
-impl crate::cache::buffers::ReportBuffers for PixelState {
-    fn report_buffers(&self, sink: &mut dyn crate::cache::buffers::BufferSink) {
-        use crate::cache::buffers::report_field;
+impl crate::cache::ReportBuffers for PixelState {
+    fn report_buffers(&self, sink: &mut dyn crate::cache::BufferSink) {
+        use crate::cache::report_field;
         report_field(sink, "scene_cache", &self.scene_cache);
         report_field(sink, "cache_diagnostics", &self.cache_diagnostics);
         report_field(sink, "raster_text", &self.raster_text);
@@ -165,9 +169,9 @@ impl crate::cache::buffers::ReportBuffers for PixelState {
 
 /// Ratatui exposes cell storage, but not each CompactString's allocator capacity.
 #[cfg(feature = "memory-diagnostics")]
-fn report_cell_buffer(sink: &mut dyn crate::cache::buffers::BufferSink, name: &str, buffer: &ratatui::buffer::Buffer) {
+fn report_cell_buffer(sink: &mut dyn crate::cache::BufferSink, name: &str, buffer: &ratatui::buffer::Buffer) {
     if sink.enter(name, std::mem::size_of_val(buffer)) {
-        sink.payload(buffer.content.len(), buffer.content.capacity(), std::mem::size_of::<ratatui::buffer::Cell>(), crate::cache::buffers::Quality::ExactPayload, "ratatui cell vector; indirect symbol allocations excluded");
+        sink.payload(buffer.content.len(), buffer.content.capacity(), std::mem::size_of::<ratatui::buffer::Cell>(), crate::cache::Quality::ExactPayload, "ratatui cell vector; indirect symbol allocations excluded");
         sink.unknown("ratatui cell symbol storage is opaque; inline symbols are included in the cell vector");
         sink.leave();
     }

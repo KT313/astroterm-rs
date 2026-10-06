@@ -1,5 +1,6 @@
 //! Logical sample-family operations, shared by planetary, lunar and orientation preparation.
-use crate::{model::simulation::Sample, timing::{StepTimes, memory::{Access, BufferId, BufferShape, IndexDomain, MemoryEvent, Operation}}};
+use crate::model::Sample;
+use crate::timing::{StepTimes, Access, BufferId, BufferShape, IndexDomain, MemoryEvent, Operation};
 
 #[allow(clippy::ptr_arg)] // retained capacity is part of the observation
 #[inline]

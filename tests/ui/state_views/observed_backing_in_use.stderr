@@ -1,9 +1,9 @@
 error[E0502]: cannot borrow `sky.stars` as mutable because it is also borrowed as immutable
-  --> tests/ui/state_views/observed_backing_in_use.rs:10:5
-   |
- 9 |     let projected = borrow_projected(cache, sky, &View::default(), ProjectionViewport { width: 8, height: 8 });
-   |                                             --- immutable borrow occurs here
-10 |     sky.stars.clear(); // rendering below still reads these observed records through the projected view
-   |     ^^^^^^^^^^^^^^^^^ mutable borrow occurs here
-11 |     astroterm::scene::draw_sky_scene(canvas, options, &projected);
-   |                                                       ---------- immutable borrow later used here
+ --> tests/ui/state_views/observed_backing_in_use.rs:8:5
+  |
+7 |     let projected = borrow_projected(cache, sky, &View::default(), ProjectionViewport { width: 8, height: 8 });
+  |                                             --- immutable borrow occurs here
+8 |     sky.stars.clear(); // rendering below still reads these observed records through the projected view
+  |     ^^^^^^^^^^^^^^^^^ mutable borrow occurs here
+9 |     astroterm::scene::draw_sky_scene(canvas, options, &projected);
+  |                                                       ---------- immutable borrow later used here

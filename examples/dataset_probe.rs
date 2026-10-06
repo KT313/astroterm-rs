@@ -2,11 +2,9 @@
 //! XDG_CACHE_HOME to isolated folders on Linux when testing a cold named-dataset download.
 use astroterm::astro::{J2000, Observer};
 use astroterm::catalog::datasets::{Dataset, DatasetDirectories};
-use astroterm::model::Sky;
-use astroterm::model::projection::{ProjectionViewport as Viewport, View};
+use astroterm::model::{Sky, ProjectionViewport as Viewport, View};
 use astroterm::projection::project_sky;
-use astroterm::sky::update_sky_positions;
-use astroterm::sky::cache::load_sky_catalog;
+use astroterm::sky::{update_sky_positions, load_sky_catalog};
 use astroterm::timing::StepTimes;
 use std::{io, sync::Arc, time::Instant};
 fn main() -> Result<(), Box<dyn std::error::Error>> {

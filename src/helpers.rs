@@ -1,4 +1,4 @@
-//! Application startup, frame-stage details, terminal lifetime, diagnostics and exit reporting.
+//! Application startup, frame-stage details, terminal setup, diagnostics and exit reporting.
 
 use astroterm::state::{ObservationCache, ProjectionCache, SimulationState, RenderingState};
 use std::fmt::Display;
@@ -10,22 +10,25 @@ use std::time::Instant;
 use astroterm::astro::SimulationClock;
 use astroterm::catalog::{City, datasets::DatasetDirectories, load_embedded_cities};
 use astroterm::cli::{Arguments, build_config, write_bash_completions};
-use astroterm::model::config::Config;
+use astroterm::model::Config;
 use astroterm::controls::apply_control;
-use astroterm::model::projection::View;
-use astroterm::model::Sky;
-use astroterm::model::simulation::FrameTime;
+use astroterm::model::{View, Sky, FrameTime};
 use astroterm::sky::update_simulation;
 use astroterm::terminal::{FrameInput, Renderer};
 use astroterm::timing::StepTimes;
 use astroterm::state::ApplicationState;
 
-use crate::pipeline::run_render_loop;
-
 /// Capture startup timings for either diagnostic mode; memory collection still waits for validated options.
 pub(super) fn start_step_times(arguments: &Arguments) -> StepTimes {
     let memory_requested = cfg!(feature = "memory-diagnostics") && arguments.debug_memory;
     StepTimes::with_trace(arguments.debug_singleframe || memory_requested)
+}
+
+/// Enable bounded memory reports only after the user's options have been validated.
+#[cfg_attr(not(feature = "memory-diagnostics"), allow(unused_variables))]
+pub(super) fn configure_memory_reporting(config: &Config, times: &mut StepTimes) {
+    #[cfg(feature = "memory-diagnostics")]
+    if config.debug_memory { times.enable_memory_run(config.cache.enabled); }
 }
 
 /// Load the embedded city table, recording diagnostics and reporting any failure.
@@ -58,7 +61,7 @@ pub(super) fn load_catalog_sky(
     step_times: &mut StepTimes,
 ) -> Result<Sky, ExitCode> {
     let catalog = step_times.measure_steps("Dataset loading", |times| {
-        astroterm::sky::cache::load_sky_catalog_with_times(
+        astroterm::sky::load_sky_catalog_with_times(
             config.dataset.as_ref(),
             directories,
             &mut io::stderr().lock(),
@@ -73,7 +76,7 @@ pub(super) fn load_catalog_sky(
 
     #[cfg(feature = "memory-diagnostics")]
     step_times.record_memory(step_times.last_memory_step(), || {
-        use astroterm::timing::memory::{BufferId, BufferShape, IndexDomain, MemoryEvent, Operation};
+        use astroterm::timing::{BufferId, BufferShape, IndexDomain, MemoryEvent, Operation};
         let shape = BufferShape { len: Some(sky.catalog.stars.len()), ..BufferShape::unknown(IndexDomain::Catalog) };
         MemoryEvent::operation(BufferId::CatalogStars, if sky.catalog.stars.is_mapped() { Operation::Map } else { Operation::Build }, None, Some(shape), shape.len, None)
     });
@@ -92,24 +95,19 @@ pub(super) fn load_catalog_sky(
     Ok(sky)
 }
 
-/// Open the renderer and restore the terminal before returning the render-loop result.
-pub(super) fn render_in_terminal(state: &mut ApplicationState) -> io::Result<()> {
-    let renderer = state.timings.measure("Terminal setup", || {
+/// Open the terminal, install its working buffers and describe setup before the caller starts the frame loop.
+pub(super) fn prepare_terminal(state: &mut ApplicationState) -> io::Result<Renderer> {
+    let (renderer, rendering) = state.timings.measure("Terminal setup", || {
         let config = &state.config;
         Renderer::open(config.renderer, config.graphics_protocol, config.render, config.terminal, config.text_scale)
-    });
-    renderer.and_then(|(mut renderer, rendering)| {
-        state.run.rendering = rendering;
-        let config = &state.config;
-        state.timings.describe("Terminal setup", || format!("renderer={:?}; projection viewport={}x{}; metadata={}; frame-time panel={}; runtime cache enabled={}", config.renderer, renderer.viewport(&state.run.rendering).width, renderer.viewport(&state.run.rendering).height, config.terminal.metadata_panel, config.terminal.frame_times, config.cache.enabled));
-        let result = run_render_loop(state, &mut renderer);
-        #[cfg(feature = "memory-diagnostics")]
-        capture_failed_frame_memory(state, &renderer, &result);
-        result
-    })
+    })?;
+    state.run.rendering = rendering;
+    let config = &state.config;
+    state.timings.describe("Terminal setup", || format!("renderer={:?}; projection viewport={}x{}; metadata={}; frame-time panel={}; runtime cache enabled={}", config.renderer, renderer.viewport(&state.run.rendering).width, renderer.viewport(&state.run.rendering).height, config.terminal.metadata_panel, config.terminal.frame_times, config.cache.enabled));
+    Ok(renderer)
 }
 
-/// Report diagnostics and the original rendering result after the terminal helper has dropped its guard.
+/// Report diagnostics and the original rendering result after the terminal scope has dropped its guard.
 pub(super) fn finish_rendering(result: io::Result<()>, state: &ApplicationState) -> ExitCode {
     finish_requested_report(result, &state.config, &state.timings, &mut io::stdout().lock(), &mut io::stderr().lock())
 }
@@ -138,7 +136,7 @@ fn write_run_report(config: &Config, times: &StepTimes, output: &mut impl io::Wr
         let report_start = Instant::now();
         writeln!(output, "Memory report mode: {}", if config.debug_singleframe { "single frame" } else { "continuous run" })?;
         times.write_memory_run_report(output)?;
-        for snapshot in times.memory_inventories() { astroterm::state::memory::write_inventory(snapshot, output)?; }
+        for snapshot in times.memory_inventories() { astroterm::state::write_inventory(snapshot, output)?; }
         writeln!(output, "Report formatting/output before this line: {:.3} ms (after cleanup; final flush excluded)", report_start.elapsed().as_secs_f64() * 1000.0)?;
         return output.flush();
     }
@@ -147,13 +145,16 @@ fn write_run_report(config: &Config, times: &StepTimes, output: &mut impl io::Wr
 }
 
 /// Preserve partial-frame evidence before the renderer guard drops; setup failures have no pending frame.
-#[cfg(feature = "memory-diagnostics")]
-fn capture_failed_frame_memory(state: &mut ApplicationState, renderer: &Renderer, result: &io::Result<()>) {
-    if result.is_ok() { return; }
-    let Some(run) = state.timings.memory_run() else { return; };
-    if !run.frame_active { return; }
-    let tt = run.current_time.map(|time| time.1);
-    capture_memory(&state.config, &state.catalog, &state.run, renderer, &mut state.timings, "After incomplete frame", tt);
+#[cfg_attr(not(feature = "memory-diagnostics"), allow(unused_variables))]
+pub(super) fn capture_failed_frame_memory(state: &mut ApplicationState, renderer: &Renderer, result: &io::Result<()>) {
+    #[cfg(feature = "memory-diagnostics")]
+    {
+        if result.is_ok() { return; }
+        let Some(run) = state.timings.memory_run() else { return; };
+        if !run.frame_active { return; }
+        let tt = run.current_time.map(|time| time.1);
+        capture_memory(&state.config, &state.catalog, &state.run, renderer, &mut state.timings, "After incomplete frame", tt);
+    }
 }
 
 /// Print an error and return a failing exit code.
@@ -235,12 +236,21 @@ pub(super) fn observe_frame(
 
 /// Project the observed sky for the current viewport within the existing Projection timer.
 pub(super) fn project_frame(
-    sky: &Sky, view: &View, viewport: astroterm::model::projection::ProjectionViewport, time: FrameTime,
+    sky: &Sky, view: &View, viewport: astroterm::model::ProjectionViewport, time: FrameTime,
     projection_cache: &mut ProjectionCache, step_times: &mut StepTimes,
 ) {
     step_times.measure_steps("Projection", |steps| {
         astroterm::projection::project_cached_sky(projection_cache, sky, view, viewport, time.tt, steps);
     })
+}
+
+/// Borrow the completed projection once, then describe that same view outside the assembly timer.
+pub(super) fn borrow_frame_projection<'a>(sky: &'a Sky, view: &View, viewport: astroterm::model::ProjectionViewport,
+    projection_cache: &'a ProjectionCache, times: &mut StepTimes) -> astroterm::model::ProjectedSky<'a> {
+    let projected = times.measure("Projected view assembly", || astroterm::projection::borrow_projected(projection_cache, sky, view, viewport));
+    record_projected_memory(times, &projected);
+    times.describe("Projected view assembly", || format!("ordered stars={}; projected-reference records allocated=0; geometry borrowed", projected.stars.len()));
+    projected
 }
 
 /// Cancel the empty diagnostic frame on a quit key without losing the last successfully presented frame.
@@ -267,13 +277,13 @@ pub(super) fn record_frame_duration(config: &Config, frame_start: Instant, time:
 #[inline]
 pub(super) fn capture_memory(config: &Config, catalog: &Arc<astroterm::model::SkyCatalog>, run: &astroterm::state::RunState, renderer: &Renderer, times: &mut StepTimes, label: &'static str, tt: Option<f64>) {
     #[cfg(feature = "memory-diagnostics")]
-    if config.debug_memory { times.capture_memory(|times| astroterm::state::memory::capture_run_inventory(config, catalog, run, renderer, times, label, tt)); }
+    if config.debug_memory { times.capture_memory(|times| astroterm::state::capture_run_inventory(config, catalog, run, renderer, times, label, tt)); }
 }
 
 /// Record the actual read-only frame view, without creating another view or copying its geometry.
 #[inline]
-pub(super) fn record_projected_memory(times: &mut StepTimes, projected: &astroterm::model::projection::ProjectedSky<'_>) {
-    use astroterm::timing::memory::{Access, BufferId, BufferShape, IndexDomain, MemoryEvent};
+fn record_projected_memory(times: &mut StepTimes, projected: &astroterm::model::ProjectedSky<'_>) {
+    use astroterm::timing::{Access, BufferId, BufferShape, IndexDomain, MemoryEvent};
     times.record_memory(times.last_memory_step(), || {
         let shape = BufferShape { len: Some(projected.stars.len()), ..BufferShape::unknown(IndexDomain::Visible) };
         MemoryEvent::borrow(BufferId::ProjectedView, Access::ReadOnly, shape)

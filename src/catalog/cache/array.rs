@@ -82,9 +82,9 @@ impl<T: Pod> CatalogArray<T> {
 }
 
 #[cfg(feature = "memory-diagnostics")]
-impl<T: Pod + crate::cache::buffers::ReportBuffers> crate::cache::buffers::ReportBuffers for CatalogArray<T> {
-    fn report_buffers(&self, sink: &mut dyn crate::cache::buffers::BufferSink) {
-        use crate::cache::buffers::report_field;
+impl<T: Pod + crate::cache::ReportBuffers> crate::cache::ReportBuffers for CatalogArray<T> {
+    fn report_buffers(&self, sink: &mut dyn crate::cache::BufferSink) {
+        use crate::cache::report_field;
         match self {
             Self::Owned(values) => report_field(sink, "owned", values),
             Self::Mapped { catalog, .. } => {

@@ -20,12 +20,12 @@ pub struct Arguments {
 
     /// Renderer: characters (default) or true-color pixels. Constellations, grid, thresholds, labels,
     /// refraction and metadata apply to both; --color, --unicode and --braille affect characters only.
-    #[arg(long, value_enum, default_value_t = crate::model::config::RendererKind::Chars)]
-    pub renderer: crate::model::config::RendererKind,
+    #[arg(long, value_enum, default_value_t = crate::model::RendererKind::Chars)]
+    pub renderer: crate::model::RendererKind,
 
     /// Pixel protocol (normally detected). Force one to test terminal support; halfblocks needs no graphics protocol.
-    #[arg(long, value_enum, default_value_t = crate::model::config::GraphicsProtocol::Auto)]
-    pub graphics_protocol: crate::model::config::GraphicsProtocol,
+    #[arg(long, value_enum, default_value_t = crate::model::GraphicsProtocol::Auto)]
+    pub graphics_protocol: crate::model::GraphicsProtocol,
 
     /// Raster text scale relative to terminal cells [0.25–4], for Sixel/Kitty/iTerm2 only. 1 restores the
     /// terminal-cell-sized layout; characters and native half-block text are unaffected.

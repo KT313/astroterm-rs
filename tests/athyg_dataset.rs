@@ -80,13 +80,10 @@ fn real_catalog_quantization_stays_within_half_an_arcsecond() {
 fn real_catalog_cache_preserves_the_rendered_frame() {
     use astroterm::astro::{J2000, Observer};
     use astroterm::canvas::Canvas;
-    use astroterm::model::Sky;
-    use astroterm::model::projection::{ProjectionViewport as Viewport, View};
-    use astroterm::model::rendering::RenderOptions;
+    use astroterm::model::{Sky, ProjectionViewport as Viewport, View, RenderOptions};
     use astroterm::projection::project_sky;
     use astroterm::scene::draw_sky_scene;
-    use astroterm::sky::update_sky_positions;
-    use astroterm::sky::cache::{catalog_fingerprint, load_cached_catalog, write_cached_catalog};
+    use astroterm::sky::{update_sky_positions, catalog_fingerprint, load_cached_catalog, write_cached_catalog};
     use astroterm::timing::StepTimes;
     fn frame(catalog: SkyCatalog) -> Canvas {
         let mut sky = Sky::new(std::sync::Arc::new(catalog));

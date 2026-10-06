@@ -1,6 +1,6 @@
 use astroterm::astro::Vector3;
 use astroterm::catalog::load_embedded_catalog;
-use astroterm::model::objects::{ObservedStar, ObservedStarView};
+use astroterm::model::{ObservedStar, ObservedStarView};
 use std::{mem::size_of, sync::Arc};
 
 #[test]

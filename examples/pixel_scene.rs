@@ -1,10 +1,9 @@
 //! Save a representative pure raster frame for visual inspection (terminal text is a separate layer).
 use astroterm::astro::{Observer, datetime_to_julian_date, parse_utc_datetime};
 use astroterm::catalog::load_embedded_catalog;
-use astroterm::model::projection::{ProjectionViewport as Viewport, View};
-use astroterm::model::rendering::RenderOptions;
+use astroterm::model::{ProjectionViewport as Viewport, View, RenderOptions};
 use astroterm::projection::project_sky;
-use astroterm::scene::pixels::draw_pixel_sky;
+use astroterm::scene::draw_pixel_sky;
 use astroterm::sky::update_sky_positions;
 use astroterm::timing::StepTimes;
 fn main() -> Result<(), Box<dyn std::error::Error>> {

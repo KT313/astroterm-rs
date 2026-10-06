@@ -7,8 +7,7 @@ mod frame;
 use astroterm::astro::{Observer, datetime_to_julian_date, parse_utc_datetime};
 use astroterm::canvas::Canvas;
 use astroterm::catalog::load_embedded_catalog;
-use astroterm::model::projection::{ProjectionKind, View, ViewCenter};
-use astroterm::model::rendering::RenderOptions;
+use astroterm::model::{ProjectionKind, View, ViewCenter, RenderOptions};
 use astroterm::scene::select_star_appearance;
 use astroterm::model::Sky;
 use astroterm::sky::update_sky_positions;
@@ -70,7 +69,7 @@ fn polaris_is_near_the_center_at_the_north_pole() {
     let projected_data = astroterm::projection::project_sky(
         &sky,
         &View::default(),
-        astroterm::model::projection::ProjectionViewport {
+        astroterm::model::ProjectionViewport {
             height: canvas.height(),
             width: canvas.width(),
         },

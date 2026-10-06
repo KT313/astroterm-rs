@@ -1,12 +1,10 @@
-use astroterm::{
-    canvas::Canvas,
-    catalog::{Catalog, StarNames},
-    model::{ObservedSky, projection::{ProjectionViewport, View}, rendering::{Frame, RenderOptions}},
-    projection::{borrow_projected, project_cached_sky},
-    scene::cached::draw_characters,
-    state::{ObservationCache, ProjectionCache, RenderingState, RunState, SceneCache, SimulationState},
-    timing::StepTimes,
-};
+use astroterm::canvas::Canvas;
+use astroterm::catalog::{Catalog, StarNames};
+use astroterm::model::{ObservedSky, ProjectionViewport, View, Frame, RenderOptions};
+use astroterm::projection::{borrow_projected, project_cached_sky};
+use astroterm::scene::draw_characters;
+use astroterm::state::{ObservationCache, ProjectionCache, RenderingState, RunState, SceneCache, SimulationState};
+use astroterm::timing::StepTimes;
 use std::sync::Arc;
 
 fn main() {

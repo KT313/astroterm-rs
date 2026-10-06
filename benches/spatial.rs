@@ -3,10 +3,7 @@ use astroterm::state::{SimulationState};
 use astroterm::astro::Observer;
 use astroterm::canvas::Canvas;
 use astroterm::catalog::{load_athyg_catalog, load_embedded_catalog};
-use astroterm::model::Sky;
-use astroterm::model::projection::{ProjectionViewport as Viewport, View, ViewCenter};
-use astroterm::model::rendering::RenderOptions;
-use astroterm::model::simulation::FrameTime;
+use astroterm::model::{Sky, ProjectionViewport as Viewport, View, ViewCenter, RenderOptions, FrameTime};
 use astroterm::projection::project_sky;
 use astroterm::scene::draw_sky_scene;
 use astroterm::sky::{observe_sky, prepare_observation, update_simulation};
@@ -106,7 +103,7 @@ fn benchmark_spatial(criterion: &mut Criterion) {
         group.bench_function(format!("query_{name}"), |b| {
             b.iter(|| {
                 black_box(
-                    astroterm::sky::grid::select_grid(&sky.catalog
+                    astroterm::sky::select_grid(&sky.catalog
                         .grid, &sky.catalog.stars, region, &observer, 12.0, true, &mut indices),
                 );
             })

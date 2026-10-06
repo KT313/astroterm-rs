@@ -1,12 +1,10 @@
 use super::*;
-use astroterm::{
-    astro::Vector3,
-    cache::{CacheConfig, RefreshReason},
-    model::{ObservedSky, projection::{ProjectionViewport, View}},
-    projection::{borrow_projected, prepare_projection_catalog, project_cached_sky, project_sky},
-    state::ProjectionCache,
-    timing::TraceStep,
-};
+use astroterm::astro::Vector3;
+use astroterm::cache::{CacheConfig, RefreshReason};
+use astroterm::model::{ObservedSky, ProjectionViewport, View};
+use astroterm::projection::{borrow_projected, prepare_projection_catalog, project_cached_sky, project_sky};
+use astroterm::state::ProjectionCache;
+use astroterm::timing::TraceStep;
 
 fn create_sky() -> ObservedSky {
     let mut parsed = astroterm::catalog::load_embedded_catalog().unwrap();

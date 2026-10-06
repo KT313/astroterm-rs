@@ -1,5 +1,6 @@
 //! The same lazy hook API is available with or without compiled-in memory diagnostics.
-use astroterm::{cache::Quality, timing::{StepTimes, memory::{Access, BufferId, BufferShape, IndexDomain, MemoryEvent, Operation}}};
+use astroterm::cache::Quality;
+use astroterm::timing::{StepTimes, Access, BufferId, BufferShape, IndexDomain, MemoryEvent, Operation};
 
 #[test]
 fn disabled_hooks_never_evaluate_descriptors_or_groups() {
@@ -34,7 +35,7 @@ fn exact_element_counts_remain_exact_when_bytes_are_unknown() {
 #[cfg(feature = "memory-diagnostics")]
 #[test]
 fn full_step_table_still_accepts_details_for_retained_steps() {
-    use astroterm::timing::run::MAX_TRACE_STEPS;
+    use astroterm::timing::MAX_TRACE_STEPS;
     let mut times = StepTimes::default();
     times.enable_memory_run(true);
     for _ in 0..MAX_TRACE_STEPS { times.measure("Kept", || ()); }
@@ -161,7 +162,7 @@ fn nested_memory_scopes_propagate_errors_without_polluting_the_completed_frame()
 #[cfg(feature = "memory-diagnostics")]
 #[test]
 fn omitted_repeated_invocation_does_not_describe_its_predecessor() {
-    use astroterm::timing::run::MAX_TRACE_STEPS;
+    use astroterm::timing::MAX_TRACE_STEPS;
     let mut times = StepTimes::default();
     times.enable_memory_run(true);
     times.measure("Retained different name", || ());
@@ -177,7 +178,7 @@ fn omitted_repeated_invocation_does_not_describe_its_predecessor() {
 #[cfg(feature = "memory-diagnostics")]
 #[test]
 fn suppressed_descendants_do_not_supersede_a_retained_sibling_with_the_same_name() {
-    use astroterm::timing::run::MAX_TRACE_STEPS;
+    use astroterm::timing::MAX_TRACE_STEPS;
     let mut times = StepTimes::default();
     times.enable_memory_run(true);
     times.measure_steps("Retained parent", |times| {
@@ -198,7 +199,7 @@ fn suppressed_descendants_do_not_supersede_a_retained_sibling_with_the_same_name
 #[cfg(feature = "memory-diagnostics")]
 #[test]
 fn activation_truncation_preserves_old_details_without_retargeting_the_truncated_call() {
-    use astroterm::timing::run::MAX_TRACE_STEPS;
+    use astroterm::timing::MAX_TRACE_STEPS;
     let mut times = StepTimes::with_trace(true);
     times.measure("Retained different name", || ());
     for _ in 1..MAX_TRACE_STEPS { times.measure("Same", || ()); }
@@ -218,7 +219,7 @@ fn activation_truncation_preserves_old_details_without_retargeting_the_truncated
 #[cfg(feature = "memory-diagnostics")]
 #[test]
 fn activation_truncation_does_not_confuse_children_of_dropped_parents_with_roots() {
-    use astroterm::timing::run::MAX_TRACE_STEPS;
+    use astroterm::timing::MAX_TRACE_STEPS;
     let mut times = StepTimes::with_trace(true);
     times.measure("Same", || ());
     for _ in 1..MAX_TRACE_STEPS { times.measure("Filler", || ()); }

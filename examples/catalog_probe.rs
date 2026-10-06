@@ -6,10 +6,7 @@ use std::{hint::black_box, path::Path, time::Instant};
 use astroterm::astro::Observer;
 use astroterm::canvas::Canvas;
 use astroterm::catalog::load_athyg_catalog;
-use astroterm::model::Sky;
-use astroterm::model::projection::{ProjectionViewport as Viewport, View};
-use astroterm::model::rendering::RenderOptions;
-use astroterm::model::simulation::FrameTime;
+use astroterm::model::{Sky, ProjectionViewport as Viewport, View, RenderOptions, FrameTime};
 use astroterm::projection::project_sky;
 use astroterm::scene::draw_sky_scene;
 use astroterm::sky::{observe_sky, prepare_observation, update_simulation};
@@ -108,7 +105,7 @@ fn measure_matrix(sky: &mut Sky) {
     let mut canvas = Canvas::new(41, 81);
     for (threshold, fov) in [(5.0, 180.0), (12.0, 10.0), (12.0, 180.0)] {
         let view = View {
-            center: astroterm::model::projection::ViewCenter::Facing {
+            center: astroterm::model::ViewCenter::Facing {
                 azimuth: 225_f64.to_radians(),
                 tilt: 30_f64.to_radians(),
             },

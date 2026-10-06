@@ -4,8 +4,7 @@ use astroterm::astro::{
     Observer,
     models::{BodyId, moons::evaluate_moon, orientation::*, planets::evaluate_planets},
 };
-use astroterm::model::SkyRegion;
-use astroterm::model::simulation::FrameTime;
+use astroterm::model::{SkyRegion, FrameTime};
 use astroterm::sky::{observe_sky, prepare_observation, update_simulation};
 use astroterm::timing::StepTimes;
 use std::io::{self, BufRead};

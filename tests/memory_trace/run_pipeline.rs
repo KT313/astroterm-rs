@@ -1,12 +1,9 @@
 //! Run-history rotation must leave real cache results, geometry and raster output unchanged.
 use astroterm::astro::{J2000, Observer};
 use astroterm::cache::CacheConfig;
-use astroterm::model::{ObservedSky, SkyCatalog};
-use astroterm::model::projection::{ProjectionViewport, View};
-use astroterm::model::rendering::RenderOptions;
-use astroterm::model::simulation::FrameTime;
+use astroterm::model::{ObservedSky, SkyCatalog, ProjectionViewport, View, RenderOptions, FrameTime};
 use astroterm::projection::{borrow_projected, project_cached_sky, select_view_region};
-use astroterm::scene::cached::draw_pixels;
+use astroterm::scene::draw_pixels;
 use astroterm::sky;
 use astroterm::state::{ObservationCache, ProjectionCache, SceneCache, SimulationState};
 use astroterm::timing::StepTimes;

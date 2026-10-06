@@ -1,5 +1,6 @@
 //! Typed events belong to exact calls, are lazy when disabled, and aggregate only explicitly batched work.
-use astroterm::{cache::{Cache, buffers::Quality}, timing::{StepTimes, memory::{Access, BufferId, BufferShape, IndexDomain, MemoryEvent, Operation}}};
+use astroterm::cache::{Cache, Quality};
+use astroterm::timing::{StepTimes, Access, BufferId, BufferShape, IndexDomain, MemoryEvent, Operation};
 
 #[path = "memory_trace/observation.rs"] mod observation;
 #[path = "memory_trace/projection.rs"] mod projection;
@@ -113,11 +114,11 @@ fn store_outcome_uses_existing_comparison_and_preserves_generations() {
 fn event_limits_and_report_units_leave_unknowns_explicit() {
     let mut times = enabled();
     times.measure("Step", || ());
-    for _ in 0..astroterm::timing::memory::MAX_MEMORY_EVENTS_PER_STEP + 2 {
+    for _ in 0..astroterm::timing::MAX_MEMORY_EVENTS_PER_STEP + 2 {
         times.record_memory(times.last_memory_step(), || MemoryEvent::operation(BufferId::UploadBytes, Operation::Output, None, None, Some(2048), Some(2048)));
     }
     let trace = times.trace().unwrap();
-    assert_eq!(trace.steps[0].memory_events.len(), astroterm::timing::memory::MAX_MEMORY_EVENTS_PER_STEP);
+    assert_eq!(trace.steps[0].memory_events.len(), astroterm::timing::MAX_MEMORY_EVENTS_PER_STEP);
     assert_eq!(trace.steps[0].memory_omitted, 2);
     let mut output = Vec::new();
     trace.write_report(&mut output).unwrap();

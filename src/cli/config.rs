@@ -7,13 +7,11 @@ use crate::astro::{
     Observer, compass_point_to_azimuth, current_julian_date, datetime_to_julian_date, parse_utc_datetime,
 };
 use crate::catalog::{City, find_city, suggest_cities};
-use crate::model::projection::{ProjectionKind, View, ViewCenter};
-use crate::model::rendering::RenderOptions;
-use crate::model::config::TerminalSettings;
+use crate::model::{ProjectionKind, View, ViewCenter, RenderOptions, TerminalSettings};
 
 use super::Arguments;
 
-use crate::model::config::{Config, SimulationSettings};
+use crate::model::{Config, SimulationSettings};
 
 /// An invalid argument, with a message for the user.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -61,8 +59,8 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
 
     // frame rate and view
     let default_fps = match arguments.renderer {
-        crate::model::config::RendererKind::Chars => 24,
-        crate::model::config::RendererKind::Pixels => 12,
+        crate::model::RendererKind::Chars => 24,
+        crate::model::RendererKind::Pixels => 12,
     };
     let fps = u32::try_from(arguments.fps.unwrap_or(default_fps))
         .ok()

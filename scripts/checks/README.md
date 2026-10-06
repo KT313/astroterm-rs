@@ -159,7 +159,7 @@ cadence test's boundary offsets have been updated accordingly. The full 12,000-e
 Minimum-star rasterizer qualification (O1):
 
 ```sh
-cargo test --locked --lib scene::pixels
+cargo test --locked --lib scene::raster::pixels
 ASTROTERM_DATASET=/path/to/athyg_40.csv.gz ASTROTERM_RASTER_OUTPUT=/tmp/astroterm-raster \
   cargo test --release --locked --lib compare_minimum_star_rasterizers -- --ignored --nocapture
 ```

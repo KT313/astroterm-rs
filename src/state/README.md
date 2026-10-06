@@ -1,6 +1,6 @@
 # Working data and its owners
 
-Start with `ApplicationState` in `mod.rs`. It is created once after configuration validation and catalog loading.
+Start with the public types in `mod.rs`; `ApplicationState` is defined in `application/mod.rs`. It is created once after configuration validation and catalog loading.
 `pipeline.rs` borrows its fields separately for simulation, observation, projection and rendering. Algorithms live
 in those processing modules; this folder owns their stored inputs, results and designated scratch buffers.
 
@@ -20,6 +20,23 @@ ApplicationState
 The terminal session is a separate scoped guard: it owns the output writer and restores terminal settings before
 reports print. It does not own scene data. `ProjectedSky` is a local borrowed view, not another stored copy or a
 reference from one root field into another. Headless callers can instead own `ProjectionData` and borrow its view.
+
+
+## Find an owner or a report
+
+Other modules import through `crate::state::{ApplicationState, ObservationCache, ...}`. Supporting modules are
+private; their layout is for navigation, not additional import paths.
+
+| Folder | Responsibility |
+|---|---|
+| `application/` | The complete application root and the fields of an active run. |
+| `processing/` | Simulation samples, observation/projection/scene caches, and their restricted borrowed views. |
+| `rendering/` | Character/pixel frame buffers, terminal diff history and glyph storage. |
+| `memory/` | The inventory capture flow; collection and report helpers implement its bounded traversal and output. |
+
+Shared records follow the same rule through `crate::model`: catalog representation is under `model/catalog/`,
+celestial records under `model/celestial/`, projection/rendering records under `model/presentation/`, and validated
+settings under `model/configuration/`. The algorithms remain outside these two ownership/data modules.
 
 ## Follow the indices
 
@@ -41,7 +58,7 @@ type from `ProjectionViewport`.
 
 ## Catalog: prepared once, shared by reference
 
-Definitions are under `model/catalog.rs`, `model/storage/`, `model/grid.rs` and `catalog/cache/`. `sky` prepares the
+Definitions are under `model/catalog/records.rs`, `model/catalog/storage/`, `model/catalog/grid.rs` and `catalog/cache/`. `sky` prepares the
 catalog; frame processing reads it. Catalog indices follow cell, conservative brightness bound and descending ID.
 
 | Storage | Contents and readers | Lifetime |
@@ -62,7 +79,7 @@ and endpoints, are intentional retained copies. Owned name bytes can be copied; 
 
 ## Simulation: samples of physical models
 
-`state/simulation.rs` owns TT sample epochs/half-spans and family policy/version counters. `sky::update_simulation`
+`state/processing/simulation.rs` owns TT sample epochs/half-spans and family policy/version counters. `sky::update_simulation`
 prepares samples; body/orientation evaluation and observer preparation read them.
 
 | Field | Units/frame | Reset or replacement |
@@ -77,7 +94,7 @@ Earlier families may already be updated when a later family fails; there is no w
 
 ## Observation: selection, propagation and separate correction snapshots
 
-`state/observation.rs` owns the caches; `sky/observation/cached.rs` orchestrates the passes. Cache keys express actual
+`state/processing/observation.rs` owns the caches; `sky/observation/pipeline.rs` orchestrates the passes. Cache keys express actual
 dependencies. Invalidation retains the old key/value but makes it unavailable through `Cache::value()` until refresh.
 
 | Field family | Producer → readers; content/order |
@@ -106,7 +123,7 @@ updated in place. The legacy `candidate_indices` vector remains owned here for t
 
 ## Projection: geometry backing plus a borrowed output view
 
-`state/projection.rs` owns these buffers; `projection/cached.rs` fills them. Rendering reads a `borrow_projected`
+`state/processing/projection.rs` owns these buffers; `projection/pipeline.rs` fills them. Rendering reads a `borrow_projected`
 view of the completed fields. That view does not build a reference vector or clone body/arc/horizon geometry.
 
 | Fields | Contents and use | Lifecycle |

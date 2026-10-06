@@ -9,14 +9,14 @@ use crate::astro::{
     DegreesMinutesSeconds, ElapsedTime, MoonPhase, Observer, SimulationClock, ZodiacSign, azimuth_to_compass,
     julian_date_to_utc,
 };
-use crate::model::projection::{ProjectionKind, View, ViewCenter};
+use crate::model::{ProjectionKind, View, ViewCenter};
 use crate::timing::StepTime;
 
 use local_time::LocalTime;
-use crate::model::metadata::ObserverTimeZone;
+use crate::model::ObserverTimeZone;
 pub use local_time::{convert_observer_time, resolve_observer_timezone};
 
-use crate::model::metadata::MetadataField;
+use crate::model::MetadataField;
 
 /// The metadata fields for the simulation time `julian_date_utc`. `unicode` allows symbols such as the zodiac sign's.
 pub fn collect_metadata_fields(

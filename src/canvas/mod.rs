@@ -203,7 +203,7 @@ fn braille_dots(symbol: char) -> Option<u8> {
 }
 
 #[cfg(feature = "memory-diagnostics")]
-crate::cache::buffers::report_fields!(Canvas { cells });
+crate::cache::report_fields!(Canvas { cells });
 
 #[cfg(test)]
 mod tests {

@@ -4,20 +4,19 @@ use crate::state::{SimulationState};
 use crate::model::ObserverState;
 use super::{LIGHT_SPEED_AU_DAY, apply_aberration, apply_unit_aberration, body_id};
 use crate::astro::{Matrix3, Vector3};
-use crate::model::{ObservedSky, PlanetKind, SkyCatalog};
-use crate::model::simulation::{SimulationError};
+use crate::model::{ObservedSky, PlanetKind, SkyCatalog, SimulationError};
 
-use crate::model::observation::BodySamples;
+use crate::model::BodySamples;
 
 pub(super) fn sample_body_states(
     simulation: &SimulationState,
     observer: &ObserverState,
 ) -> Result<BodySamples, SimulationError> {
     let planets = PlanetKind::ALL
-        .map(|kind| crate::sky::simulation::evaluate_body(simulation, body_id(kind), observer.emission_tt[body_id(kind) as usize]))
+        .map(|kind| crate::sky::evaluate_body(simulation, body_id(kind), observer.emission_tt[body_id(kind) as usize]))
         .into_iter()
         .collect::<Result<Vec<_>, _>>()?;
-    let moon = crate::sky::simulation::evaluate_body(simulation, crate::astro::models::BodyId::Moon,
+    let moon = crate::sky::evaluate_body(simulation, crate::astro::models::BodyId::Moon,
         observer.emission_tt[crate::astro::models::BodyId::Moon as usize])?;
     Ok(BodySamples { planets, moon })
 }
@@ -49,7 +48,7 @@ pub(super) fn include_constellation_endpoints(selected: Vec<usize>, output: &mut
     include_constellation_endpoints_with_times(selected, output, &mut crate::timing::StepTimes::default());
 }
 
-use crate::model::observation::SelectedStar;
+use crate::model::SelectedStar;
 
 pub(super) fn include_constellation_endpoints_with_times(
     selected: Vec<usize>,
@@ -72,13 +71,13 @@ pub(super) fn merge_constellation_endpoints(
     times: &mut crate::timing::StepTimes,
 ) -> Vec<SelectedStar> {
     let input = selected.len();
-    let before = times.inspect_memory(|| crate::timing::memory::BufferShape::vector(&selected, crate::timing::memory::IndexDomain::Catalog));
+    let before = times.inspect_memory(|| crate::timing::BufferShape::vector(&selected, crate::timing::IndexDomain::Catalog));
     times.measure("Candidate index sort and dedup", || {
         selected.sort_unstable();
         selected.dedup();
     });
     {
-        use crate::timing::memory::{Access, BufferId, BufferShape, IndexDomain, MemoryEvent, Operation};
+        use crate::timing::{Access, BufferId, BufferShape, IndexDomain, MemoryEvent, Operation};
         if let Some(shape) = before { times.record_memory(times.last_memory_step(), || MemoryEvent::borrow(BufferId::ValidatedCandidates, Access::Writable, shape)); }
         times.record_memory(times.last_memory_step(), || MemoryEvent::operation(BufferId::ValidatedCandidates, Operation::Write,
             before, Some(BufferShape::vector(&selected, IndexDomain::Catalog)), None, None)); // sort/dedup writes depend on comparisons
@@ -90,7 +89,7 @@ pub(super) fn merge_constellation_endpoints(
             selected.len()
         )
     });
-    let input_shape = times.inspect_memory(|| crate::timing::memory::BufferShape::vector(&selected, crate::timing::memory::IndexDomain::Catalog));
+    let input_shape = times.inspect_memory(|| crate::timing::BufferShape::vector(&selected, crate::timing::IndexDomain::Catalog));
     let working = times.measure("Endpoint index merge", || {
         let mut working = Vec::with_capacity(selected.len() + endpoints.len());
         let mut candidates = selected.into_iter().peekable();
@@ -116,7 +115,7 @@ pub(super) fn merge_constellation_endpoints(
         working
     });
     {
-        use crate::timing::memory::{Access, BufferId, BufferShape, IndexDomain, MemoryEvent};
+        use crate::timing::{Access, BufferId, BufferShape, IndexDomain, MemoryEvent};
         if let Some(shape) = input_shape { times.record_memory(times.last_memory_step(), || MemoryEvent::borrow(BufferId::ValidatedCandidates, Access::ReadOnly, shape)); }
         times.record_borrow(BufferId::CatalogEndpoints, Access::ReadOnly, || BufferShape::slice(endpoints, IndexDomain::Catalog));
         times.record_build(BufferId::WorkingStars, || BufferShape::vector(&working, IndexDomain::Working));

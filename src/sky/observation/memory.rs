@@ -1,6 +1,6 @@
 //! Typed observations of explicit boundaries; counts are logical payload, never physical traffic.
 use crate::cache::{Cache, CacheStats};
-use crate::timing::{StepTimes, memory::{Access, BufferId, BufferShape, IndexDomain, MemoryEvent, Operation}};
+use crate::timing::{StepTimes, Access, BufferId, BufferShape, IndexDomain, MemoryEvent, Operation};
 
 pub(super) fn snapshot_cache<K, V>(cache: &Cache<K, V>) -> (u64, CacheStats) { (cache.generation, cache.stats) }
 
@@ -46,7 +46,7 @@ pub(super) fn record_direction_pass(times: &mut StepTimes, sky: &crate::model::O
 }
 
 #[inline]
-pub(super) fn record_direction_capture(times: &mut StepTimes, buffer: BufferId, positions: &crate::model::observation::Directions) {
+pub(super) fn record_direction_capture(times: &mut StepTimes, buffer: BufferId, positions: &crate::model::Directions) {
     times.record_memory(times.last_memory_step(), || {
         let count = positions.0.len() + positions.1.len() + 1;
         MemoryEvent::operation(buffer, Operation::Copy, None, None, Some(count), count.checked_mul(std::mem::size_of::<crate::astro::Vector3>()))

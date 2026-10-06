@@ -1,8 +1,6 @@
 //! Existing rendering fixtures use this adapter to exercise projection and drawing as separate stages.
 use astroterm::canvas::Canvas;
-use astroterm::model::Sky;
-use astroterm::model::projection::{ProjectionViewport as Viewport, View};
-use astroterm::model::rendering::RenderOptions;
+use astroterm::model::{Sky, ProjectionViewport as Viewport, View, RenderOptions};
 use astroterm::projection::project_sky;
 pub fn draw_sky_scene(canvas: &mut Canvas, view: &View, options: &RenderOptions, sky: &Sky) {
     let projected_data = project_sky(

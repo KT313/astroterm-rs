@@ -1,9 +1,7 @@
-use astroterm::{
-    canvas::Canvas,
-    model::{ObservedSky, projection::{View, ProjectionViewport}, rendering::RenderOptions},
-    projection::borrow_projected,
-    state::ProjectionCache,
-};
+use astroterm::canvas::Canvas;
+use astroterm::model::{ObservedSky, View, ProjectionViewport, RenderOptions};
+use astroterm::projection::borrow_projected;
+use astroterm::state::ProjectionCache;
 
 fn mutate_before_rendering(sky: &mut ObservedSky, cache: &ProjectionCache, canvas: &mut Canvas, options: &RenderOptions) {
     let projected = borrow_projected(cache, sky, &View::default(), ProjectionViewport { width: 8, height: 8 });

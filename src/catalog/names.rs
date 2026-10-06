@@ -51,4 +51,4 @@ impl StarNames {
 }
 
 #[cfg(feature = "memory-diagnostics")]
-crate::cache::buffers::report_fields!(StarNames { text });
+crate::cache::report_fields!(StarNames { text });

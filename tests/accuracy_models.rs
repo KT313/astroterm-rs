@@ -5,9 +5,7 @@ use astroterm::astro::{
     self, Horizontal, Observer, Vector3,
     models::{BodyId, orientation::*},
 };
-use astroterm::model::Sky;
-use astroterm::model::SkyRegion;
-use astroterm::model::simulation::FrameTime;
+use astroterm::model::{Sky, SkyRegion, FrameTime};
 use astroterm::sky::{observe_sky, prepare_observation, update_simulation};
 use astroterm::timing::StepTimes;
 use serde_json::Value;

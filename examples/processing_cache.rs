@@ -3,12 +3,8 @@ use astroterm::state::{ObservationCache, ProjectionCache, SceneCache, Simulation
 use astroterm::astro::Observer;
 use astroterm::cache::CacheConfig;
 use astroterm::catalog::datasets::{Dataset, DatasetDirectories};
-use astroterm::model::ObservedSky;
-use astroterm::model::projection::{ProjectionViewport as Viewport, View};
-use astroterm::model::rendering::RenderOptions;
-use astroterm::model::simulation::FrameTime;
-use astroterm::sky::update_simulation;
-use astroterm::sky::cache::load_sky_catalog;
+use astroterm::model::{ObservedSky, ProjectionViewport as Viewport, View, RenderOptions, FrameTime};
+use astroterm::sky::{update_simulation, load_sky_catalog};
 use astroterm::timing::StepTimes;
 use std::{hint::black_box, sync::Arc, time::Instant};
 fn main() {
@@ -95,7 +91,7 @@ fn main() {
                     let projected = astroterm::projection::borrow_projected(&projection, &sky, &view, viewport);
                     elapsed[2] = start.elapsed().as_secs_f64();
                     let start = Instant::now();
-                    black_box(astroterm::scene::cached::draw_pixels(&mut raster, &projected, &options, time.tt, &mut times).unwrap());
+                    black_box(astroterm::scene::draw_pixels(&mut raster, &projected, &options, time.tt, &mut times).unwrap());
                     elapsed[3] = start.elapsed().as_secs_f64();
                     let current = [
                         simulation_after,

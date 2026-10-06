@@ -3,11 +3,10 @@ use astroterm::state::{SimulationState};
 use astroterm::astro::{COMPUTATIONAL_INTERVAL, J2000, JULIAN_YEAR_DAYS, Observer, Vector3, refract_direction};
 use astroterm::canvas::Canvas;
 use astroterm::catalog::{CatalogStar, SpaceMotion, StarId, load_embedded_catalog};
-use astroterm::model::{ObservedSky, ObserverState, SkyCatalog};
-use astroterm::model::objects::ObservedStar;
-use astroterm::model::projection::{ProjectionKind, ProjectionViewport as Viewport, View, ViewCenter};
-use astroterm::model::rendering::RenderOptions;
-use astroterm::model::simulation::FrameTime;
+use astroterm::model::{
+    ObservedSky, ObserverState, SkyCatalog, ObservedStar, ProjectionKind, ProjectionViewport as Viewport, View,
+    ViewCenter, RenderOptions, FrameTime,
+};
 use astroterm::projection::project_sky;
 use astroterm::scene::draw_sky_scene;
 use astroterm::sky::{observe_sky, prepare_observation, update_simulation};

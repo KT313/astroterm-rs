@@ -3,10 +3,9 @@ use astroterm::state::{SimulationState};
 use astroterm::astro::{Horizontal, J2000, JULIAN_YEAR_DAYS, Matrix3, Observer};
 use astroterm::canvas::Canvas;
 use astroterm::catalog::{Catalog, CatalogStar, ConstellationFigure, SpaceMotion, StarId, StarNames};
-use astroterm::model::{ObservedSky, SkyCatalog};
-use astroterm::model::projection::{ProjectionViewport as Viewport, View, ViewCenter};
-use astroterm::model::rendering::RenderOptions;
-use astroterm::model::simulation::FrameTime;
+use astroterm::model::{
+    ObservedSky, SkyCatalog, ProjectionViewport as Viewport, View, ViewCenter, RenderOptions, FrameTime,
+};
 use astroterm::projection::project_sky;
 use astroterm::scene::draw_sky_scene;
 use astroterm::sky::{observe_sky, observe_sky_candidates, prepare_observation, update_simulation};

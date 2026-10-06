@@ -1,6 +1,8 @@
 //! Headless phase-7 prototype: raster quality, protocol encoding and image/text composition cost.
-use astroterm::terminal::graphics::kitty;
-use astroterm::terminal::graphics::{compose_halfblocks, compose_image, encode_image, present_frame, serialize_frame};
+use astroterm::terminal::{
+    KITTY_IMAGE_IDS, encode_kitty_upload, serialize_kitty_swap, compose_halfblocks, compose_image, encode_image,
+    present_frame, serialize_frame,
+};
 use image::{DynamicImage, RgbaImage};
 use ratatui::{
     buffer::Buffer,
@@ -38,7 +40,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Paragraph::new("Pixel prototype — text over image")
         .style(Style::default().fg(Color::White).bg(Color::Black))
         .render(Rect::new(0, 0, 40, 1), &mut text);
-    let mut raster_text = astroterm::scene::raster_text::create_text_rasterizer()?;
+    let mut raster_text = astroterm::scene::create_text_rasterizer()?;
     for protocol in [
         ProtocolType::Kitty,
         ProtocolType::Sixel,
@@ -48,16 +50,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let start = Instant::now();
         let mut frame_image = image.clone();
         if protocol != ProtocolType::Halfblocks {
-            astroterm::scene::raster_text::paint_text_buffer(&mut raster_text, &mut frame_image, &text, (10, 20));
+            astroterm::scene::paint_text_buffer(&mut raster_text, &mut frame_image, &text, (10, 20));
         }
         if protocol == ProtocolType::Kitty {
             let rgb = DynamicImage::ImageRgba8(frame_image).into_rgb8();
-            let encoded = kitty::encode_upload(&rgb, kitty::IMAGE_IDS[0], true, false)?;
+            let encoded = encode_kitty_upload(&rgb, KITTY_IMAGE_IDS[0], true, false)?;
             let encode_ms = start.elapsed().as_secs_f64() * 1000.0;
             let start = Instant::now();
             let mut out = Vec::new();
             present_frame(&mut out, &encoded)?;
-            present_frame(&mut out, &kitty::serialize_swap(kitty::IMAGE_IDS[0], area, false)?)?;
+            present_frame(&mut out, &serialize_kitty_swap(KITTY_IMAGE_IDS[0], area, false)?)?;
             eprintln!(
                 "{protocol:?}: encode_ms={encode_ms:.3}, compose_write_memory_ms={:.3}, bytes={}",
                 start.elapsed().as_secs_f64() * 1000.0,

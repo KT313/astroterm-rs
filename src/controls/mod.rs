@@ -2,7 +2,7 @@
 //! them is up to the backend (see `terminal::keys`).
 
 use crate::astro::SimulationClock;
-use crate::model::projection::View;
+use crate::model::View;
 
 /// Fraction of the field of view that one pan step turns the view.
 const PAN_STEP_FRACTION: f64 = 1.0 / 20.0;
@@ -60,7 +60,7 @@ pub fn apply_control(control: Control, view: &mut View, clock: &mut SimulationCl
 mod tests {
     use super::*;
     use crate::astro::J2000;
-    use crate::model::projection::ViewCenter;
+    use crate::model::ViewCenter;
 
     #[test]
     fn controls_change_view_and_clock() {

@@ -13,7 +13,9 @@
 //!
 //! [`astro::models`] keeps independent star, planet, Moon and orientation formulas. [`controls`] changes views and
 //! the simulation clock; [`cli`] parses/validates input, and [`terminal`] owns scoped I/O and restoration. Shared data uses canonical `model`/`state` paths;
-//! preparation and geometric operations are explicit free functions.
+//! preparation and geometric operations are explicit free functions. Each of these modules exposes its API
+//! through `mod.rs`; optional `pipeline.rs` files show ordered processing while private supporting folders hold
+//! implementation details. Callers import root symbols instead of depending on those folders.
 //!
 //! Earth is the only production anchor. Common f64 states use equatorial J2000 axes, AU and AU/day, with
 //! a barycentric origin. [`sky`] documents the observer site and apparent-place corrections.

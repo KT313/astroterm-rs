@@ -7,12 +7,11 @@ use std::time::Duration;
 use astroterm::astro::{J2000, Observer};
 use astroterm::canvas::Canvas;
 use astroterm::catalog::{Catalog, CatalogStar, load_embedded_catalog};
-use astroterm::model::projection::{ProjectionViewport as Viewport, View, ViewCenter};
+use astroterm::model::{ProjectionViewport as Viewport, View, ViewCenter};
 use astroterm::projection::project_sky;
-use astroterm::model::rendering::RenderOptions;
+use astroterm::model::RenderOptions;
 use astroterm::scene::draw_sky_scene;
-use astroterm::model::Sky;
-use astroterm::model::simulation::FrameTime;
+use astroterm::model::{Sky, FrameTime};
 use astroterm::sky::{observe_sky, prepare_observation, update_simulation, update_sky_positions};
 use astroterm::timing::StepTimes;
 use criterion::{Criterion, SamplingMode, criterion_group, criterion_main};
@@ -183,7 +182,7 @@ fn benchmark_model_families(criterion: &mut Criterion) {
         b.iter(|| {
             for body in BodyId::PLANETS.into_iter().chain([BodyId::Moon]) {
                 black_box(
-                    astroterm::sky::simulation::evaluate_body(&simulation, body, black_box(time.tt + 1.0 / 86400.0))
+                    astroterm::sky::evaluate_body(&simulation, body, black_box(time.tt + 1.0 / 86400.0))
                         .unwrap(),
                 );
             }

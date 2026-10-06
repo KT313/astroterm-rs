@@ -1,12 +1,10 @@
 //! Observation events describe executed passes; a cache hit never fabricates a calculation or copy.
 use astroterm::astro::{J2000, Observer};
 use astroterm::cache::{CacheConfig, RefreshReason};
-use astroterm::model::{ObservedSky, SkyCatalog, SkyRegion};
-use astroterm::model::simulation::FrameTime;
+use astroterm::model::{ObservedSky, SkyCatalog, SkyRegion, FrameTime};
 use astroterm::sky;
 use astroterm::state::{ObservationCache, SimulationState};
-use astroterm::timing::StepTimes;
-use astroterm::timing::memory::{BufferId, MemoryEvent, Operation};
+use astroterm::timing::{StepTimes, BufferId, MemoryEvent, Operation};
 use std::sync::Arc;
 
 fn catalog(count: usize) -> Arc<SkyCatalog> {

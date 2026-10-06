@@ -1,0 +1,16 @@
+//! Projection, drawing and metadata records shared between stages.
+mod projection;
+mod rendering;
+mod metadata;
+pub use projection::{
+    ViewCenter, ProjectionKind, ArcPart, View, ScreenPoint, CartesianCamera, Polar, Cell, ProjectionViewport,
+    ProjectedStar, ProjectedPlanet, ProjectedMoon, ProjectedArc, ProjectedConstellation, ProjectedSky,
+    ProjectionData, ProjectedStars,
+};
+pub use rendering::{RenderOptions, TerminalViewport, Frame, Appearance};
+pub use metadata::{ObserverTimeZone, MetadataField};
+pub(crate) use projection::{
+    DEFAULT_FOV_DEGREES, MIN_FOV_DEGREES, DrawRecord, StarKey, BodyKey as ProjectionBodyKey, ConstellationKey,
+    HorizonGeometry,
+};
+pub(crate) use rendering::{SceneKey, PixelStarKey, CharacterStarKey, StarKeys, StarDisplay, PreparedScene, Glyph};

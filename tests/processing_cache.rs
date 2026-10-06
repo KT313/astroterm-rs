@@ -4,13 +4,11 @@ use astroterm::astro::{J2000, Observer, Vector3};
 use astroterm::cache::{CacheConfig, Group, GroupPolicy};
 use astroterm::canvas::Canvas;
 use astroterm::catalog::load_embedded_catalog;
-use astroterm::model::{ObservedSky, SkyCatalog};
-use astroterm::model::projection::{ProjectionViewport as Viewport, View, ViewCenter};
-use astroterm::model::rendering::RenderOptions;
-use astroterm::model::simulation::{FrameTime, ModelFamily};
+use astroterm::model::{
+    ObservedSky, SkyCatalog, ProjectionViewport as Viewport, View, ViewCenter, RenderOptions, FrameTime, ModelFamily,
+};
 use astroterm::projection::project_sky;
-use astroterm::scene::draw_sky_scene;
-use astroterm::scene::pixels::draw_pixel_sky;
+use astroterm::scene::{draw_sky_scene, draw_pixel_sky};
 use astroterm::sky::update_simulation;
 use astroterm::timing::StepTimes;
 use std::sync::Arc;
@@ -114,7 +112,7 @@ fn cached_pipeline_matches_reference_through_camera_time_and_site_changes() {
     let mut projection = ProjectionCache::new(CacheConfig::default());
     astroterm::projection::prepare_projection_catalog(&mut projection, &cached.sky.catalog, &mut StepTimes::default());
     let mut raster = SceneCache::default();
-    astroterm::scene::cached::prepare_scene_catalog(&mut raster, cached.sky.catalog.clone(), &mut StepTimes::default());
+    astroterm::scene::prepare_scene_catalog(&mut raster, cached.sky.catalog.clone(), &mut StepTimes::default());
     let mut canvas = Canvas::new(45, 90);
     let mut maxima = [0.0_f64; 3];
     for (n, seconds) in [0.0, 1.0, 10.0, 31.0, 361.0, 5.0, -500.0, 86400.0, 0.0]
@@ -161,16 +159,16 @@ fn cached_pipeline_matches_reference_through_camera_time_and_site_changes() {
         assert_eq!(projected, project_sky(&cached.sky, &view, viewport).view(&cached.sky));
         let mut expected = Canvas::new(45, 90);
         draw_sky_scene(&mut expected, &options(), &projected);
-        astroterm::scene::cached::draw_characters(&mut raster, &mut canvas, &projected, &options(), tt);
+        astroterm::scene::draw_characters(&mut raster, &mut canvas, &projected, &options(), tt);
         assert_eq!(canvas, expected);
-        astroterm::scene::cached::draw_characters(&mut raster, &mut canvas, &projected, &options(), tt);
+        astroterm::scene::draw_characters(&mut raster, &mut canvas, &projected, &options(), tt);
         assert_eq!(canvas, expected);
-        let actual = astroterm::scene::cached::draw_pixels(&mut raster, &projected, &options(), tt, &mut cached.times)
+        let actual = astroterm::scene::draw_pixels(&mut raster, &projected, &options(), tt, &mut cached.times)
             .unwrap();
         let expected = draw_pixel_sky(&projected, &options(), &mut StepTimes::default()).unwrap();
         assert_eq!(actual, expected);
         assert_eq!(
-            astroterm::scene::cached::draw_pixels(&mut raster, &projected, &options(), tt, &mut cached.times)
+            astroterm::scene::draw_pixels(&mut raster, &projected, &options(), tt, &mut cached.times)
                 .unwrap(),
             expected
         );
@@ -188,12 +186,12 @@ fn paused_projection_and_raster_reuse_but_resize_and_options_invalidate() {
     let viewport = Viewport { height: 70, width: 70 };
     astroterm::projection::project_cached_sky(&mut projection, &p.sky, &view, viewport, J2000, &mut p.times);
     let first = astroterm::projection::borrow_projected(&projection, &p.sky, &view, viewport);
-    let image = astroterm::scene::cached::draw_pixels(&mut raster, &first, &options(), J2000, &mut p.times).unwrap();
+    let image = astroterm::scene::draw_pixels(&mut raster, &first, &options(), J2000, &mut p.times).unwrap();
     let runs = projection.stats().refreshes;
     astroterm::projection::project_cached_sky(&mut projection, &p.sky, &view, viewport, J2000, &mut p.times);
     let second = astroterm::projection::borrow_projected(&projection, &p.sky, &view, viewport);
     assert_eq!(
-        astroterm::scene::cached::draw_pixels(&mut raster, &second, &options(), J2000, &mut p.times).unwrap(),
+        astroterm::scene::draw_pixels(&mut raster, &second, &options(), J2000, &mut p.times).unwrap(),
         image
     );
     assert_eq!(projection.stats().refreshes, runs);
@@ -201,18 +199,18 @@ fn paused_projection_and_raster_reuse_but_resize_and_options_invalidate() {
     astroterm::projection::project_cached_sky(&mut projection, &p.sky, &view, Viewport { height: 90, width: 90 }, J2000, &mut p.times);
     let resized = astroterm::projection::borrow_projected(&projection, &p.sky, &view, Viewport { height: 90, width: 90 });
     assert_eq!(
-        astroterm::scene::cached::draw_pixels(&mut raster, &resized, &options(), J2000, &mut p.times)
+        astroterm::scene::draw_pixels(&mut raster, &resized, &options(), J2000, &mut p.times)
             .unwrap()
             .width(),
         90
     );
     let mut changed = options();
     changed.grid = true;
-    astroterm::scene::cached::draw_pixels(&mut raster, &resized, &changed, J2000, &mut p.times).unwrap();
+    astroterm::scene::draw_pixels(&mut raster, &resized, &changed, J2000, &mut p.times).unwrap();
     assert_eq!(raster.stats().refreshes, 3);
     raster.configure(&CacheConfig::disabled());
     for _ in 0..2 {
-        astroterm::scene::cached::draw_pixels(&mut raster, &resized, &changed, J2000, &mut p.times).unwrap();
+        astroterm::scene::draw_pixels(&mut raster, &resized, &changed, J2000, &mut p.times).unwrap();
     }
     assert_eq!(raster.stats().bypasses, 2);
 }
@@ -267,7 +265,7 @@ fn moving_distance_stars_preserve_magnitude_thresholds_and_order_within_ttl() {
     let mut direct = Pipeline::new(cat, CacheConfig::disabled());
     let view = View {
         fov_degrees: 360.0,
-        projection: astroterm::model::projection::ProjectionKind::Equidistant,
+        projection: astroterm::model::ProjectionKind::Equidistant,
         ..View::default()
     };
     for seconds in [0.0, 10.0, -10.0, 100.0] {

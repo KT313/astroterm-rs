@@ -1,10 +1,13 @@
 //! Inventories use live typed containers without changing computation or cache state.
 use std::{collections::HashMap, mem::size_of, sync::Arc};
-use astroterm::{
-    cache::{Cache, CacheConfig, buffers::{BufferSink, InventorySnapshot, Kind, Owner, Quality, ReportBuffers, report_field}},
-    state::{ApplicationState, RunState, memory::{collect_inventory, write_inventory, MAX_ROWS, MAX_DEPTH, MAX_CHILDREN}},
-    cli::{Arguments, build_config},
+use astroterm::cache::{
+    Cache, CacheConfig, BufferSink, InventorySnapshot, Kind, Owner, Quality, ReportBuffers, report_field,
 };
+use astroterm::state::{
+    ApplicationState, RunState, collect_inventory, write_inventory, MAX_ROWS, MAX_DEPTH, MAX_CHILDREN,
+};
+use astroterm::cli::Arguments;
+use astroterm::cli::build_config;
 use clap::Parser;
 
 fn heap(snapshot: &InventorySnapshot, owner: Owner) -> (usize, usize) {
@@ -114,9 +117,9 @@ fn mapped_sections_and_name_clones_share_one_logical_mapping() {
     std::fs::write(&path, "ra,dec,mag,proper\n0,0,1,One\n1,2,3,Two\n").unwrap();
     let dirs = DatasetDirectories { data: None, cache: Some(temp.path().join("cache")) };
     let dataset = Some(Dataset::Path(path));
-    let owned = astroterm::sky::cache::load_sky_catalog(dataset.as_ref(), &dirs, &mut Vec::new()).unwrap();
+    let owned = astroterm::sky::load_sky_catalog(dataset.as_ref(), &dirs, &mut Vec::new()).unwrap();
     assert!(!owned.stars.is_mapped());
-    let mapped = astroterm::sky::cache::load_sky_catalog(dataset.as_ref(), &dirs, &mut Vec::new()).unwrap();
+    let mapped = astroterm::sky::load_sky_catalog(dataset.as_ref(), &dirs, &mut Vec::new()).unwrap();
     assert!(mapped.stars.is_mapped());
     let catalog = Arc::new(mapped);
     let sky = astroterm::model::Sky::new(catalog.clone());
@@ -136,8 +139,7 @@ fn mapped_sections_and_name_clones_share_one_logical_mapping() {
 #[test]
 fn inventory_does_not_change_output_or_cache_statistics() {
     use astroterm::astro::{J2000, Observer};
-    use astroterm::model::projection::ProjectionViewport as Viewport;
-    use astroterm::model::simulation::FrameTime;
+    use astroterm::model::{ProjectionViewport as Viewport, FrameTime};
     let config = build_config(Arguments::try_parse_from(["astroterm", "--debug-singleframe", "--debug-memory"]).unwrap(), &[]).unwrap();
     let sky = astroterm::model::Sky::new(Arc::new(astroterm::sky::prepare_owned_catalog(astroterm::catalog::load_embedded_catalog().unwrap())));
     let mut state = ApplicationState::new(config, sky, astroterm::timing::StepTimes::with_trace(true));
@@ -152,7 +154,7 @@ fn inventory_does_not_change_output_or_cache_statistics() {
         let mut site = astroterm::sky::prepare_cached_observer(observation, simulation, time, Observer::default()).unwrap();
         astroterm::sky::prepare_cached_light_time(observation, simulation, &mut site, &mut state.timings).unwrap();
         astroterm::sky::observe_cached_sky(observation, simulation, &site, 5.0, true, astroterm::model::SkyRegion::All, sky, &mut state.timings).unwrap();
-        astroterm::projection::project_cached_sky(projection, sky, &astroterm::model::projection::View::default(), Viewport { width: 80, height: 40 }, time.tt, &mut state.timings);
+        astroterm::projection::project_cached_sky(projection, sky, &astroterm::model::View::default(), Viewport { width: 80, height: 40 }, time.tt, &mut state.timings);
         let before = (sky.stars.clone(), observation.reports(), projection.stats());
         let _ = collect_inventory("run", &*active);
         assert_eq!(before, (active.sky.stars.clone(), active.observation.reports(), active.projection.stats()));
@@ -174,7 +176,7 @@ fn snapshot_callbacks_are_lazy_and_history_is_limited_to_two() {
 
 #[test]
 fn nested_children_are_grouped_without_losing_inspected_payloads() {
-    use astroterm::state::memory::{DETAIL_CHILDREN, sum_known_payload};
+    use astroterm::state::{DETAIL_CHILDREN, sum_known_payload};
     let values: Vec<Vec<u8>> = (0..88).map(|i| vec![7; i + 1]).collect();
     let snapshot = collect_inventory("figures", &values);
     let total = sum_known_payload(&snapshot, Owner::Application);
@@ -194,7 +196,7 @@ fn nested_children_are_grouped_without_losing_inspected_payloads() {
 
 #[test]
 fn unknown_payloads_do_not_erase_known_totals_and_overflow_is_distinct() {
-    use astroterm::state::memory::sum_known_payload;
+    use astroterm::state::sum_known_payload;
     struct Mixed;
     impl ReportBuffers for Mixed {
         fn report_buffers(&self, sink: &mut dyn BufferSink) {
@@ -219,7 +221,7 @@ fn unknown_payloads_do_not_erase_known_totals_and_overflow_is_distinct() {
 
 #[test]
 fn report_groups_working_data_and_distinguishes_references_from_owned_payload() {
-    use astroterm::state::memory::InventoryCollector;
+    use astroterm::state::InventoryCollector;
     let mut collector = InventoryCollector::new("latest completed frame", Some(2451545.0));
     collector.enter("state", 64);
     collector.enter("catalog", 8);
@@ -300,7 +302,7 @@ fn canvas_and_image_payloads_use_actual_element_capacity() {
 
 #[test]
 fn glyph_masks_are_exact_but_map_and_font_coverage_remain_partial() {
-    use astroterm::scene::raster_text::{begin_text_frame, create_text_rasterizer, draw_text};
+    use astroterm::scene::{begin_text_frame, create_text_rasterizer, draw_text};
     let mut rasterizer = create_text_rasterizer().unwrap();
     let mut image = image::RgbaImage::new(40, 24);
     draw_text(&mut rasterizer, &mut image, "AA", (0, 0), (40, 24), [255, 255, 255]);
@@ -344,7 +346,7 @@ fn saved_inventory_accounts_for_descriptors_without_recounting_the_subject() {
 
 #[test]
 fn root_capture_keeps_diagnostic_and_external_payloads_separate() {
-    use astroterm::state::memory::{capture_run_inventory, sum_known_payload};
+    use astroterm::state::{capture_run_inventory, sum_known_payload};
     let config = build_config(Arguments::try_parse_from(["astroterm"]).unwrap(), &[]).unwrap();
     let catalog = astroterm::sky::prepare_owned_catalog(astroterm::catalog::Catalog::new(vec![], Default::default(), vec![]));
     let sky = astroterm::model::Sky::new(Arc::new(catalog));

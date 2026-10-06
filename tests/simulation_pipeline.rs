@@ -4,12 +4,11 @@ use astroterm::astro::models::{BodyId, BodyState};
 use astroterm::astro::{COMPUTATIONAL_INTERVAL, Horizontal, J2000, Matrix3, Observer, Vector3};
 use astroterm::canvas::Canvas;
 use astroterm::catalog::{Catalog, load_embedded_catalog};
-use astroterm::model::projection::{ProjectionViewport as Viewport, View};
+use astroterm::model::{ProjectionViewport as Viewport, View};
 use astroterm::projection::project_sky;
-use astroterm::model::rendering::RenderOptions;
+use astroterm::model::RenderOptions;
 use astroterm::scene::draw_sky_scene;
-use astroterm::model::{ObservedSky, SkyCatalog};
-use astroterm::model::simulation::{FrameTime, ModelFamily, StateRequest};
+use astroterm::model::{ObservedSky, SkyCatalog, FrameTime, ModelFamily, StateRequest};
 use astroterm::sky::{observe_sky, prepare_light_time_samples, prepare_observation, prepare_observer, update_simulation};
 use astroterm::timing::StepTimes;
 use std::sync::{Arc, OnceLock};
@@ -253,11 +252,11 @@ fn lunar_refresh_boundary_has_no_jump() {
     update(&mut cached, J2000);
     for delta in [-11.999, 11.999] {
         let tt = J2000 + delta / 86400.0;
-        let old = astroterm::sky::simulation::evaluate_body(&cached, BodyId::Moon, tt).unwrap();
+        let old = astroterm::sky::evaluate_body(&cached, BodyId::Moon, tt).unwrap();
         let mut direct = SimulationState::exact();
         update(&mut direct, tt);
-        let earth = astroterm::sky::simulation::evaluate_body(&direct, BodyId::Earth, tt).unwrap().position;
-        let fresh = astroterm::sky::simulation::evaluate_body(&direct, BodyId::Moon, tt).unwrap();
+        let earth = astroterm::sky::evaluate_body(&direct, BodyId::Earth, tt).unwrap().position;
+        let fresh = astroterm::sky::evaluate_body(&direct, BodyId::Moon, tt).unwrap();
         assert!(angle(old.position - earth, fresh.position - earth) < 0.4);
     }
 }
@@ -277,14 +276,14 @@ fn emissions_get_separate_bounded_samples_and_same_epoch_parents() {
     assert_eq!(counts, state.refresh_counts);
     for delta in [-29.99, 0.0, 29.99] {
         let tt = emission + delta / 86400.0;
-        let actual = astroterm::sky::simulation::evaluate_body(&state, BodyId::Neptune, tt).unwrap();
+        let actual = astroterm::sky::evaluate_body(&state, BodyId::Neptune, tt).unwrap();
         let mut direct = SimulationState::exact();
         update(&mut direct, tt);
-        let earth = astroterm::sky::simulation::evaluate_body(&state, BodyId::Earth, frame.tt).unwrap().position;
+        let earth = astroterm::sky::evaluate_body(&state, BodyId::Earth, frame.tt).unwrap().position;
         assert!(
             angle(
                 actual.position - earth,
-                astroterm::sky::simulation::evaluate_body(&direct, BodyId::Neptune, tt).unwrap().position - earth
+                astroterm::sky::evaluate_body(&direct, BodyId::Neptune, tt).unwrap().position - earth
             ) < 0.3
         );
     }
@@ -298,7 +297,7 @@ fn emissions_get_separate_bounded_samples_and_same_epoch_parents() {
         .collect();
     update_simulation(&mut state, frame, &planetary_requests, &mut StepTimes::default()).unwrap();
     for request in &planetary_requests {
-        assert!(astroterm::sky::simulation::evaluate_body(&state, request.body, request.tt).is_ok());
+        assert!(astroterm::sky::evaluate_body(&state, request.body, request.tt).is_ok());
     }
     let lunar_request = StateRequest {
         body: BodyId::Moon,
@@ -308,10 +307,10 @@ fn emissions_get_separate_bounded_samples_and_same_epoch_parents() {
     let mut direct = SimulationState::exact();
     update(&mut direct, emission);
     assert_eq!(
-        astroterm::sky::simulation::evaluate_body(&state, BodyId::Moon, emission).unwrap(),
-        astroterm::sky::simulation::evaluate_body(&direct, BodyId::Moon, emission).unwrap()
+        astroterm::sky::evaluate_body(&state, BodyId::Moon, emission).unwrap(),
+        astroterm::sky::evaluate_body(&direct, BodyId::Moon, emission).unwrap()
     );
-    assert!(astroterm::sky::simulation::evaluate_body(&state, BodyId::Moon, emission - 1.0).is_err());
+    assert!(astroterm::sky::evaluate_body(&state, BodyId::Moon, emission - 1.0).is_err());
     let excessive = [
         lunar_request,
         StateRequest {
@@ -326,7 +325,7 @@ fn emissions_get_separate_bounded_samples_and_same_epoch_parents() {
 fn model_invalidation_is_limited_to_dependents() {
     let mut state = SimulationState::default();
     update(&mut state, J2000);
-    let planets: Vec<_> = BodyId::PLANETS.map(|id| astroterm::sky::simulation::evaluate_body(&state, id, J2000).unwrap()).into();
+    let planets: Vec<_> = BodyId::PLANETS.map(|id| astroterm::sky::evaluate_body(&state, id, J2000).unwrap()).into();
     let old = state.refresh_counts;
     state.set_model_version(ModelFamily::Moon, 1);
     update(&mut state, J2000);
@@ -335,7 +334,7 @@ fn model_invalidation_is_limited_to_dependents() {
     assert_eq!(state.refresh_counts.moon, old.moon + 1);
     assert_eq!(
         planets,
-        BodyId::PLANETS.map(|id| astroterm::sky::simulation::evaluate_body(&state, id, J2000).unwrap())
+        BodyId::PLANETS.map(|id| astroterm::sky::evaluate_body(&state, id, J2000).unwrap())
     );
     state.set_model_version(ModelFamily::Orientation, 1);
     update(&mut state, J2000);
@@ -390,7 +389,7 @@ fn synthetic_anchor_composes_translation_tilt_spin_and_site_velocity() {
         &mut StepTimes::default(),
     )
     .unwrap();
-    let sun = astroterm::sky::simulation::evaluate_body(&simulation, BodyId::Sun, time.tt).unwrap().position;
+    let sun = astroterm::sky::evaluate_body(&simulation, BodyId::Sun, time.tt).unwrap().position;
     let expected_sun = Horizontal::from_vector(
         observer.inertial_to_horizon.apply(
             ((sun - observer.state.position).normalized() + observer.state.velocity * (1.0 / 173.144632674240))
@@ -409,10 +408,10 @@ fn unsupported_interval_uses_direct_samples_and_nonfinite_times_fail() {
     let mut state = SimulationState::default();
     let tt = COMPUTATIONAL_INTERVAL.end_tt + 1.0;
     update(&mut state, tt);
-    assert!(astroterm::sky::simulation::evaluate_body(&state, BodyId::Earth, tt + 1e-5).is_err());
+    assert!(astroterm::sky::evaluate_body(&state, BodyId::Earth, tt + 1e-5).is_err());
     update(&mut state, COMPUTATIONAL_INTERVAL.end_tt - 1e-5);
     assert!(
-        astroterm::sky::simulation::evaluate_body(&state, BodyId::Earth, COMPUTATIONAL_INTERVAL.end_tt)
+        astroterm::sky::evaluate_body(&state, BodyId::Earth, COMPUTATIONAL_INTERVAL.end_tt)
             .is_err()
     );
     assert!(update_simulation(&mut state, frame(f64::NAN), &[], &mut StepTimes::default()).is_err());
@@ -444,12 +443,12 @@ fn qualify_cache_intervals_across_the_computational_interval() {
                 } // bodies refresh, orientation remains held
                 let mut direct = SimulationState::exact();
                 update(&mut direct, tt);
-                let expected_earth = astroterm::sky::simulation::evaluate_body(&direct, BodyId::Earth, tt).unwrap();
+                let expected_earth = astroterm::sky::evaluate_body(&direct, BodyId::Earth, tt).unwrap();
                 if family == 0 {
-                    let actual_earth = astroterm::sky::simulation::evaluate_body(&cached, BodyId::Earth, tt).unwrap();
+                    let actual_earth = astroterm::sky::evaluate_body(&cached, BodyId::Earth, tt).unwrap();
                     for id in BodyId::PLANETS {
-                        let a = astroterm::sky::simulation::evaluate_body(&cached, id, tt).unwrap();
-                        let b = astroterm::sky::simulation::evaluate_body(&direct, id, tt).unwrap();
+                        let a = astroterm::sky::evaluate_body(&cached, id, tt).unwrap();
+                        let b = astroterm::sky::evaluate_body(&direct, id, tt).unwrap();
                         absolute[0] = absolute[0].max((a.position - b.position).length());
                         absolute[1] = absolute[1].max((a.velocity - b.velocity).length());
                         let error = if id == BodyId::Earth {
@@ -468,13 +467,13 @@ fn qualify_cache_intervals_across_the_computational_interval() {
                         }
                     }
                 } else if family == 1 {
-                    let a = astroterm::sky::simulation::evaluate_body(&cached, BodyId::Moon, tt).unwrap().position
-                        - astroterm::sky::simulation::evaluate_body(&cached, BodyId::Earth, tt).unwrap().position;
-                    let b = astroterm::sky::simulation::evaluate_body(&direct, BodyId::Moon, tt).unwrap().position - expected_earth.position;
+                    let a = astroterm::sky::evaluate_body(&cached, BodyId::Moon, tt).unwrap().position
+                        - astroterm::sky::evaluate_body(&cached, BodyId::Earth, tt).unwrap().position;
+                    let b = astroterm::sky::evaluate_body(&direct, BodyId::Moon, tt).unwrap().position - expected_earth.position;
                     absolute[2] = absolute[2].max((a - b).length());
-                    let av = astroterm::sky::simulation::evaluate_body(&cached, BodyId::Moon, tt).unwrap().velocity
-                        - astroterm::sky::simulation::evaluate_body(&cached, BodyId::Earth, tt).unwrap().velocity;
-                    let bv = astroterm::sky::simulation::evaluate_body(&direct, BodyId::Moon, tt).unwrap().velocity - expected_earth.velocity;
+                    let av = astroterm::sky::evaluate_body(&cached, BodyId::Moon, tt).unwrap().velocity
+                        - astroterm::sky::evaluate_body(&cached, BodyId::Earth, tt).unwrap().velocity;
+                    let bv = astroterm::sky::evaluate_body(&direct, BodyId::Moon, tt).unwrap().velocity - expected_earth.velocity;
                     absolute[3] = absolute[3].max((av - bv).length());
                     let error = angle(a, b);
                     if error > maxima[1] {
@@ -482,9 +481,9 @@ fn qualify_cache_intervals_across_the_computational_interval() {
                         worst[1] = epoch;
                     }
                 } else {
-                    let delta = astroterm::sky::simulation::evaluate_orientation(&cached, tt)
+                    let delta = astroterm::sky::evaluate_orientation(&cached, tt)
                         .unwrap()
-                        .compose(astroterm::sky::simulation::evaluate_orientation(&direct, tt).unwrap().transpose());
+                        .compose(astroterm::sky::evaluate_orientation(&direct, tt).unwrap().transpose());
                     let sine = Vector3 {
                         x: delta.0[2][1] - delta.0[1][2],
                         y: delta.0[0][2] - delta.0[2][0],
@@ -503,7 +502,7 @@ fn qualify_cache_intervals_across_the_computational_interval() {
     }
     println!("maximum cache errors (arcsec): {maxima:?}; worst sample epochs TT: {worst:?}");
     println!("absolute planet/lunar-relative position AU and velocity AU/day maxima: {absolute:?}");
-    use astroterm::model::simulation::{MOON_LIMITS, PLANET_LIMITS};
+    use astroterm::model::{MOON_LIMITS, PLANET_LIMITS};
     for (actual, budget) in absolute.into_iter().zip([
         PLANET_LIMITS.position_au,
         PLANET_LIMITS.velocity_au_day,
@@ -528,7 +527,7 @@ fn continuous_moon_phase_matches_horizons_and_original_reference_dates() {
         let mut state = SimulationState::exact();
         update(&mut state, tt);
         let mut observer = prepare_observer(&state, frame(tt), Observer::default()).unwrap();
-        observer.state = astroterm::sky::simulation::evaluate_body(&state, BodyId::Earth, tt).unwrap(); // Horizons fixture is geocentric
+        observer.state = astroterm::sky::evaluate_body(&state, BodyId::Earth, tt).unwrap(); // Horizons fixture is geocentric
         prepare_light_time_samples(&mut state, &mut observer, &mut StepTimes::default()).unwrap();
         let mut sky = ObservedSky::new(cat.clone());
         observe_sky(
