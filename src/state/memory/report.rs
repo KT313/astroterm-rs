@@ -5,13 +5,15 @@ use crate::cache::{BufferDescriptor, InventorySnapshot, Kind, Owner, Quality};
 use super::{sum_known_payload, sum_payload, MAX_ROWS, MAX_DEPTH, MAX_CHILDREN, DETAIL_CHILDREN, MAX_VISITS};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Group { Catalog, Simulation, Observation, Projection, Rendering, Configuration, Diagnostics, External, Other }
+enum Group { Catalog, Simulation, Selection, Observer, Observation, Projection, Rendering, Configuration, Diagnostics, External, Other }
 impl Group {
     fn label(self) -> &'static str {
         match self {
             Self::Catalog => "Catalog — immutable shared source data",
             Self::Simulation => "Simulation — saved model samples",
-            Self::Observation => "Observation — selected stars and calculated sky",
+            Self::Selection => "Selection — conservative star candidates",
+            Self::Observer => "Observer preparation — geometry and emission samples",
+            Self::Observation => "Observation — corrected sky",
             Self::Projection => "Projection — screen positions and drawing order",
             Self::Rendering => "Rendering — canvases, text and output buffers",
             Self::Configuration => "Configuration",
@@ -31,6 +33,8 @@ fn classify_group(row: &BufferDescriptor) -> Group {
     let path = row.path.as_str();
     if belongs_to(path, "state.persistent.catalog") { return Group::Catalog; }
     if belongs_to(path, "state.cache.simulation") { return Group::Simulation; }
+    if belongs_to(path, "state.cache.selection") { return Group::Selection; }
+    if belongs_to(path, "state.cache.observer") { return Group::Observer; }
     if belongs_to(path, "state.cache.sky") || belongs_to(path, "state.cache.observation") { return Group::Observation; }
     if belongs_to(path, "state.cache.projection") { return Group::Projection; }
     if belongs_to(path, "state.cache.rendering") { return Group::Rendering; }
@@ -107,7 +111,7 @@ fn write_inventory_notes(snapshot: &InventorySnapshot, output: &mut impl Write) 
 }
 
 fn write_inventory_groups(snapshot: &InventorySnapshot, output: &mut impl Write) -> io::Result<()> {
-    for group in [Group::Catalog, Group::Simulation, Group::Observation, Group::Projection, Group::Rendering, Group::Configuration, Group::Diagnostics, Group::External, Group::Other] {
+    for group in [Group::Catalog, Group::Simulation, Group::Selection, Group::Observer, Group::Observation, Group::Projection, Group::Rendering, Group::Configuration, Group::Diagnostics, Group::External, Group::Other] {
         write_group(snapshot, group, output)?;
     }
     Ok(())

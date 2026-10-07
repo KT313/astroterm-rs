@@ -12,7 +12,7 @@ use astroterm::projection::project_sky;
 use astroterm::model::RenderOptions;
 use astroterm::scene::draw_sky_scene;
 use astroterm::model::{Sky, FrameTime};
-use astroterm::sky::{observe_sky, prepare_observation, update_simulation, update_sky_positions};
+use astroterm::sky::{observe_sky, prepare_observation, update_solar_system, update_sky_positions};
 use astroterm::timing::StepTimes;
 use criterion::{Criterion, SamplingMode, criterion_group, criterion_main};
 
@@ -91,7 +91,7 @@ fn benchmark_frames(criterion: &mut Criterion) {
                     bencher.iter(|| {
                         let time = FrameTime::from_utc(date + frame as f64 / (24.0 * 86400.0));
                         frame += 1;
-                        update_simulation(&mut simulation, time, &[], &mut timing).unwrap();
+                        update_solar_system(&mut simulation, time, &[], &mut timing).unwrap();
                         let observer_state = prepare_observation(&mut simulation, time, observer).unwrap();
                         observe_sky(
                             &simulation,
@@ -177,7 +177,7 @@ fn benchmark_model_families(criterion: &mut Criterion) {
     });
     let mut simulation = SimulationState::default();
     let time = FrameTime::from_utc(J2000);
-    update_simulation(&mut simulation, time, &[], &mut StepTimes::default()).unwrap();
+    update_solar_system(&mut simulation, time, &[], &mut StepTimes::default()).unwrap();
     group.bench_function("cached_bodies", |b| {
         b.iter(|| {
             for body in BodyId::PLANETS.into_iter().chain([BodyId::Moon]) {

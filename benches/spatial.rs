@@ -6,7 +6,7 @@ use astroterm::catalog::{load_athyg_catalog, load_embedded_catalog};
 use astroterm::model::{Sky, ProjectionViewport as Viewport, View, ViewCenter, RenderOptions, FrameTime};
 use astroterm::projection::project_sky;
 use astroterm::scene::draw_sky_scene;
-use astroterm::sky::{observe_sky, prepare_observation, update_simulation};
+use astroterm::sky::{observe_sky, prepare_observation, update_solar_system};
 use astroterm::timing::StepTimes;
 use criterion::{Criterion, SamplingMode, criterion_group, criterion_main};
 use std::{hint::black_box, path::Path, sync::Arc, time::Duration};
@@ -20,7 +20,7 @@ fn benchmark_spatial(criterion: &mut Criterion) {
     let mut simulation = SimulationState::default();
     let mut timing = StepTimes::default();
     let time = FrameTime::from_utc(2460736.9583333335);
-    update_simulation(&mut simulation, time, &[], &mut timing).unwrap();
+    update_solar_system(&mut simulation, time, &[], &mut timing).unwrap();
     let observer = prepare_observation(
         &mut simulation,
         time,

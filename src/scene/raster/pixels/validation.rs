@@ -5,7 +5,7 @@ use crate::astro::Observer;
 use crate::catalog::{Catalog, load_embedded_catalog};
 use crate::model::{ObservedSky, SkyCatalog, ProjectionViewport as Viewport, View, FrameTime};
 use crate::projection::project_sky;
-use crate::sky::{observe_sky, prepare_observation, update_simulation};
+use crate::sky::{observe_sky, prepare_observation, update_solar_system};
 use std::{sync::Arc, time::Instant};
 
 fn options(threshold: f64) -> RenderOptions {
@@ -24,7 +24,7 @@ fn observe(catalog: Arc<SkyCatalog>, threshold: f64) -> ObservedSky {
     let mut sky = ObservedSky::new(catalog);
     let time = FrameTime::from_utc(2460735.9583333335);
     let mut simulation = SimulationState::default();
-    update_simulation(&mut simulation, time, &[], &mut StepTimes::default()).unwrap();
+    update_solar_system(&mut simulation, time, &[], &mut StepTimes::default()).unwrap();
     let site = Observer {
         latitude: 35.69_f64.to_radians(),
         longitude: 139.69_f64.to_radians(),

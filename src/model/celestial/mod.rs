@@ -7,11 +7,11 @@ pub use objects::{
 };
 pub use observation::{CorrectionStats, ObservedSky, Sky, MoonIllumination, Anchor, ObserverState};
 pub use simulation::{
-    FrameTime, ModelFamily, StateRequest, SimulationError, InterpolationLimits, PLANET_LIMITS, MOON_LIMITS,
+    SelectedStar, FrameTime, ModelFamily, StateRequest, SimulationError, InterpolationLimits, PLANET_LIMITS, MOON_LIMITS,
     ORIENTATION_LIMITS, CachePolicy, RefreshCounts,
 };
 pub(crate) use observation::{
-    BodySamples, SelectedStar, CorrectionSelection, StellarWork, ValidityCounts, Directions, ObserverKey,
+    BodySamples, CorrectionSelection, Directions, ObserverKey,
     BodyKey as ObservationBodyKey,
 };
-pub(crate) use simulation::Sample;
+pub(crate) use simulation::{Sample, StellarWork, ValidityCounts};

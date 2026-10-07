@@ -50,6 +50,9 @@ impl ApplicationState {
         self.preparation = Some(prepared.preparation);
         self.persistent.catalog = catalog.clone();
         self.cache.sky = Sky::new(catalog);
+        self.cache.selection = crate::state::StarSelectionCache::new(self.config.cache.clone());
+        self.cache.simulation.stars = crate::state::StellarSimulationState::new(self.config.cache.clone());
+        self.cache.observer = crate::state::ObserverPreparationCache::new(self.config.cache.clone());
         self.cache.observation = crate::state::ObservationCache::new(self.config.cache.clone());
         self.cache.projection = crate::state::ProjectionCache::new(self.config.cache.clone());
         let scene = match &mut self.cache.rendering {

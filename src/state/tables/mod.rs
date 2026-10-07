@@ -4,7 +4,7 @@
 //! - `Table`: one original container (the star table, a Vec, a cached result, an image, ...). It reports
 //!   shape, allocation sizes and one bounded preview.
 //! - `Tables`: something that owns tables. It visits each of them with a dotted path such as
-//!   `cache.observation.motion`, descending into sub-owners.
+//!   `cache.simulation.stars.motion`, descending into sub-owners.
 //!
 //! Every owner struct gets one listing: either a `list_tables!` line (field names plus the cache `Group` that governs
 //! them) or a short hand-written `visit_tables` when a field needs a whole-owner adapter. `log.rs` walks the whole

@@ -3,6 +3,7 @@
 //! The per-star columns are declared once in `columns.rs`; `columns()` borrows all of them for one pass.
 mod columns;
 mod views;
+pub(crate) use views::StellarFields;
 pub use columns::{STAR_SECTIONS, StarRow, StarRowSlice, StarRowVec};
 use columns::section;
 use crate::model::Star;

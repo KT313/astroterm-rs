@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use astroterm::cli::Arguments;
 use astroterm::model::{Config, FrameTime};
-use astroterm::state::{ApplicationState, ObservationCache};
+use astroterm::state::{ApplicationState};
 use astroterm::terminal::Renderer;
 use astroterm::timing::StepTimes;
 
@@ -85,18 +85,6 @@ pub(crate) fn capture_failed_frame_memory(state: &mut ApplicationState, renderer
 pub(super) fn report_failure(error: impl Display) -> ExitCode {
     eprintln!("ERROR: {error}");
     ExitCode::FAILURE
-}
-
-/// Keep diagnostic formatting lazy and outside the observer calculation's timer.
-pub(super) fn describe_observer_geometry(time: FrameTime, site: &astroterm::astro::Observer, times: &mut StepTimes) {
-    times.describe("Observer geometry", || format!("UTC JD={:.9}; UT1 JD={:.9}; TT JD={:.9}; latitude={} rad; longitude={} rad; output WGS84 observer state + horizon matrix", time.utc, time.ut1, time.tt, site.latitude, site.longitude));
-}
-
-/// Describe the completed light-time pass, preserving the original detail order and target steps.
-pub(super) fn describe_light_time_sampling(observer: &astroterm::model::ObserverState, cache: &ObservationCache, times: &mut StepTimes) {
-    times.describe("Light-time sampling", || format!("solar-system emission epochs={:?}; stars have no light-time iteration", observer.emission_tt));
-    times.describe("Observer geometry", || format!("cache={:?}", cache.observer_report()));
-    times.describe("Light-time sampling", || format!("cache={:?}", cache.light_time_report()));
 }
 
 /// Start measuring before opening this frame's timing and optional memory records.

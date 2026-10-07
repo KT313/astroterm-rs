@@ -3,19 +3,19 @@ use std::io;
 use astroterm::astro::{Observer, SimulationClock};
 use astroterm::cache::CacheStats;
 use astroterm::controls::apply_control;
-use astroterm::model::{View, Sky, FrameTime, SimulationSettings, ProjectionViewport};
-use astroterm::sky::update_simulation;
-use astroterm::state::{ObservationCache, ProjectionCache, SimulationState, RenderingState};
+use astroterm::model::{View, Sky, FrameTime, ProjectionViewport};
+use astroterm::sky::update_solar_system;
+use astroterm::state::{ObserverPreparationCache, ObservationCache, ProjectionCache, SimulationState, RenderingState};
 use astroterm::terminal::{FrameInput, Renderer};
 use astroterm::timing::StepTimes;
-use super::{describe_observer_geometry, describe_light_time_sampling, record_projected_memory};
+use super::record_projected_memory;
 
 #[allow(clippy::too_many_arguments)]
 /// Apply a frame's controls and invalidate dependent caches after any view change or resize.
 /// The caller checks for quit first and retains ownership of the input until the frame ends.
 pub(crate) fn apply_frame_controls(
     input: &FrameInput, initial_view: &View, view: &mut View, clock: &mut SimulationClock,
-    renderer: &mut Renderer, rendering: &mut RenderingState, observation_cache: &mut ObservationCache, projection_cache: &mut ProjectionCache,
+    renderer: &mut Renderer, rendering: &mut RenderingState, selection: &mut astroterm::state::StarSelectionCache, projection_cache: &mut ProjectionCache,
 ) -> io::Result<()> {
     let previous_view = *view;
     if input.resized { renderer.fit_to_terminal(rendering)?; }
@@ -24,7 +24,7 @@ pub(crate) fn apply_frame_controls(
     }
 
     if *view != previous_view {
-        observation_cache.invalidate_view();
+        selection.invalidate_view();
         projection_cache.invalidate_view();
     } else if input.resized {
         projection_cache.invalidate_view();
@@ -41,33 +41,44 @@ pub(crate) fn resolve_frame_time(single_frame: bool, start_julian_date: f64, clo
     })
 }
 
-/// Refresh model samples within the existing Simulation timer and preserve its error conversion.
-pub(crate) fn simulate_frame(simulation_state: &mut SimulationState, time: FrameTime, step_times: &mut StepTimes) -> io::Result<()> {
+/// Prepare reception-time solar-system samples; catalog stars have a separate stage.
+pub(crate) fn simulate_solar_system_frame(simulation_state: &mut SimulationState, time: FrameTime, step_times: &mut StepTimes) -> io::Result<()> {
     step_times
-        .measure_steps("Simulation", |steps| {
-            update_simulation(simulation_state, time, &[], steps)
+        .measure_steps("Solar-system simulation", |steps| {
+            update_solar_system(simulation_state, time, &[], steps)
         })
         .map_err(io::Error::other)
 }
 
-/// Prepare observer/emission samples and run the ordered observation passes within their existing timers.
+/// Finish observer geometry and solar-system emission samples before selecting stars.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn prepare_observer_frame(
+    site: Observer, simulation_state: &mut SimulationState, observer_cache: &mut ObserverPreparationCache,
+    time: FrameTime, step_times: &mut StepTimes,
+) -> io::Result<astroterm::model::ObserverState> {
+    step_times.measure_steps("Observer preparation", |steps| {
+        astroterm::sky::prepare_observer_inputs(observer_cache, simulation_state, time, site, steps)
+    }).map_err(io::Error::other)
+}
+
+/// Select only conservative candidates and the endpoints needed by constellation lines.
+pub(crate) fn select_stars_frame(storage: &mut astroterm::state::StarSelectionCache, catalog: &std::sync::Arc<astroterm::model::SkyCatalog>,
+    observer: &astroterm::model::ObserverState, view: &View, threshold: f64, refraction: bool, times: &mut StepTimes) {
+    times.measure_steps("Star selection", |times| astroterm::sky::select_cached_stars(storage, catalog, observer, threshold, refraction, astroterm::projection::select_view_region(view), times));
+}
+
+/// Update intrinsic directions and brightness without access to observer or camera data.
+pub(crate) fn simulate_stars_frame(stars: &mut astroterm::state::StellarSimulationState, selection: astroterm::state::SelectedStars<'_>, time: FrameTime, times: &mut StepTimes) {
+    times.measure_steps("Stellar simulation", |times| astroterm::sky::simulate_stars(stars, selection, time.tt, times));
+}
+
+/// Apply viewer-dependent corrections to the completed model results.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn observe_frame(
-    simulation: &SimulationSettings, magnitude_threshold: f64, view: &View, simulation_state: &mut SimulationState,
-    observation_cache: &mut ObservationCache, sky: &mut Sky, time: FrameTime, step_times: &mut StepTimes,
-) -> io::Result<()> {
-    step_times.measure_steps("Observation", |steps| {
-        let mut observer = astroterm::sky::prepare_cached_observer_with_times(observation_cache, simulation_state, time, simulation.observer, steps)?;
-        describe_observer_geometry(time, &simulation.observer, steps);
-        steps.measure_steps("Light-time sampling", |steps| {
-            astroterm::sky::prepare_cached_light_time(observation_cache, simulation_state, &mut observer, steps)
-        })?;
-
-        describe_light_time_sampling(&observer, observation_cache, steps);
-
-        astroterm::sky::observe_cached_sky(observation_cache, simulation_state, &observer, magnitude_threshold,
-            simulation.refraction, astroterm::projection::select_view_region(view), sky, steps) // filter stars and calculate their apparent directions
-    }).map_err(io::Error::other)
+    observation: &mut ObservationCache, stars: astroterm::state::StellarResults<'_>, bodies: astroterm::state::PreparedBodies<'_>,
+    observer: &astroterm::model::ObserverState, threshold: f64, refraction: bool, sky: &mut Sky, times: &mut StepTimes,
+) {
+    times.measure_steps("Observation", |times| astroterm::sky::observe_cached_sky(observation, stars, bodies, observer, threshold, refraction, sky, times));
 }
 
 /// Project the observed sky for the current viewport within the existing Projection timer.

@@ -9,10 +9,13 @@ mod tables;
 mod memory;
 
 pub use application::{ApplicationState, Persistent, Caches};
-pub use processing::{SimulationState, ObservationCache, ProjectionCache, SceneCache};
+pub use processing::{
+    SimulationCaches, SimulationState, StellarSimulationState, ObserverPreparationCache, StarSelectionCache,
+    SelectedStars, StellarResults, PreparedBodies, ObservationCache, ProjectionCache, SceneCache,
+};
 pub(crate) use processing::{
-    RegionCache, CandidateCache, SelectedCache, WorkingCache, MotionCache, EligibleCache, RelativeCache,
-    IlluminationCache, ApparentCache, HorizontalCache, StellarMotionBuffers, ObserverBuffers, LightTimeBuffers,
+    ObserverBuffers, LightTimeBuffers, RegionCache, CandidateCache, SelectedCache, WorkingCache, MotionCache,
+    EligibleCache, RelativeCache, IlluminationCache, ApparentCache, HorizontalCache, StellarMotionBuffers,
     StarProjectionBuffers, DrawOrderBuffers,
 };
 pub use rendering::{RenderingState, CompressionSupport, CharacterState, PixelState, Presenter, TextRasterizer};

@@ -5,6 +5,7 @@ mod storage;
 pub use records::{SkyCatalog, CatalogPreparation, PreparedCatalog, ConstellationSet, StarException};
 pub use grid::{GRID_DEPTH, CELL_COUNT, REFRACTION_MARGIN, ABERRATION_MARGIN, SkyRegion, SelectionStats, SkyGrid, hash_direction};
 pub use storage::{QUANTIZATION_MARGIN, STAR_SECTIONS, StarRow, StarRowSlice, StarRowVec, StarStorage};
+pub(crate) use storage::StellarFields;
 pub(crate) use grid::{SelectedRegion, build_caps};
 
 #[cfg(test)]

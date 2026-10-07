@@ -9,7 +9,7 @@ use astroterm::projection::project_sky;
 use astroterm::model::RenderOptions;
 use astroterm::scene::draw_sky_scene;
 use astroterm::model::{ObservedSky, SkyCatalog, FrameTime, ModelFamily, StateRequest};
-use astroterm::sky::{observe_sky, prepare_light_time_samples, prepare_observation, prepare_observer, update_simulation};
+use astroterm::sky::{observe_sky, prepare_light_time_samples, prepare_observation, prepare_observer, update_solar_system};
 use astroterm::timing::StepTimes;
 use std::sync::{Arc, OnceLock};
 
@@ -20,7 +20,7 @@ fn frame(tt: f64) -> FrameTime {
     FrameTime { utc: tt, ut1: tt, tt }
 }
 fn update(state: &mut SimulationState, tt: f64) {
-    update_simulation(state, frame(tt), &[], &mut StepTimes::default()).unwrap();
+    update_solar_system(state, frame(tt), &[], &mut StepTimes::default()).unwrap();
 }
 fn catalog() -> Arc<SkyCatalog> {
     static CATALOG: OnceLock<Arc<SkyCatalog>> = OnceLock::new();
@@ -92,11 +92,13 @@ fn observation_and_projection_report_independent_ordered_passes() {
         recorded,
         [
             ("Observation", 0),
+            ("Body sampling", 1),
             ("Region filtering", 1),
             ("Brightness bounds", 1),
-            ("Body sampling", 1),
             ("Candidate validation", 1),
             ("Constellation endpoints", 1),
+            ("Candidate index sort and dedup", 2),
+            ("Endpoint index merge", 2),
             ("Stellar motion", 1),
             ("Current brightness", 1),
             ("Correction selection", 1),
@@ -270,9 +272,9 @@ fn emissions_get_separate_bounded_samples_and_same_epoch_parents() {
         body: BodyId::Neptune,
         tt: emission,
     };
-    update_simulation(&mut state, frame, &[request], &mut StepTimes::default()).unwrap();
+    update_solar_system(&mut state, frame, &[request], &mut StepTimes::default()).unwrap();
     let counts = state.refresh_counts;
-    update_simulation(&mut state, frame, &[request], &mut StepTimes::default()).unwrap();
+    update_solar_system(&mut state, frame, &[request], &mut StepTimes::default()).unwrap();
     assert_eq!(counts, state.refresh_counts);
     for delta in [-29.99, 0.0, 29.99] {
         let tt = emission + delta / 86400.0;
@@ -295,7 +297,7 @@ fn emissions_get_separate_bounded_samples_and_same_epoch_parents() {
             tt: J2000 - (index + 1) as f64 / 48.0,
         })
         .collect();
-    update_simulation(&mut state, frame, &planetary_requests, &mut StepTimes::default()).unwrap();
+    update_solar_system(&mut state, frame, &planetary_requests, &mut StepTimes::default()).unwrap();
     for request in &planetary_requests {
         assert!(astroterm::sky::evaluate_body(&state, request.body, request.tt).is_ok());
     }
@@ -303,7 +305,7 @@ fn emissions_get_separate_bounded_samples_and_same_epoch_parents() {
         body: BodyId::Moon,
         tt: emission,
     };
-    update_simulation(&mut state, frame, &[lunar_request], &mut StepTimes::default()).unwrap();
+    update_solar_system(&mut state, frame, &[lunar_request], &mut StepTimes::default()).unwrap();
     let mut direct = SimulationState::exact();
     update(&mut direct, emission);
     assert_eq!(
@@ -318,7 +320,7 @@ fn emissions_get_separate_bounded_samples_and_same_epoch_parents() {
             tt: emission - 1.0,
         },
     ];
-    assert!(update_simulation(&mut state, frame, &excessive, &mut StepTimes::default()).is_err());
+    assert!(update_solar_system(&mut state, frame, &excessive, &mut StepTimes::default()).is_err());
 }
 
 #[test]
@@ -414,7 +416,7 @@ fn unsupported_interval_uses_direct_samples_and_nonfinite_times_fail() {
         astroterm::sky::evaluate_body(&state, BodyId::Earth, COMPUTATIONAL_INTERVAL.end_tt)
             .is_err()
     );
-    assert!(update_simulation(&mut state, frame(f64::NAN), &[], &mut StepTimes::default()).is_err());
+    assert!(update_solar_system(&mut state, frame(f64::NAN), &[], &mut StepTimes::default()).is_err());
 }
 
 /// Broad deterministic sampling, including dense contemporary lunar cycles and close approaches. This qualifies

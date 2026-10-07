@@ -13,10 +13,13 @@ fn state() -> ApplicationState {
 fn observe(state: &mut ApplicationState, utc: f64) {
     let time = FrameTime::from_utc(utc);
     let cache = &mut state.cache;
-    astroterm::sky::update_simulation(&mut cache.simulation, time, &[], &mut state.timings).unwrap();
-    let mut observer = astroterm::sky::prepare_cached_observer(&mut cache.observation, &cache.simulation, time, Observer::default()).unwrap();
-    astroterm::sky::prepare_cached_light_time(&mut cache.observation, &mut cache.simulation, &mut observer, &mut state.timings).unwrap();
-    astroterm::sky::observe_cached_sky(&mut cache.observation, &cache.simulation, &observer, 5.0, false, SkyRegion::All, &mut cache.sky, &mut state.timings).unwrap();
+    astroterm::sky::update_solar_system(&mut cache.simulation.solar_system, time, &[], &mut state.timings).unwrap();
+    let mut observer = astroterm::sky::prepare_cached_observer(&mut cache.observer, &cache.simulation.solar_system, time, Observer::default()).unwrap();
+    astroterm::sky::prepare_cached_light_time(&mut cache.observer, &mut cache.simulation.solar_system, &mut observer, &mut state.timings).unwrap();
+    astroterm::sky::prepare_cached_bodies(&mut cache.observer, &cache.simulation.solar_system, &observer, &mut state.timings).unwrap();
+    astroterm::sky::select_cached_stars(&mut cache.selection, &cache.sky.catalog, &observer, 5.0, false, SkyRegion::All, &mut state.timings);
+    astroterm::sky::simulate_stars(&mut cache.simulation.stars, cache.selection.stars(), time.tt, &mut state.timings);
+    astroterm::sky::observe_cached_sky(&mut cache.observation, cache.simulation.stars.results(cache.selection.stars()), cache.observer.bodies(&observer), &observer, 5.0, false, &mut cache.sky, &mut state.timings);
 }
 
 #[test]
@@ -36,7 +39,7 @@ fn cold_and_warm_cleanup_preserve_rows_shared_identity_and_frame_results() {
         let stars_pointer = columns.u0.as_ptr();
         let rows: Vec<_> = catalog.stars.iter().collect();
         assert_eq!(app.preparation().unwrap().motion_bounds().len(), rows.len());
-        astroterm::sky::prepare_observation_catalog(&mut app.cache.observation, catalog.clone(), &mut app.timings);
+        astroterm::sky::prepare_stellar_catalog(&mut app.cache.simulation.stars, catalog.clone(), &mut app.timings);
         observe(&mut app, J2000);
         let expected = app.cache.sky.stars.clone();
         let stats = app.cache.observation.stats();

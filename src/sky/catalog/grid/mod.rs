@@ -73,7 +73,7 @@ pub(crate) fn select_region(
                 + ALWAYS_CHECKED_ANGLE
                 + QUANTIZATION_MARGIN
                 + ABERRATION_MARGIN.max(
-                    (observer.state.velocity.length() / crate::sky::LIGHT_SPEED_AU_DAY)
+                    (observer.state.velocity.length() / crate::astro::LIGHT_SPEED_AU_DAY)
                         .clamp(0.0, 1.0)
                         .asin(),
                 )

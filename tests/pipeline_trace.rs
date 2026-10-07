@@ -1,12 +1,14 @@
 //! Single-frame diagnostics must describe production results without changing them.
-use astroterm::state::{ObservationCache, ProjectionCache, SimulationState};
+#[path = "support/cached.rs"] mod cached;
+use cached::PipelineCache;
+use astroterm::state::{ProjectionCache, SimulationState};
 use astroterm::astro::{J2000, Observer};
 use astroterm::cache::CacheConfig;
 use astroterm::catalog::datasets::{Dataset, DatasetDirectories};
 use astroterm::cli::{Arguments, build_config};
 use astroterm::model::{Sky, ProjectionViewport as Viewport, View, RenderOptions, FrameTime};
 use astroterm::scene::draw_pixel_sky;
-use astroterm::sky::{update_simulation, load_sky_catalog_with_times};
+use astroterm::sky::{update_solar_system, load_sky_catalog_with_times};
 use astroterm::timing::StepTimes;
 use clap::Parser;
 use std::sync::Arc;
@@ -73,17 +75,17 @@ fn tracing_preserves_observation_projection_and_raster_with_cache_or_bypass() {
             times.begin_frame();
             let mut simulation = SimulationState::default();
             simulation.configure_cache(&config);
-            let mut observation = ObservationCache::new(config.clone());
+            let mut observation = PipelineCache::new(config.clone());
             let mut projection = ProjectionCache::new(config.clone());
             let mut sky = Sky::new(catalog.clone());
             let time = FrameTime::from_utc(J2000);
             let view = View::default();
-            update_simulation(&mut simulation, time, &[], &mut times).unwrap();
-            let mut observer = astroterm::sky::prepare_cached_observer(&mut observation, &simulation, time, Observer::default())
+            update_solar_system(&mut simulation, time, &[], &mut times).unwrap();
+            let mut observer = cached::prepare_cached_observer(&mut observation, &simulation, time, Observer::default())
                 .unwrap();
-            astroterm::sky::prepare_cached_light_time(&mut observation, &mut simulation, &mut observer, &mut times)
+            cached::prepare_cached_light_time(&mut observation, &mut simulation, &mut observer, &mut times)
                 .unwrap();
-            astroterm::sky::observe_cached_sky(&mut observation, &simulation,
+            cached::observe_cached_sky(&mut observation, &simulation,
                     &observer,
                     5.0,
                     true,

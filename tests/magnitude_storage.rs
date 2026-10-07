@@ -76,7 +76,7 @@ fn quantization_changes_ties_but_keeps_id_order_and_decoded_runtime_values() {
 #[test]
 fn clipped_minimum_passes_grid_and_candidate_checks_before_unclipped_current_filter() {
     use astroterm::{astro::{J2000, JULIAN_YEAR_DAYS, Matrix3, Observer, Vector3}, model::FrameTime,
-        sky::{observe_sky, prepare_observation, update_simulation}, state::SimulationState, timing::StepTimes};
+        sky::{observe_sky, prepare_observation, update_solar_system}, state::SimulationState, timing::StepTimes};
     let parsed = load_csv("ra,dec,mag,dist,rv\n0,0,-9.9,10,-100\n0,0,-10,,\n").unwrap();
     let catalog = Arc::new(prepare_owned_catalog(parsed).unwrap().catalog);
     // Both encoded-zero rows pass an arbitrarily bright early threshold; final brightness still decides.
@@ -86,7 +86,7 @@ fn clipped_minimum_passes_grid_and_candidate_checks_before_unclipped_current_fil
         let tt = J2000 + years * JULIAN_YEAR_DAYS;
         let time = FrameTime { utc: tt, ut1: tt, tt };
         let mut simulation = SimulationState::exact();
-        update_simulation(&mut simulation, time, &[], &mut StepTimes::default()).unwrap();
+        update_solar_system(&mut simulation, time, &[], &mut StepTimes::default()).unwrap();
         let mut observer = prepare_observation(&mut simulation, time, Observer::default()).unwrap();
         observer.inertial_to_horizon = Matrix3::IDENTITY;
         observer.state.velocity = Vector3::default();

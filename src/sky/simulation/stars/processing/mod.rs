@@ -1,13 +1,14 @@
 //! Bounded passes over selected stars. Each pass has one timer per batch, never one per star.
 //! The selected source indices are unique. Catalog data stays borrowed; scratch holds at most one batch.
-use super::*;
+use crate::astro::{Vector3, models::stars::{StellarMotion, StellarSample, years_since_j2000}};
+use crate::cache::Group;
+use crate::timing::{StepTimes, Access, BufferId, BufferShape, IndexDomain, MemoryEvent, Operation};
 
 const BATCH_SIZE: usize = 1024;
 
 use crate::model::{StellarWork, ValidityCounts};
-# [cfg (test)] use crate::model::SelectedStar;
 
-pub(super) fn update_stellar_motion(storage: crate::state::StellarMotionBuffers<'_>, catalog_stars: &crate::model::StarStorage, epoch: f64, times: &mut StepTimes) -> usize {
+pub(crate) fn update_stellar_motion(storage: crate::state::StellarMotionBuffers<'_>, catalog_stars: crate::model::StellarFields<'_>, epoch: f64, times: &mut StepTimes) -> usize {
     times.with_memory(|times| {
         let step = times.active_memory_step();
         times.record_memory(step, || MemoryEvent::borrow(BufferId::WorkingStars, Access::ReadOnly, BufferShape::vector(storage.working.value(), IndexDomain::Working)));
@@ -21,7 +22,7 @@ pub(super) fn update_stellar_motion(storage: crate::state::StellarMotionBuffers<
     let reuse = storage.config.allows(Group::StellarState);
     let refresh = times.measure("Motion cache decision", || {
         storage.motion
-            .needs_refresh(&storage.working.generation, epoch, Some(maximum), reuse)
+            .needs_refresh(&storage.key, epoch, Some(maximum), reuse)
     });
     times.record_memory(times.last_memory_step(), || MemoryEvent::unknown_operation(BufferId::MotionSamples,
         if refresh { Operation::Refresh(storage.motion.stats.last_reason.expect("refresh reason")) } else { Operation::Reuse }));
@@ -33,7 +34,7 @@ pub(super) fn update_stellar_motion(storage: crate::state::StellarMotionBuffers<
     });
     if refresh {
         let years = years_since_j2000(epoch);
-        let trajectories = catalog_stars.borrow_trajectory_fields();
+        let trajectories = &catalog_stars;
         let mut values = times.measure("Motion output allocation", || {
             Vec::with_capacity(storage.working.value().len())
         });
@@ -184,7 +185,7 @@ pub(super) fn update_stellar_motion(storage: crate::state::StellarMotionBuffers<
         times.describe("Stellar batches", || format!("input/output stars={}; refreshed={refreshed}; reused={reused}; batch limit={BATCH_SIZE}; scratch capacity={} records ({} bytes); refreshed samples with positive validity={}; zero validity: outside interval={}, singular={}, moving with distance={}, zero configured limit={}, boundary/angular bound={}; validity probe evaluations={}; resulting batch validity={validity} s", values.len(), scratch.capacity(), scratch.capacity()*std::mem::size_of::<StellarWork>(), counts.positive, counts.outside_interval, counts.singular, counts.moving_distance, counts.zero_limit, counts.boundary_or_bound, counts.probe_evaluations));
         let outcome = times.measure("Motion cache store", || {
             storage.motion
-                .store(storage.working.generation, epoch, validity, (values, singular_count))
+                .store(storage.key, epoch, validity, (values, singular_count))
         });
         times.record_store(BufferId::MotionSamples, outcome);
         let scratch_before = times.inspect_memory(|| BufferShape::vector(scratch, IndexDomain::Working));
@@ -250,7 +251,7 @@ fn qualify_stellar_span_counted(
 }
 
 #[cfg(test)]
-pub(super) fn qualify_stellar_span(
+pub(crate) fn qualify_stellar_span(
     motion: StellarMotion,
     sample: StellarSample,
     epoch: f64,
@@ -268,29 +269,25 @@ pub(super) fn qualify_stellar_span(
     )
 }
 
-pub(in crate::sky::observation) fn refresh_stellar_motion(storage: &mut ObservationCache, epoch: f64, output: &mut ObservedSky, times: &mut StepTimes) {
-    times.measure_steps("Stellar motion", |times| {
-        output.runtime_singular_count = update_stellar_motion(storage.borrow_stellar_motion(), &output.catalog.stars, epoch, times);
-    });
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{state::{StellarSimulationState, StarSelectionCache, SelectedStars}, model::{ObservedSky, SelectedStar}};
+    use crate::cache::CacheConfig;
 
     /// The previous per-star loop is deliberately retained as an independent ordering/storage reference.
-    fn update_fused(cache: &mut ObservationCache, output: &mut ObservedSky, epoch: f64) {
+    fn update_fused(cache: &mut StellarSimulationState, selection: SelectedStars<'_>, output: &mut ObservedSky, epoch: f64) {
         let maximum = cache.config.age_seconds(Group::StellarState);
         let reuse = cache.config.allows(Group::StellarState);
         if cache
             .motion
-            .needs_refresh(&cache.working.generation, epoch, Some(maximum), reuse)
+            .needs_refresh(&selection.key, epoch, Some(maximum), reuse)
         {
             let trajectories = output.catalog.stars.borrow_trajectory_fields();
-            let mut values = Vec::with_capacity(cache.working.value().len());
+            let mut values = Vec::with_capacity(selection.working.value().len());
             let mut singular = 0;
             let mut validity = maximum;
-            for star in cache.working.value() {
+            for star in selection.working.value() {
                 let entry = cache.stellar.entry(star.source_index).or_default();
                 let before = entry.stats;
                 if entry.needs_refresh(&(), epoch, Some(maximum), reuse) {
@@ -323,7 +320,7 @@ mod tests {
             }
             cache
                 .motion
-                .store(cache.working.generation, epoch, validity, (values, singular));
+                .store(selection.key, epoch, validity, (values, singular));
         }
         output.runtime_singular_count = cache.motion.value().1;
     }
@@ -343,11 +340,13 @@ mod tests {
         let base = crate::sky::create_sky_from_catalog(&parsed).unwrap();
         assert!(base.stars.len() > BATCH_SIZE * 2);
         for config in [CacheConfig::default(), CacheConfig::disabled()] {
-            let mut fused = ObservationCache::new(config.clone());
-            let mut batched = ObservationCache::new(config);
+            let mut fused = StellarSimulationState::new(config.clone());
+            let mut batched = StellarSimulationState::new(config);
             let mut a = base.clone();
             let mut b = base.clone();
             let mut scratch_allocation = None;
+            let mut selected = StarSelectionCache { catalog: Some(base.catalog.clone()), ..Default::default() };
+            selected.candidates.store((0, 0.0), 0.0, 0.0, (vec![], Default::default()));
             for (frame, offset) in [0.0, 0.0, 0.001, -0.001, 0.25, 0.25].into_iter().enumerate() {
                 let epoch = crate::astro::J2000 + offset;
                 let stars: Vec<_> = if frame < 4 {
@@ -368,11 +367,11 @@ mod tests {
                         })
                         .collect()
                 };
-                fused.working.store(frame as u64, epoch, 0.0, stars.clone());
-                batched.working.store(frame as u64, epoch, 0.0, stars);
-                update_fused(&mut fused, &mut a, epoch);
+                selected.requested_epoch = Some(epoch);
+                selected.working.store(frame as u64, epoch, 0.0, stars);
+                update_fused(&mut fused, selected.stars(), &mut a, epoch);
                 let mut times = StepTimes::with_trace(true);
-                b.runtime_singular_count = update_stellar_motion(batched.borrow_stellar_motion(), &b.catalog.stars, epoch, &mut times);
+                b.runtime_singular_count = update_stellar_motion(batched.borrow_stellar_motion(selected.stars()), b.catalog.stars.borrow_stellar_fields(), epoch, &mut times);
                 assert!(batched.stellar_scratch.is_empty());
                 assert!(batched.stellar_scratch.capacity() >= BATCH_SIZE);
                 let allocation = (batched.stellar_scratch.as_ptr(), batched.stellar_scratch.capacity());
@@ -432,4 +431,54 @@ mod tests {
         );
         assert_eq!(counts.probe_evaluations, 4);
     }
+
+#[test]
+fn stellar_hold_bound_covers_forward_reverse_and_fast_motion() {
+    let epoch = crate::astro::J2000;
+    for speed in [0.0, 0.01, 10.0, 10000.0] {
+        let motion = StellarMotion {
+            u0: Vector3 { x: 1.0, y: 0.0, z: 0.0 },
+            w: Vector3 {
+                x: 0.0,
+                y: speed,
+                z: 0.0,
+            },
+            distance_pc: None,
+        };
+        let sample = motion.evaluate(0.0, 5.0);
+        let span = qualify_stellar_span(motion, sample, epoch, 5.0, 360.0);
+        for fraction in [-1.0, -0.3, 0.0, 0.4, 1.0] {
+            let direct = motion.evaluate(years_since_j2000(epoch + span * fraction / 86400.0), 5.0);
+            let error = sample
+                .direction
+                .cross(direct.direction)
+                .length()
+                .atan2(sample.direction.dot(direct.direction));
+            assert!(error.to_degrees() * 3600.0 <= 0.1);
+            assert_eq!(direct.magnitude, sample.magnitude);
+        }
+    }
+}
+#[test]
+fn variable_brightness_and_out_of_range_states_use_exact_epochs() {
+    let motion = StellarMotion {
+        u0: Vector3 { x: 1.0, y: 0.0, z: 0.0 },
+        w: Vector3 {
+            x: -0.01,
+            y: 0.001,
+            z: 0.0,
+        },
+        distance_pc: Some(1.0),
+    };
+    let sample = motion.evaluate(0.0, 5.0);
+    assert_eq!(
+        qualify_stellar_span(motion, sample, crate::astro::J2000, 5.0, 360.0),
+        0.0
+    );
+    assert_eq!(
+        qualify_stellar_span(motion, sample, crate::astro::COMPUTATIONAL_INTERVAL.end_tt, 5.0, 360.0),
+        0.0
+    );
+}
+
 }

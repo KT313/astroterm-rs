@@ -6,7 +6,7 @@ mod diagnostics;
 
 pub(super) use startup::{load_cities, print_bash_completions, validate_arguments, load_catalog, prepare_terminal};
 pub(super) use frame::{
-    apply_frame_controls, resolve_frame_time, simulate_frame, observe_frame, project_frame,
+    apply_frame_controls, resolve_frame_time, simulate_solar_system_frame, simulate_stars_frame, observe_frame, select_stars_frame, prepare_observer_frame, project_frame,
     render_projected_frame, stop_on_quit,
 };
 pub(super) use diagnostics::{
@@ -16,6 +16,6 @@ pub(super) use diagnostics::{
 
 // Shared implementation helpers stay private to this module and its children.
 use diagnostics::{
-    finish_requested_report, report_failure, describe_observer_geometry, describe_light_time_sampling,
+    finish_requested_report, report_failure,
     record_projected_memory,
 };

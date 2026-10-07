@@ -1,32 +1,7 @@
 //! Cached body sampling and separate apparent, horizontal and refracted directions.
 use super::*;
 
-pub(in crate::sky::observation) fn update_body_sampling(
-    bodies_cache: &mut Cache<BodyKey, BodySamples>, config: &CacheConfig, epoch: f64, observer: &ObserverState,
-    simulation: &SimulationState, times: &mut StepTimes,
-) -> Result<(), SimulationError> {
-    let body_key = (
-        *observer,
-        simulation.refresh_counts.planets,
-        simulation.refresh_counts.moon,
-    );
-    let memory_before = times.inspect_memory(|| snapshot_cache(bodies_cache));
-    let result = times.measure("Body sampling", || -> Result<(), SimulationError> {
-        if bodies_cache
-            .needs_refresh(&body_key, epoch, None, config.allows(Group::SolarSystemObservation))
-        {
-            let bodies = sample_body_states(simulation, observer)?;
-            bodies_cache.store(body_key, epoch, 0.0, bodies);
-        }
-        Ok(())
-    });
-    {
-        record_cache(times, BufferId::BodySamples, memory_before, bodies_cache);
-        times.record_borrow(BufferId::PlanetSamples, Access::ReadOnly, || BufferShape::vector(&simulation.planets, IndexDomain::ModelSamples));
-        times.record_borrow(BufferId::LunarSamples, Access::ReadOnly, || BufferShape::vector(&simulation.moon, IndexDomain::ModelSamples));
-    }
-    result
-}
+
 
 pub(in crate::sky::observation) fn update_observer_subtraction(
     relative_cache: &mut RelativeCache, bodies_cache: &Cache<BodyKey, BodySamples>, config: &CacheConfig, epoch: f64,

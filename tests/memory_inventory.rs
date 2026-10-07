@@ -142,16 +142,22 @@ fn inventory_does_not_change_output_or_cache_statistics() {
     let mut state = ApplicationState::new(config, astroterm::timing::StepTimes::with_trace(true));
     state.replace_catalog(astroterm::sky::prepare_owned_catalog(astroterm::catalog::load_embedded_catalog().unwrap()).unwrap());
     for policy in [CacheConfig::default(), CacheConfig::disabled()] {
-        state.cache.simulation.configure_cache(&policy);
+        state.cache.simulation.solar_system.configure_cache(&policy);
+        state.cache.observer = astroterm::state::ObserverPreparationCache::new(policy.clone());
+        state.cache.selection = astroterm::state::StarSelectionCache::new(policy.clone());
+        state.cache.simulation.stars = astroterm::state::StellarSimulationState::new(policy.clone());
         state.cache.observation = astroterm::state::ObservationCache::new(policy.clone());
         state.cache.projection = astroterm::state::ProjectionCache::new(policy);
         let active = &mut state.cache;
-        let Caches { sky, simulation, observation, projection, .. } = &mut *active;
+        let Caches { sky, simulation, observer: observer_cache, selection, observation, projection, .. } = &mut *active;
         let time = FrameTime::from_utc(J2000);
-        astroterm::sky::update_simulation(simulation, time, &[], &mut state.timings).unwrap();
-        let mut site = astroterm::sky::prepare_cached_observer(observation, simulation, time, Observer::default()).unwrap();
-        astroterm::sky::prepare_cached_light_time(observation, simulation, &mut site, &mut state.timings).unwrap();
-        astroterm::sky::observe_cached_sky(observation, simulation, &site, 5.0, true, astroterm::model::SkyRegion::All, sky, &mut state.timings).unwrap();
+        astroterm::sky::update_solar_system(&mut simulation.solar_system, time, &[], &mut state.timings).unwrap();
+        let mut site = astroterm::sky::prepare_cached_observer(observer_cache, &simulation.solar_system, time, Observer::default()).unwrap();
+        astroterm::sky::prepare_cached_light_time(observer_cache, &mut simulation.solar_system, &mut site, &mut state.timings).unwrap();
+        astroterm::sky::prepare_cached_bodies(observer_cache, &simulation.solar_system, &site, &mut state.timings).unwrap();
+        astroterm::sky::select_cached_stars(selection, &sky.catalog, &site, 5.0, true, astroterm::model::SkyRegion::All, &mut state.timings);
+        astroterm::sky::simulate_stars(&mut simulation.stars, selection.stars(), time.tt, &mut state.timings);
+        astroterm::sky::observe_cached_sky(observation, simulation.stars.results(selection.stars()), observer_cache.bodies(&site), &site, 5.0, true, sky, &mut state.timings);
         astroterm::projection::project_cached_sky(projection, sky, &astroterm::model::View::default(), Viewport { width: 80, height: 40 }, time.tt, &mut state.timings);
         let before = (sky.stars.clone(), observation.reports(), projection.stats());
         let _ = collect_inventory("cache", &*active);

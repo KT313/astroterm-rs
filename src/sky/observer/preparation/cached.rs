@@ -1,34 +1,12 @@
-//! Catalog and observer preparation plus cache reset boundaries.
-use super::*;
-
-/// Prepare catalog-only classifications once; replacing the catalog drops these with all dependent caches.
-pub fn prepare_observation_catalog(storage: &mut ObservationCache, catalog: Arc<SkyCatalog>, times: &mut StepTimes) {
-    *storage = ObservationCache::new(storage.config.clone());
-    let classes: Vec<_> = times.measure("Stellar classifications", || {
-        let trajectories = catalog.stars.borrow_trajectory_fields();
-        (0..catalog.stars.len())
-            .map(|i| trajectories.motion(i).classify())
-            .collect()
-    });
-    {
-        times.record_borrow(BufferId::CatalogTrajectories, Access::ReadOnly, || BufferShape::unknown(IndexDomain::Catalog));
-        times.record_build(BufferId::CatalogClassifications, || BufferShape::vector(&classes, IndexDomain::Catalog));
-    }
-    times.describe("Stellar classifications", || {
-        format!(
-            "stars={}; stationary={}; moving with distance={}; classification bytes={}",
-            classes.len(),
-            classes.iter().filter(|c| c.is_stationary()).count(),
-            classes.iter().filter(|c| c.has_variable_brightness()).count(),
-            classes.len() * std::mem::size_of::<crate::astro::models::stars::StellarClass>()
-        )
-    });
-    storage.prepared_classes = Some(classes);
-    storage.catalog = Some(catalog);
-}
-
+//! Independent reception, light-time and final body caches.
+use crate::state::{ObserverPreparationCache, SimulationState, ObserverBuffers, LightTimeBuffers};
+use crate::model::{FrameTime, ObserverState, SimulationError, BodySamples, ObservationBodyKey as BodyKey};
+use crate::astro::Observer;
+use crate::cache::{Cache, CacheConfig, Group};
+use crate::timing::{StepTimes, Access, BufferId, BufferShape, IndexDomain, MemoryEvent, Operation};
+use crate::sky::{sample_body_states, record_observer_memory, snapshot_cache, record_cache};
 pub fn prepare_cached_observer(
-    storage: &mut ObservationCache,
+    storage: &mut ObserverPreparationCache,
     simulation: &SimulationState,
     time: FrameTime,
     site: Observer,
@@ -37,7 +15,7 @@ pub fn prepare_cached_observer(
 }
 
 /// Time observer preparation and inspect only its own cache, keeping diagnostics beside the domain step.
-pub fn prepare_cached_observer_with_times(storage: &mut ObservationCache, simulation: &SimulationState, time: FrameTime, site: Observer, times: &mut StepTimes) -> Result<ObserverState, SimulationError> {
+pub fn prepare_cached_observer_with_times(storage: &mut ObserverPreparationCache, simulation: &SimulationState, time: FrameTime, site: Observer, times: &mut StepTimes) -> Result<ObserverState, SimulationError> {
     let before = times.inspect_memory(|| storage.observer_report());
     let result = times.measure("Observer geometry", || prepare_cached_observer(storage, simulation, time, site));
     if let Some(before) = before {
@@ -68,7 +46,7 @@ fn update_cached_observer(
 }
 
 pub fn prepare_cached_light_time(
-    storage: &mut ObservationCache,
+    storage: &mut ObserverPreparationCache,
     simulation: &mut SimulationState,
     observer: &mut ObserverState,
     times: &mut StepTimes,
@@ -105,18 +83,37 @@ fn update_cached_light_time(
     Ok(())
 }
 
-pub(in crate::sky::observation) fn reset_catalog_if_changed(storage: &mut ObservationCache, requested_catalog: &Arc<SkyCatalog>) {
-    if storage
-        .catalog
-        .as_ref()
-        .is_none_or(|catalog| !Arc::ptr_eq(catalog, requested_catalog))
-    {
-        let observer_cache = std::mem::take(&mut storage.observer);
-        let light_time_cache = std::mem::take(&mut storage.light_time);
-        *storage = ObservationCache::new(storage.config.clone());
-        storage.observer = observer_cache;
-        storage.light_time = light_time_cache;
-        storage.catalog = Some(requested_catalog.clone());
-    }
-}
 
+pub fn prepare_cached_bodies(storage: &mut ObserverPreparationCache, simulation: &SimulationState, observer: &ObserverState, times: &mut StepTimes) -> Result<(), SimulationError> {
+    let previous = times.trace().map(|_| vec![storage.bodies.report("Body sampling")]);
+    update_body_sampling(&mut storage.bodies, &storage.config, observer.time.tt, observer, simulation, times)?;
+    times.describe("Body sampling", || format!("requested Sun/planets={}; Moon=1; output states={} at emission epochs", storage.bodies.value().planets.len(), storage.bodies.value().planets.len() + 1));
+    crate::sky::describe_cache_reports(previous, || vec![storage.bodies.report("Body sampling")], times);
+    Ok(())
+}
+fn update_body_sampling(
+    bodies_cache: &mut Cache<BodyKey, BodySamples>, config: &CacheConfig, epoch: f64, observer: &ObserverState,
+    simulation: &SimulationState, times: &mut StepTimes,
+) -> Result<(), SimulationError> {
+    let body_key = (
+        *observer,
+        simulation.refresh_counts.planets,
+        simulation.refresh_counts.moon,
+    );
+    let memory_before = times.inspect_memory(|| snapshot_cache(bodies_cache));
+    let result = times.measure("Body sampling", || -> Result<(), SimulationError> {
+        if bodies_cache
+            .needs_refresh(&body_key, epoch, None, config.allows(Group::SolarSystemObservation))
+        {
+            let bodies = sample_body_states(simulation, observer)?;
+            bodies_cache.store(body_key, epoch, 0.0, bodies);
+        }
+        Ok(())
+    });
+    {
+        record_cache(times, BufferId::BodySamples, memory_before, bodies_cache);
+        times.record_borrow(BufferId::PlanetSamples, Access::ReadOnly, || BufferShape::vector(&simulation.planets, IndexDomain::ModelSamples));
+        times.record_borrow(BufferId::LunarSamples, Access::ReadOnly, || BufferShape::vector(&simulation.moon, IndexDomain::ModelSamples));
+    }
+    result
+}

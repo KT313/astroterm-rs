@@ -1,7 +1,8 @@
 //! astroterm: a terminal star map.
 //!
-//! The frame loop is visible in the binary's `pipeline.rs`: independently prepare simulation samples, observe
-//! them from a site, project the apparent sky, then draw and present it through [`terminal::Renderer`].
+//! The frame loop is visible in the binary's `pipeline.rs`: simulate the solar system, prepare observer/light-time
+//! inputs, select stars, simulate those stars, apply observation corrections, project, then render through
+//! [`terminal::Renderer`]. Simulation and selection have separate owners and exchange read-only borrowed views.
 //!
 //! Pure foundations ([`astro`], [`canvas`], [`catalog`], [`cache`], [`rows`] and [`timing`]) support the shared records in
 //! [`model`]. Catalog and observed data, view settings, projected geometry and validated configuration live there;
@@ -36,3 +37,9 @@ pub mod sky;
 pub mod state;
 pub mod terminal;
 pub mod timing;
+
+#[cfg(test)]
+extern crate self as astroterm;
+#[cfg(test)]
+#[path = "../tests/support/cached.rs"]
+pub(crate) mod test_pipeline;

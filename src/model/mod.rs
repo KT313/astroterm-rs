@@ -12,14 +12,14 @@ pub use catalog::{
     SkyCatalog, CatalogPreparation, PreparedCatalog, ConstellationSet, StarException, GRID_DEPTH, CELL_COUNT, REFRACTION_MARGIN, ABERRATION_MARGIN, SkyRegion, SelectionStats, SkyGrid,
     hash_direction, QUANTIZATION_MARGIN, STAR_SECTIONS, StarRow, StarRowSlice, StarRowVec, StarStorage,
 };
-pub(crate) use catalog::{SelectedRegion, build_caps, unsupported_star_data};
+pub(crate) use catalog::{SelectedRegion, StellarFields, build_caps, unsupported_star_data};
 pub use celestial::{
-    Star, ObservedStar, ObservedStarView, PlanetKind, Planet, Moon, Constellation, create_planets, create_moon,
+    Star, SelectedStar, ObservedStar, ObservedStarView, PlanetKind, Planet, Moon, Constellation, create_planets, create_moon,
     CorrectionStats, ObservedSky, Sky, MoonIllumination, Anchor, ObserverState, FrameTime, ModelFamily, StateRequest,
     SimulationError, InterpolationLimits, PLANET_LIMITS, MOON_LIMITS, ORIENTATION_LIMITS, CachePolicy, RefreshCounts,
 };
 pub(crate) use celestial::{
-    BodySamples, SelectedStar, CorrectionSelection, StellarWork, ValidityCounts, Directions, ObserverKey,
+    BodySamples, CorrectionSelection, StellarWork, ValidityCounts, Directions, ObserverKey,
     ObservationBodyKey, Sample,
 };
 pub use presentation::{

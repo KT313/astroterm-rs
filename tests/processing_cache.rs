@@ -1,5 +1,7 @@
 //! Processing-cache reuse, invalidation and exact-reference comparisons through the production coordinators.
-use astroterm::state::{ObservationCache, ProjectionCache, SceneCache, SimulationState};
+#[path = "support/cached.rs"] mod cached;
+use cached::PipelineCache;
+use astroterm::state::{ProjectionCache, SceneCache, SimulationState};
 use astroterm::astro::{J2000, Observer, Vector3};
 use astroterm::cache::{CacheConfig, Group, GroupPolicy};
 use astroterm::canvas::Canvas;
@@ -9,13 +11,13 @@ use astroterm::model::{
 };
 use astroterm::projection::project_sky;
 use astroterm::scene::{draw_sky_scene, draw_pixel_sky};
-use astroterm::sky::update_simulation;
+use astroterm::sky::update_solar_system;
 use astroterm::timing::StepTimes;
 use std::sync::Arc;
 
 struct Pipeline {
     simulation: SimulationState,
-    observation: ObservationCache,
+    observation: PipelineCache,
     sky: ObservedSky,
     times: StepTimes,
 }
@@ -23,9 +25,9 @@ impl Pipeline {
     fn new(catalog: Arc<SkyCatalog>, config: CacheConfig) -> Self {
         let mut simulation = SimulationState::default();
         simulation.configure_cache(&config);
-        let mut observation = ObservationCache::new(config.clone());
+        let mut observation = PipelineCache::new(config.clone());
         if config.enabled {
-            astroterm::sky::prepare_observation_catalog(&mut observation, catalog.clone(), &mut StepTimes::default());
+            cached::prepare_stellar_catalog(&mut observation, catalog.clone(), &mut StepTimes::default());
         }
         Self {
             simulation,
@@ -38,11 +40,11 @@ impl Pipeline {
         let time = FrameTime { tt, ut1: tt, utc: tt };
         self.times.begin_frame();
         self.simulation.begin_frame();
-        update_simulation(&mut self.simulation, time, &[], &mut self.times).unwrap();
-        let mut observer = astroterm::sky::prepare_cached_observer(&mut self.observation, &self.simulation, time, site).unwrap();
-        astroterm::sky::prepare_cached_light_time(&mut self.observation, &mut self.simulation, &mut observer, &mut self.times)
+        update_solar_system(&mut self.simulation, time, &[], &mut self.times).unwrap();
+        let mut observer = cached::prepare_cached_observer(&mut self.observation, &self.simulation, time, site).unwrap();
+        cached::prepare_cached_light_time(&mut self.observation, &mut self.simulation, &mut observer, &mut self.times)
             .unwrap();
-        astroterm::sky::observe_cached_sky(&mut self.observation, &self.simulation,
+        cached::observe_cached_sky(&mut self.observation, &self.simulation,
                 &observer,
                 threshold,
                 refract,

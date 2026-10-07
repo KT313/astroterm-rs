@@ -13,7 +13,7 @@ use crate::timing::StepTimes;
 
 list_tables!(ApplicationState { leaves: [current_view, preparation], scalars: [], groups: [persistent, cache, timings] });
 list_tables!(Persistent { leaves: [], scalars: [], groups: [catalog] });
-list_tables!(Caches { leaves: [], scalars: [], groups: [sky, simulation, observation, projection, rendering] });
+list_tables!(Caches { leaves: [], scalars: [], groups: [sky, simulation, observer, selection, observation, projection, rendering] });
 
 // --- persistent ------------------------------------------------------------------------------------------------
 
@@ -55,15 +55,11 @@ list_tables!(SimulationState { leaves: [planets, moon, orientation], scalars: []
 
 list_tables!(ObservationCache {
     leaves: [
-        prepared_classes, stellar_scratch,
-        region @ CandidateSelection, candidates @ CandidateSelection,
-        selected @ WorkingSet, working @ WorkingSet,
-        stellar @ StellarState, motion @ StellarState,
         eligible @ StellarVisibility, corrections @ StellarVisibility,
-        bodies @ SolarSystemObservation, relative @ SolarSystemGeometry,
+        relative @ SolarSystemGeometry,
         apparent @ ApparentDirections, horizontal @ HorizontalSky, refracted @ Refraction,
     ],
-    scalars: [observer @ ObserverState, light_time @ SolarSystemObservation, illumination @ SolarSystemGeometry],
+    scalars: [illumination @ SolarSystemGeometry],
     groups: [],
 });
 
@@ -169,3 +165,10 @@ impl super::Table for crate::model::CatalogPreparation {
     fn columns(&self) -> Vec<crate::rows::Column> { vec![crate::rows::Column { name: "motion_bound", dtype: "f32" }] }
     fn preview(&self) -> Vec<(usize, Vec<String>)> { super::preview_indices(self.motion_bounds.len()).map(|i| (i, vec![self.motion_bounds[i].to_string()])).collect() }
 }
+
+list_tables!(crate::state::ObserverPreparationCache { leaves: [bodies @ SolarSystemObservation], scalars: [observer @ ObserverState, light_time @ SolarSystemObservation], groups: [] });
+
+list_tables!(crate::state::StarSelectionCache { leaves: [region @ CandidateSelection, candidates @ CandidateSelection, selected @ WorkingSet, working @ WorkingSet], scalars: [], groups: [] });
+
+list_tables!(crate::state::SimulationCaches { leaves: [], scalars: [], groups: [solar_system, stars] });
+list_tables!(crate::state::StellarSimulationState { leaves: [prepared_classes, stellar_scratch, stellar @ StellarState, motion @ StellarState], scalars: [], groups: [] });

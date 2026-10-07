@@ -69,3 +69,12 @@ impl SimulationState {
 }
 #[cfg(feature = "memory-diagnostics")]
 crate::cache::report_fields!(SimulationState { planets, moon, orientation });
+
+/// Separate simulation families, grouped only for state inspection.
+#[derive(Default)]
+pub struct SimulationCaches {
+    pub solar_system: SimulationState,
+    pub stars: super::StellarSimulationState,
+}
+#[cfg(feature = "memory-diagnostics")]
+crate::cache::report_fields!(SimulationCaches { solar_system, stars });

@@ -6,7 +6,7 @@ use astroterm::astro::{
     models::{BodyId, orientation::*},
 };
 use astroterm::model::{Sky, SkyRegion, FrameTime};
-use astroterm::sky::{observe_sky, prepare_observation, update_simulation};
+use astroterm::sky::{observe_sky, prepare_observation, update_solar_system};
 use astroterm::timing::StepTimes;
 use serde_json::Value;
 
@@ -29,9 +29,9 @@ fn observe(tt: f64, ut1: f64) -> Sky {
         ut1: ut1 - 59.0 / 86400.0,
         tt: tt - 59.0 / 86400.0,
     };
-    update_simulation(&mut state, seed, &[], &mut times).unwrap();
+    update_solar_system(&mut state, seed, &[], &mut times).unwrap();
     let time = FrameTime { utc: ut1, ut1, tt };
-    update_simulation(&mut state, time, &[], &mut times).unwrap();
+    update_solar_system(&mut state, time, &[], &mut times).unwrap();
     let site = Observer {
         latitude: 42.3601_f64.to_radians(),
         longitude: -71.0589_f64.to_radians(),

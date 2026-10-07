@@ -203,6 +203,9 @@ pub fn map_float_to_int_range(min_float: f64, max_float: f64, min_int: i32, max_
 
 crate::rows::debug_preview!(Matrix3);
 
+/// Speed of light in AU/day (IAU exact metre definitions).
+pub const LIGHT_SPEED_AU_DAY: f64 = 299792458.0 * 86400.0 / 149597870700.0;
+
 #[cfg(test)]
 mod tests {
     use super::*;

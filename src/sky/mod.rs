@@ -1,23 +1,34 @@
-//! Four-stage pipeline: immutable catalog and independently cached geometric simulation -> observer-relative sky
-//! -> camera projection -> rendering. Astronomy families live in astro::models; no camera enters observation.
-//! Common states use f64 J2000 equatorial AU/AU-day, with a barycentric origin. Earth is the only real
-//! anchor, with a WGS84 sea-level site. Observation applies light-time, exact parallax and aberration before
-//! horizon rotation and optional refraction; camera projection never changes these values.
-//! Start with catalog/pipeline.rs for loading/preparation, simulation/pipeline.rs for model refreshes,
-//! and observation/pipeline.rs for the apparent-position sequence. Import operations through this root.
-
+//! Ordered sky processing: solar-system simulation → observer preparation → star selection → stellar simulation
+//! → observation corrections. Projection and rendering follow in their own modules. All domain APIs are exported
+//! here; implementation folders remain private. The binary calls each stage explicitly; pipeline.rs contains
+//! headless compatibility coordinators over the same separated domains.
+//! Intrinsic stellar directions are fixed-axis J2000 unit vectors. Solar-system states are barycentric f64
+//! J2000 equatorial AU/AU-day; Moon samples are parent-relative until composed. Observer preparation uses WGS84,
+//! UT1 spin and TT model times, and completes light-time sampling before the correction-only observation stage.
 mod catalog;
+mod diagnostics;
 mod illumination;
 mod observation;
+mod observer;
+mod pipeline;
 mod positions;
+mod selection;
 mod simulation;
 
 pub use catalog::{prepare_catalog, prepare_owned_catalog, prepare_constellation_set, prepare_star, create_sky_from_catalog, select_grid};
 pub use catalog::{catalog_fingerprint, cache_path, load_sky_catalog, load_sky_catalog_with_times, write_cached_catalog, load_cached_catalog};
-pub(crate) use catalog::{select_region, select_brightness, count_region_stars};
-pub(crate) use observation::LIGHT_SPEED_AU_DAY;
+pub use simulation::{update_solar_system, evaluate_body, evaluate_orientation, prepare_stellar_catalog, simulate_stars};
+pub use observer::{prepare_observer_inputs, compose_observer_state, prepare_observer, prepare_light_time_samples, prepare_observation,
+    prepare_cached_observer, prepare_cached_observer_with_times, prepare_cached_light_time, prepare_cached_bodies};
+pub use selection::select_cached_stars;
+pub use observation::observe_cached_sky;
 pub use illumination::{compute_moon_illumination, name_moon_phase};
-pub use observation::{prepare_observation_catalog, prepare_cached_observer, prepare_cached_observer_with_times, prepare_cached_light_time, observe_cached_sky};
-pub use observation::{compose_observer_state, observe_sky, observe_sky_candidates, prepare_light_time_samples, prepare_observation, prepare_observer};
+pub use pipeline::{observe_sky, observe_sky_candidates};
 pub use positions::{refract_sky_positions, update_sky_positions};
-pub use simulation::{update_simulation, evaluate_body, evaluate_orientation};
+
+pub(crate) use catalog::{select_region, select_brightness, count_region_stars};
+pub(crate) use diagnostics::{snapshot_cache, record_cache, record_observer_memory, describe_cache_reports};
+pub(crate) use observer::sample_body_states;
+pub(crate) use selection::{filter_brightness_candidates, merge_constellation_endpoints};
+pub(crate) use simulation::simulate_stars_direct;
+pub(crate) use observation::apply_direct_observation;

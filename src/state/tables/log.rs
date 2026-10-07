@@ -156,13 +156,13 @@ mod tests {
             "persistent.catalog.endpoint_indices", "preparation", "persistent.catalog.names",
             "persistent.catalog.constellations",
             "cache.sky.stars", "cache.sky.planets", "cache.sky.moon", "cache.sky.candidate_indices",
-            "cache.simulation.planets", "cache.simulation.moon", "cache.simulation.orientation",
-            "cache.observation.prepared_classes", "cache.observation.stellar_scratch", "cache.observation.region",
-            "cache.observation.candidates", "cache.observation.selected", "cache.observation.working",
-            "cache.observation.stellar", "cache.observation.motion", "cache.observation.eligible",
-            "cache.observation.corrections", "cache.observation.bodies", "cache.observation.relative",
+            "cache.simulation.solar_system.planets", "cache.simulation.solar_system.moon", "cache.simulation.solar_system.orientation",
+            "cache.simulation.stars.prepared_classes", "cache.simulation.stars.stellar_scratch", "cache.selection.region",
+            "cache.selection.candidates", "cache.selection.selected", "cache.selection.working",
+            "cache.simulation.stars.stellar", "cache.simulation.stars.motion", "cache.observation.eligible",
+            "cache.observation.corrections", "cache.observer.bodies", "cache.observation.relative",
             "cache.observation.apparent", "cache.observation.horizontal", "cache.observation.refracted",
-            "cache.observation.observer", "cache.observation.light_time", "cache.observation.illumination",
+            "cache.observer.observer", "cache.observer.light_time", "cache.observation.illumination",
             "cache.projection.star_candidate", "cache.projection.order_candidate", "cache.projection.draw_order_scratch",
             "cache.projection.stars", "cache.projection.stars.key", "cache.projection.order", "cache.projection.order.key",
             "cache.projection.bodies", "cache.projection.bodies.key", "cache.projection.constellations",
@@ -179,7 +179,7 @@ mod tests {
         assert!(text.contains("ttl=") && text.contains("invalid=true"));
         assert!(section(&text, "cache.sky.moon").contains("**Shape:** `[1]`"));
         assert!(text.contains("| Row | phase: MoonPhase | illumination: MoonIllumination | direction: Vector3 |"));
-        let motion = section(&text, "cache.observation.motion");
+        let motion = section(&text, "cache.simulation.stars.motion");
         assert!(motion.contains("*No rows to preview.*") && !motion.contains("| Row |"));
 
     }
@@ -194,12 +194,15 @@ mod tests {
         state.replace_catalog(crate::sky::prepare_owned_catalog(crate::catalog::load_embedded_catalog().unwrap()).unwrap());
         let count = state.persistent.catalog.stars.len();
         {
-            let Caches { sky, simulation, observation, projection, .. } = &mut state.cache;
+            let Caches { sky, simulation, observer: observer_cache, selection, observation, projection, .. } = &mut state.cache;
             let time = FrameTime::from_utc(J2000);
-            crate::sky::update_simulation(simulation, time, &[], &mut state.timings).unwrap();
-            let mut site = crate::sky::prepare_cached_observer(observation, simulation, time, Observer::default()).unwrap();
-            crate::sky::prepare_cached_light_time(observation, simulation, &mut site, &mut state.timings).unwrap();
-            crate::sky::observe_cached_sky(observation, simulation, &site, 5.0, true, SkyRegion::All, sky, &mut state.timings).unwrap();
+            crate::sky::update_solar_system(&mut simulation.solar_system, time, &[], &mut state.timings).unwrap();
+            let mut site = crate::sky::prepare_cached_observer(observer_cache, &simulation.solar_system, time, Observer::default()).unwrap();
+            crate::sky::prepare_cached_light_time(observer_cache, &mut simulation.solar_system, &mut site, &mut state.timings).unwrap();
+            crate::sky::prepare_cached_bodies(observer_cache, &simulation.solar_system, &site, &mut state.timings).unwrap();
+        crate::sky::select_cached_stars(selection, &sky.catalog, &site, 5.0, true, SkyRegion::All, &mut state.timings);
+        crate::sky::simulate_stars(&mut simulation.stars, selection.stars(), time.tt, &mut state.timings);
+        crate::sky::observe_cached_sky(observation, simulation.stars.results(selection.stars()), observer_cache.bodies(&site), &site, 5.0, true, sky, &mut state.timings);
             crate::projection::project_cached_sky(projection, sky, &View::default(), ProjectionViewport { width: 80, height: 40 }, time.tt, &mut state.timings);
         }
 
@@ -222,10 +225,10 @@ mod tests {
         for row in stars.lines().filter(|l| l.starts_with('|')) { assert_eq!(row.matches('|').count(), 10); }
         let sky = section(&text, "cache.sky.stars");
         assert!(sky.contains("| Row | catalog\\_row\\_index: usize | passes\\_brightness\\_filter: bool | current\\_magnitude: f64 | direction: Vector3 |"));
-        assert!(section(&text, "cache.simulation.planets").contains(&markdown_text("sampled_state: [BodyState; 9]")));
+        assert!(section(&text, "cache.simulation.solar_system.planets").contains(&markdown_text("sampled_state: [BodyState; 9]")));
         let trace = section(&text, "timings.trace.steps");
         assert!(trace.contains("parent\\_step\\_index: Option&lt;usize&gt;"));
-        assert!(section(&text, "cache.observation.stellar").contains("| Row | catalog\\_row\\_index: usize | direction\\_j2000: Vector3 |"));
+        assert!(section(&text, "cache.simulation.stars.stellar").contains("| Row | catalog\\_row\\_index: usize | direction\\_j2000: Vector3 |"));
 
     }
 

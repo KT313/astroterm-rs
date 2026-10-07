@@ -1,16 +1,18 @@
 //! Refresh calculations already populate directions; only cache hits restore saved coordinate-space results.
-use astroterm::state::{ObservationCache, SimulationState};
+#[path = "support/cached.rs"] mod cached;
+use cached::PipelineCache;
+use astroterm::state::{SimulationState};
 use astroterm::astro::{J2000, Observer};
 use astroterm::cache::CacheConfig;
 use astroterm::catalog::load_embedded_catalog;
 use astroterm::model::{ObservedSky, SkyCatalog, View, FrameTime};
-use astroterm::sky::{observe_sky, update_simulation};
+use astroterm::sky::{observe_sky, update_solar_system};
 use astroterm::timing::StepTimes;
 use std::sync::Arc;
 
 struct Pipeline {
     simulation: SimulationState,
-    observation: ObservationCache,
+    observation: PipelineCache,
     sky: ObservedSky,
 }
 
@@ -20,7 +22,7 @@ impl Pipeline {
         simulation.configure_cache(&config);
         Self {
             simulation,
-            observation: ObservationCache::new(config),
+            observation: PipelineCache::new(config),
             sky: ObservedSky::new(catalog),
         }
     }
@@ -30,11 +32,11 @@ impl Pipeline {
         let mut times = StepTimes::with_trace(true);
         times.begin_frame();
         self.simulation.begin_frame();
-        update_simulation(&mut self.simulation, time, &[], &mut times).unwrap();
-        let mut observer = astroterm::sky::prepare_cached_observer(&mut self.observation, &self.simulation, time, site).unwrap();
-        astroterm::sky::prepare_cached_light_time(&mut self.observation, &mut self.simulation, &mut observer, &mut times)
+        update_solar_system(&mut self.simulation, time, &[], &mut times).unwrap();
+        let mut observer = cached::prepare_cached_observer(&mut self.observation, &self.simulation, time, site).unwrap();
+        cached::prepare_cached_light_time(&mut self.observation, &mut self.simulation, &mut observer, &mut times)
             .unwrap();
-        astroterm::sky::observe_cached_sky(&mut self.observation, &self.simulation,
+        cached::observe_cached_sky(&mut self.observation, &self.simulation,
                 &observer,
                 5.0,
                 refraction,

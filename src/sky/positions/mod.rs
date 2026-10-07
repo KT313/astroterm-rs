@@ -2,7 +2,7 @@
 //! owns persistent SimulationState and invokes simulation, observation and projection explicitly.
 use crate::state::{SimulationState};
 use crate::model::{Sky, FrameTime};
-use super::{observe_sky, prepare_observation, update_simulation};
+use super::{observe_sky, prepare_observation, update_solar_system};
 use crate::astro::{Observer, refract_direction};
 use crate::timing::StepTimes;
 
@@ -15,7 +15,7 @@ pub fn update_sky_positions(
 ) {
     let time = FrameTime::from_utc(julian_date_ut1);
     let mut simulation = SimulationState::exact();
-    update_simulation(&mut simulation, time, &[], times).expect("finite reference epoch");
+    update_solar_system(&mut simulation, time, &[], times).expect("finite reference epoch");
     let observer = prepare_observation(&mut simulation, time, *observer).expect("prepared reference state");
     observe_sky(
         &simulation,

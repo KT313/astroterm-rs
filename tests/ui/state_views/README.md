@@ -16,3 +16,7 @@ No terminal, filesystem dataset or large star list is needed.
 Snapshots were reviewed with `rustc 1.96.0 (ac68faa20 2026-05-25)`. On a compiler upgrade, inspect new diagnostics
 before accepting snapshot changes: each failing case must still reject the intended ownership violation, rather
 than an obsolete import, a private constructor or another unrelated error.
+
+The selection and stellar-result fixtures also reject writes through `SelectedStars::rows()` and
+`StellarResults::samples()`. The passing fixture borrows selection while mutating stellar storage, then changes
+the independent solar-system owner while the intrinsic star results remain borrowed.

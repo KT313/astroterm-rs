@@ -1,11 +1,13 @@
 //! Run-history rotation must leave real cache results, geometry and raster output unchanged.
+use super::cached;
+use cached::PipelineCache;
 use astroterm::astro::{J2000, Observer};
 use astroterm::cache::CacheConfig;
 use astroterm::model::{ObservedSky, SkyCatalog, ProjectionViewport, View, RenderOptions, FrameTime};
 use astroterm::projection::{borrow_projected, project_cached_sky, select_view_region};
 use astroterm::scene::draw_pixels;
 use astroterm::sky;
-use astroterm::state::{ObservationCache, ProjectionCache, SceneCache, SimulationState};
+use astroterm::state::{ProjectionCache, SceneCache, SimulationState};
 use astroterm::timing::StepTimes;
 use std::sync::Arc;
 
@@ -37,7 +39,7 @@ fn run_frames(catalog: Arc<SkyCatalog>, config: &CacheConfig, diagnostics: bool)
     let mut sky = ObservedSky::new(catalog);
     let mut simulation = SimulationState::default();
     simulation.configure_cache(config);
-    let mut observation = ObservationCache::new(config.clone());
+    let mut observation = PipelineCache::new(config.clone());
     let mut projection = ProjectionCache::new(config.clone());
     let mut scene = SceneCache::default();
     scene.configure(config);
@@ -49,11 +51,11 @@ fn run_frames(catalog: Arc<SkyCatalog>, config: &CacheConfig, diagnostics: bool)
         let time = FrameTime::from_utc(date);
         if diagnostics { times.set_memory_frame_time(time.utc, time.tt); }
         simulation.begin_frame();
-        sky::update_simulation(&mut simulation, time, &[], &mut times).unwrap();
-        let mut observer = sky::prepare_cached_observer(&mut observation, &simulation, time, Observer::default()).unwrap();
-        sky::prepare_cached_light_time(&mut observation, &mut simulation, &mut observer, &mut times).unwrap();
+        sky::update_solar_system(&mut simulation, time, &[], &mut times).unwrap();
+        let mut observer = cached::prepare_cached_observer(&mut observation, &simulation, time, Observer::default()).unwrap();
+        cached::prepare_cached_light_time(&mut observation, &mut simulation, &mut observer, &mut times).unwrap();
         let view = View::default();
-        sky::observe_cached_sky(&mut observation, &simulation, &observer, 8.0, true, select_view_region(&view), &mut sky, &mut times).unwrap();
+        cached::observe_cached_sky(&mut observation, &simulation, &observer, 8.0, true, select_view_region(&view), &mut sky, &mut times).unwrap();
         let viewport = ProjectionViewport { width: if index == 2 { 48 } else { 32 }, height: 32 };
         project_cached_sky(&mut projection, &sky, &view, viewport, time.tt, &mut times);
         let projected = borrow_projected(&projection, &sky, &view, viewport);

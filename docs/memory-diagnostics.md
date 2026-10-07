@@ -135,7 +135,7 @@ A view grants access to existing data and usually allocates nothing itself.
 A small illustrative row:
 
 ```text
-state.cache.observation.scratch [Application/Heap] len=0 capacity=1024; used 0 B; reserved 152.0 KiB
+state.cache.simulation.stars.stellar_scratch [Application/Heap] len=0 capacity=1024; used 0 B; reserved 152.0 KiB
 ```
 
 This scratch vector is empty now, but keeps room for its next batch. Clearing it removed its elements; it did not
@@ -241,3 +241,14 @@ Use an allocation profiler such as Heaptrack to investigate allocation lifetimes
 profiler for execution cost and memory traffic. Keep profiler results separate from this logical payload inventory.
 The debugger remains useful for inspecting individual values. No global allocator hook or debugger extension is
 installed by `--debug-memory`.
+
+The processing trace separates **Solar-system simulation**, **Observer preparation**, **Star selection**,
+**Stellar simulation**, and **Observation**, followed by projection and rendering. The first two finish body
+sampling; star selection precedes motion calculations. The `Obs` cache counter retains its historical combined
+meaning across observer preparation, selection, stellar samples and observation corrections.
+
+Table paths follow these owners: `cache.simulation.solar_system`, `cache.simulation.stars`, `cache.observer`,
+`cache.selection` and `cache.observation`. Views between stages are borrowed and do not duplicate these tables.
+Older parent timing totals are not directly comparable after this split; compare complete frame times or matching
+leaf calculations. Catalog cache fingerprints include source files, so the refactor causes a one-time prepared
+catalog rebuild even though the stored catalog schema is unchanged.

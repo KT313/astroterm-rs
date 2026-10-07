@@ -205,7 +205,7 @@ def measure_workloads(binary, dataset):
                         terminal.pump()
                     text = terminal.text()
                     times = {name: float(value) for name, value in re.findall(
-                        r"(Frame Time|Simulation|Observation|Projection|Draw|Present):\s*([0-9.]+) ms", text)}
+                        r"(Frame Time|Solar-system simulation|Observer preparation|Star selection|Stellar simulation|Observation|Projection|Draw|Present):\s*([0-9.]+) ms", text)}
                     counts = {label: int(value) for label, value in re.findall(
                         r"(Candidate cells|Candidate stars|Evaluated stars):\s*(\d+)", text)}
                     assert len(counts) == 3, text

@@ -38,20 +38,20 @@ fn table_labels(path: &str) -> &'static [&'static str] {
         "persistent.catalog.grid.coarse_caps" | "persistent.catalog.grid.fine_caps" => &["center_direction", "angular_radius_radians"],
         "persistent.catalog.names" => &["name_text_chunk"],
         "persistent.catalog.endpoint_indices" | "cache.sky.figure_override.endpoints" | "cache.sky.candidate_indices"
-            | "cache.observation.candidates" | "cache.observation.selected" => &["catalog_row_index"],
-        "cache.observation.region" => &["sky_region_index"],
-        "cache.observation.working" => &["catalog_row_index", "is_draw_candidate"],
-        "cache.observation.prepared_classes" => &["motion_properties"],
-        "cache.observation.stellar_scratch" => &["catalog_row_index", "initial_magnitude", "needs_recalculation", "trajectory_parameters", "motion_properties", "calculated_sample", "reuse_window_simulation_seconds", "calculated_at_tt_jd"],
-        "cache.observation.stellar" => &["catalog_row_index", "direction_j2000", "current_magnitude", "used_tangential_motion_fallback", "has_been_invalidated"],
-        "cache.observation.motion" => &["direction_j2000", "current_magnitude"],
+            | "cache.selection.candidates" | "cache.selection.selected" => &["catalog_row_index"],
+        "cache.selection.region" => &["sky_region_index"],
+        "cache.selection.working" => &["catalog_row_index", "is_draw_candidate"],
+        "cache.simulation.stars.prepared_classes" => &["motion_properties"],
+        "cache.simulation.stars.stellar_scratch" => &["catalog_row_index", "initial_magnitude", "needs_recalculation", "trajectory_parameters", "motion_properties", "calculated_sample", "reuse_window_simulation_seconds", "calculated_at_tt_jd"],
+        "cache.simulation.stars.stellar" => &["catalog_row_index", "direction_j2000", "current_magnitude", "used_tangential_motion_fallback", "has_been_invalidated"],
+        "cache.simulation.stars.motion" => &["direction_j2000", "current_magnitude"],
         "cache.observation.eligible" => &["passes_brightness_filter"],
         "cache.observation.corrections" => &["working_row_index"],
-        "cache.observation.bodies" => &["position_au", "velocity_au_per_day"],
+        "cache.observer.bodies" => &["position_au", "velocity_au_per_day"],
         "cache.observation.illumination" => &["moon_illumination", "moon_phase"],
-        "cache.observation.observer" | "cache.observation.light_time" => &["observer_body", "surface_coordinates", "height_above_surface_m", "frame_time", "observer_position_and_velocity", "reference_to_body_rotation", "reference_to_horizon_rotation", "has_atmosphere", "body_emission_times_tt_jd"],
-        "cache.simulation.planets" | "cache.simulation.moon" => &["sample_time_tt_jd", "reuse_half_window_days", "sampled_state"],
-        "cache.simulation.orientation" => &["sample_time_tt_jd", "reuse_half_window_days", "orientation_matrix"],
+        "cache.observer.observer" | "cache.observer.light_time" => &["observer_body", "surface_coordinates", "height_above_surface_m", "frame_time", "observer_position_and_velocity", "reference_to_body_rotation", "reference_to_horizon_rotation", "has_atmosphere", "body_emission_times_tt_jd"],
+        "cache.simulation.solar_system.planets" | "cache.simulation.solar_system.moon" => &["sample_time_tt_jd", "reuse_half_window_days", "sampled_state"],
+        "cache.simulation.solar_system.orientation" => &["sample_time_tt_jd", "reuse_half_window_days", "orientation_matrix"],
         "cache.projection.star_candidate" | "cache.projection.stars.key" => &["direction", "passes_brightness_filter"],
         "cache.projection.order_candidate" | "cache.projection.order.key" => &["observed_star_index", "current_magnitude", "star_id"],
         "cache.projection.stars" => &["observed_star_index", "screen_coordinates"],
@@ -117,23 +117,23 @@ pub(super) fn column_notes(path: &str) -> &'static [&'static str] {
         "persistent.catalog.grid.coarse_caps" | "persistent.catalog.grid.fine_caps" => &["A cap covers a circular patch of sky: its center is a unit direction in J2000 axes and its radius is an angle in radians."],
         "persistent.catalog.names" => &["Rows preview chunks of the shared UTF-8 text buffer, not individual names; the boundary table locates each label."],
         "preparation" => &["Conservative maximum angular drift from the initial direction over the supported interval, in radians. Freed after preparation."],
-        "cache.observation.working" => &["is_draw_candidate records early selection membership, before the current-time brightness check. Other rows are retained for constellation lines."],
+        "cache.selection.working" => &["is_draw_candidate records early selection membership, before the current-time brightness check. Other rows are retained for constellation lines."],
         "cache.sky.stars" | "cache.projection.star_candidate" | "cache.projection.stars.key" => &["passes_brightness_filter does not guarantee visibility on screen. Completed observation directions use East/North/Up (x/y/z); during observation the same mutable record passes through earlier coordinate systems."],
         "cache.sky.planets" | "cache.sky.moon" | "cache.projection.bodies.key" | "cache.projection.constellations.key" => &["After completed observation, stars, planets and the Moon use unit East/North/Up directions (x/y/z). Earlier body-subtraction stages hold physical displacements. body_kind includes the Sun."],
-        "cache.simulation.planets" => &["TT Julian dates count days on the simulation's terrestrial time scale. Reuse covers sample_time ± reuse_half_window_days. States are in J2000 axes, AU and AU/day, relative to the solar-system center of mass; order: Sun, Mercury, Venus, Earth, Mars, Jupiter, Saturn, Uranus, Neptune."],
-        "cache.simulation.moon" => &["Sample time is a TT Julian date; reuse extends the stated number of days in both directions. Moon state is Earth-relative in J2000 axes, with position in AU and velocity in AU/day."],
-        "cache.simulation.orientation" => &["Sample time is a TT Julian date; reuse extends the stated number of days in both directions. The matrix stores slow orientation changes; it does not include daily rotation."],
-        "cache.observation.observer" | "cache.observation.light_time" => &[
+        "cache.simulation.solar_system.planets" => &["TT Julian dates count days on the simulation's terrestrial time scale. Reuse covers sample_time ± reuse_half_window_days. States are in J2000 axes, AU and AU/day, relative to the solar-system center of mass; order: Sun, Mercury, Venus, Earth, Mars, Jupiter, Saturn, Uranus, Neptune."],
+        "cache.simulation.solar_system.moon" => &["Sample time is a TT Julian date; reuse extends the stated number of days in both directions. Moon state is Earth-relative in J2000 axes, with position in AU and velocity in AU/day."],
+        "cache.simulation.solar_system.orientation" => &["Sample time is a TT Julian date; reuse extends the stated number of days in both directions. The matrix stores slow orientation changes; it does not include daily rotation."],
+        "cache.observer.observer" | "cache.observer.light_time" => &[
             "Surface latitude/longitude are radians, longitude positive east; height is meters. Observer state uses J2000 axes, AU and AU/day relative to the solar-system center of mass. One AU is approximately the Earth–Sun distance.",
             "Rotation matrices convert reference-frame vectors into body-fixed or local East/North/Up axes. frame_time contains UTC, UT1 and TT Julian dates. has_atmosphere indicates availability, not whether refraction was requested.",
             "Emission times are TT Julian dates ordered: Sun, Mercury, Venus, Earth, Mars, Jupiter, Saturn, Uranus, Neptune, Moon. Before light-time sampling they are initialized to reception time.",
         ],
-        "cache.observation.prepared_classes" => &["Motion property bits: bit 0 (1) = stationary; bit 1 (2) = has usable distance. These determine which propagation and brightness calculations apply."],
-        "cache.observation.stellar_scratch" => &["catalog_row_index addresses the persistent star table. Times are TT Julian dates; reuse duration is simulated seconds. motion_properties uses bit 0 = stationary, bit 1 = usable distance; empty scratch retains capacity only."],
-        "cache.observation.stellar" | "cache.observation.motion" => &["Directions are evaluated at the sample time but expressed in fixed J2000 axes. Magnitudes are current apparent brightness, with smaller numbers brighter. The fallback ignores radial distance change and keeps brightness constant."],
+        "cache.simulation.stars.prepared_classes" => &["Motion property bits: bit 0 (1) = stationary; bit 1 (2) = has usable distance. These determine which propagation and brightness calculations apply."],
+        "cache.simulation.stars.stellar_scratch" => &["catalog_row_index addresses the persistent star table. Times are TT Julian dates; reuse duration is simulated seconds. motion_properties uses bit 0 = stationary, bit 1 = usable distance; empty scratch retains capacity only."],
+        "cache.simulation.stars.stellar" | "cache.simulation.stars.motion" => &["Directions are evaluated at the sample time but expressed in fixed J2000 axes. Magnitudes are current apparent brightness, with smaller numbers brighter. The fallback ignores radial distance change and keeps brightness constant."],
         "cache.observation.eligible" => &["Rows follow the working table; true means the star passed candidate membership and current brightness checks, before screen projection."],
-        "cache.observation.corrections" => &["Each index addresses cache.observation.working, not the catalog or the final observed-star table."],
-        "cache.observation.bodies" => &["Emission-time body states use J2000 axes, AU and AU/day relative to the solar-system center of mass. The separate Moon value is described in the table's existing notes."],
+        "cache.observation.corrections" => &["Each index addresses cache.selection.working, not the catalog or the final observed-star table."],
+        "cache.observer.bodies" => &["Emission-time body states use J2000 axes, AU and AU/day relative to the solar-system center of mass. The separate Moon value is described in the table's existing notes."],
         "cache.observation.relative" => &["x/y/z are physical observer-relative displacement in AU along J2000 axes, not normalized directions."],
         "cache.observation.apparent" => &["x/y/z are unit star directions in J2000 axes after apparent-direction corrections. Body and Moon vectors are included in the auxiliary note."],
         "cache.observation.horizontal" | "cache.observation.refracted" => &["x/y/z mean East/North/Up. Stars, planets and the Moon have unit directions after aberration. The refracted table additionally includes atmospheric bending."],
@@ -179,7 +179,7 @@ mod tests {
     #[test]
     fn contextual_labels_keep_types_and_distinguish_index_domains_and_units() {
         assert_eq!(names::<StarRow>("persistent.catalog.stars"), ["initial_direction", "scaled_velocity_per_year", "initial_magnitude", "brightest_possible_magnitude", "initial_distance_parsecs", "star_id", "name_entry", "display_color_index"]);
-        assert_eq!(names::<SelectedStar>("cache.observation.working"), ["catalog_row_index", "is_draw_candidate"]);
+        assert_eq!(names::<SelectedStar>("cache.selection.working"), ["catalog_row_index", "is_draw_candidate"]);
         assert_eq!(names::<ObservedStar>("cache.sky.stars"), ["catalog_row_index", "passes_brightness_filter", "current_magnitude", "direction"]);
         assert_eq!(names::<(usize, (i32, i32))>("cache.projection.stars"), ["observed_star_index", "screen_coordinates"]);
         assert_eq!(names::<usize>("cache.observation.corrections"), ["working_row_index"]);
@@ -188,7 +188,7 @@ mod tests {
         assert_eq!(names::<PixelStarKey>("cache.rendering.pixels.scene_cache.pixels.key.stars"), ["screen_coordinates", "current_magnitude", "base_rgb_color"]);
         assert_eq!(names::<CharacterStarKey>("cache.rendering.characters.scene_cache.characters.key.stars"), ["screen_coordinates", "symbol", "terminal_color"]);
         assert_eq!(names::<ProjectedArc>("arc"), ["start_coordinates", "end_coordinates", "path_coordinates", "includes_original_start", "includes_original_end"]);
-        assert_eq!(names::<ObserverState>("cache.observation.observer")[8], "body_emission_times_tt_jd");
-        assert_eq!(names::<StellarWork>("cache.observation.stellar_scratch")[7], "calculated_at_tt_jd");
+        assert_eq!(names::<ObserverState>("cache.observer.observer")[8], "body_emission_times_tt_jd");
+        assert_eq!(names::<StellarWork>("cache.simulation.stars.stellar_scratch")[7], "calculated_at_tt_jd");
     }
 }

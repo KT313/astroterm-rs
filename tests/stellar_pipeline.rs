@@ -8,7 +8,7 @@ use astroterm::model::{
 };
 use astroterm::projection::project_sky;
 use astroterm::scene::draw_sky_scene;
-use astroterm::sky::{observe_sky, observe_sky_candidates, prepare_observation, update_simulation};
+use astroterm::sky::{observe_sky, observe_sky_candidates, prepare_observation, update_solar_system};
 use astroterm::timing::StepTimes;
 use std::sync::Arc;
 
@@ -49,7 +49,7 @@ fn setup(years: f64) -> (SimulationState, astroterm::model::ObserverState) {
     let tt = J2000 + years * JULIAN_YEAR_DAYS;
     let time = FrameTime { utc: tt, ut1: tt, tt };
     let mut simulation = SimulationState::exact();
-    update_simulation(&mut simulation, time, &[], &mut StepTimes::default()).unwrap();
+    update_solar_system(&mut simulation, time, &[], &mut StepTimes::default()).unwrap();
     let mut observer = prepare_observation(&mut simulation, time, Observer::default()).unwrap();
     observer.inertial_to_horizon = Matrix3::IDENTITY;
     observer.state.velocity = astroterm::astro::Vector3::default(); // known synthetic directions, independent of sidereal rotation

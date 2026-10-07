@@ -9,7 +9,7 @@ use astroterm::catalog::load_athyg_catalog;
 use astroterm::model::{Sky, ProjectionViewport as Viewport, View, RenderOptions, FrameTime};
 use astroterm::projection::project_sky;
 use astroterm::scene::draw_sky_scene;
-use astroterm::sky::{observe_sky, prepare_observation, update_simulation};
+use astroterm::sky::{observe_sky, prepare_observation, update_solar_system};
 use astroterm::timing::StepTimes;
 
 fn main() {
@@ -59,7 +59,7 @@ fn main() {
     let time = FrameTime::from_utc(2460736.9583333335);
     let mut timing = StepTimes::default();
     let mut update = |sky: &mut Sky| {
-        update_simulation(&mut simulation, time, &[], &mut timing).unwrap();
+        update_solar_system(&mut simulation, time, &[], &mut timing).unwrap();
         let site = prepare_observation(&mut simulation, time, observer).unwrap();
         observe_sky(&simulation, &site, 5.0, false, astroterm::projection::select_view_region(&view), sky, &mut timing).unwrap();
     };
@@ -130,7 +130,7 @@ fn measure_matrix(sky: &mut Sky) {
                     let start = Instant::now();
                     timing
                         .measure_steps("Simulation", |steps| {
-                            update_simulation(&mut simulation, time, &[], steps)
+                            update_solar_system(&mut simulation, time, &[], steps)
                         })
                         .unwrap();
                     timing.measure_steps("Observation", |steps| {

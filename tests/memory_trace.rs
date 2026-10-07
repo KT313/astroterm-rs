@@ -173,3 +173,5 @@ fn existing_leaf_context_keeps_panel_structure_and_targets_its_own_invocation() 
         assert_eq!(trace.steps[1].memory_events.len(), usize::from(active));
     }
 }
+
+#[path = "support/cached.rs"] mod cached;

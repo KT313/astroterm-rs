@@ -7,7 +7,7 @@ use super::samples::{refresh_planet_samples, refresh_lunar_samples, refresh_orie
 
 /// Ensure reception and explicitly requested emission epochs are covered, refreshing only missing families.
 /// Observation preparation supplies observer-dependent light-time requests; all sample mutation stays here.
-pub fn update_simulation(state: &mut SimulationState, time: FrameTime, requests: &[StateRequest], times: &mut StepTimes) -> Result<(), SimulationError> {
+pub fn update_solar_system(state: &mut SimulationState, time: FrameTime, requests: &[StateRequest], times: &mut StepTimes) -> Result<(), SimulationError> {
     validate_sample_times(time, requests)?;                                 // reject non-finite simulation or requested times
     let (planet_epochs, moon_epochs) = collect_sample_times(time, requests); // include parent-body positions needed by the Moon
     let before = state.refresh_counts;

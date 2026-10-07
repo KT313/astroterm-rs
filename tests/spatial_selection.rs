@@ -9,7 +9,7 @@ use astroterm::model::{
 };
 use astroterm::projection::project_sky;
 use astroterm::scene::draw_sky_scene;
-use astroterm::sky::{observe_sky, prepare_observation, update_simulation};
+use astroterm::sky::{observe_sky, prepare_observation, update_solar_system};
 use astroterm::timing::StepTimes;
 use proptest::prelude::*;
 use std::sync::{Arc, OnceLock};
@@ -67,7 +67,7 @@ fn catalog() -> Arc<SkyCatalog> {
 fn prepare_case(date: f64, latitude: f64, longitude: f64) -> (SimulationState, ObserverState) {
     let time = FrameTime::from_utc(date);
     let mut simulation = SimulationState::exact();
-    update_simulation(&mut simulation, time, &[], &mut StepTimes::default()).unwrap();
+    update_solar_system(&mut simulation, time, &[], &mut StepTimes::default()).unwrap();
     let observer = prepare_observation(&mut simulation, time, Observer { latitude, longitude }).unwrap();
     (simulation, observer)
 }
@@ -359,7 +359,7 @@ fn seam_threshold_horizon_fast_mover_and_view_edge_cases_are_not_culled() {
         let time = FrameTime::from_utc(J2000 + years * JULIAN_YEAR_DAYS);
         let mut simulation = SimulationState::exact();
         let mut timing = StepTimes::default();
-        update_simulation(&mut simulation, time, &[], &mut timing).unwrap();
+        update_solar_system(&mut simulation, time, &[], &mut timing).unwrap();
         let mut observer = prepare_observation(&mut simulation, time, Observer::default()).unwrap();
         observer.inertial_to_horizon = Matrix3::IDENTITY;
         observer.state.velocity = Vector3::default();

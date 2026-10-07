@@ -2,15 +2,19 @@
 //! are plain slices already. The owner keeps the complete allocated columns; these views are processing inputs.
 use super::{StarStorage, expand};
 use crate::{
-    astro::{Vector3, models::stars::StellarMotion},
+    astro::models::stars::StellarMotion,
     catalog::{NameId},
-    model::ObservedStar,
+
 };
 use ndarray::ArrayView2;
+#[cfg(test)]
+use crate::{model::ObservedStar, astro::Vector3};
 
+#[cfg(test)]
 pub(crate) struct ObservationFields<'a> {
     magnitude: &'a [u16],
 }
+#[cfg(test)]
 impl ObservationFields<'_> {
     pub fn create_observed_star(&self, index: usize, drawable: bool) -> ObservedStar {
         ObservedStar {
@@ -47,6 +51,7 @@ impl StarStorage {
     pub(crate) fn brightness_keys(&self) -> &[u16] {
         self.rows.brightness_key.as_slice()
     }
+    #[cfg(test)]
     pub(crate) fn borrow_observation_fields(&self) -> ObservationFields<'_> {
         ObservationFields {
             magnitude: self.rows.magnitude.as_slice(),
@@ -186,5 +191,20 @@ mod measurements {
             "full_metadata_ms":totals[0]/7.0,"borrowed_packed_metadata_ms":totals[1]/7.0,
             "individual_motion_access_ms":totals[2]/7.0,"borrowed_motion_access_ms":totals[3]/7.0})
         );
+    }
+}
+
+/// Only columns required for intrinsic stellar motion and brightness; no names, IDs or display metadata.
+pub(crate) struct StellarFields<'a> {
+    trajectories: TrajectoryFields<'a>,
+    magnitudes: &'a [u16],
+}
+impl StellarFields<'_> {
+    pub fn motion(&self, index: usize) -> StellarMotion { self.trajectories.motion(index) }
+    pub fn magnitude(&self, index: usize) -> f64 { crate::catalog::decode_magnitude(self.magnitudes[index]) }
+}
+impl StarStorage {
+    pub(crate) fn borrow_stellar_fields(&self) -> StellarFields<'_> {
+        StellarFields { trajectories: self.borrow_trajectory_fields(), magnitudes: self.columns().magnitude }
     }
 }

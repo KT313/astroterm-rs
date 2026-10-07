@@ -168,7 +168,7 @@ mod tests {
     use super::*;
     use crate::model::FrameTime;
     use super::super::find_sample;
-    use crate::sky::update_simulation;
+    use crate::sky::update_solar_system;
     use crate::astro::{J2000, Observer, Vector3};
     use crate::canvas::Canvas;
     use crate::catalog::load_embedded_catalog;
@@ -305,7 +305,7 @@ mod tests {
     fn two_concrete_lunar_evaluators_share_the_pipeline_without_changing_planets() {
         let mut simulation = SimulationState::default();
         let time = FrameTime::from_utc(J2000);
-        update_simulation(&mut simulation, time, &[], &mut StepTimes::default()).unwrap();
+        update_solar_system(&mut simulation, time, &[], &mut StepTimes::default()).unwrap();
         let planets = simulation.planets.clone();
         let observer = prepare_observer(&simulation, time, Observer::default()).unwrap();
         let mut sky = crate::sky::create_sky_from_catalog(&load_embedded_catalog().unwrap()).unwrap();

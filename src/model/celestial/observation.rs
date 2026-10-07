@@ -132,41 +132,10 @@ pub(crate) struct BodySamples {
     pub(crate) moon: crate::astro::models::BodyState,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct SelectedStar {
-    pub source_index: usize,
-    pub drawable: bool,
-}
-row_columns!(SelectedStar { source_index, drawable });
-
 #[derive(Clone, PartialEq)]
 pub(crate) struct CorrectionSelection {
     pub(crate) indices: Vec<usize>,
     pub(crate) stats: crate::model::CorrectionStats,
-}
-
-#[derive(Debug)]
-pub(crate) struct StellarWork {
-    pub(crate) source_index: usize,
-    pub(crate) magnitude: f64,
-    pub(crate) refresh: bool,
-    pub(crate) motion: Option<crate::astro::models::stars::StellarMotion>,
-    pub(crate) class: Option<crate::astro::models::stars::StellarClass>,
-    pub(crate) sample: Option<crate::astro::models::stars::StellarSample>,
-    pub(crate) valid_seconds: f64,
-    pub(crate) calculated_at: f64,
-}
-row_columns!(StellarWork { source_index, magnitude, refresh, motion, class, sample, valid_seconds, calculated_at });
-
-#[derive(Default)]
-pub(crate) struct ValidityCounts {
-    pub(crate) positive: usize,
-    pub(crate) outside_interval: usize,
-    pub(crate) singular: usize,
-    pub(crate) moving_distance: usize,
-    pub(crate) zero_limit: usize,
-    pub(crate) boundary_or_bound: usize,
-    pub(crate) probe_evaluations: usize,
 }
 
 pub(crate) type Directions = (Vec<Vector3>, Vec<Vector3>, Vector3);

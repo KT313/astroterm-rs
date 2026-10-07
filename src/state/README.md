@@ -17,8 +17,12 @@ ApplicationState
 ├── preparation               startup-only movement bounds, freed before the frame loop
 ├── cache                     everything recomputed from the persistent data and the simulated time
 │   ├── sky                   observed objects ready for projection
-│   ├── simulation            samples of planet, Moon and Earth-orientation models
-│   ├── observation           selection, motion and correction caches
+│   ├── simulation
+│   │   ├── solar_system      planet, Moon and slow Earth-orientation samples
+│   │   └── stars             intrinsic motion, current magnitudes, classifications and scratch
+│   ├── observer              reception geometry, light-time results and emission-time bodies
+│   ├── selection             conservative regions, candidates and constellation endpoints
+│   ├── observation           brightness eligibility and apparent-direction corrections
 │   ├── projection            visible cells, draw order and projected geometry
 │   └── rendering             character or pixel buffers, scene cache and transport data
 └── timings                   timing records and optional bounded diagnostic history
@@ -32,7 +36,7 @@ reference from one root field into another. Headless callers can instead own `Pr
 
 `tables/` lists every data table the root holds in one flat form, for memory debugging in any build. `Table` is one
 original container (the complete star table, a Vec, a cache's stored value, an image, a canvas); `Tables` is an owner that visits its tables
-with dotted paths such as `cache.observation.motion`. Each owner has one listing in `tables/owners.rs`: a
+with dotted paths such as `cache.simulation.stars.motion`. Each owner has one listing in `tables/owners.rs`: a
 `list_tables!` line naming its fields and their cache `Group`, or a short hand-written `visit_tables` when a field
 needs an adapter that borrows its complete owner. Add a field there when you add one to an owner; leaf impls for container types are in
 `tables/leaves.rs`. A type implements `Table` or `Tables`, never both.
@@ -124,45 +128,66 @@ Table previews sort map keys once per dump, format only the edge rows, and stop 
 limits in `rows/`. Unknown sizes are labeled rather than reported as zero. The table listing is a quick view with
 explicit partial counts; the feature-gated inventory remains the detailed ownership/deduplication report.
 
-## Simulation: samples of physical models
+## Frame order and restricted inputs
 
-`state/processing/simulation.rs` owns TT sample epochs/half-spans and family policy/version counters. `sky::update_simulation`
-prepares samples; body/orientation evaluation and observer preparation read them.
+The binary runs solar-system simulation → observer preparation → star selection → stellar simulation → observation
+corrections → projection → rendering. The first two stages finish every fallible body lookup before stellar work.
+The main loop passes direct field references; none of these algorithms receives the application root.
 
-| Field | Units/frame | Reset or replacement |
-|---|---|---|
-| `planets` | Samples of nine barycentric J2000 states in AU and AU/day, in body-ID order | Successful family preparation replaces the vector; planet version changes clear it |
-| `moon` | Parent-relative lunar state; evaluation composes it with Earth's state | Lunar or orientation version changes clear it |
-| `orientation` | Slow inertial-to-date rotation matrices | Orientation version changes clear it |
+`SimulationCaches` groups two independent owners. `SimulationState` keeps its existing type name and owns only
+solar-system samples under `cache.simulation.solar_system`. `sky::update_solar_system` prepares reception and
+requested emission coverage. Planetary states are barycentric J2000 AU/AU-day; Moon samples are Earth-relative
+and composed with Earth at the requested epoch. Slow orientation uses TT, while observer preparation applies
+current UT1 spin. Zero-span families clear once per frame, not between light-time iterations. Sample selection
+remains first-covering, history remains bounded, and earlier families can remain updated if a later family fails.
 
-Zero-span policies clear the corresponding family at frame start, allowing exact within-frame samples. Request
-vectors and the bounded sample vectors being constructed remain local until successful transfer into the owner.
-Earlier families may already be updated when a later family fails; there is no whole-simulation rollback.
+`ObserverPreparationCache` owns reception geometry, light-time results and final emission-time `BodySamples`.
+`sky::prepare_observer_inputs` runs geometry, two light-time request iterations, and final body sampling. The
+reception observer remains unchanged while emission requests refresh the independent solar-system owner.
+`PreparedBodies` borrows only completed body data, and its constructor checks the observer matches the sample key.
+Getters never invoke an ephemeris. Synthetic callers may still prepare a custom observer and sample its supplied
+emission epochs without rebuilding its geometry.
 
-## Observation: selection, propagation and separate correction snapshots
+`StarSelectionCache` owns `region`, `candidates`, `selected` and `working`. The four selection passes preserve
+conservative motion, aberration, quantization and refraction margins, plus the always-checked tail and full-scan
+fallback outside the supported interval. Endpoint-only rows remain non-drawable. `SelectedStars` is a read-only
+view of the working rows, catalog identity, requested epoch and source generation; it owns no row buffers.
 
-`state/processing/observation.rs` owns the caches; `sky/observation/pipeline.rs` orchestrates the passes. Cache keys express actual
-dependencies. Invalidation retains the old key/value but makes it unavailable through `Cache::value()` until refresh.
+`StellarSimulationState` owns `prepared_classes`, `stellar`, `stellar_scratch`, `stellar_stats` and `motion` under
+`cache.simulation.stars`. `sky::prepare_stellar_catalog` prepares classifications once. `sky::simulate_stars` works
+only on selected rows; numerical passes receive only trajectory and magnitude columns through `StellarFields`.
+Intrinsic outputs are J2000 unit directions and current magnitudes, not AU positions. Per-star samples survive
+camera changes and are qualified under the existing cache rules. Moving distance-bearing stars retain exact
+current brightness; stars have no light-time iteration. The sample map does not evict during a run. Scratch
+contains at most 1024 live records and clears after each refresh while retaining capacity.
 
-| Field family | Producer → readers; content/order |
-|---|---|
-| `catalog`, `prepared_classes` | Catalog preparation → stellar lookup; shared catalog identity and classifications by catalog index |
-| `observer`, `light_time` | Reception geometry / emission-time preparation → selection and body sampling; observer state and TT epochs |
-| `region`, `candidates`, `selected` | Region and brightness filtering → endpoint merge; cell IDs, then catalog indices |
-| `working` | Endpoint merge → stellar motion/current brightness; sorted catalog indices plus drawable flags |
-| `stellar`, `stellar_scratch`, `stellar_stats` | Stellar batches → motion output; per-catalog-index sample map, at most 1024 live scratch records, cumulative counters |
-| `motion`, `eligible`, `corrections` | Propagation / current brightness / correction selection → observed output; parallel working-order directions/magnitudes/flags and retained working indices |
-| `bodies`, `relative`, `illumination` | Emission sampling / observer subtraction / Moon lighting → corrections; body-order barycentric states, observer-relative AU vectors, phase data |
-| `apparent`, `horizontal`, `refracted` | Aberration / rotation / optional refraction → next pass and projection; independent corrected-star/body-order snapshots |
+`StellarResults` borrows the intrinsic results and their matching selection. Owner identity plus local cache
+generation prevents equal generations in different selection owners from being mistaken for the same data.
+Constructors also check catalog/epoch matching; observation checks the observer epoch. The small identity tokens
+are assigned when owners are created, not per star or frame, and own no heap. No borrowed view is stored inside
+another owner. Mutation while a view is live is restricted by Rust's borrow checker.
 
-Stellar geometric directions are J2000 unit vectors. Horizontal directions use East/North/Up. The body vectors also
-carry distance where the pass requires it; they are not all unit vectors. Corrected directions never feed back into
-catalog propagation. Hits restore the appropriate snapshot; refreshes calculate it once and keep the fresh output.
+`ObservationCache` now owns only `eligible`, `corrections`, `relative`, `illumination`, `apparent`, `horizontal`
+and `refracted`, plus source provenance. `sky::observe_cached_sky` consumes prepared read-only views. It checks
+current brightness, retains necessary correction rows, builds calculated output, subtracts the observer for
+bodies, computes Moon illumination, and applies aberration, horizon rotation and optional refraction. It cannot
+mutate model samples or perform selection. Snapshot hits restore the appropriate directions; refreshes keep
+freshly calculated directions. No corrected direction feeds back into intrinsic simulation.
 
-`stellar` does not evict entries during a run. Scratch clears after the refresh but retains capacity. Automatic
-catalog-identity replacement clears catalog-dependent caches, classes and scratch while preserving observer and
-light-time caches. Explicit catalog preparation resets the full observation owner and then builds classifications.
-The two entry points deliberately have different lifecycles.
+Cache generations still change only when values change. View controls invalidate selection and projection;
+resize only invalidates projection. Catalog identity changes reset selection, intrinsic samples and corrections,
+including equal-content distinct catalog allocations. Automatic stellar replacement classifies on demand until
+explicit preparation is requested. Independent reception, light-time and body caches survive a catalog change;
+body-cache retention is newly possible because it no longer belongs to the catalog-dependent owner. Root
+`replace_catalog` resets all affected owners and clears observer preparation as part of its fresh-run installation.
+Explicit stellar preparation replaces the stellar owner; its new identity also forces dependent corrections to
+refresh on their next use. `Obs` metadata aggregates observer, selection, stellar and correction cache statistics,
+preserving its historical combined meaning.
+
+Missing body coverage retains the previous cache value but invalidates it; no new observed sky is published.
+Later stages do not run, and failure diagnostics are still printed after terminal restoration. Headless
+`observe_sky`/`observe_sky_candidates` are compatibility coordinators in `sky/pipeline.rs`: they call separate,
+cache-free selection/simulation/correction algorithms and honor caller-provided observer geometry.
 
 `cache.sky.stars` owns calculated records only, with catalog metadata borrowed through `ObservedStarView` on demand.
 Correction selection clears/refills that vector; subsequent corrections write its positions. Planet/Moon fields are

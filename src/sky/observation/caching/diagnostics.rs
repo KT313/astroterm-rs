@@ -1,30 +1,11 @@
 //! Count existing intermediate buffers only in the opt-in trace; never rerun astronomy or selection.
 use super::*;
 
-pub(super) fn describe_observation(storage: &ObservationCache, output: &ObservedSky, threshold: f64, times: &mut StepTimes) {
+pub(super) fn describe_observation(storage: &ObservationCache, stars: crate::state::StellarResults<'_>, output: &ObservedSky, threshold: f64, times: &mut StepTimes) {
     if times.trace().is_none() {
         return;
     }
-    let total = output.catalog.stars.len();
-    let (cells, regional, always) = crate::sky::count_region_stars(&output.catalog.grid, storage.region.value(), total);
-    times.describe("Region filtering", || format!("input stars={total}; selected cells={cells}/{}; retained by conservative region including always-checked={regional}; rejected region={}; always-checked subset={always}; brute-force={}", crate::model::CELL_COUNT, total - regional, output.selection.brute_force));
-    times.describe("Brightness bounds", || format!("input regional stars={regional}; rejected interval magnitude bound > {threshold}={}; output candidates={}; brute-force bypass={}", regional - storage.candidates.value().0.len(), storage.candidates.value().0.len(), output.selection.brute_force));
-    times.describe("Body sampling", || {
-        format!(
-            "requested Sun/planets={}; Moon=1; output states={} at emission epochs",
-            output.planets.len(),
-            output.planets.len() + 1
-        )
-    });
-    times.describe("Candidate validation", || {
-        let candidates = &storage.candidates.value().0;
-        let invalid = candidates.iter().filter(|&&i| i >= total).count();
-        let removed = candidates.len() - storage.selected.value().len();
-        format!("input candidates={}; rejected invalid index={invalid}; then rejected bound > {threshold}={}; output candidates={}; outside interval uses all stars", candidates.len(), removed - invalid, storage.selected.value().len())
-    });
-    let working = storage.working.value();
-    times.describe("Constellation endpoints", || format!("input selected={}; endpoint union={}; added endpoint-only={}; output working stars={}; endpoints included even when constellation drawing is disabled", storage.selected.value().len(), output.catalog.endpoint_indices().len(), working.len() - storage.selected.value().len(), working.len()));
-    times.describe("Stellar motion", || format!("input working stars={}; output directions/magnitudes={}; singular fallbacks={}; stellar sample cache totals: hits={} refreshes={} bypasses={}; stars use catalog propagation, no per-star light-time solve", working.len(), storage.motion.value().0.len(), output.runtime_singular_count, storage.stellar_stats.hits, storage.stellar_stats.refreshes, storage.stellar_stats.bypasses));
+    let working = stars.selection.working.value();
     let drawable = storage.eligible.value().iter().filter(|&&yes| yes).count();
     times.describe("Current brightness", || {
         let eligible = working.iter().filter(|s| s.drawable).count();
@@ -68,11 +49,11 @@ pub(in crate::sky::observation) fn capture_observation_reports(storage: &Observa
     reports
 }
 
-pub(in crate::sky::observation) fn describe_observation_results(storage: &ObservationCache, output: &ObservedSky, threshold: f64, previous_reports: Option<Vec<crate::cache::CacheReport>>, times: &mut StepTimes) {
+pub(in crate::sky::observation) fn describe_observation_results(storage: &ObservationCache, stars: crate::state::StellarResults<'_>, output: &ObservedSky, threshold: f64, previous_reports: Option<Vec<crate::cache::CacheReport>>, times: &mut StepTimes) {
     times.measure_diagnostics(|times| {
-        diagnostics::describe_observation(storage, output, threshold, times);
+        diagnostics::describe_observation(storage, stars, output, threshold, times);
         if let Some(previous) = previous_reports {
-            for (before, after) in previous.into_iter().zip(storage.reports()).skip(2) {
+            for (before, after) in previous.into_iter().zip(storage.reports()) {
                 times.describe(after.name, || format!("cache hits={} refreshes={} bypasses={}; last refresh reason={:?}; stored TT={:?}; validity={} s", after.stats.hits - before.stats.hits, after.stats.refreshes - before.stats.refreshes, after.stats.bypasses - before.stats.bypasses, after.stats.last_reason, after.calculated_at, after.valid_seconds));
             }
         }
