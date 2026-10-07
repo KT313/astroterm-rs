@@ -1,8 +1,9 @@
 //! Frame-stage operations over explicit inputs; the overall loop remains in pipeline.rs.
 use std::io;
-use astroterm::astro::SimulationClock;
+use astroterm::astro::{Observer, SimulationClock};
+use astroterm::cache::CacheStats;
 use astroterm::controls::apply_control;
-use astroterm::model::{View, Sky, FrameTime, SimulationSettings};
+use astroterm::model::{View, Sky, FrameTime, SimulationSettings, ProjectionViewport};
 use astroterm::sky::update_simulation;
 use astroterm::state::{ObservationCache, ProjectionCache, SimulationState, RenderingState};
 use astroterm::terminal::{FrameInput, Renderer};
@@ -79,8 +80,19 @@ pub(crate) fn project_frame(
     })
 }
 
+/// Publish cache statistics, borrow the completed geometry and render it without copying the projected data.
+/// Existing assembly/raster/presentation timers stay inside their original operations.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_projected_frame(renderer: &mut Renderer, rendering: &mut RenderingState, sky: &Sky, view: &View,
+    viewport: ProjectionViewport, projection: &ProjectionCache, observation_stats: CacheStats, utc: f64,
+    clock: &SimulationClock, observer: &Observer, times: &mut StepTimes) -> io::Result<()> {
+    renderer.set_cache_diagnostics(rendering, observation_stats, projection.stats()); // update the debug display's reuse counts
+    let projected = borrow_frame_projection(sky, view, viewport, projection, times); // read completed geometry without copying it
+    renderer.render_frame(rendering, &projected, view, utc, clock, observer, times)   // assemble the image and text, then present them
+}
+
 /// Borrow the completed projection once, then describe that same view outside the assembly timer.
-pub(crate) fn borrow_frame_projection<'a>(sky: &'a Sky, view: &View, viewport: astroterm::model::ProjectionViewport,
+fn borrow_frame_projection<'a>(sky: &'a Sky, view: &View, viewport: astroterm::model::ProjectionViewport,
     projection_cache: &'a ProjectionCache, times: &mut StepTimes) -> astroterm::model::ProjectedSky<'a> {
     let projected = times.measure("Projected view assembly", || astroterm::projection::borrow_projected(projection_cache, sky, view, viewport));
     record_projected_memory(times, &projected);

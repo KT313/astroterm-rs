@@ -3,7 +3,7 @@
 use std::io;
 use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use astroterm::astro::SimulationClock;
 use astroterm::terminal::{Renderer, poll_frame_input};
@@ -12,7 +12,7 @@ use astroterm::state::{ApplicationState, ObservationCache};
 use astroterm::model::SkyCatalog;
 
 use crate::helpers::{
-    apply_frame_controls, borrow_frame_projection, capture_memory, observe_frame, project_frame, record_frame_duration,
+    apply_frame_controls, begin_frame_diagnostics, render_projected_frame, capture_memory, observe_frame, project_frame, finish_frame_diagnostics,
     stop_on_quit, resolve_frame_time, simulate_frame, log_pipeline_data_if_requested,
 };
 
@@ -35,9 +35,7 @@ pub(super) fn run_render_loop(state: &mut ApplicationState, renderer: &mut Rende
     state.timings.reset_frame_timings();                                                                            // keep setup time out of the displayed frame timings
 
     loop {
-        let frame_start = Instant::now();
-        state.timings.begin_frame();
-        state.timings.begin_memory_frame();                                                                         // keep this frame separate from startup and the last completed frame
+        let frame_start = begin_frame_diagnostics(&mut state.timings);                                              // start this frame's timing and optional memory records
 
         let input = poll_frame_input(state.config.terminal.quit_on_any_key)?;                                       // read key presses and terminal size changes
         if stop_on_quit(&input, &mut state.timings) { return Ok(()); }                                              // stop on quit without processing other keys
@@ -51,15 +49,10 @@ pub(super) fn run_render_loop(state: &mut ApplicationState, renderer: &mut Rende
         let viewport = renderer.viewport(&state.cache.rendering);                                                   // use the current terminal size after any resize was handled
         project_frame(&state.cache.sky, &state.current_view, viewport, time, &mut state.cache.projection, &mut state.timings); // convert visible sky positions into positions on the screen
         log_pipeline_data_if_requested(state, "tmp/after-projection.md", "after-projection")?;
-        renderer.set_cache_diagnostics(&mut state.cache.rendering, state.cache.observation.stats(), state.cache.projection.stats()); // pass result-reuse counts to the debug display
-        let projected = borrow_frame_projection(&state.cache.sky, &state.current_view, viewport, &state.cache.projection, &mut state.timings); // read completed screen positions without copying them
-        renderer.render_frame(&mut state.cache.rendering, &projected, &state.current_view, time.utc, &clock, &state.config.simulation.observer, &mut state.timings)?; // draw the sky and text, then display them in the terminal
+        render_projected_frame(renderer, &mut state.cache.rendering, &state.cache.sky, &state.current_view, viewport, &state.cache.projection, state.cache.observation.stats(), time.utc, &clock, &state.config.simulation.observer, &mut state.timings)?; // draw and present the projected sky and text
         log_pipeline_data_if_requested(state, "tmp/after-rendering.md", "after-rendering")?;
 
-        let elapsed = record_frame_duration(&state.config, frame_start, time, &mut state.timings);                  // record frame duration before the final memory inspection
-        capture_memory(&state.config, &state.persistent.catalog, &state.cache, state.preparation.as_ref(), renderer, &mut state.timings, "After presented frame", Some(time.tt));
-
-        state.timings.complete_memory_frame(elapsed);                                                               // retain completed diagnostics only after successful presentation
+        finish_frame_diagnostics(&state.config, &state.persistent.catalog, &state.cache, state.preparation.as_ref(), renderer, frame_start, time, &mut state.timings); // save frame timings and requested memory diagnostics
 
         if state.config.debug_singleframe { return Ok(()); }                                                        // stop once the requested single-frame diagnostics are captured
         thread::sleep(frame_duration.saturating_sub(frame_start.elapsed()));                                        // wait until the next frame is due, unless already running late

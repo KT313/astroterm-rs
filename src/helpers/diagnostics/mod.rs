@@ -99,8 +99,26 @@ pub(super) fn describe_light_time_sampling(observer: &astroterm::model::Observer
     times.describe("Light-time sampling", || format!("cache={:?}", cache.light_time_report()));
 }
 
+/// Start measuring before opening this frame's timing and optional memory records.
+pub(crate) fn begin_frame_diagnostics(times: &mut StepTimes) -> Instant {
+    let frame_start = Instant::now();
+    times.begin_frame();
+    times.begin_memory_frame();
+    frame_start
+}
+
+/// Finish diagnostics for a successfully presented frame. Measure first so the final memory inspection stays
+/// outside the reported frame duration; keep the existing per-operation opt-in checks.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn finish_frame_diagnostics(config: &Config, catalog: &Arc<astroterm::model::SkyCatalog>, caches: &astroterm::state::Caches,
+    preparation: Option<&astroterm::model::CatalogPreparation>, renderer: &Renderer, frame_start: Instant, time: FrameTime, times: &mut StepTimes) {
+    let elapsed = record_frame_duration(config, frame_start, time, times); // record duration before inspecting memory
+    capture_memory(config, catalog, caches, preparation, renderer, times, "After presented frame", Some(time.tt));
+    times.complete_memory_frame(elapsed);                                // retain diagnostics for this completed frame
+}
+
 /// Sample duration through presentation before inspecting memory; ordinary single-frame output stays compatible.
-pub(crate) fn record_frame_duration(config: &Config, frame_start: Instant, time: FrameTime, step_times: &mut StepTimes) -> f64 {
+fn record_frame_duration(config: &Config, frame_start: Instant, time: FrameTime, step_times: &mut StepTimes) -> f64 {
     if !(config.debug_singleframe || (cfg!(feature = "memory-diagnostics") && config.debug_memory)) { return 0.0; }
     let elapsed = frame_start.elapsed().as_secs_f64();
     step_times.describe("Present", || format!(
