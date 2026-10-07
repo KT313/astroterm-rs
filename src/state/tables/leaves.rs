@@ -64,6 +64,15 @@ impl Table for StarStorage {
     fn note(&self) -> Option<String> { Some("storage=owned; per-star columns only; side tables listed separately. Magnitudes are u16 codes: code / 1000 - 10; parentheses decode the same stored value, not another column. Brightness-bound code 0 always passes early pruning.".into()) }
 }
 
+/// The live camera is one inline value owned by the root, not a cached or copied table.
+impl Table for View {
+    fn shape(&self) -> Vec<usize> { vec![1] }
+    fn rows(&self) -> usize { 1 }
+    fn bytes(&self) -> TableBytes { TableBytes::known(size_of::<Self>(), size_of::<Self>()) }
+    fn columns(&self) -> Vec<Column> { plain_column::<Self>() }
+    fn preview(&self) -> Vec<(usize, Vec<String>)> { vec![(0, vec![preview(self)])] }
+}
+
 /// Keep the original seven-value owner and its byte counts; only the debug preview gets named components.
 pub(crate) struct PreciseMotions<'a>(pub &'a CatalogArray<[f64; 7]>);
 impl Table for PreciseMotions<'_> {

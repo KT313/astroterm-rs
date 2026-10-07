@@ -11,7 +11,7 @@ use crate::timing::StepTimes;
 
 // --- root --------------------------------------------------------------------------------------------------------
 
-list_tables!(ApplicationState { leaves: [preparation], scalars: [], groups: [persistent, cache, timings] });
+list_tables!(ApplicationState { leaves: [current_view, preparation], scalars: [], groups: [persistent, cache, timings] });
 list_tables!(Persistent { leaves: [], scalars: [], groups: [catalog] });
 list_tables!(Caches { leaves: [], scalars: [], groups: [sky, simulation, observation, projection, rendering] });
 

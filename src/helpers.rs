@@ -177,13 +177,13 @@ fn report_failure(error: impl Display) -> ExitCode {
 /// Apply a frame's controls and invalidate dependent caches after any view change or resize.
 /// The caller checks for quit first and retains ownership of the input until the frame ends.
 pub(super) fn apply_frame_controls(
-    input: &FrameInput, config: &Config, view: &mut View, clock: &mut SimulationClock,
+    input: &FrameInput, initial_view: &View, view: &mut View, clock: &mut SimulationClock,
     renderer: &mut Renderer, rendering: &mut RenderingState, observation_cache: &mut ObservationCache, projection_cache: &mut ProjectionCache,
 ) -> io::Result<()> {
     let previous_view = *view;
     if input.resized { renderer.fit_to_terminal(rendering)?; }
     for &control in &input.controls {
-        apply_control(control, view, clock, &config.view);
+        apply_control(control, view, clock, initial_view);
     }
 
     if *view != previous_view {

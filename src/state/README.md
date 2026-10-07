@@ -3,12 +3,15 @@
 Start with the public types in `mod.rs`; `ApplicationState` is defined in `application/mod.rs`. It is created once
 right after configuration validation, with every owner at its final type and an empty catalog; `replace_catalog`
 installs the prepared catalog before the frame loop and is the only catalog mutation.
-`pipeline.rs` borrows the `cache` fields separately for simulation, observation, projection and rendering. Algorithms live
+`pipeline.rs` passes direct references to state fields, without destructuring the root. `current_view` starts
+from `config.view` on each render-loop entry, and reset controls restore that original value. The live view also
+appears in table dumps; its fixed-size storage is included in the root inventory's inline size. The pipeline borrows the `cache` fields separately for simulation, observation, projection and rendering. Algorithms live
 in those processing modules; this folder owns their stored inputs, results and designated scratch buffers.
 
 ```text
 ApplicationState
-├── config                    validated settings and cache policy
+├── config                    validated settings and cache policy; view is the initial reset target
+├── current_view              live camera changed by pan/zoom controls
 ├── persistent                data loaded once and never changed during the run
 │   └── catalog               Arc<SkyCatalog>: immutable catalog data, installed once by replace_catalog
 ├── preparation               startup-only movement bounds, freed before the frame loop

@@ -1,6 +1,7 @@
 //! Construct the complete root from validated configuration; the prepared catalog is installed afterwards.
 //!
 //! Root groups follow their lifetimes; preparation is freed before the frame loop:
+//! - `current_view`: the mutable camera; config.view remains the initial reset target,
 //! - `persistent`: loaded once at startup and never changed during a run (the prepared catalog),
 //! - `preparation`: temporary catalog bounds used only while building/validating the catalog,
 //! - `cache`: everything recomputed from the persistent data and the simulated time (observed objects, caches, buffers),
@@ -9,11 +10,13 @@ mod caches;
 pub use caches::Caches;
 
 use std::sync::Arc;
-use crate::model::{Config, Sky, SkyCatalog, CatalogPreparation, PreparedCatalog};
+use crate::model::{Config, View, Sky, SkyCatalog, CatalogPreparation, PreparedCatalog};
 use crate::timing::StepTimes;
 
 pub struct ApplicationState {
     pub config: Config,
+    /// Camera changed by pan/zoom controls; config.view retains the original reset value.
+    pub current_view: View,
     pub persistent: Persistent,
     pub preparation: Option<CatalogPreparation>,
     pub cache: Caches,
@@ -31,7 +34,7 @@ impl ApplicationState {
     pub fn new(config: Config, timings: StepTimes) -> Self {
         let catalog = Arc::new(SkyCatalog::empty());
         let cache = Caches::new(Sky::new(catalog.clone()), &config.cache);
-        Self { config, persistent: Persistent { catalog }, preparation: None, cache, timings }
+        Self { current_view: config.view, config, persistent: Persistent { catalog }, preparation: None, cache, timings }
     }
 
     /// Free the exclusively owned startup payload; shared runtime inputs keep their allocation and identity.
