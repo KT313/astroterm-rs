@@ -23,11 +23,7 @@ impl Write for CellWriter {
     fn write_str(&mut self, text: &str) -> fmt::Result {
         for ch in text.chars() {
             if self.remaining == 0 { self.truncated = true; return Err(fmt::Error); }
-            if ch == '|' {
-                if self.remaining < 2 { self.truncated = true; return Err(fmt::Error); }
-                self.text.push_str("\\|");
-                self.remaining -= 2;
-            } else if ch.is_control() {
+            if ch.is_control() {
                 for escaped in ch.escape_default() {
                     if self.remaining == 0 { self.truncated = true; return Err(fmt::Error); }
                     self.text.push(escaped);
@@ -169,7 +165,7 @@ mod tests {
         assert!(text.ends_with('…'));
         assert!(text.chars().count() <= MAX_CELL_CHARS + 1);
         let escaped = preview_text(["a\n\r\t\x1b | b"]);
-        assert_eq!(escaped, "a\\n\\r\\t\\u{1b} \\| b");
+        assert_eq!(escaped, "a\\n\\r\\t\\u{1b} | b");
         assert!(!escaped.chars().any(char::is_control));
         let mut visits = 0;
         let text = preview_chars((0..1_000_000).map(|_| { visits += 1; 'x' }));

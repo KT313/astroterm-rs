@@ -6,25 +6,48 @@ a measurement of physical RAM traffic. Normal builds omit the collection and sto
 
 ## Quick dump without the feature
 
+Pass `--debug-log-data` to append full-state dumps at these checkpoints, relative to the current directory:
+
+| File | Checkpoint | Frequency |
+| --- | --- | --- |
+| `tmp/tables.md` | After catalog/terminal setup, before preparation | Once per run |
+| `tmp/after-preparation.md` | After static precomputations | Once per run |
+| `tmp/after-projection.md` | After simulation, observation and projection | Every frame |
+| `tmp/after-rendering.md` | After rendering and presentation | Every frame |
+
+Missing folders are created. This works in every build; combine with `--debug-singleframe` for one dump per file.
+Logs append on subsequent runs. In-frame dumps add to frame time and can produce large files during continuous
+runs. Omit the flag for benchmarks without table logging; no log file or folder is created.
+Additional pipeline dump points can use
+`if state.config.debug_log_data { ... }` with `state.log_data(...)` or the binary's `log_pipeline_data` helper.
+The helper accepts a destination path, for example
+`log_pipeline_data(state, "tmp/startup.md", "stage-renderloop-start")?`; missing parent folders are created.
+Use different paths to keep separate dumps, or the same path to append sections to one file.
+
 Any build can write the original tables held by state (catalog, caches, rendering buffers) with their shape,
 used and reserved bytes, cache policy and metadata, column names and types, and the first and last ten rows:
 
-```text
-cache.sky.stars    shape=[1319]  used=61.8 KiB  reserved=61.8 KiB
-  columns: source_index: usize | drawable: bool | magnitude: f64 | position: Vector3
-  [0] 1 | true | 4.67 | Vector3 { x: 0.567, y: -0.798, z: 0.199 }
-```
+For example, an observed-star table renders as:
+
+### cache.sky.stars
+
+**Shape:** `[1319]` · **Used:** 61.8 KiB · **Reserved:** 61.8 KiB
+
+| Row | source_index: usize | drawable: bool | magnitude: f64 | position: Vector3 |
+| ---: | --- | --- | --- | --- |
+| 0 | 1 | true | 4.67 | Vector3 { x: 0.567, y: -0.798, z: 0.199 } |
+
 
 From code:
 
 ```rust
-state.log_data(Some(Path::new("/tmp/astroterm-tables.log")), Some("after frame 3"))?;  // append a section
+state.log_data(Some(Path::new("/tmp/astroterm-tables.md")), Some("after frame 3"))?;  // append a section
 state.log_data(None, None)?;                                                            // print to stdout
 ```
 
 Use a file path when the frame loop is running: the terminal owns stdout and the alternate screen is active.
-The star catalog is one `persistent.catalog.stars` table with all 13 columns. Long headers and rows wrap between
-columns; each cell has a bounded preview. Name ranges and precise motions are separate side tables because they
+The star catalog is one `persistent.catalog.stars` Markdown table with all 13 columns. Each table has a heading,
+memory details and typed column headers; each cell has a bounded preview. Name ranges and precise motions are separate side tables because they
 have different row counts. The main table's byte counts cover its columns only, excluding those side tables.
 
 Used bytes describe live payload; reserved bytes include spare capacity. Both come from the original owners,
@@ -34,7 +57,7 @@ below supplies detailed shared-owner accounting and per-step operations.
 
 Preview ordering is prepared once per table. Only the first and last ten rows are formatted; nested collections
 show at most four items, nesting is limited, and cell text is capped at 160 characters plus an omission marker.
-These limits apply before hidden data is expanded. Every table column remains visible on continuation lines.
+These limits apply before hidden data is expanded. Every column remains present in the Markdown table, including wide tables. Pipes and markup in values are escaped.
 
 Catalogs, including prepared-cache hits, use owned arrays. The disk cache is still used to avoid CSV parsing, but
 its bytes are read, validated and decoded into arrays; no file mapping backs the tables. The temporary file-byte

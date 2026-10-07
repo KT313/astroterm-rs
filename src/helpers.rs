@@ -31,6 +31,13 @@ pub(super) fn configure_memory_reporting(config: &Config, times: &mut StepTimes)
     if config.debug_memory { times.enable_memory_run(config.cache.enabled); }
 }
 
+/// Append one named table dump to the chosen file, creating any missing parent folders.
+pub(super) fn log_pipeline_data(state: &ApplicationState, path: impl AsRef<std::path::Path>, section: &str) -> io::Result<()> {
+    let path = path.as_ref();
+    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) { std::fs::create_dir_all(parent)?; }
+    state.log_data(Some(path), Some(section))
+}
+
 /// Load the embedded city table, recording diagnostics and reporting any failure.
 pub(super) fn load_cities(step_times: &mut StepTimes) -> Result<Vec<City>, ExitCode> {
     let cities = match step_times.measure("City loading", load_embedded_cities) {

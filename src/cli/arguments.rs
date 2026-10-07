@@ -159,6 +159,10 @@ pub struct Arguments {
     #[arg(long)]
     pub debug_singleframe: bool,
 
+    /// Append Markdown table dumps in tmp/ at startup, after preparation, and after each projection and rendering. Available in every build
+    #[arg(long)]
+    pub debug_log_data: bool,
+
     /// Report bounded memory inventories and instrumented operations after quitting; combine with --debug-singleframe for one frame.
     /// Requires: cargo build --features memory-diagnostics --bin astroterm. Does not enable the on-screen timing panel
     #[arg(long)]

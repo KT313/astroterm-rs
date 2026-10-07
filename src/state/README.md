@@ -36,9 +36,10 @@ needs an adapter that borrows its complete owner. Add a field there when you add
 Row types declare their column names once, next to their struct, with `row_columns!(Name { a, b, c })` from the
 foundation `rows` module; the compiler fills in the types and fails the build when the list and the struct differ.
 
-`state.log_data(path, section)` writes the listing: path, shape, used and reserved bytes, the cache policy and
-metadata, a `columns: name: type | ...` line, then the first and last ten rows with one cell per column. Headers and rows wrap between columns without losing later fields. `Some(path)` appends to that file (created if missing); `None` prints
-to stdout. Use a path inside the frame loop: the terminal session owns stdout and the alternate screen is active.
+`state.log_data(path, section)` writes a Markdown report: path, shape, used and reserved bytes, the cache policy and
+metadata, then a Markdown table with typed column headers and the first and last ten rows. Every column stays
+present; markup and pipes inside data are escaped. `Some(path)` appends to that file (created if missing); `None`
+prints to stdout. Use a path inside the frame loop: the terminal session owns stdout and the alternate screen is active.
 
 
 ## Find an owner or a report

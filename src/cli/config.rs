@@ -93,6 +93,7 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
     };
     Ok(Config {
         debug_singleframe: arguments.debug_singleframe,
+        debug_log_data: arguments.debug_log_data,
         debug_memory: arguments.debug_memory,
         cache: crate::cache::CacheConfig::load(arguments.cache_config.as_deref(), arguments.disable_cache)
             .map_err(|e| ConfigError(e.to_string()))?,
@@ -359,6 +360,16 @@ mod tests {
     fn debug_frametimes_turns_on_the_metadata_panel() {
         let config = config_from(&["--debug-frametimes"]).unwrap();
         assert!(config.terminal.frame_times && config.terminal.metadata_panel);
+    }
+
+    #[test]
+    fn debug_log_data_is_opt_in_and_independent_of_other_diagnostics() {
+        assert!(!config_from(&[]).unwrap().debug_log_data);
+        let config = config_from(&["--debug-log-data"]).unwrap();
+        assert!(config.debug_log_data);
+        assert!(!config.debug_singleframe && !config.debug_memory);
+        assert!(!config.terminal.frame_times && !config.terminal.metadata_panel);
+        assert!(config_from(&["--debug-log-data", "--debug-singleframe"]).unwrap().debug_singleframe);
     }
 
     #[test]
