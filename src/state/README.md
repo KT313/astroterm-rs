@@ -51,6 +51,10 @@ prints to stdout. Use a path inside the frame loop: the terminal session owns st
 
 ## Find an owner or a report
 
+Binary-only supporting functions are exported by `src/helpers/mod.rs`. Its private `startup/`, `frame/` and
+`diagnostics/` folders group setup, individual frame stages, and optional logging/reporting. `main.rs` still owns
+the terminal lifetime and calls `run_render_loop()` directly; `pipeline.rs` keeps the processing order visible.
+
 Other modules import through `crate::state::{ApplicationState, ObservationCache, ...}`. Supporting modules are
 private; their layout is for navigation, not additional import paths.
 
