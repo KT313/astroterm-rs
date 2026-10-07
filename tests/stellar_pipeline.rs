@@ -233,7 +233,10 @@ fn singular_trajectories_are_rejected_and_supported_fast_motion_stays_indexed() 
     let cat = catalog(vec![fast], vec![]);
     assert!(cat.star_exceptions.is_empty());
     assert_eq!(cat.singular_count, 0);
-    assert!(cat.always_checked().any(|i| cat.stars.get(i).id == StarId(2)));
+    assert_eq!(cat.grid.offsets[astroterm::model::CELL_COUNT], cat.stars.len());
+    let index = cat.stars.iter().position(|star| star.id == StarId(2)).unwrap();
+    let cell = astroterm::model::hash_direction(astroterm::model::GRID_DEPTH, cat.stars.stored_direction(index));
+    assert!((cat.grid.offsets[cell]..cat.grid.offsets[cell + 1]).contains(&index));
     let mut sky = ObservedSky::new(cat);
     let (simulation, observer) = setup(1000.0);
     observe_sky(

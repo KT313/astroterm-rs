@@ -118,7 +118,8 @@ loading may temporarily hold both encoded bytes and decoded arrays. The catalog'
 counted once per feature-gated inventory. Observed skies borrow original names and share immutable definition sets;
 projection keys retain handles to the same definitions, not copies of the figure or endpoint vectors.
 
-`ApplicationState.preparation` exclusively owns the per-star movement bounds used to build/validate the grid.
+`ApplicationState.preparation` exclusively owns the per-star movement bounds retained for prepared-trajectory validation.
+Region assignment now depends only on stored directions, not these bounds.
 Loading returns `PreparedCatalog { catalog, preparation }`; the disk-cache writer requires both together.
 `free_preparation_only_data()` drops that owner after static frame preparation and before the clock starts.
 Runtime rows remain a complete rectangular table, and existing catalog Arc identities do not change.
@@ -149,8 +150,10 @@ Getters never invoke an ephemeris. Synthetic callers may still prepare a custom 
 emission epochs without rebuilding its geometry.
 
 `StarSelectionCache` owns `region`, `candidates`, `selected` and `working`. The four selection passes preserve
-conservative motion, aberration, quantization and refraction margins, plus the always-checked tail and full-scan
-fallback outside the supported interval. Endpoint-only rows remain non-drawable. `SelectedStars` is a read-only
+the fixed 0.25° motion allowance, aberration, quantization and refraction margins, and full-scan fallback
+outside the supported interval. Every star belongs to its catalog-epoch region; there is no separate fast-moving
+population. Narrow-view selection can miss stars that drift beyond the fixed allowance. Moving-region handling
+is deferred; intrinsic motion calculations are unchanged. Endpoint-only rows remain non-drawable. `SelectedStars` is a read-only
 view of the working rows, catalog identity, requested epoch and source generation; it owns no row buffers.
 
 `StellarSimulationState` owns `prepared_classes`, `stellar`, `stellar_scratch`, `stellar_stats` and `motion` under

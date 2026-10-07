@@ -35,7 +35,7 @@ fn build_catalog(
 ) -> std::io::Result<PreparedCatalog> {
     let (mut stars, mut bounds, names) = prepare_compact_stars(entries, &names)?;                 // keep valid stars in compact column storage
     sort_stars_by_region_and_brightness(&mut stars, &mut bounds);                // put nearby stars together, brightest first with stable ties
-    let grid = grid::build_grid(&stars, &bounds);
+    let grid = grid::build_grid(&stars);
 
     let hr_by_id = index_representative_ids(representatives);       // retain the chosen star for each shared HR catalog number
     let index_by_hr = index_representative_positions(&stars, &hr_by_id); // find those stars after sorting

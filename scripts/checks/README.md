@@ -71,7 +71,7 @@ Unicode/braille/color with constellations and dynamic names), run:
 cargo run --release --locked --example catalog_probe -- datasets/athyg_40.csv.gz
 ```
 
-The probe reports CSV loading and trajectory preparation separately, including singular/always-checked/endpoint counts and precision exceptions. Frame output distinguishes evaluated stars, interval-brightness candidates and currently drawable stars. It
+The probe reports CSV loading and trajectory preparation separately, including singular/endpoint counts and precision exceptions. Frame output distinguishes evaluated stars, interval-brightness candidates and currently drawable stars. It
 excludes setup from per-frame measurements and does
 not include terminal presentation or drop the filesystem cache. Run it on an otherwise idle machine.
 

@@ -27,10 +27,9 @@ fn main() {
     let start = Instant::now();
     let mut sky = Sky::new(std::sync::Arc::new(astroterm::sky::prepare_owned_catalog(catalog).unwrap().catalog));
     println!(
-        "prepare_ms={:.3} singular={} always_checked={} endpoints={} precise={}",
+        "prepare_ms={:.3} singular={} endpoints={} precise={}",
         start.elapsed().as_secs_f64() * 1000.0,
         sky.catalog.singular_count,
-        sky.catalog.always_checked().len(),
         sky.catalog.endpoint_indices().len(),
         sky.catalog.stars.precise_count()
     );

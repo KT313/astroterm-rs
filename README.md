@@ -126,6 +126,8 @@ source <(./target/release/astroterm --bash-completions)
 ## Differences from the C version
 
 Catalog brightness is stored in steps of 0.001 magnitude; values very close to a display threshold may round across it.
+Stars are filtered by their catalog-epoch sky regions with a fixed motion allowance. At distant dates, fast-moving
+stars may be missing from a view; special handling for them is currently deferred.
 
 This port adds pixel graphics, interactive pan/zoom/time controls, optional AT-HYG downloads, and extra labels
 when zoomed in. It also improves astronomical calculations, curved constellation lines, date handling and

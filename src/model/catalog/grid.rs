@@ -5,6 +5,8 @@ use std::f64::consts::PI;
 
 pub const GRID_DEPTH: u8 = 6;
 pub const CELL_COUNT: usize = 6 << (2 * GRID_DEPTH);
+/// Fixed catalog-region padding, not a guarantee for stars that move farther from their catalog direction.
+pub const STELLAR_DRIFT_MARGIN: f64 = PI / 720.0; // 0.25 degrees
 pub const REFRACTION_MARGIN: f64 = 0.647 * PI / 180.0;
 /// Qualified against 200,001 Earth-velocity samples plus maximum WGS84 site spin (21.219703″).
 /// Selection also expands this from the actual observer velocity, independently of the sampled bound.

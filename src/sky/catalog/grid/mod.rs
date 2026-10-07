@@ -1,33 +1,21 @@
-//! Conservative region and brightness selection over immutable grid data.
+//! Fixed catalog-epoch regions and conservative brightness selection. Motion beyond the fixed margin may be culled.
 use crate::model::{StarStorage, SkyRegion, QUANTIZATION_MARGIN};
-use crate::astro::models::stars::ALWAYS_CHECKED_ANGLE;
 use std::f64::consts::PI;
 use crate::model::{
-    ABERRATION_MARGIN, CELL_COUNT, GRID_DEPTH, REFRACTION_MARGIN, SelectionStats, SkyGrid, SelectedRegion,
+    ABERRATION_MARGIN, CELL_COUNT, GRID_DEPTH, REFRACTION_MARGIN, STELLAR_DRIFT_MARGIN, SelectionStats, SkyGrid, SelectedRegion,
 };
 const NUMERIC_SLACK: f64 = 1e-10;
 
-pub(crate) fn stored_cell(stars: &StarStorage, bounds: &[f32], index: usize) -> usize {
-    cell_for(f64::from(bounds[index]), stars.stored_direction(index))
+/// Every star belongs to the ordinary region containing its stored catalog-epoch direction.
+pub(crate) fn stored_cell(stars: &StarStorage, index: usize) -> usize {
+    crate::model::hash_direction(GRID_DEPTH, stars.stored_direction(index))
 }
 
-/// Fast movers share the always-checked cell; everything else hashes its stored direction.
-fn cell_for(motion_bound: f64, direction: crate::astro::Vector3) -> usize {
-    if motion_bound > ALWAYS_CHECKED_ANGLE {
-        return CELL_COUNT;
-    }
-    crate::model::hash_direction(GRID_DEPTH, direction)
-}
-
-/// Build cell offsets and conservative caps from the prepared star order.
-pub(crate) fn build_grid(stars: &StarStorage, bounds: &[f32]) -> SkyGrid {
+/// Build region boundaries covering every row of the prepared star order.
+pub(crate) fn build_grid(stars: &StarStorage) -> SkyGrid {
     let mut offsets = vec![0; CELL_COUNT + 1];
-    for (direction, &bound) in stars.directions().outer_iter().zip(bounds) {
-        let direction = crate::astro::Vector3 { x: f64::from(direction[0]), y: f64::from(direction[1]), z: f64::from(direction[2]) };
-        let cell = cell_for(f64::from(bound), direction);
-        if cell < CELL_COUNT {
-            offsets[cell + 1] += 1;
-        }
+    for index in 0..stars.len() {
+        offsets[stored_cell(stars, index) + 1] += 1;
     }
     for i in 1..offsets.len() {
         offsets[i] += offsets[i - 1];
@@ -53,7 +41,8 @@ pub fn select_grid(
     select_brightness(grid, stars, &region, threshold, indices)
 }
 
-/// Select conservative cells; exact visibility is determined later by projection.
+/// Select cells with a fixed motion allowance; exact visibility is determined later by projection.
+/// Stars drifting beyond that allowance can be missed until moving-region handling is implemented.
 pub(crate) fn select_region(
     grid: &SkyGrid,
     region: SkyRegion,
@@ -70,7 +59,7 @@ pub(crate) fn select_region(
     match region {
         SkyRegion::Cone { center, radius } if radius < 150_f64.to_radians() => {
             let margin = 0.1_f64.to_radians() / 3600.0 // intrinsic stellar-cache angular allowance
-                + ALWAYS_CHECKED_ANGLE
+                + STELLAR_DRIFT_MARGIN
                 + QUANTIZATION_MARGIN
                 + ABERRATION_MARGIN.max(
                     (observer.state.velocity.length() / crate::astro::LIGHT_SPEED_AU_DAY)
@@ -106,20 +95,19 @@ pub(crate) fn select_region(
 }
 
 /// Count region membership without expanding the sorted catalog ranges.
-pub(crate) fn count_region_stars(grid: &SkyGrid, region: &SelectedRegion, total: usize) -> (usize, usize, usize) {
-    let always = total - grid.offsets[CELL_COUNT];
+pub(crate) fn count_region_stars(grid: &SkyGrid, region: &SelectedRegion, total: usize) -> (usize, usize) {
     if region.brute_force {
-        return (CELL_COUNT, total, always);
+        return (CELL_COUNT, total);
     }
     let count = region
         .cells
         .iter()
         .map(|&cell| grid.offsets[cell + 1] - grid.offsets[cell])
         .sum::<usize>();
-    (region.cells.len(), count + always, always)
+    (region.cells.len(), count)
 }
 
-/// Collect stars satisfying interval-wide brightness bounds, including the always-checked tail.
+/// Collect the brightness-qualified prefix from each selected region.
 pub(crate) fn select_brightness(
     grid: &SkyGrid,
     stars: &StarStorage,
@@ -135,7 +123,6 @@ pub(crate) fn select_brightness(
         for &cell in &region.cells {
             append_bright(keys, grid.offsets[cell]..grid.offsets[cell + 1], threshold, indices);
         }
-        append_bright(keys, grid.offsets[CELL_COUNT]..stars.len(), threshold, indices);
     }
     SelectionStats {
         cells: if region.brute_force {

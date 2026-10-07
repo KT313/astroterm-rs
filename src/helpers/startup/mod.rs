@@ -63,9 +63,9 @@ pub(crate) fn load_catalog(state: &mut ApplicationState, directories: &DatasetDi
     });
 
     state.timings.describe("Dataset loading", || format!(
-        "output stars={}; constellation figures={}; unique endpoints={}; always-checked stars={}; tangential fallbacks={}; storage=owned",
+        "output stars={}; constellation figures={}; unique endpoints={}; tangential fallbacks={}; storage=owned",
         catalog.stars.len(), catalog.constellations().len(), catalog.endpoint_indices().len(),
-        catalog.always_checked().len(), catalog.singular_count,
+        catalog.singular_count,
     ));
 
     eprintln!(

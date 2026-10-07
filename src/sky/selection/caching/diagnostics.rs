@@ -3,8 +3,8 @@ use crate::{state::StarSelectionCache, model::SkyCatalog, timing::StepTimes};
 pub(in crate::sky::selection) fn describe_selection(storage: &StarSelectionCache, catalog: &SkyCatalog, threshold: f64, times: &mut StepTimes) {
     times.measure_diagnostics(|times| {
         let total = catalog.stars.len();
-        let (cells, regional, always) = crate::sky::count_region_stars(&catalog.grid, storage.region.value(), total);
-        times.describe("Region filtering", || format!("input stars={total}; selected cells={cells}/{}; retained by conservative region including always-checked={regional}; rejected region={}; always-checked subset={always}; brute-force={}", crate::model::CELL_COUNT, total - regional, storage.candidates.value().1.brute_force));
+        let (cells, regional) = crate::sky::count_region_stars(&catalog.grid, storage.region.value(), total);
+        times.describe("Region filtering", || format!("input stars={total}; selected cells={cells}/{}; retained by catalog region={regional}; rejected region={}; brute-force={}", crate::model::CELL_COUNT, total - regional, storage.candidates.value().1.brute_force));
         times.describe("Brightness bounds", || format!("input regional stars={regional}; rejected interval magnitude bound > {threshold}={}; output candidates={}; brute-force bypass={}", regional - storage.candidates.value().0.len(), storage.candidates.value().0.len(), storage.candidates.value().1.brute_force));
         times.describe("Candidate validation", || {
             let candidates = &storage.candidates.value().0;

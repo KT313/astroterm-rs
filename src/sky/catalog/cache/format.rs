@@ -32,13 +32,13 @@ const SECTION_COUNT: usize = STAR_SECTIONS + 9;
 /// Source hashes deliberately invalidate caches even for conservative implementation-only changes.
 pub fn catalog_fingerprint() -> [u8; 32] {
     let mut hash = Sha256::new();
-    hash.update(b"astroterm catalog v7; vector columns; little-endian u64 indices; validation=1; HR=1; override=1; motion=1; quantization=1; cube-Morton=1");
+    hash.update(b"astroterm catalog v7; vector columns; little-endian u64 indices; validation=1; HR=1; override=1; motion=1; quantization=1; cube-Morton=2; all-stars-in-regions=1");
     for value in [
         crate::astro::COMPUTATIONAL_INTERVAL.start_tt,
         crate::astro::COMPUTATIONAL_INTERVAL.end_tt,
         crate::astro::JULIAN_YEAR_DAYS,
         crate::astro::models::stars::SINGULAR_RATIO,
-        crate::astro::models::stars::ALWAYS_CHECKED_ANGLE,
+        crate::model::STELLAR_DRIFT_MARGIN,
         crate::model::QUANTIZATION_MARGIN,
     ] {
         hash.update(value.to_le_bytes());
@@ -161,18 +161,13 @@ fn validate_catalog(catalog: &SkyCatalog, preparation: &CatalogPreparation, full
     if offsets.len() != CELL_COUNT + 1
         || offsets[0] != 0
         || offsets.windows(2).any(|p| p[0] > p[1])
-        || offsets[CELL_COUNT] > n
+        || offsets[CELL_COUNT] != n
     {
         return Err(invalid("invalid grid offsets"));
     }
-    let tail = offsets[CELL_COUNT];
     let mut ids = HashSet::with_capacity(n);
-    for cell in 0..=CELL_COUNT {
-        let (start, end) = if cell == CELL_COUNT {
-            (tail, n)
-        } else {
-            (offsets[cell], offsets[cell + 1])
-        };
+    for cell in 0..CELL_COUNT {
+        let (start, end) = (offsets[cell], offsets[cell + 1]);
         for i in start..end {
             if !ids.insert(catalog.stars.id(i)) {
                 return Err(invalid("duplicate stable star ID"));
@@ -184,7 +179,7 @@ fn validate_catalog(catalog: &SkyCatalog, preparation: &CatalogPreparation, full
             {
                 return Err(invalid("unsorted brightness keys/IDs"));
             }
-            if full && stored_cell(&catalog.stars, preparation.motion_bounds(), i) != cell {
+            if full && stored_cell(&catalog.stars, i) != cell {
                 return Err(invalid("star assigned to wrong cell"));
             }
         }
@@ -423,7 +418,7 @@ mod tests {
         let fingerprint = catalog_fingerprint();
         write_cached_catalog(&path, &source, &fingerprint).unwrap();
         let original = fs::read(&path).unwrap();
-        for case in 0..17 {
+        for case in 0..18 {
             let mut bytes = original.clone();
             match case {
                 0 => bytes.truncate(32),
@@ -462,6 +457,10 @@ mod tests {
                 10 => {
                     let start = section(&bytes, GRID_OFFSETS);
                     bytes[start..start + 8].copy_from_slice(&1_u64.to_le_bytes());
+                }
+                17 => {
+                    let start = section(&bytes, GRID_OFFSETS) + CELL_COUNT * 8;
+                    bytes[start..start + 8].copy_from_slice(&((source.catalog.stars.len() - 1) as u64).to_le_bytes()); // reject an unindexed tail
                 }
                 11 => {
                     let start = section(&bytes, ENDPOINTS);

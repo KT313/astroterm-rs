@@ -5,7 +5,6 @@ use crate::rows::{row_columns, plain_rows};
 use crate::astro::{COMPUTATIONAL_INTERVAL, Equatorial, J2000, JULIAN_YEAR_DAYS, Vector3};
 
 pub const SINGULAR_RATIO: f64 = 1e-3;
-pub const ALWAYS_CHECKED_ANGLE: f64 = std::f64::consts::PI / 720.0; // 15 arcminutes
 
 /// Catalog-only motion properties. Epoch-dependent singular handling remains in evaluation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -283,7 +282,7 @@ mod tests {
             Some(2.0),
         );
         assert!(star.evaluate(1000.0, 9.5).magnitude < 9.5);
-        assert!(star.motion_bound() > ALWAYS_CHECKED_ANGLE);
+        assert!(star.motion_bound() > 0.25_f64.to_radians());
     }
     proptest! {
         #[test]

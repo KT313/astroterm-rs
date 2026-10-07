@@ -92,7 +92,7 @@ pub(super) fn write_prepared_catalog_if_stable(path: Option<PathBuf>, source: &P
 pub(super) fn prepare_catalog(parsed: crate::catalog::Catalog, times: &mut crate::timing::StepTimes) -> io::Result<PreparedCatalog> {
     let input = parsed.stars.len();
     let catalog = times.measure("Catalog preparation", || crate::sky::prepare_owned_catalog(parsed))?;
-    times.describe("Catalog preparation", || format!("input entries={input}; removed placeholders={}; output stars={}; grid cells={CELL_COUNT}; always-checked={}; unique constellation endpoints={}", input - catalog.catalog.stars.len(), catalog.catalog.stars.len(), catalog.catalog.always_checked().len(), catalog.catalog.endpoint_indices().len()));
+    times.describe("Catalog preparation", || format!("input entries={input}; removed placeholders={}; output stars={}; grid cells={CELL_COUNT}; unique constellation endpoints={}", input - catalog.catalog.stars.len(), catalog.catalog.stars.len(), catalog.catalog.endpoint_indices().len()));
     Ok(catalog)
 }
 

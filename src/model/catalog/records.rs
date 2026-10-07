@@ -27,11 +27,6 @@ impl SkyCatalog {
     pub fn constellations(&self) -> &[Constellation] { self.figures.figures() }
     pub fn endpoint_indices(&self) -> &[usize] { self.figures.endpoints() }
 
-    /// Fast movers occupy the final contiguous range after the regular grid cells.
-    pub fn always_checked(&self) -> std::ops::Range<usize> {
-        self.grid.offsets[crate::model::CELL_COUNT]..self.stars.len()
-    }
-
     /// A valid catalog with no stars, figures or names: the state root starts from it so every owner exists with
     /// its final type before the dataset is loaded. Equal to preparing an empty parsed catalog.
     pub fn empty() -> Self {
