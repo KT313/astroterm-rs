@@ -53,6 +53,11 @@ have different row counts. The main table's byte counts cover its columns only, 
 have their own `preparation` owner and disappear after `free_preparation_only_data()`. No missing column is
 replaced with zeros. Names and immutable constellation definitions are shared from the original catalog.
 
+Debug headers use descriptive labels, such as `initial_magnitude` and `brightest_possible_magnitude`, while Rust
+fields retain their existing names. Column notes explain units, coordinate systems, index targets and packed flags.
+The source crosswalk is documented below `row_columns!` in `src/rows/mod.rs` and beside the contextual labels in
+`src/state/tables/labels.rs`. Labels do not change data types, numerical precision or cache formats.
+
 Used bytes describe live payload; reserved bytes include spare capacity. Both come from the original owners,
 not slices of their data. Unknown sizes print `unknown`; notes identify partial counts such as nested allocations
 and hash-table overhead. These entries are not a deduplicated process-memory total. The feature-gated inventory

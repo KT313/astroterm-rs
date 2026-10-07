@@ -36,6 +36,9 @@ needs an adapter that borrows its complete owner. Add a field there when you add
 
 Row types declare their column names once, next to their struct, with `row_columns!(Name { a, b, c })` from the
 foundation `rows` module; the compiler fills in the types and fails the build when the list and the struct differ.
+Markdown-only labels and unit/index explanations live in `tables/labels.rs`. They do not rename Rust fields or
+change storage. The comment below `row_columns!` maps named debug labels back to Rust fields; `labels.rs` also
+maps anonymous tuple/array columns. Precise-motion previews expose seven named components of each original row.
 
 `state.log_data(path, section)` writes a Markdown report: path, shape, used and reserved bytes, the cache policy and
 metadata, then a Markdown table with typed column headers and the first and last ten rows. Every column stays

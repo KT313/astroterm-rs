@@ -15,8 +15,9 @@
 //! `owners.rs`.
 mod leaves;
 mod log;
+mod labels;
 
-pub(crate) use leaves::{Bytes, Opaque, ScalarCache, Single, TimingSteps};
+pub(crate) use leaves::{Bytes, Opaque, ScalarCache, Single, TimingSteps, PreciseMotions};
 use crate::cache::Group;
 use crate::rows::Column;
 

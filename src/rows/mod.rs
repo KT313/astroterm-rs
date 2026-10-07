@@ -78,6 +78,28 @@ macro_rules! row_columns {
         $crate::rows::row_columns!(@impl $type $(<$($generic),+>)? { $($field),+ } []);
     };
 }
+// Markdown column labels are translated in state/tables/labels.rs; Rust fields and this raw schema are unchanged.
+// Debug label -> Rust field (context-specific overrides and tuple/array positions are documented there):
+// initial_direction -> u0; scaled_velocity_per_year -> w; initial_magnitude/current_magnitude -> magnitude;
+// brightest_possible_magnitude -> brightness_key; initial_distance_parsecs -> distance; star_id -> id;
+// name_entry -> name; encoded_catalog_designation -> designation; spectral_type_code -> spectral_type;
+// color_index_bv/base_rgb_color/terminal_color -> color (by type/context); data_flags -> flags;
+// precise_motion_entry -> precise_index; catalog_row_index -> source_index; is_draw_candidate/passes_brightness_filter -> drawable;
+// direction -> position; body_kind -> kind; constellation_abbreviation -> abbreviation; star_index_pairs -> segments;
+// center_direction -> center; angular_radius_radians -> radius; sample_time_tt_jd -> epoch;
+// reuse_half_window_days -> half_span; sampled_state/orientation_matrix -> value;
+// observer_body -> anchor; surface_coordinates -> site; height_above_surface_m -> height_m; frame_time -> time;
+// observer_position_and_velocity -> state; reference_to_body_rotation -> inertial_to_fixed;
+// reference_to_horizon_rotation -> inertial_to_horizon; has_atmosphere -> atmosphere; body_emission_times_tt_jd -> emission_tt;
+// needs_recalculation -> refresh; trajectory_parameters -> motion; motion_properties -> class; calculated_sample -> sample;
+// reuse_window_simulation_seconds -> valid_seconds; calculated_at_tt_jd -> calculated_at;
+// direction_j2000 -> direction; used_tangential_motion_fallback -> used_singular_fallback;
+// position_au -> position; velocity_au_per_day -> velocity (BodyState only);
+// screen_coordinates -> cell; projected_star_index -> projected_index; faintest_endpoint_magnitude -> maximum_magnitude;
+// projected_line_sections -> arcs; start_coordinates/end_coordinates -> start/end; path_coordinates -> points;
+// includes_original_start/includes_original_end -> includes_start/includes_end; symbol -> glyph;
+// base_rgb_color -> rgb; has_proper_name -> named; step_name -> name; nesting_depth -> depth;
+// elapsed_seconds -> seconds; own_diagnostic_seconds -> direct_diagnostic_seconds; parent_step_index -> parent.
 pub(crate) use row_columns;
 
 /// Types shown as one unnamed column with their Debug text (primitives, newtypes, enums).

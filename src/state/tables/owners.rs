@@ -23,7 +23,7 @@ impl Tables for SkyCatalog {
         let path = |name: &str| join(prefix, name);
         visit(&path("stars"), &self.stars, None);
         visit(&path("stars.name_table"), self.stars.name_table(), None);
-        visit(&path("stars.precise_motions"), self.stars.precise_motions(), None);
+        visit(&path("stars.precise_motions"), &super::PreciseMotions(self.stars.precise_motions()), None);
         visit(&path("grid.offsets"), &self.grid.offsets, None);
         visit(&path("grid.coarse_caps"), &self.grid.coarse_caps, None);
         visit(&path("grid.fine_caps"), &self.grid.fine_caps, None);

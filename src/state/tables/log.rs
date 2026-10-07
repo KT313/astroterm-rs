@@ -47,7 +47,8 @@ fn write_table(out: &mut dyn Write, path: &str, table: &dyn Table, ttl: Option<S
     writeln!(out, "**Shape:** `{:?}` · **Used:** {} · **Reserved:** {}\n", table.shape(), format_bytes(bytes.used), format_bytes(bytes.reserved))?;
     if let Some(ttl) = ttl { writeln!(out, "**Cache policy:** {}\n", markdown_text(&ttl))?; }
     if let Some(note) = table.note() { writeln!(out, "**Notes:** {}\n", markdown_text(&truncate(&note)))?; }
-    write_preview(out, table)
+    for note in super::labels::column_notes(path) { writeln!(out, "**Columns:** {}\n", markdown_text(note))?; }
+    write_preview(out, path, table)
 }
 
 /// Reuse policy of the group: disabled, dependency-only, or a maximum age in seconds.
@@ -59,8 +60,10 @@ fn ttl_text(config: &crate::cache::CacheConfig, group: Group) -> String {
     }
 }
 
-fn write_preview(out: &mut dyn Write, table: &dyn Table) -> io::Result<()> {
-    let columns = table.columns();
+fn write_preview(out: &mut dyn Write, path: &str, table: &dyn Table) -> io::Result<()> {
+    let mut columns = table.columns();
+    if !columns.is_empty() { super::labels::label_columns(path, &mut columns); }
+    super::labels::label_color_columns(&mut columns);
     let prepared = table.preview(); // one ordering/preparation for the entire table
     let width = columns.len().max(prepared.iter().map(|(_, cells)| cells.len()).max().unwrap_or(0));
     if width == 0 { return writeln!(out, "*No rows to preview.*\n"); }
@@ -175,7 +178,7 @@ mod tests {
         }
         assert!(text.contains("ttl=") && text.contains("invalid=true"));
         assert!(section(&text, "cache.sky.moon").contains("**Shape:** `[1]`"));
-        assert!(text.contains("| Row | phase: MoonPhase | illumination: MoonIllumination | position: Vector3 |"));
+        assert!(text.contains("| Row | phase: MoonPhase | illumination: MoonIllumination | direction: Vector3 |"));
         let motion = section(&text, "cache.observation.motion");
         assert!(motion.contains("*No rows to preview.*") && !motion.contains("| Row |"));
 
@@ -209,18 +212,20 @@ mod tests {
         for path in paths(&text) { assert!(data_rows(section(&text, &path)) <= 2 * EDGE_ROWS); }
 
         let star_header = stars.lines().find(|l| l.starts_with("| Row |")).unwrap();
-        for column in crate::model::StarRow::columns() {
+        let mut columns = crate::model::StarRow::columns();
+        super::super::labels::label_columns("persistent.catalog.stars", &mut columns);
+        for column in columns {
             let name = format!("{}: {}", column.name, short_type_name(column.dtype));
             assert!(star_header.contains(&markdown_text(&name)), "missing column: {star_header}");
         }
         assert_eq!(data_rows(stars), 20);
         for row in stars.lines().filter(|l| l.starts_with('|')) { assert_eq!(row.matches('|').count(), 14); }
         let sky = section(&text, "cache.sky.stars");
-        assert!(sky.contains("| Row | source\\_index: usize | drawable: bool | magnitude: f64 | position: Vector3 |"));
-        assert!(section(&text, "cache.simulation.planets").contains(&markdown_text("value: [BodyState; 9]")));
+        assert!(sky.contains("| Row | catalog\\_row\\_index: usize | passes\\_brightness\\_filter: bool | current\\_magnitude: f64 | direction: Vector3 |"));
+        assert!(section(&text, "cache.simulation.planets").contains(&markdown_text("sampled_state: [BodyState; 9]")));
         let trace = section(&text, "timings.trace.steps");
-        assert!(trace.contains("parent: Option&lt;usize&gt;"));
-        assert!(section(&text, "cache.observation.stellar").contains("| Row | catalog\\_index: usize | direction: Vector3 |"));
+        assert!(trace.contains("parent\\_step\\_index: Option&lt;usize&gt;"));
+        assert!(section(&text, "cache.observation.stellar").contains("| Row | catalog\\_row\\_index: usize | direction\\_j2000: Vector3 |"));
 
     }
 

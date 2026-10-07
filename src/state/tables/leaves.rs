@@ -58,6 +58,22 @@ impl Table for StarStorage {
     fn note(&self) -> Option<String> { Some("storage=owned; per-star columns only; side tables listed separately".into()) }
 }
 
+/// Keep the original seven-value owner and its byte counts; only the debug preview gets named components.
+pub(crate) struct PreciseMotions<'a>(pub &'a CatalogArray<[f64; 7]>);
+impl Table for PreciseMotions<'_> {
+    fn shape(&self) -> Vec<usize> { self.0.shape() }
+    fn rows(&self) -> usize { self.0.rows() }
+    fn bytes(&self) -> TableBytes { Table::bytes(self.0) }
+    fn columns(&self) -> Vec<Column> {
+        ["initial_direction_x", "initial_direction_y", "initial_direction_z", "scaled_velocity_x_per_year",
+            "scaled_velocity_y_per_year", "scaled_velocity_z_per_year", "initial_distance_parsecs"]
+            .into_iter().map(|name| Column { name, dtype: "f64" }).collect()
+    }
+    fn preview(&self) -> Vec<(usize, Vec<String>)> {
+        preview_indices(self.0.len()).map(|i| (i, self.0[i].iter().map(preview).collect())).collect()
+    }
+}
+
 pub(crate) struct Single<'a, T>(pub &'a T);
 impl<T: Row> Table for Single<'_, T> {
     fn shape(&self) -> Vec<usize> { vec![1] }
@@ -313,6 +329,16 @@ mod tests {
             assert_eq!(rows.iter().map(|(i, _)| *i).collect::<Vec<_>>(), preview_indices(count).collect::<Vec<_>>());
             for (index, values) in rows { assert_eq!(values, [index.to_string()]); }
         }
+    }
+    #[test]
+    fn precise_motion_preview_preserves_original_owner_and_values() {
+        let values = CatalogArray::from(vec![[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 7.0]]);
+        let table = PreciseMotions(&values);
+        assert_eq!(table.bytes(), Table::bytes(&values));
+        assert_eq!(table.shape(), vec![1]);
+        assert_eq!(table.columns().len(), 7);
+        assert_eq!(table.preview(), vec![(0, vec!["0.1", "0.2", "0.3", "0.4", "0.5", "0.6", "7.0"].into_iter().map(String::from).collect())]);
+        assert_eq!(values[0], [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 7.0]);
     }
     #[test]
     fn complete_star_table_counts_column_capacity_and_keeps_all_fields() {
