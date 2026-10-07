@@ -24,13 +24,16 @@ pub(super) fn run_render_loop(state: &mut ApplicationState, renderer: &mut Rende
 
     let frame_duration = Duration::from_secs_f64(1.0 / f64::from(config.fps));                                   // set the target time between frames from the requested FPS
     let mut view = config.view;
-    let simulation = &config.simulation;
 
     renderer.configure_cache(&mut state.cache.rendering, &config.cache);
 
     prepare_frame_data(&mut state.cache, renderer, &mut state.timings);                                          // calculate values that stay the same for the whole run
     if config.debug_log_data { log_pipeline_data(state, "tmp/after-preparation.md", "after-preparation")?; }
-    capture_memory(config, &state.persistent.catalog, &state.cache, renderer, &mut state.timings, "After preparation", None); // inspect loaded/prepared buffers only when requested
+    state.free_preparation_only_data(); // free startup-only movement bounds before frames begin
+    if state.config.debug_log_data { log_pipeline_data(state, "tmp/after-preparation-cleanup.md", "after-preparation-cleanup")?; }
+    let config = &state.config;
+    let simulation = &config.simulation;
+    capture_memory(config, &state.persistent.catalog, &state.cache, state.preparation.as_ref(), renderer, &mut state.timings, "After preparation", None); // inspect loaded/prepared buffers only when requested
     let mut clock = SimulationClock::start(simulation.start_julian_date, simulation.speed);                      // start simulated time after setup is complete
     state.timings.reset_frame_timings();                                                                         // keep setup time out of the displayed frame timings
 
@@ -56,7 +59,7 @@ pub(super) fn run_render_loop(state: &mut ApplicationState, renderer: &mut Rende
         if config.debug_log_data { log_pipeline_data(state, "tmp/after-rendering.md", "after-rendering")?; }
 
         let elapsed = record_frame_duration(config, frame_start, time, &mut state.timings);                      // record frame duration before the final memory inspection
-        capture_memory(config, &state.persistent.catalog, &state.cache, renderer, &mut state.timings, "After presented frame", Some(time.tt));
+        capture_memory(config, &state.persistent.catalog, &state.cache, state.preparation.as_ref(), renderer, &mut state.timings, "After presented frame", Some(time.tt));
 
         state.timings.complete_memory_frame(elapsed);                                                            // retain completed diagnostics only after successful presentation
 
@@ -67,11 +70,10 @@ pub(super) fn run_render_loop(state: &mut ApplicationState, renderer: &mut Rende
 
 /// Prepare values that depend only on this run's immutable catalog. Time and camera results stay in the loop.
 fn prepare_frame_data(cache: &mut Caches, renderer: &mut Renderer, times: &mut StepTimes) {
-    let Caches { sky, observation, projection, rendering, .. } = cache;
+    let Caches { sky, observation, rendering, .. } = cache;
     let catalog = &sky.catalog;
     times.measure_steps("Frame preparation", |times| {
         astroterm::sky::prepare_observation_catalog(observation, catalog.clone(), times);                        // record how each star's position and brightness can change
-        astroterm::projection::prepare_projection_catalog(projection, catalog, times);                           // store which stars each constellation line connects
         renderer.prepare_catalog(rendering, catalog.clone(), times);                                             // store each star's color and whether it has a name
     });
 }

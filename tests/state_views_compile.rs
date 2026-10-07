@@ -3,6 +3,7 @@
 fn state_views_enforce_read_write_boundaries() {
     let cases = trybuild::TestCases::new();
     cases.compile_fail("tests/ui/state_views/readonly_indices.rs");
+    cases.compile_fail("tests/ui/state_views/readonly_figures.rs");
     cases.compile_fail("tests/ui/state_views/escaping_projection.rs");
     cases.compile_fail("tests/ui/state_views/overlapping_mutable_views.rs");
     cases.compile_fail("tests/ui/state_views/observed_backing_in_use.rs");

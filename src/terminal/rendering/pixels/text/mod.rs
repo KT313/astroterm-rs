@@ -293,7 +293,7 @@ mod prepared_tests {
                 5 => projected.order.clear(),
                 _ => {}
             }
-            crate::scene::draw_pixels(&mut cache, &projected.view(&sky), &options, 0.0, &mut StepTimes::default())
+            crate::scene::draw_pixels(&mut cache, &projected.view(&sky), &options, 0.0, &mut StepTimes::default()).cloned()
                 .unwrap();
             let mut expected = Buffer::empty(area);
             let mut actual = Buffer::empty(area);

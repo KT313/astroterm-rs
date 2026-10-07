@@ -1,6 +1,6 @@
 //! Prepared-catalog cache schema, fingerprints and semantic checks. I/O lives here above the pure models;
 //! prepared arrays are decoded into owned memory before publication.
-use crate::model::{SkyCatalog, CELL_COUNT, SkyGrid, Constellation, StarStorage, STAR_SECTIONS};
+use crate::model::{SkyCatalog, PreparedCatalog, CatalogPreparation, CELL_COUNT, SkyGrid, Constellation, StarStorage, STAR_SECTIONS};
 use super::super::grid::stored_cell;
 use crate::catalog::{
     StarNames,
@@ -16,9 +16,9 @@ use std::{
     time::UNIX_EPOCH,
 };
 
-// star-storage sections first, then grid offsets, always-checked indices, endpoints, names and figures
+// star-storage sections first, then grid offsets, preparation bounds, endpoints, names and figures
 const GRID_OFFSETS: usize = STAR_SECTIONS;
-const ALWAYS_CHECKED: usize = STAR_SECTIONS + 1;
+const MOTION_BOUNDS: usize = STAR_SECTIONS + 1;
 const ENDPOINTS: usize = STAR_SECTIONS + 2;
 const NAMES: usize = STAR_SECTIONS + 3;
 const FIGURES: usize = STAR_SECTIONS + 4;
@@ -28,7 +28,7 @@ const SECTION_COUNT: usize = STAR_SECTIONS + 5;
 /// Source hashes deliberately invalidate caches even for conservative implementation-only changes.
 pub fn catalog_fingerprint() -> [u8; 32] {
     let mut hash = Sha256::new();
-    hash.update(b"astroterm catalog v2; vector columns; little-endian u64 indices; validation=1; HR=1; override=1; motion=1; quantization=1; cube-Morton=1");
+    hash.update(b"astroterm catalog v3; vector columns; little-endian u64 indices; validation=1; HR=1; override=1; motion=1; quantization=1; cube-Morton=1");
     for value in [
         crate::astro::COMPUTATIONAL_INTERVAL.start_tt,
         crate::astro::COMPUTATIONAL_INTERVAL.end_tt,
@@ -96,21 +96,22 @@ pub fn cache_path(source: &Path, directory: &Path) -> io::Result<PathBuf> {
     )))
 }
 
-pub fn write_cached_catalog(path: &Path, catalog: &SkyCatalog, fingerprint: &[u8; 32]) -> io::Result<()> {
-    validate_catalog(catalog, true)?;
-    let figures = encode_figures(&catalog.constellations)?;
+pub fn write_cached_catalog(path: &Path, prepared: &PreparedCatalog, fingerprint: &[u8; 32]) -> io::Result<()> {
+    let catalog = &prepared.catalog;
+    validate_catalog(catalog, &prepared.preparation, true)?;
+    let figures = encode_figures(catalog.constellations())?;
     let mut sections = catalog.stars.cache_sections();
     sections.extend([
         catalog.grid.offsets.bytes(),
-        catalog.always_checked.bytes(),
-        catalog.endpoint_indices.bytes(),
+        bytemuck::cast_slice(prepared.preparation.motion_bounds()),
+        bytemuck::cast_slice(catalog.endpoint_indices()),
         catalog.names.bytes(),
         &figures,
     ]);
     write_sections(path, fingerprint, &sections)
 }
 
-pub fn load_cached_catalog(path: &Path, fingerprint: &[u8; 32]) -> io::Result<SkyCatalog> {
+pub fn load_cached_catalog(path: &Path, fingerprint: &[u8; 32]) -> io::Result<PreparedCatalog> {
     let data = PreparedCatalogBytes::open(path, fingerprint)?;
     if data.section_count() != SECTION_COUNT {
         return Err(invalid("catalog section count mismatch"));
@@ -121,20 +122,19 @@ pub fn load_cached_catalog(path: &Path, fingerprint: &[u8; 32]) -> io::Result<Sk
     let mut catalog = SkyCatalog {
         stars,
         names,
-        constellations,
+        figures: std::sync::Arc::new(crate::model::ConstellationSet { figures: constellations, endpoints: data.decode(ENDPOINTS)? }),
         grid: SkyGrid::from_offsets(data.decode(GRID_OFFSETS)?.into()),
-        always_checked: data.decode(ALWAYS_CHECKED)?.into(),
-        endpoint_indices: data.decode(ENDPOINTS)?.into(),
         singular_count: 0,
     };
+    let preparation = CatalogPreparation { motion_bounds: data.decode(MOTION_BOUNDS)? };
     drop(data); // release the file snapshot; the catalog owns every decoded column
-    validate_catalog(&catalog, false)?;
+    validate_catalog(&catalog, &preparation, false)?;
     catalog.singular_count = catalog.stars.iter().filter(|s| s.singular_fallback).count();
-    Ok(catalog)
+    Ok(PreparedCatalog { catalog, preparation })
 }
 
-fn validate_catalog(catalog: &SkyCatalog, full: bool) -> io::Result<()> {
-    catalog.stars.validate(&catalog.names, full)?;
+fn validate_catalog(catalog: &SkyCatalog, preparation: &CatalogPreparation, full: bool) -> io::Result<()> {
+    catalog.stars.validate(&catalog.names, preparation.motion_bounds(), full)?;
     let n = catalog.stars.len();
     let offsets = &catalog.grid.offsets;
     if offsets.len() != CELL_COUNT + 1
@@ -145,9 +145,6 @@ fn validate_catalog(catalog: &SkyCatalog, full: bool) -> io::Result<()> {
         return Err(invalid("invalid grid offsets"));
     }
     let tail = offsets[CELL_COUNT];
-    if catalog.always_checked.len() != n - tail || catalog.always_checked.iter().copied().ne(tail..n) {
-        return Err(invalid("grid/fast-mover partition mismatch"));
-    }
     let mut ids = HashSet::with_capacity(n);
     for cell in 0..=CELL_COUNT {
         let (start, end) = if cell == CELL_COUNT {
@@ -166,13 +163,13 @@ fn validate_catalog(catalog: &SkyCatalog, full: bool) -> io::Result<()> {
             {
                 return Err(invalid("unsorted brightness keys/IDs"));
             }
-            if full && stored_cell(&catalog.stars, i) != cell {
+            if full && stored_cell(&catalog.stars, preparation.motion_bounds(), i) != cell {
                 return Err(invalid("star assigned to wrong cell"));
             }
         }
     }
     let mut endpoints = Vec::new();
-    for figure in &catalog.constellations {
+    for figure in catalog.constellations() {
         for &index in figure.segments.iter().flatten() {
             if index >= n {
                 return Err(invalid("constellation index out of range"));
@@ -182,7 +179,7 @@ fn validate_catalog(catalog: &SkyCatalog, full: bool) -> io::Result<()> {
     }
     endpoints.sort_unstable();
     endpoints.dedup();
-    if endpoints.as_slice() != &*catalog.endpoint_indices {
+    if endpoints.as_slice() != catalog.endpoint_indices() {
         return Err(invalid("endpoint union mismatch"));
     }
     Ok(())
@@ -261,11 +258,11 @@ mod tests {
     use crate::timing::StepTimes;
     use std::sync::Arc;
 
-    fn prepared() -> SkyCatalog {
+    fn prepared() -> PreparedCatalog {
         crate::sky::prepare_owned_catalog(load_embedded_catalog().unwrap())
     }
-    fn render(catalog: SkyCatalog, threshold: f64, date: f64) -> Canvas {
-        let mut sky = Sky::new(Arc::new(catalog));
+    fn render(prepared: PreparedCatalog, threshold: f64, date: f64) -> Canvas {
+        let mut sky = Sky::new(Arc::new(prepared.catalog));
         update_sky_positions(
             &mut sky,
             date,
@@ -332,7 +329,7 @@ mod tests {
         let fingerprint = catalog_fingerprint();
         write_cached_catalog(&path, &source, &fingerprint).unwrap();
         let original = fs::read(&path).unwrap();
-        for case in 0..12 {
+        for case in 0..15 {
             let mut bytes = original.clone();
             match case {
                 0 => bytes.truncate(32),
@@ -347,7 +344,7 @@ mod tests {
                     bytes[start] = 255;
                 }
                 5 => {
-                    let pair = source.grid.offsets.windows(2).find(|p| p[1] - p[0] >= 2).unwrap();
+                    let pair = source.catalog.grid.offsets.windows(2).find(|p| p[1] - p[0] >= 2).unwrap();
                     let start = section(&bytes, 3) + pair[0] * 4; // brightness keys
                     bytes[start..start + 4].copy_from_slice(&f32::MAX.to_le_bytes());
                 }
@@ -356,26 +353,32 @@ mod tests {
                     bytes[start..start + 4].copy_from_slice(&f32::NAN.to_le_bytes());
                 }
                 7 => {
-                    let start = section(&bytes, 7); // name indices
+                    let start = section(&bytes, 6); // name indices
                     bytes[start..start + 4].copy_from_slice(&u32::MAX.to_le_bytes());
                 }
                 8 => {
-                    let start = section(&bytes, 6); // stable IDs
+                    let start = section(&bytes, 5); // stable IDs
                     let id = bytes[start..start + 8].to_vec();
                     bytes[start + 8..start + 16].copy_from_slice(&id);
                 }
                 9 => {
-                    let start = section(&bytes, 8); // designations
+                    let start = section(&bytes, 7); // designations
                     bytes[start] = 255;
                 }
                 10 => {
                     let start = section(&bytes, GRID_OFFSETS);
                     bytes[start..start + 8].copy_from_slice(&1_u64.to_le_bytes());
                 }
-                _ => {
+                11 => {
                     let start = section(&bytes, ENDPOINTS);
                     bytes[start..start + 8].copy_from_slice(&u64::MAX.to_le_bytes());
                 }
+                12 | 13 => {
+                    let start = section(&bytes, MOTION_BOUNDS);
+                    let invalid = if case == 12 { f32::NAN } else { -1.0 };
+                    bytes[start..start + 4].copy_from_slice(&invalid.to_le_bytes());
+                }
+                _ => bytes[8..12].copy_from_slice(&2_u32.to_le_bytes()), // reject the previous schema even with a valid checksum
             }
             if case != 0 && case != 2 && case != 3 {
                 fix_checksum(&mut bytes);
@@ -455,7 +458,7 @@ mod tests {
         fs::set_permissions(&data, fs::Permissions::from_mode(0o755)).unwrap();
         fs::set_permissions(&cache, fs::Permissions::from_mode(0o755)).unwrap();
         let sky = result.unwrap();
-        assert_eq!(sky.stars.len(), 1);
+        assert_eq!(sky.catalog.stars.len(), 1);
         assert!(String::from_utf8_lossy(&notices).contains("continuing without a cache"));
         assert_eq!(fs::read_dir(&data).unwrap().count(), 1);
         assert_eq!(fs::read_dir(&cache).unwrap().count(), 0);
@@ -526,14 +529,14 @@ mod tests {
             });
         }
         let catalog = crate::sky::prepare_owned_catalog(input);
-        assert_eq!(catalog.stars.precise_count(), 7);
+        assert_eq!(catalog.catalog.stars.precise_count(), 7);
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("cache");
         let fingerprint = catalog_fingerprint();
         write_cached_catalog(&path, &catalog, &fingerprint).unwrap();
         let cached = load_cached_catalog(&path, &fingerprint).unwrap();
         assert_eq!(cached, catalog);
-        for storage in [&catalog.stars, &cached.stars] {
+        for storage in [&catalog.catalog.stars, &cached.catalog.stars] {
             let trajectories = storage.borrow_trajectory_fields();
             for i in 0..storage.len() {
                 let full = storage.get(i);
@@ -580,7 +583,7 @@ mod tests {
         )
         .unwrap();
         let actual = load_sky_catalog(Some(&Dataset::Path(b)), &dirs, &mut notices).unwrap();
-        assert_eq!(actual.stars.magnitude(0), 3.0);
+        assert_eq!(actual.catalog.stars.magnitude(0), 3.0);
         assert!(String::from_utf8_lossy(&notices).contains("fingerprint mismatch"));
     }
 
@@ -589,7 +592,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("cache");
         let mut source = prepared();
-        source.always_checked = vec![usize::MAX].into();
+        source.preparation.motion_bounds.clear();
         assert!(write_cached_catalog(&path, &source, &catalog_fingerprint()).is_err());
         assert!(!path.exists());
     }

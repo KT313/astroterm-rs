@@ -120,7 +120,6 @@ mod tests {
     use crate::timing::StepTimes;
     use crate::rows::Row;
     use clap::Parser;
-    use std::sync::Arc;
 
     fn empty_state() -> ApplicationState {
         let config = build_config(Arguments::try_parse_from(["astroterm"]).unwrap(), &[]).unwrap();
@@ -151,10 +150,9 @@ mod tests {
             "persistent.catalog.stars", "persistent.catalog.stars.name_table",
             "persistent.catalog.stars.precise_motions", "persistent.catalog.grid.offsets",
             "persistent.catalog.grid.coarse_caps", "persistent.catalog.grid.fine_caps",
-            "persistent.catalog.endpoint_indices", "persistent.catalog.always_checked", "persistent.catalog.names",
+            "persistent.catalog.endpoint_indices", "preparation", "persistent.catalog.names",
             "persistent.catalog.constellations",
             "cache.sky.stars", "cache.sky.planets", "cache.sky.moon", "cache.sky.candidate_indices",
-            "cache.sky.constellations", "cache.sky.names",
             "cache.simulation.planets", "cache.simulation.moon", "cache.simulation.orientation",
             "cache.observation.prepared_classes", "cache.observation.stellar_scratch", "cache.observation.region",
             "cache.observation.candidates", "cache.observation.selected", "cache.observation.working",
@@ -162,7 +160,6 @@ mod tests {
             "cache.observation.corrections", "cache.observation.bodies", "cache.observation.relative",
             "cache.observation.apparent", "cache.observation.horizontal", "cache.observation.refracted",
             "cache.observation.observer", "cache.observation.light_time", "cache.observation.illumination",
-            "cache.projection.prepared_figures", "cache.projection.prepared_endpoints",
             "cache.projection.star_candidate", "cache.projection.order_candidate", "cache.projection.draw_order_scratch",
             "cache.projection.stars", "cache.projection.stars.key", "cache.projection.order", "cache.projection.order.key",
             "cache.projection.bodies", "cache.projection.bodies.key", "cache.projection.constellations",
@@ -191,7 +188,7 @@ mod tests {
         use crate::model::{FrameTime, ProjectionViewport, SkyRegion, View};
         use crate::state::Caches;
         let mut state = empty_state();
-        state.replace_catalog(Arc::new(crate::sky::prepare_owned_catalog(crate::catalog::load_embedded_catalog().unwrap())));
+        state.replace_catalog(crate::sky::prepare_owned_catalog(crate::catalog::load_embedded_catalog().unwrap()));
         let count = state.persistent.catalog.stars.len();
         {
             let Caches { sky, simulation, observation, projection, .. } = &mut state.cache;
@@ -205,7 +202,7 @@ mod tests {
 
         let text = dump(&state, None);
         let stars = section(&text, "persistent.catalog.stars");
-        assert!(stars.contains(&format!("**Shape:** `[{count}, 13]`")));
+        assert!(stars.contains(&format!("**Shape:** `[{count}, 12]`")));
         assert!(!text.contains("persistent.catalog.stars.u0"));
         assert!(stars.contains(&format!("{} rows omitted", count - 2 * EDGE_ROWS)));
         assert!(text.contains("ttl=360 s") && text.contains("ttl=dependencies") && text.contains("invalid=false"));
@@ -217,7 +214,7 @@ mod tests {
             assert!(star_header.contains(&markdown_text(&name)), "missing column: {star_header}");
         }
         assert_eq!(data_rows(stars), 20);
-        for row in stars.lines().filter(|l| l.starts_with('|')) { assert_eq!(row.matches('|').count(), 15); }
+        for row in stars.lines().filter(|l| l.starts_with('|')) { assert_eq!(row.matches('|').count(), 14); }
         let sky = section(&text, "cache.sky.stars");
         assert!(sky.contains("| Row | source\\_index: usize | drawable: bool | magnitude: f64 | position: Vector3 |"));
         assert!(section(&text, "cache.simulation.planets").contains(&markdown_text("value: [BodyState; 9]")));

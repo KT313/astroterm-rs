@@ -1,6 +1,6 @@
 //! Resolve the selected dataset, reuse validated prepared data, or prepare the source catalog.
 use crate::catalog::{datasets::{Dataset, DatasetDirectories, resolve_dataset}, load_athyg_catalog_with_times};
-use crate::model::SkyCatalog;
+use crate::model::PreparedCatalog;
 use crate::timing::StepTimes;
 use std::io::{self, Write};
 use super::loading::{
@@ -13,7 +13,7 @@ pub fn load_sky_catalog(
     dataset: Option<&Dataset>,
     directories: &DatasetDirectories,
     notices: &mut impl Write,
-) -> io::Result<SkyCatalog> {
+) -> io::Result<PreparedCatalog> {
     load_sky_catalog_with_times(dataset, directories, notices, &mut StepTimes::default())
 }
 
@@ -23,7 +23,7 @@ pub fn load_sky_catalog_with_times(
     directories: &DatasetDirectories,
     notices: &mut impl Write,
     times: &mut StepTimes,
-) -> io::Result<SkyCatalog> {
+) -> io::Result<PreparedCatalog> {
     let Some(dataset) = dataset else { return load_embedded_sky(times); }; // use the built-in catalog unless another dataset was selected
     let source = times.measure("Dataset resolution", || resolve_dataset(dataset, directories, notices))?;
     times.describe("Dataset resolution", || format!("source={}", source.display()));

@@ -50,17 +50,17 @@ pub(in crate::terminal) fn initialize_pixel_canvas(state: &mut PixelState, times
 }
 
 pub(in crate::terminal) fn rasterize_pixel_sky(state: &mut PixelState, sky: &ProjectedSky<'_>, date: f64, times: &mut StepTimes) -> io::Result<()> {
-    state.sky_image = times
+    times
         .measure_steps("Raster", |times| {
-            crate::scene::draw_pixels(&mut state.scene_cache, sky, &state.options, crate::model::FrameTime::from_utc(date).tt, times)
+            crate::scene::draw_pixels(&mut state.scene_cache, sky, &state.options, crate::model::FrameTime::from_utc(date).tt, times).map(|_| ())
         })
         .ok_or_else(|| io::Error::other("cannot allocate terminal image"))?;
     times.describe("Raster", || {
         format!(
             "output sky={}x{} pixels; RGBA bytes={}; cache={:?}",
-            state.sky_image.width(),
-            state.sky_image.height(),
-            state.sky_image.len(),
+            state.scene_cache.pixel_image().width(),
+            state.scene_cache.pixel_image().height(),
+            state.scene_cache.pixel_image().len(),
             state.scene_cache.stats()
         )
     });
@@ -70,29 +70,33 @@ pub(in crate::terminal) fn rasterize_pixel_sky(state: &mut PixelState, sky: &Pro
 pub(in crate::terminal) fn compose_pixel_sky(state: &mut PixelState, times: &mut StepTimes) {
     if let Some(frame) = &mut state.frame_image {
         times.measure("Sky composition", || {
-            image::imageops::replace(
+            compose_sky_image(
+                state.scene_cache.pixel_image(),
                 frame,
-                &state.sky_image,
                 i64::from(state.area.x) * i64::from(state.font.width),
                 i64::from(state.area.y) * i64::from(state.font.height),
             )
         });
         {
-            times.record_borrow(BufferId::SkyImage, Access::ReadOnly, || BufferShape::vector(state.sky_image.as_raw(), IndexDomain::Bytes));
+            times.record_borrow(BufferId::PixelScene, Access::ReadOnly, || BufferShape::vector(state.scene_cache.pixel_image().as_raw(), IndexDomain::Bytes));
             times.record_borrow(BufferId::FrameImage, Access::Writable, || BufferShape::vector(frame.as_raw(), IndexDomain::Bytes));
             times.record_unknown(BufferId::FrameImage, Operation::Copy); // image::replace clips; no second pixel walk to count copied bytes
         }
         times.describe("Sky composition", || {
             format!(
                 "source sky={}x{} pixels; target={}x{} pixels; output RGBA bytes={}",
-                state.sky_image.width(),
-                state.sky_image.height(),
+                state.scene_cache.pixel_image().width(),
+                state.scene_cache.pixel_image().height(),
                 frame.width(),
                 frame.height(),
                 frame.len()
             )
         });
     }
+}
+
+fn compose_sky_image(sky: &image::RgbaImage, frame: &mut image::RgbaImage, x: i64, y: i64) {
+    image::imageops::replace(frame, sky, x, y);
 }
 
 pub(in crate::terminal) fn prepare_pixel_fields(state: &mut PixelState, sky: &ProjectedSky<'_>, view: &View, date: f64, clock: &SimulationClock, observer: &Observer, times: &mut StepTimes) {
@@ -202,10 +206,24 @@ pub(in crate::terminal) fn paint_pixel_text(state: &mut PixelState, text_cell: (
                 frame.len()
             )
         });
+        release_pixel_text(state, times);
     }
 }
 
 pub(in crate::terminal) fn encode_pixel_cells(state: &mut PixelState, times: &mut StepTimes) -> io::Result<()> {
+    let result = compose_encoded_pixel_cells(state, times);
+    release_pixel_text(state, times); // also free half-block text when encoding fails
+    result
+}
+
+fn release_pixel_text(state: &mut PixelState, times: &mut StepTimes) {
+    if state.text.content.is_empty() { return; }
+    let before = times.inspect_memory(|| BufferShape::vector(&state.text.content, IndexDomain::Cells));
+    times.measure_memory_scope("Text buffer release", |_| state.text = ratatui::buffer::Buffer::empty(ratatui::layout::Rect::default()));
+    times.record_shape(BufferId::TextCells, Operation::Release, before, || BufferShape::vector(&state.text.content, IndexDomain::Cells));
+}
+
+fn compose_encoded_pixel_cells(state: &mut PixelState, times: &mut StepTimes) -> io::Result<()> {
     state.composed = if state.frame_image.is_some() {
         state.encoded = Some(times.measure("Image encoding", || {
             encode_image(DynamicImage::ImageRgba8(state.frame_image.take().expect("graphics frame initialized")), state.screen, state.protocol, state.tmux)
@@ -231,8 +249,11 @@ pub(in crate::terminal) fn encode_pixel_cells(state: &mut PixelState, times: &mu
         });
         buffer
     } else {
+        // ratatui-image Halfblocks::new requires ownership; only this protocol needs a scoped transfer copy.
+        times.record_borrow(BufferId::PixelScene, Access::ReadOnly, || BufferShape::vector(state.scene_cache.pixel_image().as_raw(), IndexDomain::Bytes));
+        times.record_shape(BufferId::HalfblockTransfer, Operation::Copy, None, || BufferShape::vector(state.scene_cache.pixel_image().as_raw(), IndexDomain::Bytes));
         state.encoded = Some(times.measure("Image encoding", || {
-            encode_image(DynamicImage::ImageRgba8(std::mem::take(&mut state.sky_image)), state.area, state.protocol, state.tmux)
+            encode_image(DynamicImage::ImageRgba8(state.scene_cache.pixel_image().clone()), state.area, state.protocol, state.tmux)
         })?);
         times.record_unknown(BufferId::EncodedImage, Operation::Build); // opaque protocol internals, fresh result retained for inspection
         times.describe("Image encoding", || {
@@ -309,7 +330,7 @@ pub(in crate::terminal) fn convert_kitty_pixels(state: &mut PixelState, times: &
 
 pub(in crate::terminal) fn encode_kitty_upload(state: &mut PixelState, times: &mut StepTimes) -> io::Result<()> {
     let transport_before = times.inspect_memory(|| (describe_upload(state), BufferShape::vector(&state.compressed, IndexDomain::Bytes)));
-    times.measure("Image encoding", || {
+    let result = times.measure("Image encoding", || {
         kitty::encode_upload_into(
             &state.rgb,
             state.kitty_image_id,
@@ -318,7 +339,7 @@ pub(in crate::terminal) fn encode_kitty_upload(state: &mut PixelState, times: &m
             &mut state.compressed,
             &mut state.upload,
         )
-    })?;
+    });
     {
         times.record_borrow(BufferId::RgbImage, Access::ReadOnly, || BufferShape::vector(state.rgb.as_raw(), IndexDomain::Bytes));
         times.record_shape(BufferId::UploadBytes, Operation::Clear, transport_before.map(|s| s.0), || { let mut shape = transport_before.unwrap().0; shape.len = Some(0); shape });
@@ -336,7 +357,10 @@ pub(in crate::terminal) fn encode_kitty_upload(state: &mut PixelState, times: &m
             state.tmux
         )
     });
-    Ok(())
+    let before = times.inspect_memory(|| BufferShape::vector(state.rgb.as_raw(), IndexDomain::Bytes));
+    times.measure_memory_scope("RGB buffer release", |_| state.rgb = image::RgbImage::new(0, 0));
+    times.record_shape(BufferId::RgbImage, Operation::Release, before, || BufferShape::vector(state.rgb.as_raw(), IndexDomain::Bytes));
+    result
 }
 
 pub(in crate::terminal) fn serialize_kitty_swap(state: &mut PixelState, times: &mut StepTimes) -> io::Result<()> {
@@ -394,3 +418,97 @@ fn describe_upload(state: &PixelState) -> BufferShape {
 }
 
 
+
+#[cfg(test)]
+mod lifetime_tests {
+    use super::*;
+    use clap::Parser;
+    use ratatui::layout::Rect;
+
+    fn pixels(protocol: ProtocolType) -> PixelState {
+        let config = crate::cli::build_config(crate::cli::Arguments::try_parse_from(["astroterm"]).unwrap(), &[]).unwrap();
+        PixelState {
+            scene_cache: Default::default(),
+            cache_diagnostics: Default::default(),
+            reuse_assets: true,
+            protocol,
+            compression: CompressionSupport::Supported,
+            kitty_image_id: kitty::IMAGE_IDS[0],
+            font: ratatui_image::FontSize { width: 2, height: 2 },
+            tmux: false,
+            screen: Rect::new(0, 0, 8, 4),
+            area: Rect::new(0, 0, 8, 4),
+            viewport: crate::model::ProjectionViewport { width: 16, height: 8 },
+            options: config.render,
+            settings: config.terminal,
+            time_zone: None,
+            text_scale: 1.0,
+            frame_image: None,
+            rgb: image::RgbImage::new(0, 0),
+            fields: Vec::new(),
+            text: ratatui::buffer::Buffer::empty(Rect::default()),
+            composed: ratatui::buffer::Buffer::empty(Rect::default()),
+            upload: String::new(),
+            compressed: Vec::new(),
+            encoded: None,
+            serialization_blank: ratatui::buffer::Buffer::empty(Rect::default()),
+            serialized: Vec::new(),
+            raster_text: if protocol == ProtocolType::Halfblocks {
+                None
+            } else {
+                Some(crate::scene::create_text_rasterizer().unwrap())
+            },
+        }
+    }
+
+    #[test]
+    fn transient_text_and_rgb_are_freed_while_cached_sky_and_transport_survive() {
+        for protocol in [ProtocolType::Kitty, ProtocolType::Sixel, ProtocolType::Iterm2, ProtocolType::Halfblocks] {
+            let mut state = pixels(protocol);
+            let sky = crate::sky::create_sky_from_catalog(&crate::catalog::load_embedded_catalog().unwrap());
+            let data = crate::projection::project_sky(&sky, &View::default(), state.viewport);
+            let projected = data.view(&sky);
+            let mut times = StepTimes::with_trace(true);
+            let mut cached_pointer = None;
+            for frame in 0..2 {
+                initialize_pixel_canvas(&mut state, &mut times).unwrap();
+                rasterize_pixel_sky(&mut state, &projected, 2451545.0, &mut times).unwrap();
+                let expected = state.scene_cache.pixel_image().clone();
+                let pointer = state.scene_cache.pixel_image().as_ptr();
+                if let Some(previous) = cached_pointer { assert_eq!(pointer, previous, "paused sky reuses its original image"); }
+                cached_pointer = Some(pointer);
+                compose_pixel_sky(&mut state, &mut times);
+                state.text = ratatui::buffer::Buffer::empty(state.screen);
+                state.text[(0, 0)].set_symbol(if frame == 0 { "A" } else { "B" });
+                paint_pixel_text(&mut state, (2, 2), &mut times);
+                if protocol == ProtocolType::Halfblocks {
+                    assert!(!state.text.content.is_empty()); // still needed for cell composition
+                } else { assert_eq!(state.text.content.capacity(), 0); }
+                if protocol == ProtocolType::Kitty {
+                    convert_kitty_pixels(&mut state, &mut times);
+                    assert!(!state.rgb.is_empty());
+                    encode_kitty_upload(&mut state, &mut times).unwrap();
+                    assert_eq!(state.rgb.as_raw().capacity(), 0);
+                    assert!(!state.upload.is_empty());
+                    assert!(state.compressed.capacity() > 0);
+                } else {
+                    encode_pixel_cells(&mut state, &mut times).unwrap();
+                    assert_eq!(state.text.content.capacity(), 0);
+                    assert!(!state.composed.content.is_empty());
+                }
+                assert_eq!(state.scene_cache.pixel_image(), &expected, "text/composition must never modify the cached sky");
+            }
+            assert_eq!(state.scene_cache.stats().hits, 1);
+        }
+    }
+
+    #[test]
+    fn failed_encoding_frees_text_and_preserves_the_error() {
+        let mut state = pixels(ProtocolType::Kitty);
+        state.frame_image = Some(image::RgbaImage::new(2, 2));
+        state.text = ratatui::buffer::Buffer::empty(state.screen);
+        let error = encode_pixel_cells(&mut state, &mut StepTimes::default()).unwrap_err();
+        assert_eq!(error.to_string(), "Kitty output requires the RGB upload/swap pipeline");
+        assert_eq!(state.text.content.capacity(), 0);
+    }
+}

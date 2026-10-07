@@ -17,8 +17,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &mut io::stderr().lock(),
     )?;
     let elapsed = start.elapsed().as_secs_f64();
-    let count = catalog.stars.len();
-    let mut sky = Sky::new(Arc::new(catalog));
+    let count = catalog.catalog.stars.len();
+    let mut sky = Sky::new(Arc::new(catalog.catalog));
     update_sky_positions(&mut sky, J2000, &Observer::default(), 5.0, &mut StepTimes::default());
     let projected_data = project_sky(&sky, &View::default(), Viewport { height: 41, width: 81 });
     let projected = projected_data.view(&sky);

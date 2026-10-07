@@ -23,7 +23,7 @@ pub(super) fn describe_observation(storage: &ObservationCache, output: &Observed
         format!("input candidates={}; rejected invalid index={invalid}; then rejected bound > {threshold}={}; output candidates={}; outside interval uses all stars", candidates.len(), removed - invalid, storage.selected.value().len())
     });
     let working = storage.working.value();
-    times.describe("Constellation endpoints", || format!("input selected={}; endpoint union={}; added endpoint-only={}; output working stars={}; endpoints included even when constellation drawing is disabled", storage.selected.value().len(), output.catalog.endpoint_indices.len(), working.len() - storage.selected.value().len(), working.len()));
+    times.describe("Constellation endpoints", || format!("input selected={}; endpoint union={}; added endpoint-only={}; output working stars={}; endpoints included even when constellation drawing is disabled", storage.selected.value().len(), output.catalog.endpoint_indices().len(), working.len() - storage.selected.value().len(), working.len()));
     times.describe("Stellar motion", || format!("input working stars={}; output directions/magnitudes={}; singular fallbacks={}; stellar sample cache totals: hits={} refreshes={} bypasses={}; stars use catalog propagation, no per-star light-time solve", working.len(), storage.motion.value().0.len(), output.runtime_singular_count, storage.stellar_stats.hits, storage.stellar_stats.refreshes, storage.stellar_stats.bypasses));
     let drawable = storage.eligible.value().iter().filter(|&&yes| yes).count();
     times.describe("Current brightness", || {

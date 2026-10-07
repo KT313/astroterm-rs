@@ -38,10 +38,9 @@ pub struct CharacterState {
 }
 
 /// Pixel backend storage. Geometry is measured in terminal cells (screen/area) and physical pixels (viewport).
-/// Scene output remains an intentional clone; sky_image is that clone's destination. frame_image combines sky
-/// and text and is consumed by the protocol/image conversion API. Other working results stay inspectable until
-/// replaced by fresh allocations next frame: retention for inspection is not capacity reuse. Image and ratatui
-/// buffers currently rebuild each frame; protocol/image conversion may consume their allocation. Metadata Vec
+/// Scene pixels are borrowed from the cache. frame_image combines sky and text and is consumed by conversion.
+/// RGB pixels and text cells are freed after their last consumer; their working slots are empty between frames.
+/// Other image and ratatui buffers currently rebuild each frame. Metadata Vec
 /// capacity is reused, but its strings are rebuilt. Resizing invalidates scene data and resets the Kitty ID.
 pub struct PixelState {
     pub(crate) scene_cache: crate::state::SceneCache,
@@ -60,9 +59,8 @@ pub struct PixelState {
     pub(crate) time_zone: Option<(Observer, ObserverTimeZone)>,
     pub(crate) raster_text: Option<TextRasterizer>,
     pub(crate) text_scale: f64,
-    // Full-frame background/sky/text bitmap, plus the scene-cache clone and converted opaque RGB pixels.
+    // Full-frame sky/text bitmap and the temporary opaque RGB conversion result.
     pub(crate) frame_image: Option<image::RgbaImage>,
-    pub(crate) sky_image: image::RgbaImage,
     pub(crate) rgb: image::RgbImage,
     pub(crate) fields: Vec<MetadataField>,
     pub(crate) text: ratatui::buffer::Buffer,
@@ -153,7 +151,6 @@ impl crate::cache::ReportBuffers for PixelState {
         report_field(sink, "cache_diagnostics", &self.cache_diagnostics);
         report_field(sink, "raster_text", &self.raster_text);
         report_field(sink, "frame_image", &self.frame_image);
-        report_field(sink, "sky_image", &self.sky_image);
         report_field(sink, "rgb_pixels", self.rgb.as_raw());
         report_field(sink, "fields", &self.fields);
         report_field(sink, "upload", &self.upload);

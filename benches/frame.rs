@@ -74,7 +74,7 @@ fn benchmark_frames(criterion: &mut Criterion) {
     ] {
         let mut sky = Sky::new(std::sync::Arc::new(astroterm::sky::prepare_owned_catalog(
             build_catalog(count),
-        )));
+        ).catalog));
         let mut timing = StepTimes::default();
         let mut group = criterion.benchmark_group(name);
         group

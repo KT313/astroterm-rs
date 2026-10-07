@@ -31,8 +31,7 @@ pub struct ObservedSky {
     pub stars: Vec<ObservedStar>,
     pub planets: Vec<Planet>,
     pub moon: Moon,
-    pub names: crate::catalog::StarNames,
-    pub constellations: Vec<Constellation>,
+    pub(crate) figure_override: Option<Arc<crate::model::ConstellationSet>>,
     pub(crate) refracted: bool,
     pub outside_accuracy_range: bool,
 }
@@ -40,6 +39,12 @@ pub struct ObservedSky {
 pub type Sky = ObservedSky;
 
 impl ObservedSky {
+    /// The active definitions; a missing override means use the catalog's original allocation.
+    pub fn figures(&self) -> &Arc<crate::model::ConstellationSet> { self.figure_override.as_ref().unwrap_or(&self.catalog.figures) }
+    pub fn constellations(&self) -> &[Constellation] { self.figures().figures() }
+    pub fn figure_override(&self) -> Option<&Arc<crate::model::ConstellationSet>> { self.figure_override.as_ref() }
+    pub fn set_figure_override(&mut self, figures: Option<Arc<crate::model::ConstellationSet>>) { self.figure_override = figures; }
+
     pub fn new(catalog: Arc<SkyCatalog>) -> Self {
         Self {
             corrections: CorrectionStats::default(),
@@ -47,8 +52,7 @@ impl ObservedSky {
             selection: SelectionStats::default(),
             candidate_indices: Vec::new(),
             runtime_singular_count: 0,
-            names: catalog.names.clone(),
-            constellations: catalog.constellations.clone(),
+            figure_override: None,
             catalog,
             stars: Vec::new(),
             planets: create_planets(),
@@ -64,7 +68,7 @@ impl ObservedSky {
             .count()
     }
     pub fn star_name(&self, star: &ObservedStar) -> Option<&str> {
-        self.names.get(self.catalog.stars.name(star.source_index))
+        self.catalog.names.get(self.catalog.stars.name(star.source_index))
     }
     /// Borrow one calculated record and its catalog metadata; `index` addresses this observed subset.
     pub fn star_view(&self, index: usize) -> ObservedStarView<'_> {

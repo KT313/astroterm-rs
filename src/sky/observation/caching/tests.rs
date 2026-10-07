@@ -4,7 +4,7 @@ fn small_catalog() -> Arc<SkyCatalog> {
     let mut source = crate::catalog::load_embedded_catalog().unwrap();
     source.stars.retain(|star| star.has_data);
     source.stars.truncate(6);
-    Arc::new(crate::sky::prepare_owned_catalog(crate::catalog::Catalog::new(source.stars, Default::default(), vec![])))
+    Arc::new(crate::sky::prepare_owned_catalog(crate::catalog::Catalog::new(source.stars, Default::default(), vec![])).catalog)
 }
 
 #[test]

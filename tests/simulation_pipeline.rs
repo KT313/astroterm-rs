@@ -25,7 +25,7 @@ fn update(state: &mut SimulationState, tt: f64) {
 fn catalog() -> Arc<SkyCatalog> {
     static CATALOG: OnceLock<Arc<SkyCatalog>> = OnceLock::new();
     CATALOG
-        .get_or_init(|| Arc::new(astroterm::sky::prepare_owned_catalog(load_embedded_catalog().unwrap())))
+        .get_or_init(|| Arc::new(astroterm::sky::prepare_owned_catalog(load_embedded_catalog().unwrap()).catalog))
         .clone()
 }
 fn observe(state: &SimulationState, time: f64, site: Observer, catalog: Arc<SkyCatalog>) -> ObservedSky {
@@ -182,7 +182,7 @@ fn check_playback_cadence(speed: f64) {
         Vec::new(),
         Default::default(),
         Vec::new(),
-    )));
+    )).catalog);
     let mut cached = SimulationState::default();
     let mut direct = SimulationState::exact();
     for frame in 0..80 {

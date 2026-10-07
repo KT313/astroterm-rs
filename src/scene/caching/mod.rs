@@ -1,6 +1,6 @@
 //! State-owned whole-sky caches. Metadata and terminal presentation are assembled after these immutable results.
 mod keys;
-use crate::timing::{Access, BufferId, BufferShape, IndexDomain, Operation};
+use crate::timing::{BufferId, Operation};
 use super::diagnostics::memory::{describe_candidate, describe_canvas, record_scene_candidate, record_scene_commit};
 
 #[cfg(test)]
@@ -87,16 +87,6 @@ pub(super) fn clear_pixel_candidate(storage: &mut SceneCache, times: &mut StepTi
         clear_scene_candidate(storage.pixel_candidate.as_mut().expect("raster candidate captured"));
     });
     times.record_shape(BufferId::PixelCandidate, Operation::Clear, cleared_before, || describe_candidate(storage.pixel_candidate.as_ref().unwrap()));
-}
-
-pub(super) fn copy_pixel_scene(storage: &SceneCache, times: &mut StepTimes) -> Option<image::RgbaImage> {
-    let image = times.measure("Raster output copy", || storage.pixels.value().clone());
-    {
-        times.record_borrow(BufferId::PixelScene, Access::ReadOnly, || BufferShape::vector(storage.pixels.value().as_raw(), IndexDomain::Bytes));
-        times.record_shape(BufferId::SkyImage, Operation::Copy, None, || BufferShape::vector(image.as_raw(), IndexDomain::Bytes));
-    }
-    times.describe("Raster output copy", || format!("copied RGBA bytes={}", image.len()));
-    Some(image)
 }
 
 pub(super) fn prepare_character_candidate(storage: &mut SceneCache, canvas: &Canvas, sky: &ProjectedSky<'_>, options: &RenderOptions, epoch: f64, times: &mut StepTimes) -> bool {

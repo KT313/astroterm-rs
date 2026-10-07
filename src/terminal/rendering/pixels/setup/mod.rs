@@ -42,7 +42,6 @@ pub fn open_pixel_renderer(
         time_zone: None,
         text_scale,
         frame_image: None,
-        sky_image: image::RgbaImage::new(0, 0),
         rgb: image::RgbImage::new(0, 0),
         fields: Vec::new(),
         text: ratatui::buffer::Buffer::empty(Rect::default()),

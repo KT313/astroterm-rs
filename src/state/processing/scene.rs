@@ -1,5 +1,5 @@
 //! Whole-sky raster snapshots and catalog-derived display data. Keys preserve structural equality.
-//! Character and pixel output copies remain intentional; metadata is composed after the sky cache.
+//! Pixel output is borrowed; metadata is composed into a separate full-frame image.
 use crate::cache::{Cache, CacheConfig};
 use crate::canvas::Canvas;
 use crate::model::{PreparedScene, SceneKey};
@@ -15,12 +15,15 @@ pub struct SceneCache {
     /// Nested label strings and constellation arc payloads are dropped when the candidate is cleared.
     pub(crate) pixel_candidate: Option<SceneKey>,
     pub(crate) character_candidate: Option<SceneKey>,
-    /// Completed sky pixels before metadata; output remains a separate intentional copy.
+    /// Completed sky pixels before metadata; the renderer borrows this allocation.
     pub(crate) pixels: Cache<SceneKey, image::RgbaImage>,
     /// Completed character sky; refresh and hit copies preserve existing canvas semantics.
     pub(crate) characters: Cache<SceneKey, Canvas>,
 }
 impl SceneCache {
+    /// Read the completed sky; callers must prepare it before borrowing and cannot paint into it.
+    pub fn pixel_image(&self) -> &image::RgbaImage { self.pixels.value() }
+
     pub(crate) fn prepared(&self) -> Option<&PreparedScene> {
         self.prepared.as_ref()
     }

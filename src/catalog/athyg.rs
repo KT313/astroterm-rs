@@ -520,8 +520,8 @@ mod tests {
         let bright = sky.star_views().find(|star| star.id() == StarId(1)).unwrap();
         assert_eq!(sky.star_name(&bright), Some("Bright"));
         assert_eq!(sky.star_view(0).id(), StarId(2)); // override made the original representative dimmer than its companion
-        assert_eq!(sky.constellations.len(), 1);
-        let [a, b] = sky.constellations[0].segments[0];
+        assert_eq!(sky.constellations().len(), 1);
+        let [a, b] = sky.constellations()[0].segments[0];
         assert_eq!((sky.star_view(a).id(), sky.star_view(b).id()), (StarId(1), StarId(5)));
     }
 

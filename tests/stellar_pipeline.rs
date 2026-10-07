@@ -43,7 +43,7 @@ fn catalog(stars: Vec<CatalogStar>, segments: Vec<[u32; 2]>) -> Arc<SkyCatalog> 
             abbreviation: "Test",
             segments,
         }],
-    )))
+    )).catalog)
 }
 fn setup(years: f64) -> (SimulationState, astroterm::model::ObserverState) {
     let tt = J2000 + years * JULIAN_YEAR_DAYS;
@@ -237,7 +237,7 @@ fn singular_trajectories_and_fast_motion_are_reported_in_prepared_state() {
             .distance_pc
             .is_none()
     );
-    assert!(cat.always_checked.iter().any(|&i| cat.stars.get(i).id == StarId(2)));
+    assert!(cat.always_checked().any(|i| cat.stars.get(i).id == StarId(2)));
     let mut sky = ObservedSky::new(cat);
     let (simulation, observer) = setup(1000.0);
     observe_sky(

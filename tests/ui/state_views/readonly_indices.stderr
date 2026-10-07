@@ -4,7 +4,7 @@ error[E0594]: cannot assign to `endpoints[_]`, which is behind a `&` reference
 5 |     endpoints[0] = 0;
   |     ^^^^^^^^^^^^^^^^ `endpoints` is a `&` reference, so it cannot be written to
   |
-help: consider changing this to be a mutable reference
+help: consider changing this binding's type
   |
-4 |     let endpoints: &[usize] = &mut catalog.endpoint_indices; // catalog indices are borrowed read-only
-  |                                +++
+4 |     let endpoints: &mut [usize] = catalog.endpoint_indices(); // catalog indices are borrowed read-only
+  |                     +++

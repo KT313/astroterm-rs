@@ -1,5 +1,5 @@
 //! Visible cells address observed-star rows; draw order addresses visible cells. Geometry is viewport-relative.
-//! Keys retain exact comparisons. Prepared figures deliberately own a catalog copy; scratch holds sort records.
+//! Keys retain exact comparisons and shared immutable definitions; scratch holds sort records.
 use crate::cache::{Cache, CacheConfig};
 use crate::model::{
     StarKey, ProjectionBodyKey as BodyKey, ConstellationKey, HorizonGeometry, Cell, DrawRecord, View,
@@ -9,10 +9,6 @@ use crate::model::{
 pub struct ProjectionCache {
     /// Reuse policy; read by processing stages and replaced only by explicit reconfiguration.
     pub(crate) config: CacheConfig,
-    /// Preparation copies of source figures; used only to detect changed caller-provided figures.
-    pub(crate) prepared_figures: Vec<crate::model::Constellation>,
-    /// Unique sorted catalog indices for the prepared figures; rebuilt during catalog preparation.
-    pub(crate) prepared_endpoints: Vec<usize>,
     /// Exact candidate key in observed order; cleared on a hit, transferred on successful refresh.
     pub(crate) star_candidate: StarKey,
     /// Observed index, current magnitude and ID for each visible cell; same candidate lifecycle.
@@ -70,7 +66,7 @@ impl ProjectionCache {
     }
 }
 #[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(ProjectionCache { config, prepared_figures, prepared_endpoints, star_candidate, order_candidate, stars, order, draw_order_scratch, bodies, constellations, horizon });
+crate::cache::report_fields!(ProjectionCache { config, star_candidate, order_candidate, stars, order, draw_order_scratch, bodies, constellations, horizon });
 
 /// Projection may append cells and update its cache, but cannot access motion or rendering state.
 pub(crate) struct StarProjectionBuffers<'a> {

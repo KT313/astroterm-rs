@@ -21,8 +21,8 @@ report_flat!(Star, ObservedStar, Planet, Moon, PlanetKind, CorrectionStats, Obse
     crate::catalog::StarId, crate::canvas::Cell, crate::cache::Group, crate::cache::GroupPolicy);
 
 report_fields!(Constellation { segments });
-report_fields!(crate::model::SkyCatalog { stars, grid, endpoint_indices, always_checked, names, constellations });
-report_fields!(ObservedSky { catalog, stars, candidate_indices, planets, names, constellations });
+report_fields!(crate::model::SkyCatalog { stars, grid, names, figures });
+report_fields!(ObservedSky { catalog, stars, candidate_indices, planets, figure_override });
 report_fields!(BodySamples { planets });
 report_fields!(CorrectionSelection { indices });
 report_fields!(ProjectedArc { points });

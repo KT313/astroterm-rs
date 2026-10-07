@@ -2,7 +2,7 @@ use super::*;
 use astroterm::astro::Vector3;
 use astroterm::cache::{CacheConfig, RefreshReason};
 use astroterm::model::{ObservedSky, ProjectionViewport, View};
-use astroterm::projection::{borrow_projected, prepare_projection_catalog, project_cached_sky, project_sky};
+use astroterm::projection::{borrow_projected, project_cached_sky, project_sky};
 use astroterm::state::ProjectionCache;
 use astroterm::timing::TraceStep;
 
@@ -134,10 +134,10 @@ fn projection_runtime_off_preserves_outputs_and_cache_stats_and_records_nothing(
         let viewport = ProjectionViewport { width: 80, height: 40 };
         assert_eq!(borrow_projected(&enabled_cache, &sky, &View::default(), viewport), borrow_projected(&disabled_cache, &sky, &View::default(), viewport));
     }
-    let mut startup = enabled();
-    prepare_projection_catalog(&mut enabled_cache, &sky.catalog, &mut startup);
-    assert!(find_step(&startup, "Constellation topology").memory_events.iter().any(|record| matches!(record.event,
-        MemoryEvent::Operation { buffer: BufferId::PreparedEndpoints, operation: Operation::Copy, .. })));
+    let recorded = run(&mut enabled_cache, &sky, true);
+    assert!(find_step(&recorded, "Constellation projection").memory_events.iter().any(|record| matches!(record.event,
+        MemoryEvent::Borrow { buffer: BufferId::CatalogEndpoints, access: Access::ReadOnly, .. })));
+
 }
 
 #[test]

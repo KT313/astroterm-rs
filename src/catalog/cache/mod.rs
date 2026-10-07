@@ -10,7 +10,7 @@ use std::{
 };
 
 const MAGIC: &[u8; 8] = b"ASTROCAT";
-const VERSION: u32 = 2; // 2: direction and motion columns are [f32; 3] rows
+const VERSION: u32 = 3; // 3: preparation bounds separate; fast movers represented by the grid tail
 const PREFIX: usize = 64;
 const MAX_SECTIONS: usize = 64;
 

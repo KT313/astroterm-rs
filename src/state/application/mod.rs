@@ -1,19 +1,21 @@
 //! Construct the complete root from validated configuration; the prepared catalog is installed afterwards.
 //!
-//! The root has three groups, named after how long their data lives:
+//! Root groups follow their lifetimes; preparation is freed before the frame loop:
 //! - `persistent`: loaded once at startup and never changed during a run (the prepared catalog),
+//! - `preparation`: temporary catalog bounds used only while building/validating the catalog,
 //! - `cache`: everything recomputed from the persistent data and the simulated time (observed objects, caches, buffers),
 //! - `timings`: diagnostics, not used for rendering.
 mod caches;
 pub use caches::Caches;
 
 use std::sync::Arc;
-use crate::model::{Config, Sky, SkyCatalog};
+use crate::model::{Config, Sky, SkyCatalog, CatalogPreparation, PreparedCatalog};
 use crate::timing::StepTimes;
 
 pub struct ApplicationState {
     pub config: Config,
     pub persistent: Persistent,
+    pub preparation: Option<CatalogPreparation>,
     pub cache: Caches,
     pub timings: StepTimes,
 }
@@ -29,15 +31,31 @@ impl ApplicationState {
     pub fn new(config: Config, timings: StepTimes) -> Self {
         let catalog = Arc::new(SkyCatalog::empty());
         let cache = Caches::new(Sky::new(catalog.clone()), &config.cache);
-        Self { config, persistent: Persistent { catalog }, cache, timings }
+        Self { config, persistent: Persistent { catalog }, preparation: None, cache, timings }
     }
 
+    /// Free the exclusively owned startup payload; shared runtime inputs keep their allocation and identity.
+    pub fn free_preparation_only_data(&mut self) { self.preparation = None; }
+
+    pub fn preparation(&self) -> Option<&CatalogPreparation> { self.preparation.as_ref() }
+
     /// Install the prepared catalog: the only catalog mutation, done once at startup. The observed sky is rebuilt
-    /// from it (name and figure copies); observation caches are still empty and `prepare_frame_data` runs later.
+    /// from shared inputs; dependent catalog caches are reset and `prepare_frame_data` runs later.
     /// The same `Arc` is shared by `persistent.catalog` and `cache.sky.catalog`, so no catalog buffers are copied.
-    pub fn replace_catalog(&mut self, catalog: Arc<SkyCatalog>) {
+    pub fn replace_catalog(&mut self, prepared: PreparedCatalog) {
+        let catalog = Arc::new(prepared.catalog);
+        self.preparation = Some(prepared.preparation);
         self.persistent.catalog = catalog.clone();
         self.cache.sky = Sky::new(catalog);
+        self.cache.observation = crate::state::ObservationCache::new(self.config.cache.clone());
+        self.cache.projection = crate::state::ProjectionCache::new(self.config.cache.clone());
+        let scene = match &mut self.cache.rendering {
+            crate::state::RenderingState::Pending => return,
+            crate::state::RenderingState::Chars(state) => &mut state.scene_cache,
+            crate::state::RenderingState::Pixels(state) => &mut state.scene_cache,
+        };
+        *scene = crate::state::SceneCache::default();
+        scene.configure(&self.config.cache);
     }
 }
 

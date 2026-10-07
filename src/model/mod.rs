@@ -9,7 +9,7 @@ mod configuration;
 mod diagnostics;
 
 pub use catalog::{
-    SkyCatalog, GRID_DEPTH, CELL_COUNT, REFRACTION_MARGIN, ABERRATION_MARGIN, SkyRegion, SelectionStats, SkyGrid,
+    SkyCatalog, CatalogPreparation, PreparedCatalog, ConstellationSet, GRID_DEPTH, CELL_COUNT, REFRACTION_MARGIN, ABERRATION_MARGIN, SkyRegion, SelectionStats, SkyGrid,
     hash_direction, QUANTIZATION_MARGIN, STAR_SECTIONS, StarRow, StarRowSlice, StarRowVec, StarStorage,
 };
 pub(crate) use catalog::{SelectedRegion, build_caps};

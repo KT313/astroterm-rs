@@ -13,7 +13,7 @@ fn main() {
         data: None,
         cache: Some(std::env::temp_dir().join("astroterm-processing-probe")),
     };
-    let catalog = Arc::new(load_sky_catalog(dataset.as_ref(), &directories, &mut std::io::stderr()).unwrap());
+    let catalog = Arc::new(load_sky_catalog(dataset.as_ref(), &directories, &mut std::io::stderr()).unwrap().catalog);
     for fov in [225.0, 115.2, 12.4] {
         for speed in [0.0, 1.0, 100.0, -100.0, 100000.0] {
             for enabled in [true, false] {

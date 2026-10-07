@@ -72,7 +72,7 @@ pub(super) fn load_catalog(state: &mut ApplicationState, directories: &DatasetDi
         )
     });
     let catalog = match catalog {
-        Ok(catalog) if catalog.stars.is_empty() => Err(io::Error::other("dataset contains no stars")), // an empty catalog is only valid before loading
+        Ok(catalog) if catalog.catalog.stars.is_empty() => Err(io::Error::other("dataset contains no stars")), // an empty catalog is only valid before loading
         Ok(catalog) => Ok(catalog),
         Err(error) => Err(io::Error::other(error)),
     };
@@ -81,7 +81,7 @@ pub(super) fn load_catalog(state: &mut ApplicationState, directories: &DatasetDi
         Err(error) => return Err(finish_requested_report(Err(error), &state.config, &state.timings,
             &mut io::stdout().lock(), &mut io::stderr().lock())),
     };
-    state.replace_catalog(Arc::new(catalog));                                          // the single catalog install point
+    state.replace_catalog(catalog);                                          // the single catalog install point
     let catalog = &state.persistent.catalog;
 
     #[cfg(feature = "memory-diagnostics")]
@@ -93,8 +93,8 @@ pub(super) fn load_catalog(state: &mut ApplicationState, directories: &DatasetDi
 
     state.timings.describe("Dataset loading", || format!(
         "output stars={}; constellation figures={}; unique endpoints={}; always-checked stars={}; tangential fallbacks={}; storage=owned",
-        catalog.stars.len(), catalog.constellations.len(), catalog.endpoint_indices.len(),
-        catalog.always_checked.len(), catalog.singular_count,
+        catalog.stars.len(), catalog.constellations().len(), catalog.endpoint_indices().len(),
+        catalog.always_checked().len(), catalog.singular_count,
     ));
 
     eprintln!(
@@ -163,7 +163,7 @@ pub(super) fn capture_failed_frame_memory(state: &mut ApplicationState, renderer
         let Some(run) = state.timings.memory_run() else { return; };
         if !run.frame_active { return; }
         let tt = run.current_time.map(|time| time.1);
-        capture_memory(&state.config, &state.persistent.catalog, &state.cache, renderer, &mut state.timings, "After incomplete frame", tt);
+        capture_memory(&state.config, &state.persistent.catalog, &state.cache, state.preparation.as_ref(), renderer, &mut state.timings, "After incomplete frame", tt);
     }
 }
 
@@ -285,9 +285,9 @@ pub(super) fn record_frame_duration(config: &Config, frame_start: Instant, time:
 #[allow(clippy::too_many_arguments)]
 #[cfg_attr(not(feature = "memory-diagnostics"), allow(unused_variables))]
 #[inline]
-pub(super) fn capture_memory(config: &Config, catalog: &Arc<astroterm::model::SkyCatalog>, caches: &astroterm::state::Caches, renderer: &Renderer, times: &mut StepTimes, label: &'static str, tt: Option<f64>) {
+pub(super) fn capture_memory(config: &Config, catalog: &Arc<astroterm::model::SkyCatalog>, caches: &astroterm::state::Caches, preparation: Option<&astroterm::model::CatalogPreparation>, renderer: &Renderer, times: &mut StepTimes, label: &'static str, tt: Option<f64>) {
     #[cfg(feature = "memory-diagnostics")]
-    if config.debug_memory { times.capture_memory(|times| astroterm::state::capture_run_inventory(config, catalog, caches, renderer, times, label, tt)); }
+    if config.debug_memory { times.capture_memory(|times| astroterm::state::capture_run_inventory(config, catalog, caches, preparation, renderer, times, label, tt)); }
 }
 
 /// Record the actual read-only frame view, without creating another view or copying its geometry.

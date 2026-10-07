@@ -55,7 +55,7 @@ pub(super) fn include_constellation_endpoints_with_times(
     output: &mut ObservedSky,
     times: &mut crate::timing::StepTimes,
 ) {
-    let working = merge_constellation_endpoints(selected, &output.catalog.endpoint_indices, times);
+    let working = merge_constellation_endpoints(selected, output.catalog.endpoint_indices(), times);
     let fields = output.catalog.stars.borrow_observation_fields();
     output.stars.clear();
     output.stars.extend(
@@ -232,7 +232,7 @@ pub(super) fn select_corrections(output: &mut ObservedSky) {
     let (indices, stats) = select_correction_indices(
         output.stars.iter().map(|s| s.source_index),
         &flags,
-        &output.catalog.endpoint_indices,
+        output.catalog.endpoint_indices(),
     );
     output.corrections = stats;
     if stats.skipped == 0 {

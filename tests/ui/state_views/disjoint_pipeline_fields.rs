@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 fn main() {
     let catalog = Catalog::new(Vec::new(), StarNames::default(), Vec::new());
-    let sky = ObservedSky::new(Arc::new(astroterm::sky::prepare_owned_catalog(catalog)));
+    let sky = ObservedSky::new(Arc::new(astroterm::sky::prepare_owned_catalog(catalog).catalog));
     let mut run = Caches {
         sky, simulation: SimulationState::default(), observation: ObservationCache::default(),
         projection: ProjectionCache::default(), rendering: RenderingState::Pending,
@@ -30,6 +30,10 @@ fn main() {
     simulation.begin_frame(); // changing a disjoint state owner does not invalidate the borrowed projection
     draw_characters(&mut scene, &mut frame.sky, &projected, &options, 2451545.0);
 
+    let definitions = sky.constellations();
+    let mut counts = Vec::new();
+    counts.extend(definitions.iter().map(|figure| figure.segments.len())); // read only the figures, write separate results
+    assert_eq!(counts.len(), definitions.len());
     let pixels = &frame.sky;
     frame.panel.as_mut().unwrap().clear(); // one frame canvas can be changed while the other remains borrowed
     assert_eq!(pixels.height(), 8);

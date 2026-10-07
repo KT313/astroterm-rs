@@ -40,10 +40,10 @@ impl Table for StarStorage {
     fn rows(&self) -> usize { self.len() }
     fn columns(&self) -> Vec<Column> { StarRow::columns() }
     fn bytes(&self) -> TableBytes {
-        let StarRowVec { u0, w, magnitude, brightness_key, distance, motion_bound, id, name, designation,
+        let StarRowVec { u0, w, magnitude, brightness_key, distance, id, name, designation,
             spectral_type, color, flags, precise_index } = self.owned_columns(); // adding a field requires accounting for it
         let sizes = [TableBytes::vector(u0), TableBytes::vector(w), TableBytes::vector(magnitude),
-            TableBytes::vector(brightness_key), TableBytes::vector(distance), TableBytes::vector(motion_bound),
+            TableBytes::vector(brightness_key), TableBytes::vector(distance),
             TableBytes::vector(id), TableBytes::vector(name), TableBytes::vector(designation),
             TableBytes::vector(spectral_type), TableBytes::vector(color), TableBytes::vector(flags), TableBytes::vector(precise_index)];
         TableBytes {
@@ -193,6 +193,9 @@ impl Table for HashMap<char, Glyph> {
 crate::rows::debug_preview!(fontdue::Metrics);
 
 pub(crate) trait Describe { fn describe(&self) -> String; }
+impl Describe for std::sync::Arc<crate::model::ConstellationSet> {
+    fn describe(&self) -> String { format!("shared definition reference: {} figures, {} endpoints; payload counted at owner", self.figures().len(), self.endpoints().len()) }
+}
 macro_rules! describe_preview {
     ($($ty:ty),+) => { $(impl Describe for $ty { fn describe(&self) -> String { preview(self) } })+ };
 }
@@ -314,21 +317,21 @@ mod tests {
     #[test]
     fn complete_star_table_counts_column_capacity_and_keeps_all_fields() {
         let mut catalog = crate::sky::prepare_owned_catalog(crate::catalog::load_embedded_catalog().unwrap());
-        let stars = &mut catalog.stars;
+        let stars = &mut catalog.catalog.stars;
         stars.reserve(stars.len());
         let size = Table::bytes(stars);
-        let packed_row_bytes = 2 * 12 + 4 * 4 + 8 + 4 + 16 + 2 + 4 + 1 + 4;
+        let packed_row_bytes = 2 * 12 + 3 * 4 + 8 + 4 + 16 + 2 + 4 + 1 + 4;
         assert_eq!(size.used, Some(stars.len() * packed_row_bytes));
         assert!(size.reserved.unwrap() > size.used.unwrap());
         let columns = stars.columns();
         let preview = Table::preview(stars);
         assert_eq!(preview.len(), 20);
-        assert_eq!(<StarStorage as Table>::columns(stars).len(), 13);
+        assert_eq!(<StarStorage as Table>::columns(stars).len(), 12);
         for (i, cells) in preview {
-            assert_eq!(cells.len(), 13);
+            assert_eq!(cells.len(), 12);
             assert_eq!(cells[0], crate::rows::preview(&columns.u0[i]));
-            assert_eq!(cells[6], columns.id[i].to_string());
-            assert_eq!(cells[12], columns.precise_index[i].to_string());
+            assert_eq!(cells[5], columns.id[i].to_string());
+            assert_eq!(cells[11], columns.precise_index[i].to_string());
         }
         assert_eq!(Table::bytes(stars), size); // inspection retains no data and changes no capacities
     }

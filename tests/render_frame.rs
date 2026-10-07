@@ -82,7 +82,7 @@ fn polaris_is_near_the_center_at_the_north_pole() {
         .map(|cell| cell.symbol)
         .collect();
     assert!(
-        glyphs.contains(select_star_appearance(&polaris, &sky.names).ascii),
+        glyphs.contains(select_star_appearance(&polaris, &sky.catalog.names).ascii),
         "Polaris glyph near the center: {glyphs:?}"
     );
 }

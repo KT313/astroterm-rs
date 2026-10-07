@@ -246,7 +246,7 @@ impl ProjectionData {
             viewport: self.viewport,
             stars: ProjectedStars::new(observed, &self.stars, &self.order),
             planets: &self.planets, moon: &self.moon, constellations: &self.constellations,
-            names: &observed.names, horizon: &self.horizon, horizon_labels: &self.horizon_labels,
+            names: &observed.catalog.names, horizon: &self.horizon, horizon_labels: &self.horizon_labels,
         }
     }
 }
@@ -289,7 +289,7 @@ pub(crate) type StarKey = (Vec<(Vector3, bool)>, View, ProjectionViewport);
 pub(crate) type BodyKey = (Vec<(PlanetKind, Vector3)>, crate::model::Moon, View, ProjectionViewport);
 pub(crate) type ConstellationKey = (
     Vec<(usize, Vector3, f64)>,
-    Vec<crate::model::Constellation>,
+    std::sync::Arc<crate::model::ConstellationSet>,
     f64,
     View,
     ProjectionViewport,

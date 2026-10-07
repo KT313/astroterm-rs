@@ -33,11 +33,10 @@ pub struct StellarMotion {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StellarSample {
     pub direction: Vector3,
-    pub distance_ratio: f64,
     pub magnitude: f64,
     pub used_singular_fallback: bool,
 }
-row_columns!(StellarSample { direction, distance_ratio, magnitude, used_singular_fallback });
+row_columns!(StellarSample { direction, magnitude, used_singular_fallback });
 
 pub fn years_since_j2000(julian_date_tt: f64) -> f64 {
     (julian_date_tt - J2000) / JULIAN_YEAR_DAYS
@@ -154,7 +153,6 @@ impl StellarMotion {
         };
         StellarSample {
             direction: q * (1.0 / norm),
-            distance_ratio: ratio,
             magnitude: current,
             used_singular_fallback: singular,
         }

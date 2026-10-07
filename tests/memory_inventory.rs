@@ -120,7 +120,7 @@ fn cached_catalog_owns_buffers_and_shared_catalog_is_counted_once() {
     let source = astroterm::sky::load_sky_catalog(dataset.as_ref(), &dirs, &mut Vec::new()).unwrap();
     let cached = astroterm::sky::load_sky_catalog(dataset.as_ref(), &dirs, &mut Vec::new()).unwrap();
     assert_eq!(source, cached);
-    let catalog = Arc::new(cached);
+    let catalog = Arc::new(cached.catalog);
     let one = collect_inventory("one", &catalog);
     let shared = collect_inventory("two references", &(catalog.clone(), catalog.clone()));
     assert!(heap(&one, Owner::Shared).0 > 0);
@@ -129,7 +129,8 @@ fn cached_catalog_owns_buffers_and_shared_catalog_is_counted_once() {
     let sky = astroterm::model::Sky::new(catalog.clone());
     let snapshot = collect_inventory("owned", &(catalog, sky));
     assert!(!snapshot.rows.iter().any(|r| r.kind == Kind::Mapping));
-    assert!(heap(&snapshot, Owner::Application).0 > heap(&one, Owner::Application).0); // sky owns its name/figure copies
+    assert_eq!(heap(&snapshot, Owner::Shared), heap(&one, Owner::Shared));
+    assert!(heap(&snapshot, Owner::Application).0 > heap(&one, Owner::Application).0); // sky owns current body outputs; catalog data stays shared
     assert_eq!(std::fs::read_dir(dirs.cache.as_ref().unwrap()).unwrap().count(), 1);
 }
 
@@ -139,7 +140,7 @@ fn inventory_does_not_change_output_or_cache_statistics() {
     use astroterm::model::{ProjectionViewport as Viewport, FrameTime};
     let config = build_config(Arguments::try_parse_from(["astroterm", "--debug-singleframe", "--debug-memory"]).unwrap(), &[]).unwrap();
     let mut state = ApplicationState::new(config, astroterm::timing::StepTimes::with_trace(true));
-    state.replace_catalog(Arc::new(astroterm::sky::prepare_owned_catalog(astroterm::catalog::load_embedded_catalog().unwrap())));
+    state.replace_catalog(astroterm::sky::prepare_owned_catalog(astroterm::catalog::load_embedded_catalog().unwrap()));
     for policy in [CacheConfig::default(), CacheConfig::disabled()] {
         state.cache.simulation.configure_cache(&policy);
         state.cache.observation = astroterm::state::ObservationCache::new(policy.clone());
@@ -353,7 +354,7 @@ fn root_capture_keeps_diagnostic_and_external_payloads_separate() {
     times.capture_memory(|_| collect_inventory("prior fixture", &vec![0_u8; 32]));
     let state = ApplicationState::new(config, times); // the empty startup catalog is enough for a root capture
     let writer = Vec::<u8>::with_capacity(256); // stand-in for the external writer's known buffer
-    let snapshot = capture_run_inventory(&state.config, &state.persistent.catalog, &state.cache, &writer, &state.timings, "root", None);
+    let snapshot = capture_run_inventory(&state.config, &state.persistent.catalog, &state.cache, state.preparation.as_ref(), &writer, &state.timings, "root", None);
     assert_eq!(snapshot.omitted_nodes, 0);
     assert!(sum_known_payload(&snapshot, Owner::Diagnostics).used.unwrap() > 0);
     assert_eq!(sum_known_payload(&snapshot, Owner::External).reserved, Some(writer.capacity()));

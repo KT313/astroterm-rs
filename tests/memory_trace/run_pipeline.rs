@@ -14,7 +14,7 @@ fn continuous_history_preserves_calculations_and_cache_behavior() {
     let mut source = astroterm::catalog::load_embedded_catalog().unwrap();
     source.stars.retain(|star| star.has_data);
     source.stars.truncate(24);
-    let catalog = Arc::new(sky::prepare_owned_catalog(astroterm::catalog::Catalog::new(source.stars, Default::default(), vec![])));
+    let catalog = Arc::new(sky::prepare_owned_catalog(astroterm::catalog::Catalog::new(source.stars, Default::default(), vec![])).catalog);
     for config in [CacheConfig::default(), CacheConfig::disabled()] {
         let plain = run_frames(catalog.clone(), &config, false);
         let traced = run_frames(catalog.clone(), &config, true);
@@ -57,7 +57,7 @@ fn run_frames(catalog: Arc<SkyCatalog>, config: &CacheConfig, diagnostics: bool)
         let viewport = ProjectionViewport { width: if index == 2 { 48 } else { 32 }, height: 32 };
         project_cached_sky(&mut projection, &sky, &view, viewport, time.tt, &mut times);
         let projected = borrow_projected(&projection, &sky, &view, viewport);
-        let image = draw_pixels(&mut scene, &projected, &options, time.tt, &mut times).unwrap();
+        let image = draw_pixels(&mut scene, &projected, &options, time.tt, &mut times).cloned().unwrap();
         results.push(FrameResult { sky: sky.clone(), image, observation: observation.reports(), projection: projection.stats(), scene: scene.stats() });
         if diagnostics {
             times.complete_memory_frame(0.01);

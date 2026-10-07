@@ -1,12 +1,12 @@
 //! Loading details keep I/O failures and optional diagnostics outside the catalog pipeline.
-use crate::model::{SkyCatalog, CELL_COUNT};
+use crate::model::{PreparedCatalog, CELL_COUNT};
 use crate::catalog::{datasets::DatasetDirectories, cache::supported, load_embedded_catalog};
 use crate::timing::StepTimes;
 use sha2::{Digest, Sha256};
 use std::{io::{self, Write}, path::{Path, PathBuf}};
 use super::format::{cache_path, catalog_fingerprint, load_cached_catalog, write_cached_catalog};
 
-pub(super) fn load_embedded_sky(times: &mut StepTimes) -> io::Result<SkyCatalog> {
+pub(super) fn load_embedded_sky(times: &mut StepTimes) -> io::Result<PreparedCatalog> {
     let parsed = times
         .measure("Embedded BSC loading", load_embedded_catalog)
         .map_err(io::Error::other)?;
@@ -49,11 +49,11 @@ pub(super) fn fingerprint_source(path: &Option<PathBuf>) -> [u8; 32] {
     fingerprint
 }
 
-pub(super) fn try_load_prepared_catalog(path: &Option<PathBuf>, fingerprint: &[u8; 32], notices: &mut impl Write, times: &mut StepTimes) -> io::Result<Option<SkyCatalog>> {
+pub(super) fn try_load_prepared_catalog(path: &Option<PathBuf>, fingerprint: &[u8; 32], notices: &mut impl Write, times: &mut StepTimes) -> io::Result<Option<PreparedCatalog>> {
     if let Some(path) = path {
         let cached = times.measure("Prepared catalog lookup", || load_cached_catalog(path, fingerprint));
         times.describe("Prepared catalog lookup", || match &cached {
-            Ok(catalog) => format!("hit: validated owned stars={}; source CSV not read; original skipped-row counts unavailable in this cache format", catalog.stars.len()),
+            Ok(catalog) => format!("hit: validated owned stars={}; source CSV not read; original skipped-row counts unavailable in this cache format", catalog.catalog.stars.len()),
             Err(error) => format!("miss: {error}; parse source next"),
         });
         match cached {
@@ -71,7 +71,7 @@ pub(super) fn try_load_prepared_catalog(path: &Option<PathBuf>, fingerprint: &[u
     Ok(None)
 }
 
-pub(super) fn write_prepared_catalog_if_stable(path: Option<PathBuf>, source: &Path, catalog: &SkyCatalog, fingerprint: &[u8; 32], notices: &mut impl Write, times: &mut StepTimes) -> io::Result<()> {
+pub(super) fn write_prepared_catalog_if_stable(path: Option<PathBuf>, source: &Path, catalog: &PreparedCatalog, fingerprint: &[u8; 32], notices: &mut impl Write, times: &mut StepTimes) -> io::Result<()> {
     if let Some(path) = path {
         if cache_path(source, path.parent().unwrap()).ok().as_ref() != Some(&path) {
             writeln!(notices, "Dataset changed while loading; cache was not written.")?;
@@ -88,10 +88,10 @@ pub(super) fn write_prepared_catalog_if_stable(path: Option<PathBuf>, source: &P
     Ok(())
 }
 
-pub(super) fn prepare_catalog(parsed: crate::catalog::Catalog, times: &mut crate::timing::StepTimes) -> SkyCatalog {
+pub(super) fn prepare_catalog(parsed: crate::catalog::Catalog, times: &mut crate::timing::StepTimes) -> PreparedCatalog {
     let input = parsed.stars.len();
     let catalog = times.measure("Catalog preparation", || crate::sky::prepare_owned_catalog(parsed));
-    times.describe("Catalog preparation", || format!("input entries={input}; removed placeholders={}; output stars={}; grid cells={CELL_COUNT}; always-checked={}; unique constellation endpoints={}", input - catalog.stars.len(), catalog.stars.len(), catalog.always_checked.len(), catalog.endpoint_indices.len()));
+    times.describe("Catalog preparation", || format!("input entries={input}; removed placeholders={}; output stars={}; grid cells={CELL_COUNT}; always-checked={}; unique constellation endpoints={}", input - catalog.catalog.stars.len(), catalog.catalog.stars.len(), catalog.catalog.always_checked().len(), catalog.catalog.endpoint_indices().len()));
     catalog
 }
 

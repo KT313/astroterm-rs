@@ -53,9 +53,6 @@ impl StarStorage {
     pub(crate) fn brightness_keys(&self) -> &[f32] {
         self.rows.brightness_key.as_slice()
     }
-    pub(crate) fn motion_bounds(&self) -> &[f32] {
-        self.rows.motion_bound.as_slice()
-    }
     pub(crate) fn borrow_observation_fields(&self) -> ObservationFields<'_> {
         ObservationFields {
             magnitude: self.rows.magnitude.as_slice(),
@@ -110,7 +107,7 @@ mod tests {
         let fingerprint = catalog_fingerprint();
         write_cached_catalog(&path, &owned, &fingerprint).unwrap();
         let cached = load_cached_catalog(&path, &fingerprint).unwrap();
-        for catalog in [&owned, &cached] {
+        for catalog in [&owned.catalog, &cached.catalog] {
             let fields = catalog.stars.borrow_observation_fields();
             let trajectories = catalog.stars.borrow_trajectory_fields();
             let directions = catalog.stars.directions();
@@ -156,7 +153,7 @@ mod measurements {
             cache: Some(std::env::temp_dir().join("astroterm-processing-probe")),
         };
         let catalog =
-            crate::sky::load_sky_catalog(dataset.as_ref(), &directories, &mut std::io::stderr()).unwrap();
+            crate::sky::load_sky_catalog(dataset.as_ref(), &directories, &mut std::io::stderr()).unwrap().catalog;
         let indices: Vec<_> = catalog
             .stars
             .brightness_keys()

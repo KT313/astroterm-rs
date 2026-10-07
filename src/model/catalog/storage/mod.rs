@@ -113,7 +113,6 @@ impl StarStorage {
             bytemuck::cast_slice(c.magnitude),
             bytemuck::cast_slice(c.brightness_key),
             bytemuck::cast_slice(c.distance),
-            bytemuck::cast_slice(c.motion_bound),
             bytemuck::cast_slice(c.id),
             bytemuck::cast_slice(c.name),
             bytemuck::cast_slice(c.designation),
@@ -134,7 +133,6 @@ impl StarStorage {
                 magnitude: data.decode(section::MAGNITUDE)?,
                 brightness_key: data.decode(section::BRIGHTNESS_KEY)?,
                 distance: data.decode(section::DISTANCE)?,
-                motion_bound: data.decode(section::MOTION_BOUND)?,
                 id: data.decode(section::ID)?,
                 name: data.decode(section::NAME)?,
                 designation: data.decode(section::DESIGNATION)?,
@@ -147,7 +145,7 @@ impl StarStorage {
             precise_motions: data.decode(section::PRECISE_MOTIONS)?.into(),
         })
     }
-    pub(crate) fn validate(&self, names: &crate::catalog::StarNames, full: bool) -> io::Result<()> {
+    pub(crate) fn validate(&self, names: &crate::catalog::StarNames, bounds: &[f32], full: bool) -> io::Result<()> {
         let c = self.columns();
         let n = c.id.len();
         if [
@@ -156,7 +154,7 @@ impl StarStorage {
             c.magnitude.len(),
             c.brightness_key.len(),
             c.distance.len(),
-            c.motion_bound.len(),
+            bounds.len(),
             c.name.len(),
             c.designation.len(),
             c.spectral_type.len(),
@@ -186,7 +184,7 @@ impl StarStorage {
             }
         }
         let mut precise_seen = vec![false; self.precise_motions.len()];
-        for i in 0..n {
+        for (i, &bound) in bounds.iter().enumerate() {
             if c.name[i] as usize > self.name_table.len()
                 || c.precise_index[i] as usize > self.precise_motions.len()
                 || c.flags[i] > 3
@@ -195,11 +193,11 @@ impl StarStorage {
                 return Err(invalid("invalid star metadata/index"));
             }
             if c.u0[i].iter().chain(&c.w[i]).any(|v| !v.is_finite())
-                || [c.magnitude[i], c.brightness_key[i], c.distance[i], c.motion_bound[i], c.color[i]]
+                || [c.magnitude[i], c.brightness_key[i], c.distance[i], bound, c.color[i]]
                     .iter()
                     .any(|x| !x.is_finite())
                 || c.distance[i] < 0.0
-                || c.motion_bound[i] < 0.0
+                || bound < 0.0
             {
                 return Err(invalid("invalid numerical star data"));
             }
@@ -221,7 +219,7 @@ impl StarStorage {
                     || motion.remove_singular_distance()
                     || (c.flags[i] & 1 != 0 && motion.distance_pc.is_some())
                     || self.brightness_key(i) > motion.brightest_magnitude(self.magnitude(i))
-                    || self.motion_bound(i) < motion.motion_bound() + QUANTIZATION_MARGIN
+                    || f64::from(bound) < motion.motion_bound() + QUANTIZATION_MARGIN
                 {
                     return Err(invalid("inconsistent trajectory policy/bounds"));
                 }
@@ -246,9 +244,6 @@ impl StarStorage {
     }
     pub fn brightness_key(&self, i: usize) -> f64 {
         self.rows.brightness_key.as_slice()[i] as f64
-    }
-    pub fn motion_bound(&self, i: usize) -> f64 {
-        self.rows.motion_bound.as_slice()[i] as f64
     }
     pub fn magnitude(&self, i: usize) -> f64 {
         self.rows.magnitude.as_slice()[i] as f64
@@ -284,7 +279,6 @@ impl StarStorage {
             motion: self.motion(i),
             magnitude: f64::from(c.magnitude[i]),
             brightness_key: f64::from(c.brightness_key[i]),
-            motion_bound: f64::from(c.motion_bound[i]),
             singular_fallback: c.flags[i] & 1 != 0,
             spectral_type: c.spectral_type[i],
             color_index: (c.flags[i] & 2 != 0).then_some(c.color[i]),
@@ -292,7 +286,7 @@ impl StarStorage {
         }
     }
 
-    pub(crate) fn push(&mut self, star: Star) {
+    pub(crate) fn push(&mut self, star: Star) -> f32 {
         // decide singular handling on quantized inputs, then certify compact direction accuracy
         let original = star.motion;
         let mut compact = StellarMotion {
@@ -330,7 +324,6 @@ impl StarStorage {
                 .next_down()
                 .max(f32::MIN),
             distance: if precise { 0.0 } else { motion.distance_pc.unwrap_or(0.0) as f32 },
-            motion_bound: ((motion.motion_bound() + QUANTIZATION_MARGIN) as f32).next_up(),
             id: star.id.0,
             name,
             designation: encode_designation(star.designation),
@@ -339,10 +332,11 @@ impl StarStorage {
             flags: u8::from(star.singular_fallback || singular) | (u8::from(star.color_index.is_some()) << 1),
             precise_index,
         });
+        ((motion.motion_bound() + QUANTIZATION_MARGIN) as f32).next_up()
     }
 
     /// Reorder in place using a permutation, without an expanded or second compact catalog.
-    pub(crate) fn reorder(&mut self, order: &[usize]) {
+    pub(crate) fn reorder(&mut self, order: &[usize], bounds: &mut [f32]) {
         let mut destination = vec![0; self.len()];
         for (new, &old) in order.iter().enumerate() {
             destination[old] = new;
@@ -356,7 +350,7 @@ impl StarStorage {
                 rows.magnitude.swap(i, j);
                 rows.brightness_key.swap(i, j);
                 rows.distance.swap(i, j);
-                rows.motion_bound.swap(i, j);
+                bounds.swap(i, j);
                 rows.id.swap(i, j);
                 rows.name.swap(i, j);
                 rows.designation.swap(i, j);
@@ -377,7 +371,7 @@ impl StarStorage {
 }
 
 #[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(StarRowVec { u0, w, magnitude, brightness_key, distance, motion_bound, id, name, designation, spectral_type, color, flags, precise_index });
+crate::cache::report_fields!(StarRowVec { u0, w, magnitude, brightness_key, distance, id, name, designation, spectral_type, color, flags, precise_index });
 #[cfg(feature = "memory-diagnostics")]
 crate::cache::report_fields!(StarStorage { rows, name_table, precise_motions });
 
@@ -394,7 +388,6 @@ mod tests {
             motion,
             magnitude,
             brightness_key: 0.0,
-            motion_bound: 0.0,
             singular_fallback: false,
             spectral_type: *b"G2",
             color_index: None,
@@ -488,7 +481,9 @@ mod tests {
             assert_eq!(storage.get(i).id, storage.id(i));
         }
         let mut owned = storage.clone();
-        owned.reorder(&[2, 0, 1]);
+        let mut bounds = [0.1, 0.2, 0.3];
+        owned.reorder(&[2, 0, 1], &mut bounds);
+        assert_eq!(bounds, [0.3, 0.1, 0.2]);
         assert_eq!(owned.columns().id, &[2, 0, 1]);
         assert_eq!(owned.get(0), storage.get(2));
     }
@@ -502,7 +497,7 @@ mod tests {
         ) {
             let mut original = StellarMotion { u0: Equatorial { right_ascension: ra, declination: dec }.to_unit_vector(),
                 w: Vector3 { x:wx, y:wy, z:wz }, distance_pc: distance.then_some(10.0) };
-            let mut storage = StarStorage::default(); storage.push(star(original,5.0));
+            let mut storage = StarStorage::default(); let bound = storage.push(star(original,5.0));
             original.remove_singular_distance();
             let stored = storage.motion(0);
             let (start,end) = computational_years();
@@ -511,7 +506,7 @@ mod tests {
                 let sample = stored.evaluate(t,5.0);
                 prop_assert!(separation(original.evaluate(t,5.0).direction,sample.direction) <= MAX_DIRECTION_ERROR + 1e-12);
                 prop_assert!(storage.brightness_key(0) <= sample.magnitude);
-                prop_assert!(separation(storage.stored_direction(0),sample.direction) <= storage.motion_bound(0));
+                prop_assert!(separation(storage.stored_direction(0),sample.direction) <= f64::from(bound));
             }
         }
     }

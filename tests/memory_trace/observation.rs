@@ -11,7 +11,7 @@ fn catalog(count: usize) -> Arc<SkyCatalog> {
     let mut source = astroterm::catalog::load_embedded_catalog().unwrap();
     source.stars.retain(|star| star.has_data);
     source.stars.truncate(count);
-    Arc::new(sky::prepare_owned_catalog(astroterm::catalog::Catalog::new(source.stars, Default::default(), vec![])))
+    Arc::new(sky::prepare_owned_catalog(astroterm::catalog::Catalog::new(source.stars, Default::default(), vec![])).catalog)
 }
 fn times(enabled: bool) -> StepTimes {
     let mut result = StepTimes::with_trace(true);

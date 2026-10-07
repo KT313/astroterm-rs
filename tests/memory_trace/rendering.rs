@@ -29,19 +29,19 @@ fn contains(events: &[MemoryEvent], buffer: BufferId, operation: Operation) -> b
 }
 
 #[test]
-fn raster_hit_only_clears_candidate_and_copies_output_without_repainting() {
+fn raster_hit_only_clears_candidate_and_borrows_output_without_repainting() {
     let sky = fixture();
     let data = project_sky(&sky, &View::default(), ProjectionViewport { width: 16, height: 12 });
     let projected = data.view(&sky);
     let mut cache = SceneCache::default();
     let mut first = trace(true);
-    let expected = draw_pixels(&mut cache, &projected, &options(), J2000, &mut first).unwrap();
+    let expected = draw_pixels(&mut cache, &projected, &options(), J2000, &mut first).cloned().unwrap();
     assert!(contains(&operations(&first, "Raster cache store"), BufferId::PixelCandidate, Operation::Move));
     assert!(contains(&operations(&first, "Raster cache store"), BufferId::PixelScene, Operation::Store { value_changed: true }));
     assert!(operations(&first, "Canvas initialization").iter().any(|e| matches!(e, MemoryEvent::Operation { operation: Operation::Build, .. })));
 
     let mut hit = trace(true);
-    assert_eq!(draw_pixels(&mut cache, &projected, &options(), J2000, &mut hit).unwrap(), expected);
+    assert_eq!(draw_pixels(&mut cache, &projected, &options(), J2000, &mut hit).cloned().unwrap(), expected);
     assert!(contains(&operations(&hit, "Raster cache decision"), BufferId::PixelScene, Operation::Reuse));
     assert!(operations(&hit, "Canvas initialization").is_empty());
     assert!(operations(&hit, "Raster cache store").is_empty());
@@ -49,7 +49,10 @@ fn raster_hit_only_clears_candidate_and_copies_output_without_repainting() {
     let MemoryEvent::Operation { before: Some(before), after: Some(after), .. } = clears[0] else { panic!("candidate shapes"); };
     assert_eq!(before.capacity, after.capacity);
     assert_eq!(after.len, Some(0));
-    assert!(operations(&hit, "Raster output copy").iter().any(|e| matches!(e, MemoryEvent::Operation { buffer: BufferId::SkyImage, operation: Operation::Copy, logical_bytes: Some(bytes), .. } if *bytes == expected.len())));
+    assert!(operations(&hit, "Raster output copy").is_empty());
+    let image = draw_pixels(&mut cache, &projected, &options(), J2000, &mut hit).unwrap();
+    let pixels = image.as_ptr();
+    assert_eq!(pixels, cache.pixel_image().as_ptr(), "returned pixels borrow the cache allocation");
 }
 
 #[test]
@@ -58,11 +61,11 @@ fn raster_invalidation_and_bypass_preserve_equal_result_store_outcomes() {
     let data = project_sky(&sky, &View::default(), ProjectionViewport { width: 16, height: 12 });
     let projected = data.view(&sky);
     let mut cache = SceneCache::default();
-    let expected = draw_pixels(&mut cache, &projected, &options(), J2000, &mut trace(false)).unwrap();
+    let expected = draw_pixels(&mut cache, &projected, &options(), J2000, &mut trace(false)).cloned().unwrap();
     for reason in [RefreshReason::Invalidated, RefreshReason::Bypassed] {
         if reason == RefreshReason::Bypassed { cache.configure(&CacheConfig::disabled()); } else { cache.invalidate(); }
         let mut times = trace(true);
-        assert_eq!(draw_pixels(&mut cache, &projected, &options(), J2000, &mut times).unwrap(), expected);
+        assert_eq!(draw_pixels(&mut cache, &projected, &options(), J2000, &mut times).cloned().unwrap(), expected);
         let events = operations(&times, "Raster cache decision");
         assert!(contains(&events, BufferId::PixelScene, Operation::Refresh(reason)));
         assert!(!contains(&events, BufferId::PixelCandidate, Operation::Compare)); // both paths bypass key equality
@@ -94,7 +97,7 @@ fn normal_trace_without_memory_activation_leaves_rendering_events_empty() {
     let data = project_sky(&sky, &View::default(), ProjectionViewport { width: 16, height: 12 });
     let mut cache = SceneCache::default();
     let mut times = trace(false);
-    draw_pixels(&mut cache, &data.view(&sky), &options(), J2000, &mut times).unwrap();
+    draw_pixels(&mut cache, &data.view(&sky), &options(), J2000, &mut times).cloned().unwrap();
     assert!(times.trace().unwrap().steps.iter().all(|s| s.memory_events.is_empty()));
 }
 
@@ -105,10 +108,10 @@ fn changed_raster_inputs_report_dependency_comparison_and_changed_image() {
     let projected = data.view(&sky);
     let mut cache = SceneCache::default();
     let mut options = options();
-    let first = draw_pixels(&mut cache, &projected, &options, J2000, &mut trace(false)).unwrap();
+    let first = draw_pixels(&mut cache, &projected, &options, J2000, &mut trace(false)).cloned().unwrap();
     options.grid = true;
     let mut changed = trace(true);
-    let next = draw_pixels(&mut cache, &projected, &options, J2000, &mut changed).unwrap();
+    let next = draw_pixels(&mut cache, &projected, &options, J2000, &mut changed).cloned().unwrap();
     assert_ne!(first, next);
     let decision = operations(&changed, "Raster cache decision");
     assert!(contains(&decision, BufferId::PixelCandidate, Operation::Compare));

@@ -40,9 +40,9 @@ fn athyg_matches_the_embedded_catalog() {
 
     // nearly all constellation figures find their stars
     let sky = astroterm::sky::prepare_catalog(&athyg);
-    assert_eq!(sky.constellations.len(), 88);
+    assert_eq!(sky.catalog.constellations().len(), 88);
     assert_eq!(
-        sky.constellations
+        sky.catalog.constellations()
             .iter()
             .map(|figure| figure.segments.len())
             .sum::<usize>(),
@@ -57,7 +57,7 @@ fn real_catalog_quantization_stays_within_half_an_arcsecond() {
     let stored = astroterm::sky::prepare_catalog(&source);
     let (start, end) = astroterm::astro::models::stars::computational_years();
     let mut maximum = 0.0_f64;
-    for star in stored.stars.iter() {
+    for star in stored.catalog.stars.iter() {
         let i = source.stars.binary_search_by_key(&star.id, |s| s.id).unwrap();
         let mut original = astroterm::sky::prepare_star(&source.stars[i]).motion;
         original.remove_singular_distance();
@@ -71,7 +71,7 @@ fn real_catalog_quantization_stays_within_half_an_arcsecond() {
     }
     eprintln!(
         "AT-HYG max quantization separation: {maximum} arcsec; {} precise trajectories",
-        stored.stars.precise_count()
+        stored.catalog.stars.precise_count()
     );
 }
 
@@ -111,8 +111,8 @@ fn real_catalog_cache_preserves_the_rendered_frame() {
     let path = dir.path().join("cache");
     let fingerprint = catalog_fingerprint();
     write_cached_catalog(&path, &catalog, &fingerprint).unwrap();
-    let expected = frame(catalog);
+    let expected = frame(catalog.catalog);
     let cached = load_cached_catalog(&path, &fingerprint).unwrap();
-    assert!(cached.stars.len() > 2_500_000);
-    assert_eq!(frame(cached), expected);
+    assert!(cached.catalog.stars.len() > 2_500_000);
+    assert_eq!(frame(cached.catalog), expected);
 }

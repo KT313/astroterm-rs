@@ -15,12 +15,12 @@ use super::diagnostics::memory::{
     record_pixel_initialization, record_pixel_finalization,
 };
 
-/// Reuse or redraw the pixel scene, then return the existing owned image copy expected by the renderer.
-pub fn draw_pixels(storage: &mut crate::state::SceneCache, sky: &ProjectedSky<'_>, options: &RenderOptions, epoch: f64, times: &mut StepTimes) -> Option<image::RgbaImage> {
+/// Reuse or redraw the pixel scene, then lend the completed immutable image without copying pixels.
+pub fn draw_pixels<'a>(storage: &'a mut crate::state::SceneCache, sky: &ProjectedSky<'_>, options: &RenderOptions, epoch: f64, times: &mut StepTimes) -> Option<&'a image::RgbaImage> {
     let refresh = super::caching::prepare_pixel_candidate(storage, sky, options, epoch, times); // compare this frame's drawing inputs with the saved image
     if refresh { super::caching::refresh_pixel_scene(storage, sky, options, epoch, times)?; }   // redraw and store the image when its inputs changed
     else { super::caching::clear_pixel_candidate(storage, times); }                             // keep candidate capacity for the next comparison
-    super::caching::copy_pixel_scene(storage, times)                                           // give the caller its existing separate image buffer
+    Some(storage.pixel_image()) // borrow the original image; callers needing ownership must explicitly copy
 }
 
 pub fn draw_characters(storage: &mut crate::state::SceneCache, canvas: &mut Canvas, sky: &ProjectedSky<'_>, options: &RenderOptions, epoch: f64) {

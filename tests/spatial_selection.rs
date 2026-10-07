@@ -59,7 +59,7 @@ fn catalog() -> Arc<SkyCatalog> {
                     has_data: true,
                 });
             }
-            Arc::new(astroterm::sky::prepare_owned_catalog(catalog))
+            Arc::new(astroterm::sky::prepare_owned_catalog(catalog).catalog)
         })
         .clone()
 }
@@ -355,7 +355,7 @@ fn seam_threshold_horizon_fast_mover_and_view_edge_cases_are_not_culled() {
             });
             parsed.stars.push(star);
         }
-        let catalog = Arc::new(astroterm::sky::prepare_owned_catalog(parsed));
+        let catalog = Arc::new(astroterm::sky::prepare_owned_catalog(parsed).catalog);
         let time = FrameTime::from_utc(J2000 + years * JULIAN_YEAR_DAYS);
         let mut simulation = SimulationState::exact();
         let mut timing = StepTimes::default();

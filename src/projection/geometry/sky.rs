@@ -58,7 +58,7 @@ pub fn project_sky_with_times(
     });
     let (planets, moon) = times.measure("Body projection", || project_bodies(sky, view, &camera, viewport));
     let constellations = times.measure("Constellation projection", || {
-        project_constellations(sky, view, viewport)
+        project_constellations(sky.constellations(), &sky.stars, sky.magnitude_threshold, view, viewport)
     });
     let (horizon, horizon_labels) = times.measure("Horizon projection", || {
         (
@@ -122,17 +122,19 @@ pub(in crate::projection) fn project_bodies(
 }
 
 pub(in crate::projection) fn project_constellations(
-    sky: &ObservedSky,
+    figures: &[crate::model::Constellation],
+    stars: &[crate::model::ObservedStar],
+    magnitude_threshold: f64,
     view: &View,
     viewport: Viewport,
 ) -> Vec<ProjectedConstellation> {
     let find_star = |index| {
-        sky.stars
+        stars
             .binary_search_by_key(&index, |star| star.source_index)
             .ok()
-            .map(|i| &sky.stars[i])
+            .map(|i| &stars[i])
     };
-    sky.constellations
+    figures
         .iter()
         .filter_map(|figure| {
             let endpoints = figure
@@ -145,7 +147,7 @@ pub(in crate::projection) fn project_constellations(
                 .iter()
                 .map(|star| star.magnitude)
                 .fold(f64::NEG_INFINITY, f64::max);
-            if maximum_magnitude > sky.magnitude_threshold {
+            if maximum_magnitude > magnitude_threshold {
                 return None;
             }
             let arcs = endpoints

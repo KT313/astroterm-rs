@@ -11,6 +11,7 @@ ApplicationState
 ├── config                    validated settings and cache policy
 ├── persistent                data loaded once and never changed during the run
 │   └── catalog               Arc<SkyCatalog>: immutable catalog data, installed once by replace_catalog
+├── preparation               startup-only movement bounds, freed before the frame loop
 ├── cache                     everything recomputed from the persistent data and the simulated time
 │   ├── sky                   observed objects ready for projection
 │   ├── simulation            samples of planet, Moon and Earth-orientation models
@@ -85,23 +86,29 @@ catalog; frame processing reads it. Catalog indices follow cell, conservative br
 | Storage | Contents and readers | Lifetime |
 |---|---|---|
 | `stars` columns `u0`, `w` (N×3), `distance`; `precise_motions` side table | J2000 equatorial unit directions, normalized motion per Julian year (365.25 days), distance in parsecs; stellar propagation reads them through `columns()` or the `directions()`/`motions()` views | Immutable during the run; the `Arc` is swapped once at startup by `replace_catalog` |
-| `stars` columns `magnitude`, `brightness_key`, `motion_bound` | Starting magnitude, conservative brightest magnitude and angular drift in radians; selection/propagation read them | Same |
+| `stars` columns `magnitude`, `brightness_key` | Starting magnitude and conservative brightest magnitude; selection/propagation read them | Same |
 | `stars` columns `id`, `name`, `designation`, `spectral_type`, `color`, `flags`; `name_table` side table | Stable identity and encoded display metadata; ordering, labels and appearance read them | Same |
-| `grid.offsets`, coarse/fine caps, `always_checked` | Catalog-region membership and conservative angular caps; region/brightness filtering reads them | Same; cap vectors are also built for cache-loaded catalogs |
-| `endpoint_indices`, constellation figures/segments | Sorted catalog-index union and resolved endpoint pairs; endpoint merge and arc projection read them | Same |
+| `grid.offsets`, coarse/fine caps | Catalog-region membership and conservative angular caps; region/brightness filtering reads them | Same; cap vectors are also built for cache-loaded catalogs |
+| `figures.endpoints`, constellation figures/segments | Sorted catalog-index union and resolved endpoint pairs; endpoint merge and arc projection read them | Same |
 | `names.text` | UTF-8 text block; labels resolve name ranges into it | Same |
 
 The per-star columns are declared once as `StarRow` (`model/catalog/storage/columns.rs`); `StarRowVec` owns one
 vector per column and `StarRowSlice` borrows them for processing. The logger receives the original `StarStorage`,
-not separate column views. Its `persistent.catalog.stars` entry reports all 13 fields and sums actual column
+not separate column views. Its `persistent.catalog.stars` entry reports all 12 runtime fields and sums actual column
 lengths/capacities. Name ranges and precise motions have separate table entries; their bytes are not counted twice.
 
 Prepared disk caches are read into a temporary byte buffer, validated and decoded into owned vectors. They use the
 same representation as source-loaded catalogs. `CatalogArray` owns a vector; no catalog file mappings remain.
 The byte snapshot is dropped before the loaded catalog is returned. Validation and atomic disk writes remain;
 loading may temporarily hold both encoded bytes and decoded arrays. The catalog's Arc handles share one allocation,
-counted once per feature-gated inventory. Names and constellation figures cloned into the observed sky, and
-projection's preparation copies, remain intentional owned copies.
+counted once per feature-gated inventory. Observed skies borrow original names and share immutable definition sets;
+projection keys retain handles to the same definitions, not copies of the figure or endpoint vectors.
+
+`ApplicationState.preparation` exclusively owns the per-star movement bounds used to build/validate the grid.
+Loading returns `PreparedCatalog { catalog, preparation }`; the disk-cache writer requires both together.
+`free_preparation_only_data()` drops that owner after static frame preparation and before the clock starts.
+Runtime rows remain a complete rectangular table, and existing catalog Arc identities do not change.
+The cache format is version 3; older prepared caches are rejected and rebuilt from source normally.
 
 Table previews sort map keys once per dump, format only the edge rows, and stop nested/text formatting at named
 limits in `rows/`. Unknown sizes are labeled rather than reported as zero. The table listing is a quick view with
@@ -158,7 +165,7 @@ view of the completed fields. That view does not build a reference vector or clo
 
 | Fields | Contents and use | Lifecycle |
 |---|---|---|
-| `prepared_figures`, `prepared_endpoints` | Figure copy and sorted catalog endpoint union used to recognize unchanged topology | Replaced on preparation; changed public figures use a local endpoint fallback |
+| Immutable definition handle in constellation key | Read-only original definitions and their endpoint union | Shared; custom figures replace an immutable set through `set_figure_override` |
 | `star_candidate`, `stars` | Exact observed-position/flag key, then visible `(observed_index, Cell)` result | Candidate is cleared on hit, moved into cache on successful refresh |
 | `order_candidate`, `order`, `draw_order_scratch` | Exact visible magnitude/ID inputs, draw-order permutation, temporary sort records | Same key lifecycle; sort scratch retains capacity between sorts |
 | `bodies` | Projected Sun/planet cells plus lunar geometry; hidden body records remain present | Refresh when the geometry key changes |
@@ -181,8 +188,8 @@ all rendering algorithms.
 | Scene candidates and committed keys | Raster input capture → exact comparison; display values plus copied body/arc/horizon geometry | Hits clear flat vectors while retaining capacity; nested strings/arcs drop; refresh transfers candidate; failed pixel draws retain it for reset/retry |
 | Scene pixel/character results | Raster passes → composition; RGBA pixels or canvas cells | Intentional image clone per output; character clone on refresh and restore on hit |
 | Character `frame`, `presenter` | Sky/panel drawing → full-screen composition → diff writer | Resize replaces canvases and discards previous-frame snapshot; successful presentation updates previous |
-| Pixel `sky_image`, `frame_image`, `rgb` | Raster clone → sky/text composition → RGB conversion/encoding | Rebuilt per frame and retained for inspection; conversions can consume/transfer allocations |
-| Pixel `text`, `composed`, `encoded` | Text/image composition → serialization; ratatui cells or protocol handle | Rebuilt per frame; encoded internals are opaque |
+| Pixel `frame_image`, `rgb` | Borrowed cached sky → sky/text composition → RGB conversion/encoding | Full frame consumed by conversion; RGB freed after upload encoding |
+| Pixel `text`, `composed`, `encoded` | Text/image composition → serialization; ratatui cells or protocol handle | Text freed after painting/composition; composed/encoded results rebuilt per frame; encoded internals are opaque |
 | Metadata `fields`, character `step_fields`, cache strings/notices | Metadata/timing formatting → panel/text | Field vectors refill in place; strings are rebuilt; notices retained as needed |
 | `TextRasterizer` font/glyph map | Lazy glyph rasterization → text painting; glyph-keyed coverage bytes | Cell-size change, bypass or 512-glyph policy clears masks; font internals remain opaque |
 | `upload`, `compressed`, `serialized`, `serialization_blank` | Kitty/image encoding → writer; bytes or terminal cells | Refilled only after previous writes/flushes complete; flat capacities retained |
@@ -190,7 +197,7 @@ all rendering algorithms.
 
 Retention is not a promise of allocation reuse. In particular, image and ratatui buffers currently rebuild each
 frame. Retaining old capacity/data for inspection can raise steady or peak memory. Inventory snapshots do not prove
-process peaks. The cached raster output copies and previous-frame canvas remain intentional.
+process peaks. Character raster output copies and the previous-frame character canvas remain intentional.
 
 ## Diagnostics and deliberate exceptions
 
@@ -216,3 +223,20 @@ Not every local allocation belongs in the root:
 Inventory rows distinguish known payload, lower bounds and unknown storage. Shared allocations and mappings are
 counted once per capture; mapped file length is neither heap use nor RSS. Buffer-operation events describe explicit
 instrumented operations and permitted borrows, not every memory access, allocator call or physical byte transfer.
+
+### One-use results and narrow inputs
+
+Stellar samples retain direction, magnitude and the singular-fallback flag; distance ratio is only a local
+calculation. Its removal can change a per-star diagnostic generation comparison, but these generations do not
+control downstream processing. TTLs and exact-time reuse are unchanged.
+
+Pixel text layout is freed after glyph painting (graphics) or cell composition (halfblocks). Glyph masks and
+transport capacities remain reusable. The cached sky image is read-only; metadata paints only into the distinct
+full-frame image. `scene::draw_pixels` returns a borrowed image, and `SceneCache::pixel_image` exposes that same
+allocation after preparation. Headless callers needing an independent snapshot must explicitly clone it.
+Halfblock encoding retains one scoped image copy because the installed library constructor consumes its image.
+
+Constellation geometry helpers receive `&[Constellation]`, `&[ObservedStar]` and required settings, not the full
+catalog. Definition sets have no writable public field access; custom sets are validated by
+`sky::prepare_constellation_set` and explicitly installed. `None` restores default figures; an empty set hides them.
+Observation continues including the base catalog's endpoint union; projection uses the active definitions.

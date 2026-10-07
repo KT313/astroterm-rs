@@ -34,7 +34,7 @@ fn source_and_cached_loads_report_actual_work_and_ordered_skip_reasons() {
         let catalog =
             load_sky_catalog_with_times(Some(&Dataset::Path(path.clone())), &dirs, &mut Vec::new(), &mut times)
                 .unwrap();
-        assert_eq!(catalog.stars.len(), 2);
+        assert_eq!(catalog.catalog.stars.len(), 2);
         let mut report = Vec::new();
         times.trace().unwrap().write_report(&mut report).unwrap();
         let report = String::from_utf8(report).unwrap();
@@ -55,7 +55,7 @@ fn source_and_cached_loads_report_actual_work_and_ordered_skip_reasons() {
 fn tracing_preserves_observation_projection_and_raster_with_cache_or_bypass() {
     let catalog = Arc::new(astroterm::sky::prepare_owned_catalog(
         astroterm::catalog::load_embedded_catalog().unwrap(),
-    ));
+    ).catalog);
     let options = RenderOptions {
         unicode: true,
         braille: false,

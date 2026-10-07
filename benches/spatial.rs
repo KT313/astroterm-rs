@@ -16,7 +16,7 @@ fn benchmark_spatial(criterion: &mut Criterion) {
         Some(path) => load_athyg_catalog(Path::new(&path)).unwrap(),
         None => load_embedded_catalog().unwrap(),
     };
-    let mut sky = Sky::new(Arc::new(astroterm::sky::prepare_owned_catalog(source)));
+    let mut sky = Sky::new(Arc::new(astroterm::sky::prepare_owned_catalog(source).catalog));
     let mut simulation = SimulationState::default();
     let mut timing = StepTimes::default();
     let time = FrameTime::from_utc(2460736.9583333335);

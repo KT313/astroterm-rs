@@ -151,7 +151,7 @@ pub(in crate::sky::observation) fn update_correction_selection(
                 select_correction_indices(
                     working_cache.value().iter().map(|s| s.source_index),
                     eligible.value(),
-                    &output.catalog.endpoint_indices,
+                    output.catalog.endpoint_indices(),
                 )
             });
             let outcome = times.measure("Correction cache store", || {

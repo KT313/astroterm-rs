@@ -16,7 +16,6 @@ pub struct Star {
     /// Catalog magnitude at J2000; evaluated magnitude belongs to ObservedStar.
     pub magnitude: f64,
     pub brightness_key: f64,
-    pub motion_bound: f64,
     pub singular_fallback: bool,
     /// Morgan-Keenan spectral class and subclass as in the catalog, e.g. `*b"K1"`; blank if unknown.
     pub spectral_type: [u8; 2],

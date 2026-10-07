@@ -4,19 +4,21 @@ use crate::model::{StarStorage, Constellation};
 use std::collections::HashMap;
 use super::{grid, prepare_star};
 
-pub(super) fn prepare_compact_stars(entries: impl Iterator<Item = CatalogStar>) -> StarStorage {
+pub(super) fn prepare_compact_stars(entries: impl Iterator<Item = CatalogStar>) -> (StarStorage, Vec<f32>) {
     // prepare directly into compact arrays, then permute in place by cell, key and stable ID
     let mut stars = StarStorage::default();
     stars.reserve(entries.size_hint().1.unwrap_or(0));
+    let mut bounds = Vec::with_capacity(entries.size_hint().1.unwrap_or(0));
     for entry in entries.filter(|s| s.has_data) {
-        stars.push(prepare_star(&entry));
+        bounds.push(stars.push(prepare_star(&entry)));
     }
     stars.shrink_to_fit();
-    stars
+    bounds.shrink_to_fit();
+    (stars, bounds)
 }
 
-pub(super) fn sort_stars_by_region_and_brightness(stars: &mut StarStorage) {
-    let cells: Vec<_> = (0..stars.len()).map(|i| grid::stored_cell(stars, i)).collect();
+pub(super) fn sort_stars_by_region_and_brightness(stars: &mut StarStorage, bounds: &mut [f32]) {
+    let cells: Vec<_> = (0..stars.len()).map(|i| grid::stored_cell(stars, bounds, i)).collect();
     let mut order: Vec<_> = (0..stars.len()).collect();
     order.sort_unstable_by(|&a, &b| {
         cells[a]
@@ -24,7 +26,7 @@ pub(super) fn sort_stars_by_region_and_brightness(stars: &mut StarStorage) {
             .then_with(|| stars.brightness_key(a).total_cmp(&stars.brightness_key(b)))
             .then_with(|| stars.id(b).cmp(&stars.id(a)))
     });
-    stars.reorder(&order);
+    stars.reorder(&order, bounds);
     drop(order);
     drop(cells);
 }
@@ -48,11 +50,6 @@ pub(super) fn collect_constellation_endpoints(constellations: &[Constellation]) 
     endpoints
 }
 
-pub(super) fn collect_fast_moving_stars(stars: &StarStorage) -> Vec<usize> {
-    stars.iter().enumerate().filter_map(|(i, star)| {
-        (star.motion_bound > crate::astro::models::stars::ALWAYS_CHECKED_ANGLE).then_some(i)
-    }).collect()
-}
 
 /// A figure with its stars as indices into the star table. Segments with a star missing from the dataset are left
 /// out, and so is a figure without any segments left.
@@ -169,16 +166,16 @@ mod tests {
             ],
         );
         let sky = crate::sky::create_sky_from_catalog(&catalog);
-        assert_eq!(sky.constellations.len(), 1);
-        let [a, b] = sky.constellations[0].segments[0];
+        assert_eq!(sky.constellations().len(), 1);
+        let [a, b] = sky.constellations()[0].segments[0];
         assert_eq!((sky.star_view(a).id().0, sky.star_view(b).id().0), (10, 20));
     }
 
     #[test]
     fn constellations_reference_star_indices() {
         let sky = build_sky();
-        assert_eq!(sky.constellations.len(), 88);
-        let [a, b] = sky.constellations[19].segments[0];
+        assert_eq!(sky.constellations().len(), 88);
+        let [a, b] = sky.constellations()[19].segments[0];
         assert_eq!((sky.star_view(a).id().0, sky.star_view(b).id().0), (4785, 4915));
     }
 }

@@ -27,7 +27,7 @@ fn filtered_and_reordered_states_borrow_their_own_catalog_metadata() {
         assert_eq!(view.designation().resolve(), full.designation);
         assert_eq!(view.spectral_type(), full.spectral_type);
         assert_eq!(view.color_index(), full.color_index);
-        assert_eq!(sky.star_name(&view), sky.names.get(full.name));
+        assert_eq!(sky.star_name(&view), sky.catalog.names.get(full.name));
         assert_eq!(view.magnitude, i as f64);
     }
     assert_eq!(sky.star_view(0).magnitude, 0.0);

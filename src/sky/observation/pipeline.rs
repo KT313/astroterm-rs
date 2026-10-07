@@ -32,7 +32,7 @@ pub fn observe_cached_sky(
 
     output.selection = storage.candidates.value().1; // publish conservative selection counts
     update_candidate_validation(&mut storage.selected, &storage.candidates, &storage.config, epoch, threshold, &output.catalog, times); // validate selected indices and brightness bounds
-    update_constellation_endpoints(&mut storage.working, &storage.selected, &storage.config, epoch, &output.catalog.endpoint_indices, times); // include stars needed by constellation lines
+    update_constellation_endpoints(&mut storage.working, &storage.selected, &storage.config, epoch, output.catalog.endpoint_indices(), times); // include stars needed by constellation lines
     update_stellar_motion(storage, epoch, output, times); // update selected stars using their catalog motion
     update_current_brightness(&mut storage.eligible, &storage.working, &storage.motion, &storage.config, epoch, threshold, &mut output.magnitude_threshold, times); // mark stars bright enough at the current simulated time
 

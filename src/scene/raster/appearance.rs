@@ -163,7 +163,7 @@ mod tests {
                 &sky.star_views()
                     .find(|star| star.id().0 == catalog_number as u64)
                     .unwrap(),
-                &sky.names,
+                &sky.catalog.names,
             )
         };
         assert_eq!(
@@ -184,7 +184,7 @@ mod tests {
         assert_eq!(
             format_star_label(
                 &sky.star_views().find(|star| star.id().0 == 7001).unwrap(),
-                &sky.names,
+                &sky.catalog.names,
                 true
             ),
             "Vega"
@@ -192,7 +192,7 @@ mod tests {
         let unnamed = (sky.star_views().enumerate()).find(|(_, star)| star.has_data() && star.name().is_none());
         let (_, unnamed) = unnamed.unwrap();
         assert_eq!(
-            format_star_label(&unnamed, &sky.names, false),
+            format_star_label(&unnamed, &sky.catalog.names, false),
             format!("HR {}", unnamed.id().0)
         );
     }

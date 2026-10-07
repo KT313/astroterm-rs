@@ -12,7 +12,7 @@ mod observation;
 mod positions;
 mod simulation;
 
-pub use catalog::{prepare_catalog, prepare_owned_catalog, prepare_star, create_sky_from_catalog, select_grid};
+pub use catalog::{prepare_catalog, prepare_owned_catalog, prepare_constellation_set, prepare_star, create_sky_from_catalog, select_grid};
 pub use catalog::{catalog_fingerprint, cache_path, load_sky_catalog, load_sky_catalog_with_times, write_cached_catalog, load_cached_catalog};
 pub(crate) use catalog::{select_region, select_brightness, count_region_stars};
 pub(crate) use observation::LIGHT_SPEED_AU_DAY;

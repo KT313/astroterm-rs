@@ -11,7 +11,8 @@ Pass `--debug-log-data` to append full-state dumps at these checkpoints, relativ
 | File | Checkpoint | Frequency |
 | --- | --- | --- |
 | `tmp/tables.md` | After catalog/terminal setup, before preparation | Once per run |
-| `tmp/after-preparation.md` | After static precomputations | Once per run |
+| `tmp/after-preparation.md` | After static precomputations, before freeing startup data | Once per run |
+| `tmp/after-preparation-cleanup.md` | After freeing preparation-only bounds | Once per run |
 | `tmp/after-projection.md` | After simulation, observation and projection | Every frame |
 | `tmp/after-rendering.md` | After rendering and presentation | Every frame |
 
@@ -46,9 +47,11 @@ state.log_data(None, None)?;                                                    
 ```
 
 Use a file path when the frame loop is running: the terminal owns stdout and the alternate screen is active.
-The star catalog is one `persistent.catalog.stars` Markdown table with all 13 columns. Each table has a heading,
+The star catalog is one `persistent.catalog.stars` Markdown table with all 12 runtime columns. Each table has a heading,
 memory details and typed column headers; each cell has a bounded preview. Name ranges and precise motions are separate side tables because they
-have different row counts. The main table's byte counts cover its columns only, excluding those side tables.
+have different row counts. The main table's byte counts cover its columns only, excluding those side tables. Startup-only movement bounds
+have their own `preparation` owner and disappear after `free_preparation_only_data()`. No missing column is
+replaced with zeros. Names and immutable constellation definitions are shared from the original catalog.
 
 Used bytes describe live payload; reserved bytes include spare capacity. Both come from the original owners,
 not slices of their data. Unknown sizes print `unknown`; notes identify partial counts such as nested allocations
@@ -61,8 +64,8 @@ These limits apply before hidden data is expanded. Every column remains present 
 
 Catalogs, including prepared-cache hits, use owned arrays. The disk cache is still used to avoid CSV parsing, but
 its bytes are read, validated and decoded into arrays; no file mapping backs the tables. The temporary file-byte
-buffer is released before loading returns. Loading can temporarily hold both bytes and decoded arrays, and name
-clones own separate storage. The source fingerprint changes once with this implementation, so existing prepared
+buffer is released before loading returns. Loading can temporarily hold both bytes and decoded arrays. Names
+and figures are shared without cloning their payloads. The source fingerprint changes once with this implementation, so existing prepared
 caches rebuild. Used/reserved bytes are allocation measurements, not physical RAM residency; OS swapping is allowed.
 
 ## Build and run
@@ -147,8 +150,11 @@ measurement happened; it does not claim those bytes remain allocated when the re
 `sample[n]` are inspection ordinals, not persistent identities. `[*]` groups inspected children after four examples;
 it never extrapolates uninspected children.
 
-Pixel images and ratatui results can be retained for inspection while still being rebuilt each frame. State ownership
-is not a promise of reuse. Designated scratch and some transport/metadata vectors keep capacity after clearing. This
+Pixel text cells and Kitty RGB pixels are freed after their last consumer. Their slots are empty in the final
+frame dump; use an explicit earlier dump to inspect these transient results. The sky-only raster cache remains
+available for reuse and is borrowed directly during composition. Halfblocks require one short-lived image copy
+at the external encoder's ownership boundary; graphics-image composition does not copy into an intermediate sky
+buffer. Other ratatui/encoded results can still be retained for inspection; state ownership is not a promise of reuse. Designated scratch and some transport/metadata vectors keep capacity after clearing. This
 work makes ownership inspectable; it does not claim lower memory usage, fewer allocations or faster frames.
 
 ## Read events beside processing times

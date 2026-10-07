@@ -20,7 +20,6 @@ pub fn prepare_star(entry: &CatalogStar) -> Star {
         name: entry.name,
         designation: entry.designation,
         brightness_key: motion.brightest_magnitude(magnitude),
-        motion_bound: motion.motion_bound(),
         motion,
         magnitude,
         singular_fallback,

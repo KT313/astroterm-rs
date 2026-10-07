@@ -7,8 +7,8 @@ use crate::model::{
 };
 const NUMERIC_SLACK: f64 = 1e-10;
 
-pub(crate) fn stored_cell(stars: &StarStorage, index: usize) -> usize {
-    cell_for(stars.motion_bound(index), stars.stored_direction(index))
+pub(crate) fn stored_cell(stars: &StarStorage, bounds: &[f32], index: usize) -> usize {
+    cell_for(f64::from(bounds[index]), stars.stored_direction(index))
 }
 
 /// Fast movers share the always-checked cell; everything else hashes its stored direction.
@@ -20,9 +20,9 @@ fn cell_for(motion_bound: f64, direction: crate::astro::Vector3) -> usize {
 }
 
 /// Build cell offsets and conservative caps from the prepared star order.
-pub(crate) fn build_grid(stars: &StarStorage) -> SkyGrid {
+pub(crate) fn build_grid(stars: &StarStorage, bounds: &[f32]) -> SkyGrid {
     let mut offsets = vec![0; CELL_COUNT + 1];
-    for (direction, &bound) in stars.directions().outer_iter().zip(stars.motion_bounds()) {
+    for (direction, &bound) in stars.directions().outer_iter().zip(bounds) {
         let direction = crate::astro::Vector3 { x: f64::from(direction[0]), y: f64::from(direction[1]), z: f64::from(direction[2]) };
         let cell = cell_for(f64::from(bound), direction);
         if cell < CELL_COUNT {

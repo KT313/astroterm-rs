@@ -51,7 +51,7 @@ fn complete_scenes_match_for_mixed_radii_and_large_canvas_fallback() {
         star.magnitude = [2.0, 7.0, 7.03125, 7.03124, 8.0, 10.0][i % 6];
     }
     let catalog = Catalog::new(stars, source.names, source.constellations);
-    let sky = observe(Arc::new(crate::sky::prepare_owned_catalog(catalog)), 10.0);
+    let sky = observe(Arc::new(crate::sky::prepare_owned_catalog(catalog).catalog), 10.0);
     for (width, height) in [(1, 1), (200, 200), (1102, 1102), (4097, 17), (17, 4097)] {
         let view = View {
             fov_degrees: 225.0,
@@ -78,7 +78,7 @@ fn compare_minimum_star_rasterizers() {
         cache: Some(std::env::temp_dir().join("astroterm-processing-probe")),
     };
     let catalog =
-        Arc::new(crate::sky::load_sky_catalog(dataset.as_ref(), &directories, &mut std::io::stderr()).unwrap());
+        Arc::new(crate::sky::load_sky_catalog(dataset.as_ref(), &directories, &mut std::io::stderr()).unwrap().catalog);
     for threshold in [5.0, 10.0] {
         let sky = observe(catalog.clone(), threshold);
         for fov in [225.0, 115.2, 12.4] {

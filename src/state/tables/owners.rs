@@ -11,7 +11,7 @@ use crate::timing::StepTimes;
 
 // --- root --------------------------------------------------------------------------------------------------------
 
-list_tables!(ApplicationState { leaves: [], scalars: [], groups: [persistent, cache, timings] });
+list_tables!(ApplicationState { leaves: [preparation], scalars: [], groups: [persistent, cache, timings] });
 list_tables!(Persistent { leaves: [], scalars: [], groups: [catalog] });
 list_tables!(Caches { leaves: [], scalars: [], groups: [sky, simulation, observation, projection, rendering] });
 
@@ -27,10 +27,9 @@ impl Tables for SkyCatalog {
         visit(&path("grid.offsets"), &self.grid.offsets, None);
         visit(&path("grid.coarse_caps"), &self.grid.coarse_caps, None);
         visit(&path("grid.fine_caps"), &self.grid.fine_caps, None);
-        visit(&path("endpoint_indices"), &self.endpoint_indices, None);
-        visit(&path("always_checked"), &self.always_checked, None);
+        visit(&path("endpoint_indices"), &self.figures.endpoints, None);
         visit(&path("names"), &self.names, None);
-        visit(&path("constellations"), &self.constellations, None);
+        visit(&path("constellations"), &self.figures.figures, None);
     }
 }
 
@@ -42,8 +41,10 @@ impl Tables for ObservedSky {
         visit(&join(prefix, "planets"), &self.planets, None);
         visit(&join(prefix, "moon"), &Single(&self.moon), None);
         visit(&join(prefix, "candidate_indices"), &self.candidate_indices, None);
-        visit(&join(prefix, "constellations"), &self.constellations, None);
-        visit(&join(prefix, "names"), &self.names, None);
+        if let Some(figures) = self.figure_override() {
+            visit(&join(prefix, "figure_override.figures"), &figures.figures, None);
+            visit(&join(prefix, "figure_override.endpoints"), &figures.endpoints, None);
+        }
     }
 }
 
@@ -69,8 +70,6 @@ list_tables!(ObservationCache {
 impl Tables for ProjectionCache {
     fn visit_tables(&self, prefix: &str, visit: &mut TableVisitor<'_>) {
         let path = |name: &str| join(prefix, name);
-        visit(&path("prepared_figures"), &self.prepared_figures, None);
-        visit(&path("prepared_endpoints"), &self.prepared_endpoints, None);
         visit(&path("star_candidate"), &self.star_candidate, None);
         visit(&path("order_candidate"), &self.order_candidate, None);
         visit(&path("draw_order_scratch"), &self.draw_order_scratch, None);
@@ -113,7 +112,6 @@ impl Tables for CharacterState {
 impl Tables for PixelState {
     fn visit_tables(&self, prefix: &str, visit: &mut TableVisitor<'_>) {
         let path = |name: &str| join(prefix, name);
-        visit(&path("sky_image"), &self.sky_image, None);
         visit(&path("frame_image"), &self.frame_image, None);
         visit(&path("rgb"), &self.rgb, None);
         visit(&path("text"), &self.text, None);
@@ -160,4 +158,12 @@ impl Tables for StepTimes {
         visit(&join(prefix, "steps"), &TimingSteps(self), None);
         if let Some(trace) = self.trace() { visit(&join(prefix, "trace.steps"), &trace.steps, None); }
     }
+}
+
+impl super::Table for crate::model::CatalogPreparation {
+    fn shape(&self) -> Vec<usize> { vec![self.motion_bounds.len()] }
+    fn rows(&self) -> usize { self.motion_bounds.len() }
+    fn bytes(&self) -> super::TableBytes { super::TableBytes::vector(&self.motion_bounds) }
+    fn columns(&self) -> Vec<crate::rows::Column> { vec![crate::rows::Column { name: "motion_bound", dtype: "f32" }] }
+    fn preview(&self) -> Vec<(usize, Vec<String>)> { super::preview_indices(self.motion_bounds.len()).map(|i| (i, vec![self.motion_bounds[i].to_string()])).collect() }
 }

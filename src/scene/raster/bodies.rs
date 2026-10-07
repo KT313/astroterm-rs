@@ -382,7 +382,7 @@ mod tests {
         for star in &mut catalog.stars {
             star.name = None;
         }
-        sky.catalog = std::sync::Arc::new(crate::sky::prepare_catalog(&catalog));
+        sky.catalog = std::sync::Arc::new(crate::sky::prepare_catalog(&catalog).catalog);
         for (step, &index) in indices.iter().enumerate() {
             sky.stars[index].magnitude = 4.0 - step as f64;
             assert!(sky.star_view(index).name().is_none());

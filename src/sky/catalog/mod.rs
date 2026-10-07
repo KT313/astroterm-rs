@@ -5,7 +5,7 @@ mod grid;
 mod cache;
 mod stars;
 
-pub use pipeline::{prepare_catalog, prepare_owned_catalog, create_sky_from_catalog};
+pub use pipeline::{prepare_catalog, prepare_owned_catalog, prepare_constellation_set, create_sky_from_catalog};
 pub use stars::prepare_star;
 pub use grid::select_grid;
 pub(crate) use grid::{select_region, select_brightness, count_region_stars};

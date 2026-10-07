@@ -59,12 +59,12 @@ fn project(sky: &Sky) -> crate::model::ProjectionData {
 
 fn check_pixels(cache: &mut SceneCache, sky: &ProjectedSky<'_>, options: &RenderOptions) {
     let expected = draw_pixel_sky(sky, options, &mut StepTimes::default()).unwrap();
-    let actual = crate::scene::draw_pixels(cache, sky, options, J2000, &mut StepTimes::default())
+    let actual = crate::scene::draw_pixels(cache, sky, options, J2000, &mut StepTimes::default()).cloned()
         .unwrap();
     assert_eq!(actual, expected);
     let hits = cache.pixels.stats.hits;
     assert_eq!(
-        crate::scene::draw_pixels(cache, sky, options, J2000, &mut StepTimes::default())
+        crate::scene::draw_pixels(cache, sky, options, J2000, &mut StepTimes::default()).cloned()
             .unwrap(),
         expected
     );
@@ -221,7 +221,7 @@ fn compact_keys_preserve_bodies_overlays_warnings_and_disabled_cache_behavior() 
     let expected = draw_pixel_sky(&projected.view(&sky), &options, &mut StepTimes::default()).unwrap();
     for _ in 0..2 {
         assert_eq!(
-            crate::scene::draw_pixels(&mut cache, &projected.view(&sky), &options, J2000, &mut StepTimes::default())
+            crate::scene::draw_pixels(&mut cache, &projected.view(&sky), &options, J2000, &mut StepTimes::default()).cloned()
                 .unwrap(),
             expected
         );
@@ -261,7 +261,7 @@ fn prepared_display_constants_match_reference_and_fall_back_for_another_catalog(
         "immutable preparation survives runtime cache bypass"
     );
     assert_eq!(
-        crate::scene::draw_pixels(&mut cache, &project(&original).view(&original), &options(), J2000, &mut StepTimes::default())
+        crate::scene::draw_pixels(&mut cache, &project(&original).view(&original), &options(), J2000, &mut StepTimes::default()).cloned()
             .unwrap(),
         draw_pixel_sky(&project(&original).view(&original), &options(), &mut StepTimes::default()).unwrap()
     );
@@ -274,10 +274,10 @@ fn pixel_candidate_reuses_hit_capacity_then_moves_on_refresh() {
     let view = projected.view(&sky);
     let mut cache = SceneCache::default();
     let mut times = StepTimes::default();
-    let expected = draw_pixels(&mut cache, &view, &options(), J2000, &mut times).unwrap();
+    let expected = draw_pixels(&mut cache, &view, &options(), J2000, &mut times).cloned().unwrap();
     assert!(cache.pixel_candidate.is_none()); // the successful refresh moved the entire key into the cache
 
-    draw_pixels(&mut cache, &view, &options(), J2000, &mut times).unwrap();
+    draw_pixels(&mut cache, &view, &options(), J2000, &mut times).cloned().unwrap();
     let candidate = cache.pixel_candidate.as_ref().unwrap();
     let StarKeys::Pixels(stars) = &candidate.stars else { panic!("pixel key expected") };
     assert!(stars.is_empty());
@@ -285,7 +285,7 @@ fn pixel_candidate_reuses_hit_capacity_then_moves_on_refresh() {
     let allocation = (stars.as_ptr(), stars.capacity());
     let planet_allocation = (candidate.planets.as_ptr(), candidate.planets.capacity());
     for _ in 0..3 {
-        assert_eq!(draw_pixels(&mut cache, &view, &options(), J2000, &mut times).unwrap(), expected);
+        assert_eq!(draw_pixels(&mut cache, &view, &options(), J2000, &mut times).cloned().unwrap(), expected);
         let candidate = cache.pixel_candidate.as_ref().unwrap();
         let StarKeys::Pixels(stars) = &candidate.stars else { panic!("pixel key expected") };
         assert_eq!((stars.as_ptr(), stars.capacity()), allocation);
@@ -296,7 +296,7 @@ fn pixel_candidate_reuses_hit_capacity_then_moves_on_refresh() {
     let generation = cache.pixels.generation;
     let refreshes = cache.pixels.stats.refreshes;
     cache.invalidate();
-    assert_eq!(draw_pixels(&mut cache, &view, &options(), J2000 + 1.0, &mut times).unwrap(), expected);
+    assert_eq!(draw_pixels(&mut cache, &view, &options(), J2000 + 1.0, &mut times).cloned().unwrap(), expected);
     assert!(cache.pixel_candidate.is_none());
     assert_eq!(cache.pixels.stats.refreshes, refreshes + 1);
     assert_eq!(cache.pixels.generation, generation); // equal raster results keep the existing generation
@@ -342,7 +342,7 @@ fn failed_pixel_refresh_keeps_committed_value_and_candidate_for_retry() {
     let mut projected = project(&sky);
     let mut cache = SceneCache::default();
     let mut times = StepTimes::default();
-    let expected = draw_pixels(&mut cache, &projected.view(&sky), &options(), J2000, &mut times).unwrap();
+    let expected = draw_pixels(&mut cache, &projected.view(&sky), &options(), J2000, &mut times).cloned().unwrap();
     let generation = cache.pixels.generation;
     let refreshes = cache.pixels.stats.refreshes;
     let viewport = projected.viewport;
@@ -355,7 +355,7 @@ fn failed_pixel_refresh_keeps_committed_value_and_candidate_for_retry() {
     assert_eq!(cache.pixels.calculated_at, Some(J2000));
 
     projected.viewport = viewport;
-    assert_eq!(draw_pixels(&mut cache, &projected.view(&sky), &options(), J2000 + 2.0, &mut times).unwrap(), expected);
+    assert_eq!(draw_pixels(&mut cache, &projected.view(&sky), &options(), J2000 + 2.0, &mut times).cloned().unwrap(), expected);
     assert!(cache.pixel_candidate.is_none());
     assert_eq!(cache.pixels.generation, generation); // retry compared against the old committed image
     assert_eq!(cache.pixels.stats.refreshes, refreshes + 1);
