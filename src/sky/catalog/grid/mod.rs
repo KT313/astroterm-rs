@@ -148,9 +148,9 @@ pub(crate) fn select_brightness(
     }
 }
 
-fn append_bright(keys: &[f32], range: std::ops::Range<usize>, threshold: f64, indices: &mut Vec<usize>) {
+fn append_bright(keys: &[u16], range: std::ops::Range<usize>, threshold: f64, indices: &mut Vec<usize>) {
     for i in range {
-        if f64::from(keys[i]) > threshold {
+        if !crate::catalog::passes_brightness_bound(keys[i], threshold) {
             break;
         }
         indices.push(i);

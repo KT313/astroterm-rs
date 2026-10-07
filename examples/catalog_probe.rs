@@ -25,7 +25,7 @@ fn main() {
 
     // prepare the fixed rendering workload
     let start = Instant::now();
-    let mut sky = Sky::new(std::sync::Arc::new(astroterm::sky::prepare_owned_catalog(catalog).catalog));
+    let mut sky = Sky::new(std::sync::Arc::new(astroterm::sky::prepare_owned_catalog(catalog).unwrap().catalog));
     println!(
         "prepare_ms={:.3} singular={} always_checked={} endpoints={} precise={}",
         start.elapsed().as_secs_f64() * 1000.0,

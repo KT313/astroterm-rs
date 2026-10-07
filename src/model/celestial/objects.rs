@@ -2,25 +2,19 @@
 use crate::rows::row_columns;
 use crate::astro::models::stars::StellarMotion;
 use crate::astro::{Horizontal, MoonPhase, Vector3};
-use crate::catalog::{Designation, NameId, StarId};
+use crate::catalog::{NameId, StarId};
 
 /// A catalog star.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Star {
     pub id: StarId,
-    /// Proper name, for the brighter stars that have one.
+    /// Display label: proper name when available, otherwise a catalog identifier.
     pub name: Option<NameId>,
-    /// Catalog designation, e.g. a Bayer letter or an HR number, for labelling stars without a name.
-    pub designation: Option<Designation>,
     pub motion: StellarMotion,
     /// Catalog magnitude at J2000; evaluated magnitude belongs to ObservedStar.
     pub magnitude: f64,
     pub brightness_key: f64,
-    pub singular_fallback: bool,
-    /// Morgan-Keenan spectral class and subclass as in the catalog, e.g. `*b"K1"`; blank if unknown.
-    pub spectral_type: [u8; 2],
-    /// B-V color index, if known.
-    pub color_index: Option<f32>,
+    pub display_color: crate::model::StarColor,
     /// Whether the catalog has data for this star (a few catalog numbers are empty placeholders).
     pub has_data: bool,
 }
@@ -67,9 +61,7 @@ impl std::fmt::Debug for ObservedStarView<'_> {
             .field("state", self.state)
             .field("id", &self.id())
             .field("name", &self.name())
-            .field("designation", &self.designation())
-            .field("spectral_type", &self.spectral_type())
-            .field("color_index", &self.color_index())
+            .field("display_color", &self.display_color())
             .finish()
     }
 }
@@ -84,9 +76,7 @@ impl PartialEq for ObservedStarView<'_> {
         self.state == other.state
             && self.id() == other.id()
             && self.name() == other.name()
-            && self.designation() == other.designation()
-            && self.spectral_type() == other.spectral_type()
-            && self.color_index() == other.color_index()
+            && self.display_color() == other.display_color()
     }
 }
 impl ObservedStarView<'_> {
@@ -96,14 +86,8 @@ impl ObservedStarView<'_> {
     pub fn name(&self) -> Option<NameId> {
         self.catalog.name(self.source_index)
     }
-    pub fn designation(&self) -> crate::catalog::EncodedDesignation {
-        self.catalog.designation(self.source_index)
-    }
-    pub fn spectral_type(&self) -> [u8; 2] {
-        self.catalog.spectral_type(self.source_index)
-    }
-    pub fn color_index(&self) -> Option<f32> {
-        self.catalog.color_index(self.source_index)
+    pub fn display_color(&self) -> crate::model::StarColor {
+        self.catalog.display_color(self.source_index)
     }
     pub fn has_data(&self) -> bool {
         true // prepared catalogs contain no placeholders

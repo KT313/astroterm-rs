@@ -9,7 +9,7 @@ use astroterm::timing::TraceStep;
 fn create_sky() -> ObservedSky {
     let mut parsed = astroterm::catalog::load_embedded_catalog().unwrap();
     parsed.stars.truncate(4);
-    let mut sky = astroterm::sky::create_sky_from_catalog(&astroterm::catalog::Catalog::new(parsed.stars, parsed.names, vec![]));
+    let mut sky = astroterm::sky::create_sky_from_catalog(&astroterm::catalog::Catalog::new(parsed.stars, parsed.names, vec![])).unwrap();
     for (index, star) in sky.stars.iter_mut().enumerate() {
         star.drawable = true;
         star.position = Vector3 { x: 0.0, y: 0.0, z: 1.0 };

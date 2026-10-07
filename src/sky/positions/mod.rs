@@ -51,12 +51,12 @@ mod tests {
     use super::*;
     use crate::astro::MoonPhase;
     use crate::astro::Observer;
-    use crate::catalog::{Designation, load_embedded_catalog};
+    use crate::catalog::load_embedded_catalog;
     use crate::model::{Sky, PlanetKind};
 
     #[test]
     fn brightness_candidates_and_endpoints_are_updated_and_refracted() {
-        let mut sky = crate::sky::create_sky_from_catalog(&load_embedded_catalog().unwrap());
+        let mut sky = crate::sky::create_sky_from_catalog(&load_embedded_catalog().unwrap()).unwrap();
         let threshold = 5.0;
         let count = sky.count_bright_stars(threshold);
         let sentinel = crate::astro::Horizontal {
@@ -97,7 +97,7 @@ mod tests {
             latitude: 42.3601 * PI / 180.0,
             longitude: -71.0589 * PI / 180.0,
         };
-        let mut sky = crate::sky::create_sky_from_catalog(&load_embedded_catalog().expect("embedded catalog loads"));
+        let mut sky = crate::sky::create_sky_from_catalog(&load_embedded_catalog().expect("embedded catalog loads")).unwrap();
         update_sky_positions(&mut sky, julian_date, &boston, f64::INFINITY, &mut StepTimes::default());
         sky
     }
@@ -129,8 +129,8 @@ mod tests {
         let sky = update_boston_sky();
         let vega = sky.star_views().find(|star| star.id().0 == 7001).unwrap();
         assert_eq!(
-            (vega.designation().resolve(), sky.star_name(&vega)),
-            (Some(Designation::Hr(7001)), Some("Vega"))
+            (vega.id().0, sky.star_name(&vega)),
+            (7001, Some("Vega"))
         );
         assert_position(vega.position, 0.547246, 0.0, STAR_EPSILON);
 

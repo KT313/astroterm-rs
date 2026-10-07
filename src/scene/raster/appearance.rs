@@ -17,38 +17,21 @@ const STAR_GLYPHS_ASCII: [char; 10] = ['0', '0', 'O', 'O', 'o', 'o', '.', '.', '
 
 use crate::model::Appearance;
 
-/// A star's look: a bigger glyph the brighter it is, its name, and a color from its spectral class.
+/// A star's look: a bigger glyph the brighter it is, its label, and its prepared palette color.
 pub fn select_star_appearance<'a>(star: &Star, names: &'a StarNames) -> Appearance<'a> {
-    select_star_appearance_prepared(star, names, None)
-}
-
-pub(crate) fn select_star_appearance_prepared<'a>(
-    star: &Star,
-    names: &'a StarNames,
-    prepared: Option<&crate::model::PreparedScene>,
-) -> Appearance<'a> {
     let glyph_index = select_star_glyph_index(star.magnitude);
     Appearance {
         ascii: STAR_GLYPHS_ASCII[glyph_index],
         unicode: STAR_GLYPHS_UNICODE[glyph_index],
         label: names.get(star.name()),
-        color: prepared.map_or_else(
-            || select_star_color(star.spectral_type(), star.color_index()),
-            |p| crate::scene::raster::prepared::resolve_prepared_color(p, star),
-        ),
+        color: star.display_color().terminal_color(),
     }
 }
 
 /// A star's label: its proper name, or else its catalog designation (e.g. "α Vir" or "HR 1713"), with Greek letters
 /// if `unicode`.
 pub fn format_star_label<'a>(star: &Star, names: &'a StarNames, unicode: bool) -> Cow<'a, str> {
-    if let Some(name) = names.get(star.name()) {
-        return Cow::Borrowed(name);
-    }
-    match star.designation().resolve() {
-        Some(designation) => Cow::Owned(designation.format(unicode)),
-        None => Cow::Borrowed(""),
-    }
+    Cow::Borrowed(names.get_for_mode(star.name(), unicode).unwrap_or(""))
 }
 
 /// The look of the Sun or a planet: its astronomical symbol and name.
@@ -88,33 +71,6 @@ pub fn select_moon_appearance(phase: MoonPhase, lit_on_right: bool) -> Appearanc
     }
 }
 
-/// Approximate color of a star from its spectral class, within the 8 basic terminal colors: hot blue-white stars
-/// (O, B, Wolf-Rayet) are cyan, white to yellow-white stars (A, F, G) use the default color, orange K stars are yellow
-/// and cool red giants and carbon stars (M, C, S, N) are red. Without a known class, the B-V color index decides.
-pub(super) fn select_star_color(spectral_type: [u8; 2], color_index: Option<f32>) -> Option<Color> {
-    match spectral_type[0] {
-        b'O' | b'B' | b'W' => Some(Color::Cyan),
-        b'A' | b'F' | b'G' => None,
-        b'K' => Some(Color::Yellow),
-        b'M' | b'C' | b'S' | b'N' => Some(Color::Red),
-        _ => select_color_from_color_index(color_index?),
-    }
-}
-
-/// The color of the spectral class a B-V color index typically belongs to: below 0 for O/B stars, from 0.8 for K and
-/// from 1.4 for M stars.
-fn select_color_from_color_index(color_index: f32) -> Option<Color> {
-    if color_index < 0.0 {
-        Some(Color::Cyan)
-    } else if color_index >= 1.4 {
-        Some(Color::Red)
-    } else if color_index >= 0.8 {
-        Some(Color::Yellow)
-    } else {
-        None
-    }
-}
-
 /// Index into the star glyph tables for a magnitude (brighter stars get bigger glyphs).
 fn select_star_glyph_index(magnitude: f64) -> usize {
     let last = STAR_GLYPHS_ASCII.len() as i32 - 1;
@@ -127,6 +83,13 @@ mod tests {
     use super::*;
     use crate::catalog::load_embedded_catalog;
 
+
+    fn select_star_color(spectral_type: [u8; 2], color_index: Option<f32>) -> Option<Color> {
+        let mut entry = load_embedded_catalog().unwrap().stars.remove(0);
+        entry.spectral_type = spectral_type;
+        entry.color_index = color_index;
+        crate::sky::prepare_star(&entry).display_color.terminal_color()
+    }
 
     #[test]
     fn star_colors_follow_spectral_class() {
@@ -157,11 +120,11 @@ mod tests {
 
     #[test]
     fn bright_stars_get_their_names_and_spectral_colors() {
-        let sky = crate::sky::create_sky_from_catalog(&load_embedded_catalog().expect("embedded catalog loads"));
+        let sky = crate::sky::create_sky_from_catalog(&load_embedded_catalog().expect("embedded catalog loads")).unwrap();
         let star = |catalog_number: usize| {
             select_star_appearance(
                 &sky.star_views()
-                    .find(|star| star.id().0 == catalog_number as u64)
+                    .find(|star| star.id().0 == catalog_number as u32)
                     .unwrap(),
                 &sky.catalog.names,
             )
@@ -180,7 +143,7 @@ mod tests {
 
     #[test]
     fn stars_without_a_name_are_labelled_with_their_catalog_number() {
-        let sky = crate::sky::create_sky_from_catalog(&load_embedded_catalog().expect("embedded catalog loads"));
+        let sky = crate::sky::create_sky_from_catalog(&load_embedded_catalog().expect("embedded catalog loads")).unwrap();
         assert_eq!(
             format_star_label(
                 &sky.star_views().find(|star| star.id().0 == 7001).unwrap(),
@@ -189,7 +152,7 @@ mod tests {
             ),
             "Vega"
         );
-        let unnamed = (sky.star_views().enumerate()).find(|(_, star)| star.has_data() && star.name().is_none());
+        let unnamed = (sky.star_views().enumerate()).find(|(_, star)| star.has_data() && sky.star_name(star).is_some_and(|name| name.starts_with("HR ")));
         let (_, unnamed) = unnamed.unwrap();
         assert_eq!(
             format_star_label(&unnamed, &sky.catalog.names, false),

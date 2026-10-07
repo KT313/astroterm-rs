@@ -18,7 +18,6 @@ pub(super) fn compose_text(
     fields: &[MetadataField],
     notice: Option<&str>,
     times: &mut crate::timing::StepTimes,
-    prepared: Option<&crate::model::PreparedScene>,
     named_candidates: Option<&[usize]>,
 ) -> Buffer {
     // assemble every text layer in memory before either image encoding or terminal output
@@ -33,7 +32,7 @@ pub(super) fn compose_text(
         )
     });
     let (eligible, submitted, visited) = times.measure("Star labels", || {
-        draw_star_labels(&mut buffer, sky, options, area, prepared, named_candidates)
+        draw_star_labels(&mut buffer, sky, options, area, named_candidates)
     });
     {
         times.record_borrow(BufferId::TextCells, Access::Writable, || BufferShape::vector(&buffer.content, IndexDomain::Cells));
@@ -78,9 +77,10 @@ pub(super) fn compose_text(
     times.measure("Notices", || draw_notices(&mut buffer, sky, screen, notice));
     times.describe("Notices", || {
         format!(
-            "fallback notice={}; accuracy warning={}; final nonblank text cells={}",
+            "fallback notice={}; accuracy warning={}; brightness-bound warning={}; final nonblank text cells={}",
             notice.is_some(),
             sky.outside_accuracy_range,
+            sky.magnitude_clipping().any(),
             buffer.content.iter().filter(|c| !c.symbol().trim().is_empty()).count()
         )
     });
@@ -92,7 +92,6 @@ fn draw_star_labels(
     sky: &ProjectedSky<'_>,
     options: &RenderOptions,
     area: Rect,
-    prepared: Option<&crate::model::PreparedScene>,
     named_candidates: Option<&[usize]>,
 ) -> (usize, usize, usize) {
     let mut eligible = 0;
@@ -119,13 +118,13 @@ fn draw_star_labels(
         let label = if named.contains(&index) {
             Some(format_star_label(&entry.star, sky.names, true))
         } else if entry.star.magnitude <= options.label_threshold {
-            sky.names.get(entry.star.name()).map(std::borrow::Cow::Borrowed)
+            sky.names.get_for_mode(entry.star.name(), true).map(std::borrow::Cow::Borrowed)
         } else {
             None
         };
         if let Some(label) = label {
             let (row, col) = cell(position);
-            let [r, g, b] = crate::scene::resolve_star_rgb(&entry.star, prepared);
+            let [r, g, b] = crate::scene::star_rgb(&entry.star);
             eligible += 1;
             submitted += usize::from(put_label(buffer, area, row - 1, col + 1, &label, Color::Rgb(r, g, b)));
         }
@@ -195,15 +194,21 @@ fn draw_metadata(buffer: &mut Buffer, screen: Rect, fields: &[MetadataField]) {
 }
 
 fn draw_notices(buffer: &mut Buffer, sky: &ProjectedSky<'_>, screen: Rect, notice: Option<&str>) {
-    if let Some(notice) = notice {
-        Paragraph::new(notice)
+    let notices = [
+        sky.outside_accuracy_range.then_some(crate::astro::accuracy::ACCURACY_WARNING),
+        sky.magnitude_clipping().any().then_some(crate::catalog::MAGNITUDE_CLIPPING_WARNING),
+    ];
+    let warning_rows = notices.iter().flatten().count();
+    for (offset, text) in notices.into_iter().flatten().enumerate() {
+        let Some(row) = screen.height.checked_sub(offset as u16 + 1) else { break; };
+        Paragraph::new(text)
             .style(Style::default().fg(Color::Yellow).bg(Color::Black))
-            .render(Rect::new(0, screen.height.saturating_sub(2), screen.width, 1), buffer);
+            .render(Rect::new(screen.x, screen.y + row, screen.width, 1), buffer);
     }
-    if sky.outside_accuracy_range {
-        Paragraph::new(crate::astro::accuracy::ACCURACY_WARNING)
-            .style(Style::default().fg(Color::Yellow).bg(Color::Black))
-            .render(Rect::new(0, screen.height.saturating_sub(1), screen.width, 1), buffer);
+    if let Some(text) = notice {
+        let Some(row) = screen.height.checked_sub(((warning_rows + 1).max(2)) as u16) else { return; };
+        Paragraph::new(text).style(Style::default().fg(Color::Yellow).bg(Color::Black))
+            .render(Rect::new(screen.x, screen.y + row, screen.width, 1), buffer);
     }
 }
 
@@ -248,16 +253,46 @@ mod prepared_tests {
     use crate::timing::StepTimes;
 
     #[test]
+    fn pixel_notices_keep_clipping_date_and_fallback_on_separate_rows() {
+        let mut parsed = load_embedded_catalog().unwrap();
+        parsed.stars.truncate(1);
+        let star = &mut parsed.stars[0];
+        star.magnitude = -10.0;
+        star.right_ascension = 0.0;
+        star.declination = 0.0;
+        star.space_motion = Some(crate::catalog::SpaceMotion {
+            distance_pc: 10.0, position: crate::astro::Vector3 { x: 10.0, y: 0.0, z: 0.0 },
+            velocity: crate::astro::Vector3 { x: -0.0001, y: 0.0, z: 0.0 },
+        });
+        let mut sky = crate::sky::create_sky_from_catalog(&parsed).unwrap();
+        sky.outside_accuracy_range = true;
+        let data = project_sky(&sky, &View::default(), Viewport { width: 200, height: 100 });
+        let projected = data.view(&sky);
+        assert!(projected.magnitude_clipping().any());
+        let area = Rect::new(0, 0, 140, 6);
+        let mut buffer = Buffer::empty(area);
+        draw_notices(&mut buffer, &projected, area, Some("Protocol fallback notice"));
+        let row = |y| (0..140).map(|x| buffer[(x, y)].symbol()).collect::<String>();
+        assert!(row(5).starts_with(crate::astro::accuracy::ACCURACY_WARNING));
+        assert!(row(4).starts_with("Stored brightness bounds clipped"));
+        assert!(row(3).starts_with("Protocol fallback notice"));
+        for height in [0, 1, 2] { // tiny terminals clip notices without underflow or overwriting retained rows
+            let area = Rect::new(0, 0, 140, height);
+            draw_notices(&mut Buffer::empty(area), &projected, area, Some("fallback"));
+        }
+    }
+
+    #[test]
     fn prepared_label_candidates_preserve_order_clipping_and_dynamic_names() {
         let mut parsed = load_embedded_catalog().unwrap();
         parsed.stars.truncate(12);
         let mut names = StarNames::default();
-        let name = names.insert("Named 星");
+        let name = names.insert("Named 星").unwrap();
         for (i, star) in parsed.stars.iter_mut().enumerate() {
             star.name = (i % 3 == 0).then_some(name);
-            star.magnitude = i as f32 * 0.25;
+            star.magnitude = i as f64 * 0.25;
         }
-        let mut sky = crate::sky::create_sky_from_catalog(&Catalog::new(parsed.stars, names, vec![]));
+        let mut sky = crate::sky::create_sky_from_catalog(&Catalog::new(parsed.stars, names, vec![])).unwrap();
         for star in &mut sky.stars {
             star.position = Horizontal {
                 azimuth: 0.5,
@@ -266,7 +301,6 @@ mod prepared_tests {
             .to_unit_vector();
         }
         let mut cache = SceneCache::default();
-        crate::scene::prepare_scene_catalog(&mut cache, sky.catalog.clone(), &mut StepTimes::default());
         let area = Rect::new(0, 0, 40, 20);
         let mut options = RenderOptions {
             unicode: true,
@@ -297,14 +331,13 @@ mod prepared_tests {
                 .unwrap();
             let mut expected = Buffer::empty(area);
             let mut actual = Buffer::empty(area);
-            let expected_counts = draw_star_labels(&mut expected, &projected.view(&sky), &options, area, None, None);
+            let expected_counts = draw_star_labels(&mut expected, &projected.view(&sky), &options, area, None);
             let actual_counts = draw_star_labels(
                 &mut actual,
                 &projected.view(&sky),
                 &options,
                 area,
-                cache.prepared(),
-                cache.named_candidates(),
+                Some(cache.named_candidates()),
             );
             assert_eq!(actual, expected);
             assert_eq!(

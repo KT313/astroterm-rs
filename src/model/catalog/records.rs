@@ -8,6 +8,7 @@ use std::sync::Arc;
 pub struct SkyCatalog {
     /// Compact immutable inputs, sorted by cell then conservative brightness key and descending stable ID.
     pub stars: StarStorage,
+    pub star_exceptions: Vec<StarException>,
     pub grid: SkyGrid,
     pub singular_count: usize,
     pub names: StarNames,
@@ -15,6 +16,14 @@ pub struct SkyCatalog {
 }
 
 impl SkyCatalog {
+    /// Stage-3 boundary: reject exceptional catalogs until sparse processing is implemented.
+    pub fn validate_exception_support(&self) -> std::io::Result<()> {
+        if let Some(entry) = self.star_exceptions.first() {
+            return Err(unsupported_star_data(&format!("catalog has {} star exception(s), beginning at catalog row {}", self.star_exceptions.len(), entry.catalog_row_index)));
+        }
+        self.stars.validate_exception_storage()
+    }
+
     pub fn constellations(&self) -> &[Constellation] { self.figures.figures() }
     pub fn endpoint_indices(&self) -> &[usize] { self.figures.endpoints() }
 
@@ -28,6 +37,7 @@ impl SkyCatalog {
     pub fn empty() -> Self {
         Self {
             stars: StarStorage::default(),
+            star_exceptions: Vec::new(),
             grid: SkyGrid::from_offsets(vec![0; crate::model::CELL_COUNT + 1].into()),
             singular_count: 0,
             names: StarNames::default(),
@@ -37,7 +47,7 @@ impl SkyCatalog {
 
     /// Number of possible-brightness candidates across all cells for an inclusive threshold.
     pub fn count_bright_stars(&self, threshold: f64) -> usize {
-        self.stars.brightness_keys().iter().filter(|&&key| f64::from(key) <= threshold).count()
+        self.stars.brightness_keys().iter().filter(|&&key| crate::catalog::passes_brightness_bound(key, threshold)).count()
     }
 
     /// Resolve a star's name from the original catalog-owned string block.
@@ -52,7 +62,7 @@ mod tests {
 
     #[test]
     fn empty_catalog_matches_preparing_no_rows() {
-        let prepared = crate::sky::prepare_owned_catalog(crate::catalog::Catalog::new(Vec::new(), StarNames::default(), Vec::new()));
+        let prepared = crate::sky::prepare_owned_catalog(crate::catalog::Catalog::new(Vec::new(), StarNames::default(), Vec::new())).unwrap();
         assert_eq!(SkyCatalog::empty(), prepared.catalog);
         assert!(SkyCatalog::empty().stars.is_empty());
     }
@@ -90,3 +100,18 @@ impl ConstellationSet {
 }
 #[cfg(feature = "memory-diagnostics")]
 crate::cache::report_fields!(ConstellationSet { figures, endpoints });
+
+/// Sparse future metadata. Row indices address the final sorted catalog; zero precise_motion_entry means absent.
+/// No entries are accepted yet, including entries that claim neither exception.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StarException {
+    pub catalog_row_index: usize,
+    pub uses_motion_fallback: bool,
+    pub precise_motion_entry: u32,
+}
+crate::rows::row_columns!(StarException { catalog_row_index, uses_motion_fallback, precise_motion_entry });
+// Debug column names match the Rust fields. Precision entries are one-based references to stars.precise_motions.
+
+pub(crate) fn unsupported_star_data(reason: &str) -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::Unsupported, format!("{reason}; sparse star-exception support is not implemented yet"))
+}

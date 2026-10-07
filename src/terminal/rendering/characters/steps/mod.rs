@@ -46,9 +46,11 @@ pub(in crate::terminal) fn rasterize_character_sky(state: &mut CharacterState, s
     });
 }
 
-pub(in crate::terminal) fn draw_character_notice(state: &mut CharacterState) {
+pub(in crate::terminal) fn draw_character_notice(state: &mut CharacterState, sky: &ProjectedSky<'_>) {
     if let Some(notice) = &state.startup_notice {
-        let row = state.frame.sky.height().saturating_sub(2) as i32;
+        let warning_rows = usize::from(sky.outside_accuracy_range) + usize::from(sky.magnitude_clipping().any());
+        let Some(row) = state.frame.sky.height().checked_sub((warning_rows + 1).max(2)) else { return; };
+        let row = row as i32;
         state.frame
             .sky
             .put_str_truncated(row, 0, notice, Some(crate::canvas::Color::Yellow));

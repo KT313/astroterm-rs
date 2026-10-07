@@ -8,7 +8,7 @@ use crate::catalog::{Catalog, ConstellationFigure, StarNames};
 
 
 /// Prepare and sort a borrowed catalog, retaining the caller's original rows.
-pub fn prepare_catalog(catalog: &Catalog) -> PreparedCatalog {
+pub fn prepare_catalog(catalog: &Catalog) -> std::io::Result<PreparedCatalog> {
     build_catalog(
         catalog.stars.iter().cloned(),
         catalog.names.clone(),
@@ -18,7 +18,7 @@ pub fn prepare_catalog(catalog: &Catalog) -> PreparedCatalog {
 }
 
 /// Consume parsed catalog rows while preparing compact storage and constellation indices.
-pub fn prepare_owned_catalog(catalog: Catalog) -> PreparedCatalog {
+pub fn prepare_owned_catalog(catalog: Catalog) -> std::io::Result<PreparedCatalog> {
     build_catalog(
         catalog.stars.into_iter(),
         catalog.names,
@@ -32,8 +32,8 @@ fn build_catalog(
     names: StarNames,
     representatives: &HashMap<u32, crate::catalog::StarId>,
     figures: &[ConstellationFigure],
-) -> PreparedCatalog {
-    let (mut stars, mut bounds) = prepare_compact_stars(entries);                 // keep valid stars in compact column storage
+) -> std::io::Result<PreparedCatalog> {
+    let (mut stars, mut bounds, names) = prepare_compact_stars(entries, &names)?;                 // keep valid stars in compact column storage
     sort_stars_by_region_and_brightness(&mut stars, &mut bounds);                // put nearby stars together, brightest first with stable ties
     let grid = grid::build_grid(&stars, &bounds);
 
@@ -41,20 +41,22 @@ fn build_catalog(
     let index_by_hr = index_representative_positions(&stars, &hr_by_id); // find those stars after sorting
     let constellations = resolve_constellation_figures(figures, &index_by_hr); // turn line endpoints into star-array indices
     let endpoint_indices = collect_constellation_endpoints(&constellations); // record the unique stars needed by the figures
-    let singular_count = stars.iter().filter(|star| star.singular_fallback).count();
+    let singular_count = 0; // exceptional catalogs are rejected until sparse handling is implemented
     let catalog = SkyCatalog {
         singular_count,
         stars,
+        star_exceptions: Vec::new(),
         grid,
         names,
         figures: Arc::new(crate::model::ConstellationSet { figures: constellations, endpoints: endpoint_indices }),
     };
-    PreparedCatalog { catalog, preparation: CatalogPreparation { motion_bounds: bounds } }
+    catalog.validate_exception_support()?;
+    Ok(PreparedCatalog { catalog, preparation: CatalogPreparation { motion_bounds: bounds } })
 }
 
 /// Build a zero-position sky for fixtures, including prepared catalog data.
-pub fn create_sky_from_catalog(catalog: &Catalog) -> ObservedSky {
-    let catalog = Arc::new(prepare_catalog(catalog).catalog);
+pub fn create_sky_from_catalog(catalog: &Catalog) -> std::io::Result<ObservedSky> {
+    let catalog = Arc::new(prepare_catalog(catalog)?.catalog);
     let mut sky = ObservedSky::new(catalog);
     sky.stars = sky
         .catalog
@@ -66,7 +68,7 @@ pub fn create_sky_from_catalog(catalog: &Catalog) -> ObservedSky {
         })
         .collect();
     sky.corrections.evaluated = sky.stars.len();
-    sky
+    Ok(sky)
 }
 
 

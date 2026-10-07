@@ -1,22 +1,22 @@
 //! Borrow validated columns once per processing pass. The vector columns get typed N×3 views; scalar columns
 //! are plain slices already. The owner keeps the complete allocated columns; these views are processing inputs.
-use super::{StarStorage, decode_motion, expand};
+use super::{StarStorage, expand};
 use crate::{
     astro::{Vector3, models::stars::StellarMotion},
-    catalog::{EncodedDesignation, NameId},
+    catalog::{NameId},
     model::ObservedStar,
 };
 use ndarray::ArrayView2;
 
 pub(crate) struct ObservationFields<'a> {
-    magnitude: &'a [f32],
+    magnitude: &'a [u16],
 }
 impl ObservationFields<'_> {
     pub fn create_observed_star(&self, index: usize, drawable: bool) -> ObservedStar {
         ObservedStar {
             source_index: index,
             drawable,
-            magnitude: f64::from(self.magnitude[index]),
+            magnitude: crate::catalog::decode_magnitude(self.magnitude[index]),
             position: Vector3::default(),
         }
     }
@@ -25,15 +25,9 @@ pub(crate) struct TrajectoryFields<'a> {
     u0: &'a [[f32; 3]],
     w: &'a [[f32; 3]],
     distance: &'a [f32],
-    precise_indices: &'a [u32],
-    precise_motions: &'a [[f64; 7]],
 }
 impl TrajectoryFields<'_> {
     pub fn motion(&self, index: usize) -> StellarMotion {
-        let precise = self.precise_indices[index];
-        if precise != 0 {
-            return decode_motion(self.precise_motions[precise as usize - 1]);
-        }
         StellarMotion {
             u0: expand(self.u0[index]),
             w: expand(self.w[index]),
@@ -50,7 +44,7 @@ impl StarStorage {
     pub fn motions(&self) -> ArrayView2<'_, f32> {
         ArrayView2::from(self.rows.w.as_slice())
     }
-    pub(crate) fn brightness_keys(&self) -> &[f32] {
+    pub(crate) fn brightness_keys(&self) -> &[u16] {
         self.rows.brightness_key.as_slice()
     }
     pub(crate) fn borrow_observation_fields(&self) -> ObservationFields<'_> {
@@ -64,23 +58,14 @@ impl StarStorage {
             u0: c.u0,
             w: c.w,
             distance: c.distance,
-            precise_indices: c.precise_index,
-            precise_motions: &self.precise_motions,
         }
     }
     pub fn name(&self, index: usize) -> Option<NameId> {
         let name = self.rows.name.as_slice()[index];
-        (name != 0).then(|| NameId::from_range(self.name_table[name as usize - 1]))
+        NameId::from_entry(name)
     }
-    pub fn designation(&self, index: usize) -> EncodedDesignation {
-        EncodedDesignation::from_validated_bytes(self.rows.designation.as_slice()[index])
-    }
-    pub fn spectral_type(&self, index: usize) -> [u8; 2] {
-        self.rows.spectral_type.as_slice()[index]
-    }
-    pub fn color_index(&self, index: usize) -> Option<f32> {
-        let flags = self.rows.flags.as_slice()[index];
-        (flags & 2 != 0).then_some(self.rows.color.as_slice()[index])
+    pub fn display_color(&self, index: usize) -> crate::model::StarColor {
+        crate::model::StarColor::from_index(self.rows.display_color.as_slice()[index]).expect("validated color index")
     }
 }
 
@@ -101,7 +86,7 @@ mod tests {
                 z: 0.0,
             },
         });
-        let owned = crate::sky::prepare_owned_catalog(parsed);
+        let owned = crate::sky::prepare_owned_catalog(parsed).unwrap();
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("catalog");
         let fingerprint = catalog_fingerprint();
@@ -124,10 +109,8 @@ mod tests {
                 assert!(std::ptr::eq(view.catalog, &catalog.stars));
                 assert_eq!(view.id(), full.id);
                 assert_eq!(view.name(), full.name);
-                assert_eq!(view.spectral_type(), full.spectral_type);
-                assert_eq!(view.color_index(), full.color_index);
+                assert_eq!(view.display_color(), full.display_color);
                 assert_eq!(view.has_data(), full.has_data);
-                assert_eq!(view.designation().resolve(), full.designation);
                 assert_eq!(
                     catalog.names.get(catalog.stars.name(index)),
                     catalog.names.get(full.name)
@@ -159,7 +142,7 @@ mod measurements {
             .brightness_keys()
             .iter()
             .enumerate()
-            .filter(|(_, m)| **m <= 10.0)
+            .filter(|(_, m)| crate::catalog::passes_brightness_bound(**m, 10.0))
             .map(|(i, _)| i)
             .take(500000)
             .collect();
@@ -176,10 +159,8 @@ mod measurements {
                             black_box((
                                 s.id,
                                 s.name,
-                                s.designation,
                                 s.magnitude,
-                                s.spectral_type,
-                                s.color_index,
+                                s.display_color,
                                 s.has_data,
                             ));
                         }

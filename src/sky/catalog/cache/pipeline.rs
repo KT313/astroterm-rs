@@ -24,15 +24,23 @@ pub fn load_sky_catalog_with_times(
     notices: &mut impl Write,
     times: &mut StepTimes,
 ) -> io::Result<PreparedCatalog> {
-    let Some(dataset) = dataset else { return load_embedded_sky(times); }; // use the built-in catalog unless another dataset was selected
+    let Some(dataset) = dataset else { return report_clipping(load_embedded_sky(times)?, notices); }; // use the built-in catalog unless another dataset was selected
     let source = times.measure("Dataset resolution", || resolve_dataset(dataset, directories, notices))?;
     times.describe("Dataset resolution", || format!("source={}", source.display()));
     let path = resolve_cache_path(&source, directories, notices); // find an optional prepared-cache location
     let fingerprint = fingerprint_source(&path);                // identify the source and all preparation rules
-    if let Some(catalog) = try_load_prepared_catalog(&path, &fingerprint, notices, times)? { return Ok(catalog); }
+    if let Some(catalog) = try_load_prepared_catalog(&path, &fingerprint, notices, times)? { return report_clipping(catalog, notices); }
 
     let parsed = times.measure_steps("AT-HYG loading", |times| load_athyg_catalog_with_times(&source, times)).map_err(io::Error::other)?;
-    let catalog = prepare_catalog(parsed, times);               // compact and index the parsed stars
+    let catalog = prepare_catalog(parsed, times)?;               // compact and index the parsed stars
     write_prepared_catalog_if_stable(path, &source, &catalog, &fingerprint, notices, times)?; // save only if the source stayed unchanged
+    report_clipping(catalog, notices)
+}
+
+fn report_clipping(catalog: PreparedCatalog, notices: &mut impl Write) -> io::Result<PreparedCatalog> {
+    let counts = catalog.catalog.stars.magnitude_clipping();
+    if counts.any() {
+        writeln!(notices, "Warning: {} Lower clips: {}; upper clips: {}.", crate::catalog::MAGNITUDE_CLIPPING_WARNING, counts.lower, counts.upper)?;
+    }
     Ok(catalog)
 }

@@ -9,10 +9,10 @@ mod configuration;
 mod diagnostics;
 
 pub use catalog::{
-    SkyCatalog, CatalogPreparation, PreparedCatalog, ConstellationSet, GRID_DEPTH, CELL_COUNT, REFRACTION_MARGIN, ABERRATION_MARGIN, SkyRegion, SelectionStats, SkyGrid,
+    SkyCatalog, CatalogPreparation, PreparedCatalog, ConstellationSet, StarException, GRID_DEPTH, CELL_COUNT, REFRACTION_MARGIN, ABERRATION_MARGIN, SkyRegion, SelectionStats, SkyGrid,
     hash_direction, QUANTIZATION_MARGIN, STAR_SECTIONS, StarRow, StarRowSlice, StarRowVec, StarStorage,
 };
-pub(crate) use catalog::{SelectedRegion, build_caps};
+pub(crate) use catalog::{SelectedRegion, build_caps, unsupported_star_data};
 pub use celestial::{
     Star, ObservedStar, ObservedStarView, PlanetKind, Planet, Moon, Constellation, create_planets, create_moon,
     CorrectionStats, ObservedSky, Sky, MoonIllumination, Anchor, ObserverState, FrameTime, ModelFamily, StateRequest,
@@ -26,11 +26,11 @@ pub use presentation::{
     ViewCenter, ProjectionKind, ArcPart, View, ScreenPoint, CartesianCamera, Polar, Cell, ProjectionViewport,
     ProjectedStar, ProjectedPlanet, ProjectedMoon, ProjectedArc, ProjectedConstellation, ProjectedSky,
     ProjectionData, ProjectedStars, RenderOptions, TerminalViewport, Frame, Appearance, ObserverTimeZone,
-    MetadataField,
+    MetadataField, StarColor,
 };
 pub(crate) use presentation::{
     DEFAULT_FOV_DEGREES, MIN_FOV_DEGREES, DrawRecord, StarKey, ProjectionBodyKey, ConstellationKey, HorizonGeometry,
-    SceneKey, PixelStarKey, CharacterStarKey, StarKeys, StarDisplay, PreparedScene, Glyph,
+    SceneKey, PixelStarKey, CharacterStarKey, StarKeys, Glyph,
 };
 pub use configuration::{Config, SimulationSettings, TerminalSettings, RendererKind, GraphicsProtocol};
 

@@ -14,7 +14,7 @@ fn continuous_history_preserves_calculations_and_cache_behavior() {
     let mut source = astroterm::catalog::load_embedded_catalog().unwrap();
     source.stars.retain(|star| star.has_data);
     source.stars.truncate(24);
-    let catalog = Arc::new(sky::prepare_owned_catalog(astroterm::catalog::Catalog::new(source.stars, Default::default(), vec![])).catalog);
+    let catalog = Arc::new(sky::prepare_owned_catalog(astroterm::catalog::Catalog::new(source.stars, source.names, vec![])).unwrap().catalog);
     for config in [CacheConfig::default(), CacheConfig::disabled()] {
         let plain = run_frames(catalog.clone(), &config, false);
         let traced = run_frames(catalog.clone(), &config, true);

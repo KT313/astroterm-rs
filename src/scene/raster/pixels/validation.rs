@@ -51,7 +51,7 @@ fn complete_scenes_match_for_mixed_radii_and_large_canvas_fallback() {
         star.magnitude = [2.0, 7.0, 7.03125, 7.03124, 8.0, 10.0][i % 6];
     }
     let catalog = Catalog::new(stars, source.names, source.constellations);
-    let sky = observe(Arc::new(crate::sky::prepare_owned_catalog(catalog).catalog), 10.0);
+    let sky = observe(Arc::new(crate::sky::prepare_owned_catalog(catalog).unwrap().catalog), 10.0);
     for (width, height) in [(1, 1), (200, 200), (1102, 1102), (4097, 17), (17, 4097)] {
         let view = View {
             fov_degrees: 225.0,
@@ -61,7 +61,7 @@ fn complete_scenes_match_for_mixed_radii_and_large_canvas_fallback() {
         let projected = projected_data.view(&sky);
         let actual = draw_pixel_sky(&projected, &options(10.0), &mut StepTimes::default()).unwrap();
         let expected =
-            draw_pixel_sky_with_star_path(&projected, &options(10.0), &mut StepTimes::default(), false, None).unwrap();
+            draw_pixel_sky_with_star_path(&projected, &options(10.0), &mut StepTimes::default(), false).unwrap();
         assert_eq!(actual, expected, "{width}x{height}");
     }
 }
@@ -103,7 +103,7 @@ fn compare_minimum_star_rasterizers() {
                     let mut times = StepTimes::default();
                     let start = Instant::now();
                     images[mode] =
-                        draw_pixel_sky_with_star_path(&projected, &options(threshold), &mut times, mode == 1, None);
+                        draw_pixel_sky_with_star_path(&projected, &options(threshold), &mut times, mode == 1);
                     let elapsed = start.elapsed().as_secs_f64() * 1000.0;
                     if frame > 0 {
                         durations[mode].push(elapsed);

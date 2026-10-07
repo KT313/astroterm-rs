@@ -5,7 +5,7 @@ use std::{mem::size_of, sync::Arc};
 
 #[test]
 fn filtered_and_reordered_states_borrow_their_own_catalog_metadata() {
-    let mut sky = astroterm::sky::create_sky_from_catalog(&load_embedded_catalog().unwrap());
+    let mut sky = astroterm::sky::create_sky_from_catalog(&load_embedded_catalog().unwrap()).unwrap();
     sky.stars = [100, 9, 1700, 1].map(|i| sky.stars[i].clone()).into();
     for (i, state) in sky.stars.iter_mut().enumerate() {
         state.magnitude = -0.0 + i as f64;
@@ -24,9 +24,7 @@ fn filtered_and_reordered_states_borrow_their_own_catalog_metadata() {
         assert!(std::ptr::eq(view.catalog, &sky.catalog.stars));
         assert_eq!(view.id(), full.id);
         assert_eq!(view.name(), full.name);
-        assert_eq!(view.designation().resolve(), full.designation);
-        assert_eq!(view.spectral_type(), full.spectral_type);
-        assert_eq!(view.color_index(), full.color_index);
+        assert_eq!(view.display_color(), full.display_color);
         assert_eq!(sky.star_name(&view), sky.catalog.names.get(full.name));
         assert_eq!(view.magnitude, i as f64);
     }
@@ -38,7 +36,7 @@ fn filtered_and_reordered_states_borrow_their_own_catalog_metadata() {
 
 #[test]
 fn borrowed_star_debug_does_not_expand_the_whole_catalog() {
-    let sky = astroterm::sky::create_sky_from_catalog(&load_embedded_catalog().unwrap());
+    let sky = astroterm::sky::create_sky_from_catalog(&load_embedded_catalog().unwrap()).unwrap();
     let debug = format!("{:?}", sky.star_view(0));
     assert!(debug.contains("ObservedStarView"));
     assert!(!debug.contains("StarStorage"));

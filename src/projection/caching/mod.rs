@@ -270,7 +270,7 @@ mod draw_order_tests {
         for star in &mut parsed.stars {
             star.name = None;
         }
-        crate::sky::create_sky_from_catalog(&parsed)
+        crate::sky::create_sky_from_catalog(&parsed).unwrap()
     }
 
     #[test]
@@ -337,7 +337,8 @@ mod draw_order_tests {
                     }
                 });
                 let expected_ids: Vec<_> = expected.iter().map(|s| s.id()).collect();
-                let expected_names: Vec<_> = expected_ids.iter().rev().take(5).copied().collect();
+                let expected_names: Vec<_> = expected.iter().rev().take(5)
+                    .filter(|s| s.magnitude > options.label_threshold || s.name().is_none()).map(|s| s.id()).collect();
                 for _ in 0..2 {
                     crate::projection::project_cached_sky(&mut cache, &sky,
                         &View::default(),
@@ -389,16 +390,16 @@ mod draw_order_tests {
                 let entries = (0..synthetic_count * 2)
                     .map(|index| {
                         let mut star = template.clone();
-                        star.id = StarId(index as u64 + 1);
+                        star.id = StarId(index as u32 + 1);
                         let mixed = (index as u64)
                             .wrapping_mul(0x9e3779b97f4a7c15)
                             .rotate_left(27)
                             .wrapping_mul(0xbf58476d1ce4e5b9);
-                        star.magnitude = (mixed % 8192) as f32 / 1024.0 - 3.0; // ties, range -3..5
+                        star.magnitude = (mixed % 8192) as f64 / 1024.0 - 3.0; // ties, range -3..5
                         star
                     })
                     .collect();
-                sky = crate::sky::create_sky_from_catalog(&crate::catalog::Catalog::new(entries, Default::default(), vec![]));
+                sky = crate::sky::create_sky_from_catalog(&crate::catalog::Catalog::new(entries, Default::default(), vec![])).unwrap();
                 sky.stars
                     .sort_unstable_by_key(|star| sky.catalog.stars.id(star.source_index)); // restore synthetic ID order after catalog preparation
                 (0..synthetic_count).map(|i| (i * 2, (0, 0))).collect()
@@ -473,7 +474,7 @@ mod preparation_tests {
 
     #[test]
     fn shared_topology_matches_reference_and_handles_changed_figures() {
-        let mut sky = crate::sky::create_sky_from_catalog(&crate::catalog::load_embedded_catalog().unwrap());
+        let mut sky = crate::sky::create_sky_from_catalog(&crate::catalog::load_embedded_catalog().unwrap()).unwrap();
         let mut cache = ProjectionCache::default();
         let endpoint_storage = sky.catalog.endpoint_indices().as_ptr();
         for phase in 0..6 {
@@ -509,7 +510,7 @@ mod ownership_tests {
     fn fixture() -> ObservedSky {
         let mut parsed = crate::catalog::load_embedded_catalog().unwrap();
         parsed.stars.truncate(6);
-        let mut sky = crate::sky::create_sky_from_catalog(&crate::catalog::Catalog::new(parsed.stars, parsed.names, vec![]));
+        let mut sky = crate::sky::create_sky_from_catalog(&crate::catalog::Catalog::new(parsed.stars, parsed.names, vec![])).unwrap();
         for (index, star) in sky.stars.iter_mut().enumerate() {
             star.position = Vector3 { x: 0.0, y: 0.0, z: 1.0 };
             star.magnitude = index as f64;

@@ -47,16 +47,26 @@ state.log_data(None, None)?;                                                    
 ```
 
 Use a file path when the frame loop is running: the terminal owns stdout and the alternate screen is active.
-The star catalog is one `persistent.catalog.stars` Markdown table with all 12 runtime columns. Each table has a heading,
-memory details and typed column headers; each cell has a bounded preview. Name ranges and precise motions are separate side tables because they
+The star catalog is one `persistent.catalog.stars` Markdown table with all 8 runtime columns. Each table has a heading,
+memory details and typed column headers; each cell has a bounded preview. Label boundaries, sparse ASCII alternatives and precise motions are separate side tables because they
 have different row counts. The main table's byte counts cover its columns only, excluding those side tables. Startup-only movement bounds
 have their own `preparation` owner and disappear after `free_preparation_only_data()`. No missing column is
-replaced with zeros. Names and immutable constellation definitions are shared from the original catalog.
+replaced with zeros. Prepared display labels and immutable constellation definitions are shared from the catalog. Proper names and catalog
+identifiers use the same label rules; `name_entry` references a pair of adjacent u32 boundaries.
 
 Debug headers use descriptive labels, such as `initial_magnitude` and `brightest_possible_magnitude`, while Rust
-fields retain their existing names. Column notes explain units, coordinate systems, index targets and packed flags.
+fields retain their existing names. Column notes explain units, coordinate systems, index targets and reserved exception fields.
 The source crosswalk is documented below `row_columns!` in `src/rows/mod.rs` and beside the contextual labels in
 `src/state/tables/labels.rs`. Labels do not change data types, numerical precision or cache formats.
+
+`display_color_index: u8` selects one of eight shared RGB/terminal palette entries, explained in the table notes.
+Source spectral codes and B-V measurements are discarded after classification. The former renderer-side
+`scene_cache.prepared.stars` table is removed; label eligibility comes from the catalog's existing name references.
+
+`persistent.catalog.star_exceptions` is an empty skeleton for future motion-fallback and high-precision metadata.
+Ordinary star rows no longer store flags or precision references. Datasets requiring these exceptions currently
+fail with an explicit unsupported-feature error; the reserved precise-motion table must also remain empty.
+Runtime fallback calculations for accepted stars outside the supported time interval are unchanged.
 
 Used bytes describe live payload; reserved bytes include spare capacity. Both come from the original owners,
 not slices of their data. Unknown sizes print `unknown`; notes identify partial counts such as nested allocations

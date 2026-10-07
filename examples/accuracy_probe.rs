@@ -10,7 +10,7 @@ use astroterm::timing::StepTimes;
 use std::io::{self, BufRead};
 fn main() {
     let cat = astroterm::catalog::load_embedded_catalog().unwrap();
-    let mut sky = astroterm::sky::create_sky_from_catalog(&cat);
+    let mut sky = astroterm::sky::create_sky_from_catalog(&cat).unwrap();
     for line in io::stdin().lock().lines() {
         let line = line.unwrap();
         let fields: Vec<f64> = line.split_whitespace().map(|v| v.parse().unwrap()).collect();

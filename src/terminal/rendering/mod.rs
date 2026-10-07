@@ -43,13 +43,6 @@ impl Renderer {
             RenderingState::Pending => panic!("rendering state is not initialized"),
         }
     }
-    pub fn prepare_catalog(&mut self, state: &mut RenderingState, catalog: std::sync::Arc<crate::model::SkyCatalog>, times: &mut StepTimes) {
-        match state {
-            RenderingState::Chars(r) => crate::scene::prepare_scene_catalog(&mut r.scene_cache, catalog, times),
-            RenderingState::Pixels(r) => crate::scene::prepare_scene_catalog(&mut r.scene_cache, catalog, times),
-            RenderingState::Pending => panic!("rendering state is not initialized"),
-        }
-    }
     pub fn set_cache_diagnostics(&mut self, state: &mut RenderingState, observation: crate::cache::CacheStats, projection: crate::cache::CacheStats) {
         let value = [crate::cache::format_stats(observation), crate::cache::format_stats(projection)];
         match state {

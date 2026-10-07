@@ -1,15 +1,13 @@
-//! Drawing primitives, object appearance, and catalog-bound display constants.
+//! Drawing primitives, object appearance, and shared catalog palette access.
 pub(super) mod appearance;
 mod bodies;
 mod overlays;
 pub(super) mod pixels;
-pub(super) mod prepared;
 
 pub use appearance::{format_star_label, select_moon_appearance, select_planet_appearance, select_star_appearance};
 pub use bodies::{draw_constellations, draw_moon, draw_planets, draw_stars};
 pub use overlays::{draw_azimuthal_grid, draw_cardinal_directions, draw_horizon_labels, draw_horizon_line};
 pub(crate) use bodies::select_dynamically_named_stars;
-pub(super) use bodies::draw_stars_prepared;
 
 use crate::canvas::{Canvas, Color, draw_line_ascii, draw_line_smooth};
 use crate::model::{ProjectedSky, RenderOptions};
@@ -25,10 +23,14 @@ pub(super) fn draw_orientation_labels(canvas: &mut Canvas, options: &RenderOptio
 }
 
 pub(super) fn draw_coverage_notice(canvas: &mut Canvas, sky: &ProjectedSky<'_>) {
-    if sky.outside_accuracy_range && canvas.height() > 0 {
-        let row = canvas.height() as i32 - 1;
-        for col in 0..canvas.width() { canvas.put_char(row, col as i32, ' ', None); }
-        canvas.put_str_truncated(row, 0, crate::astro::accuracy::ACCURACY_WARNING, Some(Color::Yellow));
+    let notices = [
+        sky.outside_accuracy_range.then_some(crate::astro::accuracy::ACCURACY_WARNING),
+        sky.magnitude_clipping().any().then_some(crate::catalog::MAGNITUDE_CLIPPING_WARNING),
+    ];
+    for (offset, notice) in notices.into_iter().flatten().enumerate() {
+        let Some(row) = canvas.height().checked_sub(offset + 1) else { break; };
+        for col in 0..canvas.width() { canvas.put_char(row as i32, col as i32, ' ', None); }
+        canvas.put_str_truncated(row as i32, 0, notice, Some(Color::Yellow));
     }
 }
 

@@ -16,6 +16,7 @@ impl<T: Pod> Deref for CatalogArray<T> {
 }
 impl<T: Pod> CatalogArray<T> {
     pub fn capacity(&self) -> usize { self.0.capacity() }
+    pub(crate) fn shrink_to_fit(&mut self) { self.0.shrink_to_fit(); }
     pub(crate) fn bytes(&self) -> &[u8] { bytemuck::cast_slice(&self.0) }
     pub(crate) fn push(&mut self, value: T) { self.0.push(value); }
 }

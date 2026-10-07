@@ -150,7 +150,7 @@ mod tests {
         assert!(text.starts_with("\n## empty\n"));
         let listed = paths(&text);
         for expected in [
-            "persistent.catalog.stars", "persistent.catalog.stars.name_table",
+            "persistent.catalog.stars", "persistent.catalog.star_exceptions", "persistent.catalog.names.boundaries", "persistent.catalog.names.ascii_alternatives",
             "persistent.catalog.stars.precise_motions", "persistent.catalog.grid.offsets",
             "persistent.catalog.grid.coarse_caps", "persistent.catalog.grid.fine_caps",
             "persistent.catalog.endpoint_indices", "preparation", "persistent.catalog.names",
@@ -191,7 +191,7 @@ mod tests {
         use crate::model::{FrameTime, ProjectionViewport, SkyRegion, View};
         use crate::state::Caches;
         let mut state = empty_state();
-        state.replace_catalog(crate::sky::prepare_owned_catalog(crate::catalog::load_embedded_catalog().unwrap()));
+        state.replace_catalog(crate::sky::prepare_owned_catalog(crate::catalog::load_embedded_catalog().unwrap()).unwrap());
         let count = state.persistent.catalog.stars.len();
         {
             let Caches { sky, simulation, observation, projection, .. } = &mut state.cache;
@@ -205,7 +205,7 @@ mod tests {
 
         let text = dump(&state, None);
         let stars = section(&text, "persistent.catalog.stars");
-        assert!(stars.contains(&format!("**Shape:** `[{count}, 12]`")));
+        assert!(stars.contains(&format!("**Shape:** `[{count}, 8]`")));
         assert!(!text.contains("persistent.catalog.stars.u0"));
         assert!(stars.contains(&format!("{} rows omitted", count - 2 * EDGE_ROWS)));
         assert!(text.contains("ttl=360 s") && text.contains("ttl=dependencies") && text.contains("invalid=false"));
@@ -219,7 +219,7 @@ mod tests {
             assert!(star_header.contains(&markdown_text(&name)), "missing column: {star_header}");
         }
         assert_eq!(data_rows(stars), 20);
-        for row in stars.lines().filter(|l| l.starts_with('|')) { assert_eq!(row.matches('|').count(), 14); }
+        for row in stars.lines().filter(|l| l.starts_with('|')) { assert_eq!(row.matches('|').count(), 10); }
         let sky = section(&text, "cache.sky.stars");
         assert!(sky.contains("| Row | catalog\\_row\\_index: usize | passes\\_brightness\\_filter: bool | current\\_magnitude: f64 | direction: Vector3 |"));
         assert!(section(&text, "cache.simulation.planets").contains(&markdown_text("sampled_state: [BodyState; 9]")));

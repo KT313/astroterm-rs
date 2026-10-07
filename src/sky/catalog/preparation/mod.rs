@@ -4,17 +4,26 @@ use crate::model::{StarStorage, Constellation};
 use std::collections::HashMap;
 use super::{grid, prepare_star};
 
-pub(super) fn prepare_compact_stars(entries: impl Iterator<Item = CatalogStar>) -> (StarStorage, Vec<f32>) {
-    // prepare directly into compact arrays, then permute in place by cell, key and stable ID
+pub(super) fn prepare_compact_stars(entries: impl Iterator<Item = CatalogStar>, source_names: &crate::catalog::StarNames) -> std::io::Result<(StarStorage, Vec<f32>, crate::catalog::StarNames)> {
     let mut stars = StarStorage::default();
-    stars.reserve(entries.size_hint().1.unwrap_or(0));
-    let mut bounds = Vec::with_capacity(entries.size_hint().1.unwrap_or(0));
+    let capacity = entries.size_hint().0;
+    if capacity as u64 <= u64::from(u32::MAX) { stars.reserve(capacity); }
+    let mut bounds = Vec::new();
+    let mut labels = crate::catalog::LabelBuilder::default();
     for entry in entries.filter(|s| s.has_data) {
-        bounds.push(stars.push(prepare_star(&entry)));
+        crate::catalog::Catalog::check_star_count(stars.len() as u64 + 1).map_err(std::io::Error::other)?;
+        let mut star = prepare_star(&entry);
+        star.name = if let Some(name) = entry.name {
+            let text = source_names.get(Some(name)).ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid source label reference"))?;
+            Some(labels.insert(text.to_owned(), None)?)
+        } else if let Some(designation) = entry.designation {
+            Some(labels.insert(designation.format(true), Some(designation.format(false)))?)
+        } else { None };
+        bounds.push(stars.push(star)?);
     }
     stars.shrink_to_fit();
     bounds.shrink_to_fit();
-    (stars, bounds)
+    Ok((stars, bounds, labels.finish()))
 }
 
 pub(super) fn sort_stars_by_region_and_brightness(stars: &mut StarStorage, bounds: &mut [f32]) {
@@ -71,10 +80,10 @@ fn resolve_constellation_figure(
 #[cfg(test)]
 mod tests {
     use crate::model::Sky;
-    use crate::catalog::{Catalog, StarNames, CatalogStar, ConstellationFigure, Designation, load_embedded_catalog};
+    use crate::catalog::{Catalog, StarNames, CatalogStar, ConstellationFigure, load_embedded_catalog};
 
     fn build_sky() -> Sky {
-        crate::sky::create_sky_from_catalog(&load_embedded_catalog().expect("embedded catalog loads"))
+        crate::sky::create_sky_from_catalog(&load_embedded_catalog().expect("embedded catalog loads")).unwrap()
     }
 
     #[test]
@@ -85,10 +94,13 @@ mod tests {
             sky.star_name(&sky.star_views().find(|star| star.id().0 == 7001).unwrap()),
             Some("Vega")
         );
-        assert!(
-            sky.star_views()
-                .all(|star| star.designation().resolve() == Some(Designation::Hr(star.id().0 as u32)))
-        );
+        let source = load_embedded_catalog().unwrap();
+        for star in sky.star_views() {
+            let original = &source.stars[star.id().0 as usize - 1];
+            let expected = source.names.get(original.name).map(str::to_owned)
+                .unwrap_or_else(|| original.designation.unwrap().format(true));
+            assert_eq!(sky.star_name(&star), Some(expected.as_str()));
+        }
         for range in sky.catalog.grid.offsets.windows(2) {
             let stars = &sky.catalog.stars;
             for i in range[0] + 1..range[1] {
@@ -118,16 +130,16 @@ mod tests {
     }
 
     #[test]
-    fn stars_keep_their_names_and_spectral_types() {
+    fn stars_keep_their_names_and_prepared_colors() {
         let sky = build_sky();
         let star = |id| sky.star_views().find(|star| star.id().0 == id).unwrap();
         assert_eq!(
-            (sky.star_name(&star(2061)), &star(2061).spectral_type()),
-            (Some("Betelgeuse"), b"M1")
+            (sky.star_name(&star(2061)), star(2061).display_color()),
+            (Some("Betelgeuse"), crate::model::StarColor::RedOrange)
         );
         assert_eq!(
-            (sky.star_name(&star(5340)), &star(5340).spectral_type()),
-            (Some("Arcturus"), b"K1")
+            (sky.star_name(&star(5340)), star(5340).display_color()),
+            (Some("Arcturus"), crate::model::StarColor::Orange)
         );
     }
 
@@ -141,7 +153,7 @@ mod tests {
     #[test]
     fn constellations_are_matched_by_hr_number_in_any_dataset() {
         let star = |hr: Option<u32>| CatalogStar {
-            id: crate::catalog::StarId(u64::from(hr.unwrap_or(100))),
+            id: crate::catalog::StarId(hr.unwrap_or(100)),
             space_motion: None,
             hr,
             name: None,
@@ -165,7 +177,7 @@ mod tests {
                 figure("Def", vec![[98, 99]]),
             ],
         );
-        let sky = crate::sky::create_sky_from_catalog(&catalog);
+        let sky = crate::sky::create_sky_from_catalog(&catalog).unwrap();
         assert_eq!(sky.constellations().len(), 1);
         let [a, b] = sky.constellations()[0].segments[0];
         assert_eq!((sky.star_view(a).id().0, sky.star_view(b).id().0), (10, 20));

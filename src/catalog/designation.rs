@@ -192,21 +192,3 @@ mod tests {
         assert_eq!(Designation::parse_tycho("a-b-c"), None);
     }
 }
-
-/// Packed catalog designation, decoded only when a label is requested. Immutable prepared storage validates the
-/// bytes once on load; carrying them through observation avoids expanding and revalidating every star's label.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct EncodedDesignation([u8; 16]);
-impl EncodedDesignation {
-    pub(crate) fn from_validated_bytes(bytes: [u8; 16]) -> Self {
-        Self(bytes)
-    }
-    pub fn resolve(self) -> Option<Designation> {
-        super::cache::encoding::decode_designation(self.0).expect("validated catalog designation")
-    }
-}
-impl From<Option<Designation>> for EncodedDesignation {
-    fn from(value: Option<Designation>) -> Self {
-        Self(super::cache::encoding::encode_designation(value))
-    }
-}

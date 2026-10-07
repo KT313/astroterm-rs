@@ -53,13 +53,13 @@ fn catalog() -> Arc<SkyCatalog> {
                     ra_motion: 0.0,
                     ra_motion_cos_dec: 0.0,
                     dec_motion: 0.0,
-                    magnitude: (uniform() * 12.0) as f32,
+                    magnitude: uniform() * 12.0,
                     spectral_type: *b"G2",
                     color_index: None,
                     has_data: true,
                 });
             }
-            Arc::new(astroterm::sky::prepare_owned_catalog(catalog).catalog)
+            Arc::new(astroterm::sky::prepare_owned_catalog(catalog).unwrap().catalog)
         })
         .clone()
 }
@@ -341,9 +341,9 @@ fn seam_threshold_horizon_fast_mover_and_view_edge_cases_are_not_culled() {
         parsed.stars.clear();
         parsed.constellations.clear();
         parsed.hr_representatives.clear();
-        for (i, magnitude) in [5_f32.next_down(), 5.0, 5_f32.next_up()].into_iter().enumerate() {
+        for (i, magnitude) in [4.999, 5.0, 5.001].into_iter().enumerate() {
             let mut star = template.clone();
-            star.id = StarId(i as u64);
+            star.id = StarId(i as u32);
             star.has_data = true;
             star.magnitude = magnitude - if years != 0.0 { 10.0 } else { 0.0 };
             star.right_ascension = direction.y.atan2(direction.x);
@@ -355,7 +355,7 @@ fn seam_threshold_horizon_fast_mover_and_view_edge_cases_are_not_culled() {
             });
             parsed.stars.push(star);
         }
-        let catalog = Arc::new(astroterm::sky::prepare_owned_catalog(parsed).catalog);
+        let catalog = Arc::new(astroterm::sky::prepare_owned_catalog(parsed).unwrap().catalog);
         let time = FrameTime::from_utc(J2000 + years * JULIAN_YEAR_DAYS);
         let mut simulation = SimulationState::exact();
         let mut timing = StepTimes::default();

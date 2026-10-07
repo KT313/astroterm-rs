@@ -15,16 +15,7 @@ use crate::timing::StepTimes;
 pub const BACKGROUND: [u8; 4] = [3, 6, 14, 255];
 
 pub fn draw_pixel_sky(sky: &ProjectedSky<'_>, options: &RenderOptions, times: &mut StepTimes) -> Option<RgbaImage> {
-    draw_pixel_sky_with_star_path(sky, options, times, true, None)
-}
-
-pub(crate) fn draw_pixel_sky_prepared(
-    sky: &ProjectedSky<'_>,
-    options: &RenderOptions,
-    times: &mut StepTimes,
-    prepared: Option<&crate::model::PreparedScene>,
-) -> Option<RgbaImage> {
-    draw_pixel_sky_with_star_path(sky, options, times, true, prepared)
+    draw_pixel_sky_with_star_path(sky, options, times, true)
 }
 
 pub(in crate::scene) fn initialize_pixel_canvas(viewport: crate::model::ProjectionViewport) -> Option<Pixmap> {
@@ -51,7 +42,6 @@ pub(in crate::scene) fn draw_pixel_stars(
     sky: &ProjectedSky<'_>,
     options: &RenderOptions,
     fast_stars: bool,
-    prepared: Option<&crate::model::PreparedScene>,
 ) {
     for star in sky.stars.iter() {
         if star.star.magnitude > options.magnitude_threshold {
@@ -61,7 +51,7 @@ pub(in crate::scene) fn draw_pixel_stars(
             let magnitude = star.star.magnitude;
             let radius = (2.8 - 0.32 * magnitude).clamp(0.55, 4.0) as f32;
             let strength = (1.0 - 0.045 * (magnitude + 1.46)).clamp(0.16, 1.0);
-            let color = super::prepared::resolve_star_rgb(&star.star, prepared)
+            let color = star_rgb(&star.star)
                 .map(|c| (f64::from(c) * strength).round() as u8);
             if fast_stars && radius == MINIMUM_STAR_RADIUS && draw_minimum_star(canvas, x, y, color) {
                 continue;
@@ -129,25 +119,7 @@ pub(in crate::scene) fn draw_pixel_grid(canvas: &mut Pixmap, sky: &ProjectedSky<
 }
 
 pub(crate) fn star_rgb(star: &ObservedStarView<'_>) -> [u8; 3] {
-    compute_star_rgb(star.spectral_type(), star.color_index())
-}
-
-pub(super) fn compute_star_rgb(spectral_type: [u8; 2], color_index: Option<f32>) -> [u8; 3] {
-    match spectral_type[0] {
-        b'O' | b'W' => [155, 185, 255],
-        b'B' => [180, 205, 255],
-        b'A' => [220, 231, 255],
-        b'F' => [248, 245, 235],
-        b'G' => [255, 234, 192],
-        b'K' => [255, 192, 125],
-        b'M' | b'C' | b'S' | b'N' => [255, 142, 91],
-        _ => match color_index {
-            Some(bv) if bv < 0.0 => [180, 205, 255],
-            Some(bv) if bv >= 1.4 => [255, 142, 91],
-            Some(bv) if bv >= 0.8 => [255, 192, 125],
-            _ => [230, 236, 255],
-        },
-    }
+    star.display_color().rgb()
 }
 
 pub(crate) fn planet_rgb(kind: PlanetKind) -> [u8; 3] {

@@ -11,7 +11,7 @@ use astroterm::sky::update_sky_positions;
 use astroterm::timing::StepTimes;
 
 fn boston_sky(julian_date_ut1: f64) -> Sky {
-    let mut sky = astroterm::sky::create_sky_from_catalog(&load_embedded_catalog().unwrap());
+    let mut sky = astroterm::sky::create_sky_from_catalog(&load_embedded_catalog().unwrap()).unwrap();
     let observer = Observer {
         latitude: 42.3601_f64.to_radians(),
         longitude: -71.0589_f64.to_radians(),

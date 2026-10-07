@@ -18,7 +18,7 @@ pub(super) fn load_embedded_sky(times: &mut StepTimes) -> io::Result<PreparedCat
             parsed.stars.len()
         )
     });
-    Ok(prepare_catalog(parsed, times))
+    prepare_catalog(parsed, times)
 }
 
 pub(super) fn resolve_cache_path(source: &Path, directories: &DatasetDirectories, notices: &mut impl Write) -> Option<PathBuf> {
@@ -59,6 +59,7 @@ pub(super) fn try_load_prepared_catalog(path: &Option<PathBuf>, fingerprint: &[u
         match cached {
             Ok(catalog) => return Ok(Some(catalog)),
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) if error.kind() == io::ErrorKind::Unsupported => return Err(error),
             Err(error) => {
                 writeln!(
                     notices,
@@ -88,10 +89,10 @@ pub(super) fn write_prepared_catalog_if_stable(path: Option<PathBuf>, source: &P
     Ok(())
 }
 
-pub(super) fn prepare_catalog(parsed: crate::catalog::Catalog, times: &mut crate::timing::StepTimes) -> PreparedCatalog {
+pub(super) fn prepare_catalog(parsed: crate::catalog::Catalog, times: &mut crate::timing::StepTimes) -> io::Result<PreparedCatalog> {
     let input = parsed.stars.len();
-    let catalog = times.measure("Catalog preparation", || crate::sky::prepare_owned_catalog(parsed));
+    let catalog = times.measure("Catalog preparation", || crate::sky::prepare_owned_catalog(parsed))?;
     times.describe("Catalog preparation", || format!("input entries={input}; removed placeholders={}; output stars={}; grid cells={CELL_COUNT}; always-checked={}; unique constellation endpoints={}", input - catalog.catalog.stars.len(), catalog.catalog.stars.len(), catalog.catalog.always_checked().len(), catalog.catalog.endpoint_indices().len()));
-    catalog
+    Ok(catalog)
 }
 

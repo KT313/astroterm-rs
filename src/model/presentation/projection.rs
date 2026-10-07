@@ -213,6 +213,12 @@ pub struct ProjectedSky<'a> {
     pub horizon_labels: &'a [(Cell, &'static str)],
 }
 
+impl ProjectedSky<'_> {
+    pub fn magnitude_clipping(&self) -> crate::catalog::MagnitudeClipping {
+        self.stars.observed.catalog.stars.magnitude_clipping()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProjectionData {
     pub outside_accuracy_range: bool,

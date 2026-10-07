@@ -4,16 +4,16 @@ use crate::model::{
     Star, ObservedStar, Planet, Moon, PlanetKind, CorrectionStats, ObserverState,
     Anchor, MoonIllumination, SelectedStar, StellarWork, ValidityCounts, View, ViewCenter,
     ProjectionKind, ArcPart, CartesianCamera, ScreenPoint, Polar, ProjectionViewport, ProjectedPlanet,
-    ProjectedMoon, DrawRecord, PixelStarKey, CharacterStarKey, StarDisplay, RenderOptions, TerminalViewport,
+    ProjectedMoon, DrawRecord, PixelStarKey, CharacterStarKey, RenderOptions, TerminalViewport,
     TerminalSettings, RendererKind, GraphicsProtocol, FrameTime, ModelFamily, StateRequest, CachePolicy,
     RefreshCounts, InterpolationLimits, Constellation, ObservedSky, BodySamples, CorrectionSelection, ProjectedArc,
-    ProjectedConstellation, SceneKey, PreparedScene, Glyph, Frame, StarKeys, Config,
+    ProjectedConstellation, SceneKey, Glyph, Frame, StarKeys, Config,
 };
 
-report_flat!(Star, ObservedStar, Planet, Moon, PlanetKind, CorrectionStats, ObserverState, Anchor, MoonIllumination,
+report_flat!(crate::model::StarException, Star, ObservedStar, Planet, Moon, PlanetKind, CorrectionStats, ObserverState, Anchor, MoonIllumination,
     crate::model::SkyRegion, crate::astro::MoonPhase, SelectedStar, StellarWork, ValidityCounts, View, ViewCenter, ProjectionKind, ArcPart, CartesianCamera,
     ScreenPoint, Polar, ProjectionViewport, ProjectedPlanet, ProjectedMoon, DrawRecord,
-    PixelStarKey, CharacterStarKey, StarDisplay, RenderOptions, TerminalViewport, TerminalSettings,
+    crate::model::StarColor, PixelStarKey, CharacterStarKey, RenderOptions, TerminalViewport, TerminalSettings,
     RendererKind, GraphicsProtocol, FrameTime, ModelFamily, StateRequest, CachePolicy, RefreshCounts,
     InterpolationLimits, crate::model::CellCap, crate::model::SelectionStats,
     crate::astro::Vector3, crate::astro::Matrix3, crate::astro::Observer, crate::astro::models::BodyState,
@@ -21,14 +21,13 @@ report_flat!(Star, ObservedStar, Planet, Moon, PlanetKind, CorrectionStats, Obse
     crate::catalog::StarId, crate::canvas::Cell, crate::cache::Group, crate::cache::GroupPolicy);
 
 report_fields!(Constellation { segments });
-report_fields!(crate::model::SkyCatalog { stars, grid, names, figures });
+report_fields!(crate::model::SkyCatalog { stars, star_exceptions, grid, names, figures });
 report_fields!(ObservedSky { catalog, stars, candidate_indices, planets, figure_override });
 report_fields!(BodySamples { planets });
 report_fields!(CorrectionSelection { indices });
 report_fields!(ProjectedArc { points });
 report_fields!(ProjectedConstellation { arcs });
 report_fields!(SceneKey { stars, planets, constellations, horizon, labels });
-report_fields!(PreparedScene { catalog, stars });
 report_fields!(Glyph { coverage });
 report_fields!(Frame { sky, panel });
 

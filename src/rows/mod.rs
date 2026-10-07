@@ -81,10 +81,11 @@ macro_rules! row_columns {
 // Markdown column labels are translated in state/tables/labels.rs; Rust fields and this raw schema are unchanged.
 // Debug label -> Rust field (context-specific overrides and tuple/array positions are documented there):
 // initial_direction -> u0; scaled_velocity_per_year -> w; initial_magnitude/current_magnitude -> magnitude;
+// In the prepared star table, magnitude and brightness_key are u16 codes, decoded as code / 1000 - 10.
 // brightest_possible_magnitude -> brightness_key; initial_distance_parsecs -> distance; star_id -> id;
-// name_entry -> name; encoded_catalog_designation -> designation; spectral_type_code -> spectral_type;
-// color_index_bv/base_rgb_color/terminal_color -> color (by type/context); data_flags -> flags;
-// precise_motion_entry -> precise_index; catalog_row_index -> source_index; is_draw_candidate/passes_brightness_filter -> drawable;
+// name_entry -> name; display_color_index -> display_color;
+// base_rgb_color/terminal_color -> color (by type/context);
+// catalog_row_index -> source_index; is_draw_candidate/passes_brightness_filter -> drawable;
 // direction -> position; body_kind -> kind; constellation_abbreviation -> abbreviation; star_index_pairs -> segments;
 // center_direction -> center; angular_radius_radians -> radius; sample_time_tt_jd -> epoch;
 // reuse_half_window_days -> half_span; sampled_state/orientation_matrix -> value;
@@ -98,7 +99,7 @@ macro_rules! row_columns {
 // screen_coordinates -> cell; projected_star_index -> projected_index; faintest_endpoint_magnitude -> maximum_magnitude;
 // projected_line_sections -> arcs; start_coordinates/end_coordinates -> start/end; path_coordinates -> points;
 // includes_original_start/includes_original_end -> includes_start/includes_end; symbol -> glyph;
-// base_rgb_color -> rgb; has_proper_name -> named; step_name -> name; nesting_depth -> depth;
+// step_name -> name; nesting_depth -> depth;
 // elapsed_seconds -> seconds; own_diagnostic_seconds -> direct_diagnostic_seconds; parent_step_index -> parent.
 pub(crate) use row_columns;
 

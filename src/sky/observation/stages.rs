@@ -34,11 +34,11 @@ pub(super) fn filter_brightness_candidates(
         indices
             .iter()
             .copied()
-            .filter(|&i| i < keys.len() && f64::from(keys[i]) <= threshold)
+            .filter(|&i| i < keys.len() && crate::catalog::passes_brightness_bound(keys[i], threshold))
             .collect()
     } else {
         (0..catalog.stars.len())
-            .filter(|&i| f64::from(keys[i]) <= threshold)
+            .filter(|&i| crate::catalog::passes_brightness_bound(keys[i], threshold))
             .collect()
     }
 }

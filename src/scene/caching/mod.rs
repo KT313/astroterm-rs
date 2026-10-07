@@ -9,11 +9,9 @@ mod tests;
 use crate::cache::CacheConfig;
 
 use crate::state::SceneCache;
-#[cfg(test)]
+use crate::model::{RenderOptions};
+use super::draw_sky_scene_with_times;
 use super::raster::pixels::draw_pixel_sky;
-use crate::model::{PreparedScene, RenderOptions};
-use super::draw_sky_scene_prepared;
-use super::raster::pixels::draw_pixel_sky_prepared;
 use crate::cache::Group;
 use crate::canvas::Canvas;
 use crate::model::ProjectedSky;
@@ -26,16 +24,15 @@ fn capture_scene_key(
     sky: &ProjectedSky<'_>,
     options: RenderOptions,
     canvas_size: Option<(usize, usize)>,
-    prepared: Option<&PreparedScene>,
     named_candidates: &mut Vec<usize>,
 ) {
     let key = candidate.get_or_insert_with(|| SceneKey {
         stars: StarKeys::Pixels(Vec::new()),
         planets: Vec::new(), moon: None, constellations: Vec::new(), horizon: Vec::new(), labels: Vec::new(),
-        viewport: sky.viewport, facing: sky.facing, warning: sky.outside_accuracy_range, options, canvas_size,
+        viewport: sky.viewport, facing: sky.facing, warning: sky.outside_accuracy_range, brightness_warning: sky.magnitude_clipping().any(), options, canvas_size,
     });
     clear_scene_candidate(key); // also resets a candidate left behind by a failed image allocation
-    capture_star_keys(&mut key.stars, sky, &options, canvas_size.is_some(), prepared, named_candidates);
+    capture_star_keys(&mut key.stars, sky, &options, canvas_size.is_some(), named_candidates);
     key.planets.extend_from_slice(sky.planets);
     key.moon = sky.moon.cell.map(|_| (*sky.moon).clone());
     key.constellations.extend_from_slice(sky.constellations);
@@ -44,21 +41,16 @@ fn capture_scene_key(
     key.viewport = sky.viewport;
     key.facing = sky.facing;
     key.warning = sky.outside_accuracy_range;
+    key.brightness_warning = sky.magnitude_clipping().any();
     key.options = options;
     key.canvas_size = canvas_size;
 }
 
 
-pub fn prepare_scene_catalog(storage: &mut SceneCache, catalog: std::sync::Arc<crate::model::SkyCatalog>, times: &mut StepTimes) {
-    storage.prepared = Some(crate::scene::prepare_scene(catalog, times));
-    storage.named_candidates.clear();
-    storage.invalidate();
-}
-
 pub(super) fn prepare_pixel_candidate(storage: &mut SceneCache, sky: &ProjectedSky<'_>, options: &RenderOptions, epoch: f64, times: &mut StepTimes) -> bool {
     let candidate_before = times.inspect_memory(|| storage.pixel_candidate.as_ref().map(describe_candidate)).flatten();
     times.measure("Raster cache key", || {
-        capture_scene_key(&mut storage.pixel_candidate, sky, *options, None, storage.prepared.as_ref(), &mut storage.named_candidates)
+        capture_scene_key(&mut storage.pixel_candidate, sky, *options, None, &mut storage.named_candidates)
     });
     let key = storage.pixel_candidate.as_ref().expect("raster candidate captured");
     record_scene_candidate(times, BufferId::PixelCandidate, candidate_before, key, Some(&storage.named_candidates));
@@ -72,7 +64,7 @@ pub(super) fn prepare_pixel_candidate(storage: &mut SceneCache, sky: &ProjectedS
 }
 
 pub(super) fn refresh_pixel_scene(storage: &mut SceneCache, sky: &ProjectedSky<'_>, options: &RenderOptions, epoch: f64, times: &mut StepTimes) -> Option<()> {
-    let image = draw_pixel_sky_prepared(sky, options, times, storage.prepared.as_ref())?;
+    let image = draw_pixel_sky(sky, options, times)?;
     let outcome = times.measure("Raster cache store", || {
         let key = storage.pixel_candidate.take().expect("raster candidate captured");
         storage.pixels.store(key, epoch, 0.0, image)
@@ -97,7 +89,6 @@ pub(super) fn prepare_character_candidate(storage: &mut SceneCache, canvas: &Can
             sky,
             *options,
             Some((canvas.height(), canvas.width())),
-            storage.prepared.as_ref(),
             &mut storage.named_candidates,
         )
     });
@@ -113,7 +104,7 @@ pub(super) fn prepare_character_candidate(storage: &mut SceneCache, canvas: &Can
 }
 
 pub(super) fn refresh_character_scene(storage: &mut SceneCache, canvas: &mut Canvas, sky: &ProjectedSky<'_>, options: &RenderOptions, epoch: f64, times: &mut StepTimes) {
-    draw_sky_scene_prepared(canvas, options, sky, times, storage.prepared.as_ref());
+    draw_sky_scene_with_times(canvas, options, sky, times);
     let copy = times.measure("Character cache copy", || canvas.clone());
     times.record_shape(BufferId::CharacterScene, Operation::Copy, None, || describe_canvas(canvas));
     let outcome = times.measure("Raster cache store", || {

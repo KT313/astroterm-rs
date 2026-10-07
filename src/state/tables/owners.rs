@@ -22,7 +22,10 @@ impl Tables for SkyCatalog {
     fn visit_tables(&self, prefix: &str, visit: &mut TableVisitor<'_>) {
         let path = |name: &str| join(prefix, name);
         visit(&path("stars"), &self.stars, None);
-        visit(&path("stars.name_table"), self.stars.name_table(), None);
+        visit(&path("magnitude_clipping"), &Single(&self.stars.magnitude_clipping()), None);
+        visit(&path("star_exceptions"), &self.star_exceptions, None);
+        visit(&path("names.boundaries"), self.names.boundaries(), None);
+        visit(&path("names.ascii_alternatives"), self.names.ascii_alternatives(), None);
         visit(&path("stars.precise_motions"), &super::PreciseMotions(self.stars.precise_motions()), None);
         visit(&path("grid.offsets"), &self.grid.offsets, None);
         visit(&path("grid.coarse_caps"), &self.grid.coarse_caps, None);
@@ -129,7 +132,6 @@ impl Tables for PixelState {
 impl Tables for SceneCache {
     fn visit_tables(&self, prefix: &str, visit: &mut TableVisitor<'_>) {
         let path = |name: &str| join(prefix, name);
-        visit(&path("prepared.stars"), &self.prepared.as_ref().map(|p| &p.stars), None);
         visit(&path("named_candidates"), &self.named_candidates, None);
         if let Some(key) = &self.pixel_candidate { key.visit_tables(&path("pixel_candidate"), visit); }
         if let Some(key) = &self.character_candidate { key.visit_tables(&path("character_candidate"), visit); }

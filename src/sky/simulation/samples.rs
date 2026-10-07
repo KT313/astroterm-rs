@@ -308,7 +308,7 @@ mod tests {
         update_simulation(&mut simulation, time, &[], &mut StepTimes::default()).unwrap();
         let planets = simulation.planets.clone();
         let observer = prepare_observer(&simulation, time, Observer::default()).unwrap();
-        let mut sky = crate::sky::create_sky_from_catalog(&load_embedded_catalog().unwrap());
+        let mut sky = crate::sky::create_sky_from_catalog(&load_embedded_catalog().unwrap()).unwrap();
         let options = RenderOptions {
             unicode: true,
             braille: true,

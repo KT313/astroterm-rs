@@ -340,7 +340,7 @@ mod tests {
                 z: 0.0,
             },
         });
-        let base = crate::sky::create_sky_from_catalog(&parsed);
+        let base = crate::sky::create_sky_from_catalog(&parsed).unwrap();
         assert!(base.stars.len() > BATCH_SIZE * 2);
         for config in [CacheConfig::default(), CacheConfig::disabled()] {
             let mut fused = ObservationCache::new(config.clone());

@@ -21,7 +21,7 @@ fn observe(state: &mut ApplicationState, utc: f64) {
 
 #[test]
 fn cold_and_warm_cleanup_preserve_rows_shared_identity_and_frame_results() {
-    let source = prepare_owned_catalog(astroterm::catalog::load_embedded_catalog().unwrap());
+    let source = prepare_owned_catalog(astroterm::catalog::load_embedded_catalog().unwrap()).unwrap();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("catalog");
     let fingerprint = catalog_fingerprint();
@@ -66,7 +66,7 @@ fn cold_and_warm_cleanup_preserve_rows_shared_identity_and_frame_results() {
 fn replacement_installs_fresh_preparation_and_clears_catalog_dependents() {
     let mut app = state();
     app.free_preparation_only_data();
-    let prepare = || prepare_owned_catalog(astroterm::catalog::load_embedded_catalog().unwrap());
+    let prepare = || prepare_owned_catalog(astroterm::catalog::load_embedded_catalog().unwrap()).unwrap();
     app.replace_catalog(prepare());
     observe(&mut app, J2000);
     app.cache.sky.set_figure_override(Some(astroterm::sky::prepare_constellation_set(Vec::new(), 0).unwrap()));

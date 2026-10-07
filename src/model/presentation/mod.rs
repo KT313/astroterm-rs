@@ -2,6 +2,8 @@
 mod projection;
 mod rendering;
 mod metadata;
+mod star_color;
+pub use star_color::StarColor;
 pub use projection::{
     ViewCenter, ProjectionKind, ArcPart, View, ScreenPoint, CartesianCamera, Polar, Cell, ProjectionViewport,
     ProjectedStar, ProjectedPlanet, ProjectedMoon, ProjectedArc, ProjectedConstellation, ProjectedSky,
@@ -13,4 +15,4 @@ pub(crate) use projection::{
     DEFAULT_FOV_DEGREES, MIN_FOV_DEGREES, DrawRecord, StarKey, BodyKey as ProjectionBodyKey, ConstellationKey,
     HorizonGeometry,
 };
-pub(crate) use rendering::{SceneKey, PixelStarKey, CharacterStarKey, StarKeys, StarDisplay, PreparedScene, Glyph};
+pub(crate) use rendering::{SceneKey, PixelStarKey, CharacterStarKey, StarKeys, Glyph};

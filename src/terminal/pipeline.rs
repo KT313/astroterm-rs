@@ -26,7 +26,7 @@ pub(super) fn render_character_frame(state: &mut CharacterState, session: &mut T
 #[allow(clippy::too_many_arguments)]
 fn draw_character_layers(state: &mut CharacterState, sky: &ProjectedSky<'_>, view: &View, date: f64, clock: &SimulationClock, observer: &Observer, times: &mut StepTimes) {
     rasterize_character_sky(state, sky, date, times);                                  // draw objects and constellation lines onto the sky canvas
-    draw_character_notice(state);                                                    // explain any fallback from pixel rendering
+    draw_character_notice(state, sky);                                                    // explain any fallback from pixel rendering
     draw_character_panel(state, sky, view, date, clock, observer, times);              // add local time, location and requested diagnostics
 }
 

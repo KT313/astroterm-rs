@@ -140,7 +140,7 @@ fn inventory_does_not_change_output_or_cache_statistics() {
     use astroterm::model::{ProjectionViewport as Viewport, FrameTime};
     let config = build_config(Arguments::try_parse_from(["astroterm", "--debug-singleframe", "--debug-memory"]).unwrap(), &[]).unwrap();
     let mut state = ApplicationState::new(config, astroterm::timing::StepTimes::with_trace(true));
-    state.replace_catalog(astroterm::sky::prepare_owned_catalog(astroterm::catalog::load_embedded_catalog().unwrap()));
+    state.replace_catalog(astroterm::sky::prepare_owned_catalog(astroterm::catalog::load_embedded_catalog().unwrap()).unwrap());
     for policy in [CacheConfig::default(), CacheConfig::disabled()] {
         state.cache.simulation.configure_cache(&policy);
         state.cache.observation = astroterm::state::ObservationCache::new(policy.clone());

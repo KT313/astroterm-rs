@@ -105,7 +105,7 @@ mod tests {
     #[test]
     fn compact_sort_and_permutation_match_reference_with_ties_and_reused_scratch() {
         let catalog = crate::catalog::load_embedded_catalog().unwrap();
-        let mut sky = crate::sky::create_sky_from_catalog(&catalog);
+        let mut sky = crate::sky::create_sky_from_catalog(&catalog).unwrap();
         sky.stars.truncate(128);
         let mut scratch = Vec::new();
         for count in [128, 3, 0, 17, 128] {

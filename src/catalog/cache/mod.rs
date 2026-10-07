@@ -1,6 +1,5 @@
 //! Aligned, checksummed cache container. The higher sky layer owns the catalog schema and semantic validation.
 mod array;
-pub(crate) mod encoding;
 pub use array::CatalogArray;
 use std::{
     fs::File,
@@ -10,7 +9,7 @@ use std::{
 };
 
 const MAGIC: &[u8; 8] = b"ASTROCAT";
-const VERSION: u32 = 3; // 3: preparation bounds separate; fast movers represented by the grid tail
+const VERSION: u32 = 7; // 7: u16 fixed-point magnitudes and persisted clipping counts
 const PREFIX: usize = 64;
 const MAX_SECTIONS: usize = 64;
 

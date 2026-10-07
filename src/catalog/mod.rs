@@ -8,6 +8,7 @@ mod cities;
 pub mod datasets;
 mod designation;
 mod names;
+mod magnitude;
 mod orbits;
 mod space_motion;
 mod tables;
@@ -19,8 +20,10 @@ pub use athyg::load_athyg_catalog;
 pub(crate) use athyg::load_athyg_catalog_with_times;
 pub use bsc5::{Bsc5Entry, parse_bsc5};
 pub use cities::{City, find_city, parse_cities, suggest_cities};
-pub use designation::{Designation, EncodedDesignation};
+pub use designation::Designation;
 pub use names::{NameId, StarNames};
+pub use magnitude::{decode_magnitude, encode_magnitude, validate_magnitude, encode_brightness_bound, passes_brightness_bound, MagnitudeClipping, MIN_MAGNITUDE, MAX_MAGNITUDE, MAGNITUDE_CLIPPING_WARNING};
+pub(crate) use names::LabelBuilder;
 pub use orbits::{
     EARTH_ORBIT, JUPITER_ORBIT, MARS_ORBIT, MERCURY_ORBIT, MOON_ORBIT, NEPTUNE_ORBIT, SATURN_ORBIT, URANUS_ORBIT,
     VENUS_ORBIT,
@@ -47,9 +50,19 @@ pub struct Catalog {
 
 /// Identity within a catalog: BSC5 HR number, or zero-based AT-HYG data-row index (including skipped rows).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct StarId(pub u64);
+pub struct StarId(pub u32);
+
+impl StarId {
+    pub fn try_from_index(index: u64) -> Result<Self, CatalogError> {
+        u32::try_from(index).map(Self).map_err(|_| CatalogError::LimitExceeded("internal star ID exceeds 4,294,967,295 (source rows include skipped rows)"))
+    }
+}
 
 impl Catalog {
+    pub(crate) fn check_star_count(count: u64) -> Result<(), CatalogError> {
+        if count > u64::from(u32::MAX) { return Err(CatalogError::LimitExceeded("loaded-star count exceeds 4,294,967,295")); }
+        Ok(())
+    }
     /// Choose each HR representative by original magnitude, then lowest stable ID.
     pub fn new(stars: Vec<CatalogStar>, names: StarNames, constellations: Vec<ConstellationFigure>) -> Self {
         let mut representatives: HashMap<u32, &CatalogStar> = HashMap::new();
@@ -93,7 +106,7 @@ pub struct CatalogStar {
     /// Tangential RA motion (dRA/dt · cos declination), radians/Julian year; retained even at a pole.
     pub ra_motion_cos_dec: f64,
     pub dec_motion: f64,
-    pub magnitude: f32,
+    pub magnitude: f64,
     /// Morgan-Keenan spectral class and subclass, e.g. `*b"K1"`; blank if unknown.
     pub spectral_type: [u8; 2],
     /// B-V color index, if known.
@@ -105,6 +118,7 @@ pub struct CatalogStar {
 /// Malformed embedded data.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CatalogError {
+    LimitExceeded(&'static str),
     /// The BSC5 data ends before the header (`entry: None`) or inside an entry.
     TruncatedBsc5 {
         entry: Option<usize>,
@@ -132,6 +146,7 @@ pub enum CatalogError {
 impl fmt::Display for CatalogError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            CatalogError::LimitExceeded(message) => f.write_str(message),
             CatalogError::TruncatedBsc5 { entry: None } => {
                 write!(f, "star catalog is too short for its header")
             }
@@ -164,8 +179,8 @@ pub fn load_embedded_catalog() -> Result<Catalog, CatalogError> {
     let stars = entries
         .iter()
         .zip(star_names)
-        .map(|(entry, name)| convert_bsc5_entry(entry, name.map(|name| names.insert(name))))
-        .collect();
+        .map(|(entry, name)| Ok(convert_bsc5_entry(entry, name.map(|name| names.insert(name)).transpose().map_err(|e| CatalogError::Io(e.to_string()))?)))
+        .collect::<Result<Vec<_>, CatalogError>>()?;
     Ok(Catalog::new(stars, names, load_constellation_figures()?))
 }
 
@@ -177,7 +192,7 @@ pub fn load_constellation_figures() -> Result<Vec<ConstellationFigure>, CatalogE
 /// A BSC5 entry as a catalog star, designated by its HR number.
 fn convert_bsc5_entry(entry: &Bsc5Entry, name: Option<NameId>) -> CatalogStar {
     CatalogStar {
-        id: StarId(u64::from(entry.catalog_number)),
+        id: StarId(entry.catalog_number),
         space_motion: None,
         hr: Some(entry.catalog_number),
         name,
@@ -204,6 +219,14 @@ crate::rows::debug_preview!(StarId);
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn star_count_limit_is_independent_of_id_range() {
+        Catalog::check_star_count(u64::from(u32::MAX)).unwrap();
+        assert!(Catalog::check_star_count(u64::from(u32::MAX) + 1).is_err());
+        assert_eq!(StarId::try_from_index(u64::from(u32::MAX)).unwrap().0, u32::MAX);
+        assert!(StarId::try_from_index(u64::from(u32::MAX) + 1).is_err());
+    }
 
     #[test]
     fn embedded_catalog_is_consistent() {

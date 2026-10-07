@@ -26,14 +26,14 @@ fn fixture(name: &str, spectrum: [u8; 2], color_index: Option<f32>) -> Sky {
     let mut catalog = load_embedded_catalog().unwrap();
     catalog.stars.truncate(3);
     let mut names = StarNames::default();
-    let named = names.insert(name);
+    let named = names.insert(name).unwrap();
     for (i, star) in catalog.stars.iter_mut().enumerate() {
-        star.magnitude = 1.0 + i as f32;
+        star.magnitude = 1.0 + i as f64;
         star.name = (i == 0).then_some(named);
         star.spectral_type = spectrum;
         star.color_index = color_index;
     }
-    let mut sky = crate::sky::create_sky_from_catalog(&Catalog::new(catalog.stars, names, vec![]));
+    let mut sky = crate::sky::create_sky_from_catalog(&Catalog::new(catalog.stars, names, vec![])).unwrap();
     for (i, star) in sky.stars.iter_mut().enumerate() {
         star.position = Horizontal {
             azimuth: i as f64,
@@ -176,7 +176,7 @@ fn character_keys_track_dynamic_designation_changes_at_fixed_positions() {
         source.stars[0].name = None;
         source.stars[0].magnitude = 1.0;
         source.stars[0].designation = Some(designation);
-        let mut sky = crate::sky::create_sky_from_catalog(&Catalog::new(source.stars, StarNames::default(), vec![]));
+        let mut sky = crate::sky::create_sky_from_catalog(&Catalog::new(source.stars, StarNames::default(), vec![])).unwrap();
         sky.stars[0].position = Horizontal {
             azimuth: 0.0,
             altitude: 1.2,
@@ -230,11 +230,10 @@ fn compact_keys_preserve_bodies_overlays_warnings_and_disabled_cache_behavior() 
 }
 
 #[test]
-fn prepared_display_constants_match_reference_and_fall_back_for_another_catalog() {
+fn catalog_palette_matches_reference_after_catalog_switch_and_cache_bypass() {
     let original = fixture("Original", *b"B0", None);
     let other = fixture("Other", *b"  ", Some(1.4));
     let mut cache = SceneCache::default();
-    crate::scene::prepare_scene_catalog(&mut cache, original.catalog.clone(), &mut StepTimes::with_trace(true));
     for sky in [&original, &other] {
         let mut projected = project(sky);
         for phase in 0..3 {
@@ -249,17 +248,13 @@ fn prepared_display_constants_match_reference_and_fall_back_for_another_catalog(
                 .stars
                 .iter()
                 .enumerate()
-                .filter_map(|(i, star)| star.star.name().is_some().then_some(i))
+                .filter_map(|(i, star)| (star.star.name().is_some() && star.star.magnitude <= options().label_threshold).then_some(i))
                 .collect();
-            assert_eq!(cache.named_candidates().unwrap(), expected);
+            assert_eq!(cache.named_candidates(), expected);
             check_characters(&mut cache, &projected.view(sky), &options(), (40, 60));
         }
     }
     cache.configure(&CacheConfig::disabled());
-    assert!(
-        cache.prepared().is_some(),
-        "immutable preparation survives runtime cache bypass"
-    );
     assert_eq!(
         crate::scene::draw_pixels(&mut cache, &project(&original).view(&original), &options(), J2000, &mut StepTimes::default()).cloned()
             .unwrap(),

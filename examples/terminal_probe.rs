@@ -25,7 +25,7 @@ fn main() {
                 config.text_scale,
             )
             .unwrap();
-            let sky = astroterm::sky::create_sky_from_catalog(&astroterm::catalog::load_embedded_catalog().unwrap());
+            let sky = astroterm::sky::create_sky_from_catalog(&astroterm::catalog::load_embedded_catalog().unwrap()).unwrap();
             let projected_data = astroterm::projection::project_sky(&sky, &config.view, renderer.viewport(&rendering));
     let projected = projected_data.view(&sky);
             let clock = astroterm::astro::SimulationClock::start(config.simulation.start_julian_date, 0.0);

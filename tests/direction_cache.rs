@@ -93,7 +93,7 @@ fn assert_matching_sky(actual: &ObservedSky, expected: &ObservedSky) {
 
 #[test]
 fn direction_refreshes_skip_restoration_and_paused_hits_restore_exact_results() {
-    let catalog = Arc::new(astroterm::sky::prepare_owned_catalog(load_embedded_catalog().unwrap()).catalog);
+    let catalog = Arc::new(astroterm::sky::prepare_owned_catalog(load_embedded_catalog().unwrap()).unwrap().catalog);
     let mut cached = Pipeline::new(catalog.clone(), CacheConfig::default());
     let first_site = Observer::default();
     let next_site = Observer {
@@ -138,7 +138,7 @@ fn direction_refreshes_skip_restoration_and_paused_hits_restore_exact_results() 
 
 #[test]
 fn bypass_always_calculates_without_restoring_even_when_paused() {
-    let catalog = Arc::new(astroterm::sky::prepare_owned_catalog(load_embedded_catalog().unwrap()).catalog);
+    let catalog = Arc::new(astroterm::sky::prepare_owned_catalog(load_embedded_catalog().unwrap()).unwrap().catalog);
     let mut bypassed = Pipeline::new(catalog, CacheConfig::disabled());
     let mut expected = None;
     for _ in 0..3 {

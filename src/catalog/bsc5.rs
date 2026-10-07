@@ -15,7 +15,7 @@ pub struct Bsc5Entry {
     pub declination: f64,
     /// Two character spectral type, e.g. `b"A0"`. Blank for entries without data.
     pub spectral_type: [u8; 2],
-    pub magnitude: f32,
+    pub magnitude: f64,
     pub ra_motion: f64,
     pub dec_motion: f64,
 }
@@ -41,23 +41,26 @@ pub fn parse_bsc5(data: &[u8]) -> Result<Vec<Bsc5Entry>, CatalogError> {
     (0..star_count)
         .map(|index| {
             let bytes = entries.get(index * ENTRY_BYTES..(index + 1) * ENTRY_BYTES);
-            bytes
-                .map(parse_entry)
-                .ok_or(CatalogError::TruncatedBsc5 { entry: Some(index) })
+            let bytes = bytes.ok_or(CatalogError::TruncatedBsc5 { entry: Some(index) })?;
+            parse_entry(bytes)
         })
         .collect()
 }
 
-fn parse_entry(bytes: &[u8]) -> Bsc5Entry {
-    Bsc5Entry {
-        catalog_number: read_f32(bytes, 0) as u32, // XNO is stored as a float
+fn parse_entry(bytes: &[u8]) -> Result<Bsc5Entry, CatalogError> {
+    let number = f64::from(read_f32(bytes, 0)); // XNO is stored as a float; reject overflow instead of saturating
+    if !number.is_finite() || number < 0.0 || number.fract() != 0.0 || number > f64::from(u32::MAX) {
+        return Err(CatalogError::Io(format!("invalid BSC5 star ID {number}: expected an integer from 0 to {}", u32::MAX)));
+    }
+    Ok(Bsc5Entry {
+        catalog_number: number as u32,
         right_ascension: read_f64(bytes, 4),
         declination: read_f64(bytes, 12),
         spectral_type: [bytes[20], bytes[21]],
-        magnitude: f32::from(read_i16(bytes, 22)) / 100.0, // stored as magnitude * 100
+        magnitude: f64::from(read_i16(bytes, 22)) / 100.0, // stored as magnitude * 100
         ra_motion: f64::from(read_f32(bytes, 24)),
         dec_motion: f64::from(read_f32(bytes, 28)),
-    }
+    })
 }
 
 fn read_i16(bytes: &[u8], offset: usize) -> i16 {
@@ -83,6 +86,17 @@ mod tests {
 
     const EPSILON: f64 = 0.01;
     const MOTION_EPSILON: f64 = 1e-20;
+
+    #[test]
+    fn binary_ids_reject_overflow_and_invalid_numbers() {
+        let mut row = [0; ENTRY_BYTES];
+        for value in [f32::NAN, f32::INFINITY, -1.0, 1.5, 4_294_967_296.0] {
+            row[..4].copy_from_slice(&value.to_le_bytes());
+            assert!(parse_entry(&row).is_err());
+        }
+        row[..4].copy_from_slice(&4_294_967_040_f32.to_le_bytes());
+        assert_eq!(parse_entry(&row).unwrap().catalog_number, 4_294_967_040);
+    }
 
     #[test]
     fn parses_every_entry_in_catalog_order() {

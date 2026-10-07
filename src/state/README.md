@@ -90,15 +90,15 @@ catalog; frame processing reads it. Catalog indices follow cell, conservative br
 |---|---|---|
 | `stars` columns `u0`, `w` (N×3), `distance`; `precise_motions` side table | J2000 equatorial unit directions, normalized motion per Julian year (365.25 days), distance in parsecs; stellar propagation reads them through `columns()` or the `directions()`/`motions()` views | Immutable during the run; the `Arc` is swapped once at startup by `replace_catalog` |
 | `stars` columns `magnitude`, `brightness_key` | Starting magnitude and conservative brightest magnitude; selection/propagation read them | Same |
-| `stars` columns `id`, `name`, `designation`, `spectral_type`, `color`, `flags`; `name_table` side table | Stable identity and encoded display metadata; ordering, labels and appearance read them | Same |
+| `stars` columns `id`, `name`, `display_color` | Stable u32 identity and label/color references; ordering, labels and appearance read them | Same |
 | `grid.offsets`, coarse/fine caps | Catalog-region membership and conservative angular caps; region/brightness filtering reads them | Same; cap vectors are also built for cache-loaded catalogs |
 | `figures.endpoints`, constellation figures/segments | Sorted catalog-index union and resolved endpoint pairs; endpoint merge and arc projection read them | Same |
-| `names.text` | UTF-8 text block; labels resolve name ranges into it | Same |
+| `names.text`, `names.boundaries`, `names.ascii_alternatives` | Shared label text with u32 boundaries and sparse ASCII variants; one-based star references survive sorting | Same; preparation-only deduplication map is dropped |
 
 The per-star columns are declared once as `StarRow` (`model/catalog/storage/columns.rs`); `StarRowVec` owns one
 vector per column and `StarRowSlice` borrows them for processing. The logger receives the original `StarStorage`,
-not separate column views. Its `persistent.catalog.stars` entry reports all 12 runtime fields and sums actual column
-lengths/capacities. Name ranges and precise motions have separate table entries; their bytes are not counted twice.
+not separate column views. Its `persistent.catalog.stars` entry reports all 8 runtime fields and sums actual column
+lengths/capacities. Label boundaries, ASCII alternatives and precise motions have separate table entries; their bytes are not counted twice.
 
 Prepared disk caches are read into a temporary byte buffer, validated and decoded into owned vectors. They use the
 same representation as source-loaded catalogs. `CatalogArray` owns a vector; no catalog file mappings remain.
@@ -243,3 +243,47 @@ Constellation geometry helpers receive `&[Constellation]`, `&[ObservedStar]` and
 catalog. Definition sets have no writable public field access; custom sets are validated by
 `sky::prepare_constellation_set` and explicitly installed. `None` restores default figures; an empty set hides them.
 Observation continues including the base catalog's endpoint union; projection uses the active definitions.
+
+Catalog preparation returns `io::Result`: source labels, text size and star-count limits are checked before publishing
+the catalog. Internal IDs use u32 (maximum 4,294,967,295); AT-HYG IDs include skipped source rows. External Gaia
+identifiers remain u64 during parsing and formatting. Prepared cache schema 7 stores u32 IDs, shared label
+boundaries/alternatives and a one-byte display palette index; neither designation bytes nor source spectral/B-V
+columns remain in the runtime catalog. Proper names and catalog identifiers have identical label
+eligibility; text prefers the proper name. Logical labels with the same Unicode text and ASCII behavior share an
+entry. A literal proper name and a designation with different ASCII behavior intentionally remain distinct.
+
+Star colors are classified during catalog preparation from the original spectral letter and f32 B-V thresholds.
+`StarColor` in model/ defines eight shared pixel/terminal palette entries. Rendering reads the catalog's validated
+u8 index; there is no `PreparedScene`/`StarDisplay` allocation, separate name-presence array or scene-catalog Arc.
+The raw classification inputs remain only in source loading. Per-star flags and precision references are removed; exception metadata has a separate empty skeleton.
+The compile-time palette is static data, not per-run heap storage. Raster keys still retain their exact drawing
+inputs; those intentional cache values are unchanged.
+
+`SkyCatalog.star_exceptions` owns a sparse `Vec<StarException>` with final catalog row index, motion-fallback
+boolean and one-based precise-motion reference. It must remain empty in this implementation, as must the reserved
+`stars.precise_motions` payload. Source preparation still detects all exceptional trajectories before modifying
+or storing them; it returns a descriptive Unsupported error. The completed preparation, cache read/write and
+pre-frame boundary reject nonempty exception tables or orphaned precision payloads. A current-schema unsupported
+cache is an error, not a silent source rebuild. Older cache versions still rebuild normally.
+
+This deliberately suspends previously supported exceptional catalogs until sparse processing is implemented.
+The numerical stellar model and runtime near-zero-distance fallback remain available, including outside the
+preparation interval. Ordinary catalogs preserve their compact f32 motion inputs and behavior.
+
+Prepared `magnitude` and `brightness_key` columns now each own u16 codes, decoded as `code / 1000.0 - 10.0`.
+Raw magnitudes are validated as f64 in [-10.000, 55.535], then rounded to the nearest thousandth; halfway scaled
+values round upward (fainter). Bounds use that decoded initial magnitude and the effective stored trajectory,
+round downward, and are checked against decoding roundoff. Stationary stars keep constant brightness in both
+the runtime model and the bound calculation. Current-time magnitudes stay unclipped f64.
+The compact star columns occupy 41 bytes per star (column payload, excluding containers and side tables).
+
+Derived out-of-range bounds clip to an endpoint. Bound code zero always passes early brightness pruning, even
+below -10, so clipping cannot hide a star. `StarStorage` retains only two catalog-wide clipping counters; the
+prepared cache persists and validates them. Console warnings appear once per load, and the TUI keeps a separate
+notice alongside the date-range warning. The single `next_down` safety ULP below -10 is not counted as a real
+clip. Raw range validation has no tolerance. Upper clipping is supported by the encoder but cannot arise from
+the present whole-interval bound: the interval contains J2000, so its minimum is never above initial magnitude.
+
+Table previews report u16 storage and show both code and decoded magnitude in the same cell; no second decoded
+column is retained. `persistent.catalog.magnitude_clipping` exposes the inline counters. Quantization can create
+new brightness ties and change near-threshold visibility or labels; draw-order ties still use stable IDs.

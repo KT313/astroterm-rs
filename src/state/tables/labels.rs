@@ -13,7 +13,7 @@ pub(super) fn label_columns(path: &str, columns: &mut [Column]) {
 }
 
 // The named-field crosswalk is below row_columns! in rows/mod.rs. Anonymous-row mappings (label -> storage):
-// name_byte_range -> name_table[row][0..2], start inclusive / end exclusive.
+// label_byte_boundary -> names.boundaries[row]; unicode_and_ascii_entries -> names.ascii_alternatives[row].
 // precise-motion direction x/y/z -> [0]/[1]/[2]; scaled velocity x/y/z -> [3]/[4]/[5]; distance -> [6].
 // catalog_row_boundary -> grid.offsets[row]; sky_region_index -> region.cells[row].
 // catalog_row_index -> endpoint_indices/candidate_indices/candidates/selected[row], or the stellar HashMap key.
@@ -30,8 +30,9 @@ pub(super) fn label_columns(path: &str, columns: &mut [Column]) {
 fn table_labels(path: &str) -> &'static [&'static str] {
     match path {
         "preparation" => &["max_direction_change_radians"],
-        "persistent.catalog.stars" => &["initial_direction", "scaled_velocity_per_year", "initial_magnitude", "brightest_possible_magnitude", "initial_distance_parsecs", "star_id", "name_entry", "encoded_catalog_designation", "spectral_type_code", "color_index_bv", "data_flags", "precise_motion_entry"],
-        "persistent.catalog.stars.name_table" => &["name_byte_range"],
+        "persistent.catalog.stars" => &["initial_direction", "scaled_velocity_per_year", "initial_magnitude", "brightest_possible_magnitude", "initial_distance_parsecs", "star_id", "name_entry", "display_color_index"],
+        "persistent.catalog.names.boundaries" => &["label_byte_boundary"],
+        "persistent.catalog.names.ascii_alternatives" => &["unicode_and_ascii_entries"],
         "persistent.catalog.stars.precise_motions" => &["initial_direction_x", "initial_direction_y", "initial_direction_z", "scaled_velocity_x_per_year", "scaled_velocity_y_per_year", "scaled_velocity_z_per_year", "initial_distance_parsecs"],
         "persistent.catalog.grid.offsets" => &["catalog_row_boundary"],
         "persistent.catalog.grid.coarse_caps" | "persistent.catalog.grid.fine_caps" => &["center_direction", "angular_radius_radians"],
@@ -62,7 +63,6 @@ fn table_labels(path: &str) -> &'static [&'static str] {
         _ if path.ends_with(".horizon") => &["screen_endpoint_pair"],
         _ if path.ends_with(".labels") => &["screen_coordinates", "label_text"],
         _ if path.ends_with(".named_candidates") => &["projected_star_index"],
-        _ if path.ends_with(".prepared.stars") => &["base_rgb_color", "terminal_color", "has_proper_name"],
         _ if path.ends_with(".raster_text.glyphs") => &["character", "glyph_dimensions_and_spacing", "coverage_mask_bytes"],
         _ if path.ends_with(".frame_image") || path.ends_with(".scene_cache.pixels") => &["rgba_pixel_row"],
         _ if path.ends_with(".rgb") => &["rgb_pixel_row"],
@@ -104,17 +104,18 @@ pub(super) fn column_notes(path: &str) -> &'static [&'static str] {
     match path {
         "persistent.catalog.stars" => &[
             "Initial means the J2000 reference date. Directions use fixed J2000 equatorial axes. Scaled velocity is per Julian year (365.25 days), not radians per year; it includes distance change when known.",
-            "Magnitude measures apparent brightness: smaller numbers mean brighter. Brightest possible magnitude is a conservative bound within the supported interval, not an all-time physical maximum.",
-            "name_entry and precise_motion_entry are one-based references to the corresponding side tables; zero means absent. star_id is stable identity, not a row index.",
-            "A zero compact distance means no usable distance here; a precise-motion entry may provide it instead. A precise-motion entry overrides the compact trajectory.",
-            "spectral_type_code holds two character bytes (for example [75, 49] means K1). encoded_catalog_designation contains packed label identifiers, not display text.",
-            "color_index_bv is the astronomical blue-minus-visual color measurement, not RGB. data_flags: bit 0 (1) = tangential-motion fallback; bit 1 (2) = color index available. Without bit 1, color_index_bv is a placeholder.",
+            "Magnitude measures apparent brightness: smaller numbers mean brighter. Both prepared magnitude columns store u16 codes (code / 1000 - 10); previews show the code and decoded value. Brightest possible magnitude bounds the supported interval; code 0 bypasses early pruning because a lower bound may have been clipped.",
+            "name_entry is one-based and addresses the shared label boundaries; zero means absent. star_id is a stable u32 identity, not the sorted row index.",
+            "Zero distance means unavailable. Stars requiring precision exceptions or load-time motion fallback are currently rejected with an unsupported-feature error.",
+            "display_color_index is a prepared palette category, not a measured B-V value: 0 default, 1 hot blue, 2 blue-white, 3 white, 4 yellow-white, 5 yellow, 6 orange, 7 red-orange. The palette supplies both pixel and terminal colors.",
         ],
-        "persistent.catalog.stars.name_table" => &["Each pair is [start byte, exclusive end byte] in persistent.catalog.names; the name_entry column refers to this table."],
-        "persistent.catalog.stars.precise_motions" => &["Seven components of each original packed row are shown separately for readability; storage is unchanged. Direction uses J2000 axes, velocity is scaled per Julian year, distance is in parsecs; zero distance means unavailable."],
+        "persistent.catalog.names.boundaries" => &["For nonzero name_entry e, label bytes are boundaries[e-1]..boundaries[e]. The last boundary ends the buffer; offsets count UTF-8 bytes."],
+        "persistent.catalog.names.ascii_alternatives" => &["Sparse [Unicode entry, ASCII entry] pairs, sorted by Unicode entry. Both reference the same shared label buffer through its boundaries. Labels without a pair use the same text in either mode."],
+        "persistent.catalog.star_exceptions" => &["Reserved sparse table: catalog_row_index refers to the final sorted star table; precise_motion_entry is one-based, zero means none. All nonempty exception tables are rejected until sparse support is implemented."],
+        "persistent.catalog.stars.precise_motions" => &["Reserved payload; accepted catalogs keep this empty. Seven components of each original packed row are shown separately for readability; storage is unchanged. Direction uses J2000 axes, velocity is scaled per Julian year, distance is in parsecs; zero distance means unavailable."],
         "persistent.catalog.grid.offsets" => &["Adjacent boundaries delimit a sky region's catalog rows. The last boundary is the start of the always-checked tail, not the end of the full catalog."],
         "persistent.catalog.grid.coarse_caps" | "persistent.catalog.grid.fine_caps" => &["A cap covers a circular patch of sky: its center is a unit direction in J2000 axes and its radius is an angle in radians."],
-        "persistent.catalog.names" => &["Rows preview chunks of the shared UTF-8 text buffer, not individual names; name_byte_range locates each name."],
+        "persistent.catalog.names" => &["Rows preview chunks of the shared UTF-8 text buffer, not individual names; the boundary table locates each label."],
         "preparation" => &["Conservative maximum angular drift from the initial direction over the supported interval, in radians. Freed after preparation."],
         "cache.observation.working" => &["is_draw_candidate records early selection membership, before the current-time brightness check. Other rows are retained for constellation lines."],
         "cache.sky.stars" | "cache.projection.star_candidate" | "cache.projection.stars.key" => &["passes_brightness_filter does not guarantee visibility on screen. Completed observation directions use East/North/Up (x/y/z); during observation the same mutable record passes through earlier coordinate systems."],
@@ -143,9 +144,8 @@ pub(super) fn column_notes(path: &str) -> &'static [&'static str] {
             "Source star_index_pairs refer to catalog rows. For projected figures, faintest_endpoint_magnitude is the largest magnitude among the defining stars; larger means fainter.",
             "Nested ProjectedArc fields: start/end = screen coordinates; points = sampled path coordinates; includes_start/includes_end mean the section reaches the original star endpoints rather than a clipping boundary.",
         ],
-        _ if path.ends_with(".named_candidates") => &["Indices refer to the projected stars in drawing order, not catalog rows; candidates have proper names but still undergo label rules."],
+        _ if path.ends_with(".named_candidates") => &["Indices refer to the projected stars in drawing order, not catalog rows; candidates have prepared labels and pass the ordinary label threshold; dynamic candidates are added separately."],
         _ if path.ends_with(".raster_text.glyphs") => &["Coverage mask bytes describe how much each glyph pixel is filled. Metrics contain glyph size, placement offsets and advance spacing."],
-        _ if path.ends_with(".prepared.stars") => &["Rows follow the catalog. base_rgb_color is red/green/blue in 0..255; terminal_color is a character-renderer color; has_proper_name excludes designation-only labels."],
         _ if path.starts_with("cache.projection.") || path.contains("scene_cache") => &["Screen coordinates are (row, column), local to the sky viewport; units are terminal cells or pixels according to the renderer. RGB channels range from 0 to 255; terminal colors use named palette entries. Magnitudes use smaller numbers for brighter stars."],
         _ => &[],
     }
@@ -164,7 +164,7 @@ mod tests {
     use super::*;
     use crate::rows::Row;
     use crate::model::{StarRow, ObservedStar, SelectedStar, ObserverState, StellarWork, DrawRecord,
-        PixelStarKey, CharacterStarKey, StarDisplay, ProjectedArc};
+        PixelStarKey, CharacterStarKey, ProjectedArc};
 
     fn names<T: Row>(path: &str) -> Vec<&'static str> {
         let mut columns = T::columns();
@@ -178,7 +178,7 @@ mod tests {
 
     #[test]
     fn contextual_labels_keep_types_and_distinguish_index_domains_and_units() {
-        assert_eq!(names::<StarRow>("persistent.catalog.stars"), ["initial_direction", "scaled_velocity_per_year", "initial_magnitude", "brightest_possible_magnitude", "initial_distance_parsecs", "star_id", "name_entry", "encoded_catalog_designation", "spectral_type_code", "color_index_bv", "data_flags", "precise_motion_entry"]);
+        assert_eq!(names::<StarRow>("persistent.catalog.stars"), ["initial_direction", "scaled_velocity_per_year", "initial_magnitude", "brightest_possible_magnitude", "initial_distance_parsecs", "star_id", "name_entry", "display_color_index"]);
         assert_eq!(names::<SelectedStar>("cache.observation.working"), ["catalog_row_index", "is_draw_candidate"]);
         assert_eq!(names::<ObservedStar>("cache.sky.stars"), ["catalog_row_index", "passes_brightness_filter", "current_magnitude", "direction"]);
         assert_eq!(names::<(usize, (i32, i32))>("cache.projection.stars"), ["observed_star_index", "screen_coordinates"]);
@@ -187,7 +187,6 @@ mod tests {
         assert_eq!(names::<DrawRecord>("cache.projection.draw_order_scratch"), ["current_magnitude", "star_id", "projected_star_index"]);
         assert_eq!(names::<PixelStarKey>("cache.rendering.pixels.scene_cache.pixels.key.stars"), ["screen_coordinates", "current_magnitude", "base_rgb_color"]);
         assert_eq!(names::<CharacterStarKey>("cache.rendering.characters.scene_cache.characters.key.stars"), ["screen_coordinates", "symbol", "terminal_color"]);
-        assert_eq!(names::<StarDisplay>("cache.rendering.pixels.scene_cache.prepared.stars"), ["base_rgb_color", "terminal_color", "has_proper_name"]);
         assert_eq!(names::<ProjectedArc>("arc"), ["start_coordinates", "end_coordinates", "path_coordinates", "includes_original_start", "includes_original_end"]);
         assert_eq!(names::<ObserverState>("cache.observation.observer")[8], "body_emission_times_tt_jd");
         assert_eq!(names::<StellarWork>("cache.observation.stellar_scratch")[7], "calculated_at_tt_jd");

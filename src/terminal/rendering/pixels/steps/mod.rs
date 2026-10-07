@@ -176,8 +176,7 @@ pub(in crate::terminal) fn layout_pixel_text(state: &mut PixelState, sky: &Proje
             &state.fields,
             notice,
             times,
-            state.scene_cache.prepared(),
-            state.scene_cache.named_candidates(),
+            Some(state.scene_cache.named_candidates()),
         )
     });
     text_cell
@@ -465,7 +464,7 @@ mod lifetime_tests {
     fn transient_text_and_rgb_are_freed_while_cached_sky_and_transport_survive() {
         for protocol in [ProtocolType::Kitty, ProtocolType::Sixel, ProtocolType::Iterm2, ProtocolType::Halfblocks] {
             let mut state = pixels(protocol);
-            let sky = crate::sky::create_sky_from_catalog(&crate::catalog::load_embedded_catalog().unwrap());
+            let sky = crate::sky::create_sky_from_catalog(&crate::catalog::load_embedded_catalog().unwrap()).unwrap();
             let data = crate::projection::project_sky(&sky, &View::default(), state.viewport);
             let projected = data.view(&sky);
             let mut times = StepTimes::with_trace(true);

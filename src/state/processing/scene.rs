@@ -1,14 +1,12 @@
-//! Whole-sky raster snapshots and catalog-derived display data. Keys preserve structural equality.
+//! Whole-sky raster snapshots and label candidates. Keys preserve structural equality.
 //! Pixel output is borrowed; metadata is composed into a separate full-frame image.
 use crate::cache::{Cache, CacheConfig};
 use crate::canvas::Canvas;
-use crate::model::{PreparedScene, SceneKey};
+use crate::model::SceneKey;
 #[derive(Default)]
 pub struct SceneCache {
     pub(crate) config: CacheConfig,
-    /// Immutable catalog display constants; replace at catalog preparation, shared catalog payload stays shared.
-    pub(crate) prepared: Option<PreparedScene>,
-    /// Indices into the current projected draw order for stars with names; rebuilt during pixel key capture.
+    /// Indices into the current projected draw order for stars meeting the ordinary label threshold; rebuilt during pixel key capture.
     pub(crate) named_candidates: Vec<usize>,
     /// Exact raster inputs in draw order. Hits clear live entries but retain flat capacities;
     /// successful refreshes transfer the candidate into the matching cache. Failed pixel draws retain it.
@@ -24,12 +22,7 @@ impl SceneCache {
     /// Read the completed sky; callers must prepare it before borrowing and cannot paint into it.
     pub fn pixel_image(&self) -> &image::RgbaImage { self.pixels.value() }
 
-    pub(crate) fn prepared(&self) -> Option<&PreparedScene> {
-        self.prepared.as_ref()
-    }
-    pub(crate) fn named_candidates(&self) -> Option<&[usize]> {
-        self.prepared.as_ref().map(|_| self.named_candidates.as_slice())
-    }
+    pub(crate) fn named_candidates(&self) -> &[usize] { &self.named_candidates }
     pub fn configure(&mut self, config: &CacheConfig) {
         self.config = config.clone();
         self.invalidate();
@@ -50,4 +43,4 @@ impl SceneCache {
     }
 }
 #[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(SceneCache { config, prepared, named_candidates, pixel_candidate, character_candidate, pixels, characters });
+crate::cache::report_fields!(SceneCache { config, named_candidates, pixel_candidate, character_candidate, pixels, characters });

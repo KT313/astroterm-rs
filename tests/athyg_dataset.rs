@@ -39,7 +39,7 @@ fn athyg_matches_the_embedded_catalog() {
     }
 
     // nearly all constellation figures find their stars
-    let sky = astroterm::sky::prepare_catalog(&athyg);
+    let sky = astroterm::sky::prepare_catalog(&athyg).unwrap();
     assert_eq!(sky.catalog.constellations().len(), 88);
     assert_eq!(
         sky.catalog.constellations()
@@ -54,7 +54,7 @@ fn athyg_matches_the_embedded_catalog() {
 #[ignore = "needs datasets/athyg_40.csv.gz; release quantization audit"]
 fn real_catalog_quantization_stays_within_half_an_arcsecond() {
     let source = load_athyg_catalog(Path::new(DATASET)).unwrap();
-    let stored = astroterm::sky::prepare_catalog(&source);
+    let stored = astroterm::sky::prepare_catalog(&source).unwrap();
     let (start, end) = astroterm::astro::models::stars::computational_years();
     let mut maximum = 0.0_f64;
     for star in stored.catalog.stars.iter() {
@@ -106,7 +106,7 @@ fn real_catalog_cache_preserves_the_rendered_frame() {
         );
         canvas
     }
-    let catalog = astroterm::sky::prepare_owned_catalog(load_athyg_catalog(Path::new(DATASET)).unwrap());
+    let catalog = astroterm::sky::prepare_owned_catalog(load_athyg_catalog(Path::new(DATASET)).unwrap()).unwrap();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("cache");
     let fingerprint = catalog_fingerprint();

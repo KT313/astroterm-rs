@@ -16,15 +16,6 @@ const DYNAMIC_NAME_COUNT: usize = 5;
 /// Draw the stars bright enough for the threshold, dimmest first. Named stars brighter than the label threshold get
 /// labels, and with dynamic names also the brightest stars in view when few objects in view have labels.
 pub fn draw_stars(canvas: &mut Canvas, options: &RenderOptions, sky: &ProjectedSky<'_>) {
-    draw_stars_prepared(canvas, options, sky, None);
-}
-
-pub(in crate::scene) fn draw_stars_prepared(
-    canvas: &mut Canvas,
-    options: &RenderOptions,
-    sky: &ProjectedSky<'_>,
-    prepared: Option<&crate::model::PreparedScene>,
-) {
     let dynamically_named = if options.dynamic_names {
         select_dynamically_named_stars(options, sky)
     } else {
@@ -39,14 +30,14 @@ pub(in crate::scene) fn draw_stars_prepared(
         let label = if dynamically_named.contains(&index) {
             Some(format_star_label(&star, sky.names, options.unicode))
         } else if star.magnitude <= options.label_threshold {
-            sky.names.get(star.name()).map(Cow::Borrowed)
+            sky.names.get_for_mode(star.name(), options.unicode).map(Cow::Borrowed)
         } else {
             None
         };
         draw_object(
             canvas,
             options,
-            &super::appearance::select_star_appearance_prepared(&star, sky.names, prepared),
+            &super::appearance::select_star_appearance(&star, sky.names),
             entry.cell,
             label.as_deref(),
         );
@@ -313,7 +304,7 @@ mod tests {
     /// The real sky with every object at the nadir (out of the overhead view), except the given stars, which are placed
     /// on a ring around the zenith.
     fn place_in_view(visible: &[usize]) -> Sky {
-        let mut sky = crate::sky::create_sky_from_catalog(&load_embedded_catalog().expect("embedded catalog loads"));
+        let mut sky = crate::sky::create_sky_from_catalog(&load_embedded_catalog().expect("embedded catalog loads")).unwrap();
         let nadir = horizontal(0.0, -90.0).to_unit_vector();
         sky.stars.iter_mut().for_each(|star| star.position = nadir);
         sky.planets.iter_mut().for_each(|planet| planet.position = nadir);
@@ -336,7 +327,7 @@ mod tests {
         let unnamed = brightest_first
             .iter()
             .position(|&index| {
-                sky.star_view(index).name().is_none() && sky.stars[index].magnitude > ASCII.label_threshold
+                sky.star_name(&sky.stars[index]).is_some_and(|name| name.starts_with("HR ")) && sky.stars[index].magnitude > ASCII.label_threshold
             })
             .unwrap();
         brightest_first[unnamed..unnamed + 7].to_vec()
@@ -375,6 +366,26 @@ mod tests {
     }
 
     #[test]
+    fn newly_quantized_ties_draw_by_ascending_id_and_name_by_descending_id() {
+        let mut catalog = load_embedded_catalog().unwrap();
+        catalog.stars.truncate(6);
+        for (index, star) in catalog.stars.iter_mut().enumerate() {
+            star.id = crate::catalog::StarId(index as u32);
+            star.magnitude = 5.00001 + index as f64 * 0.00001;
+            star.has_data = true;
+        }
+        let mut sky = crate::sky::create_sky_from_catalog(&catalog).unwrap();
+        for star in &mut sky.stars { star.position = horizontal(0.0, 80.0).to_unit_vector(); }
+        let mut data = project_sky(&sky, &View::default(), Viewport { width: 81, height: 41 });
+        for planet in &mut data.planets { planet.cell = None; }
+        data.moon.cell = None;
+        let projected = data.view(&sky);
+        assert_eq!(projected.stars.iter().map(|s| s.star.id().0).collect::<Vec<_>>(), [0, 1, 2, 3, 4, 5]);
+        let labels = super::select_dynamically_named_stars(&DYNAMIC, &projected);
+        assert_eq!(labels.iter().map(|&i| projected.stars.get(i).star.id().0).collect::<Vec<_>>(), [5, 4, 3, 2, 1]);
+    }
+
+    #[test]
     fn dynamic_names_follow_current_magnitudes_instead_of_catalog_order() {
         let indices = pick_unlabelled_stars(&place_in_view(&[]));
         let mut sky = place_in_view(&indices);
@@ -382,12 +393,13 @@ mod tests {
         for star in &mut catalog.stars {
             star.name = None;
         }
-        sky.catalog = std::sync::Arc::new(crate::sky::prepare_catalog(&catalog).catalog);
+        sky.catalog = std::sync::Arc::new(crate::sky::prepare_catalog(&catalog).unwrap().catalog);
         for (step, &index) in indices.iter().enumerate() {
             sky.stars[index].magnitude = 4.0 - step as f64;
-            assert!(sky.star_view(index).name().is_none());
+            assert!(sky.star_name(&sky.stars[index]).unwrap().starts_with("HR "));
         }
-        let expected = indices.iter().rev().take(5).copied().collect::<Vec<_>>();
+        let expected = indices.iter().rev().take(5).copied()
+            .filter(|&index| sky.stars[index].magnitude > DYNAMIC.label_threshold).collect::<Vec<_>>();
         assert_eq!(
             select_dynamically_named_stars(&View::default(), &DYNAMIC, &sky),
             expected

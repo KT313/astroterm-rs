@@ -20,7 +20,7 @@ fn scenes_preserve_glyphs_colors_and_wide_cell_occupancy() {
         latitude: 35.69_f64.to_radians(),
         longitude: 139.69_f64.to_radians(),
     }; // Tokyo
-    let mut sky = astroterm::sky::create_sky_from_catalog(&load_embedded_catalog().unwrap());
+    let mut sky = astroterm::sky::create_sky_from_catalog(&load_embedded_catalog().unwrap()).unwrap();
     update_sky_positions(&mut sky, date, &observer, 5.0, &mut StepTimes::default());
     let defaults = RenderOptions {
         unicode: false,
@@ -112,7 +112,7 @@ fn snapshot_format_distinguishes_color_and_continuation() {
 #[test]
 fn filtered_updates_match_full_updates_across_threshold_changes() {
     let catalog = load_embedded_catalog().unwrap();
-    let mut filtered = astroterm::sky::create_sky_from_catalog(&catalog);
+    let mut filtered = astroterm::sky::create_sky_from_catalog(&catalog).unwrap();
     let mut full = filtered.clone();
     let observer = Observer {
         latitude: 0.6,
@@ -149,7 +149,7 @@ fn filtered_updates_match_full_updates_across_threshold_changes() {
 #[test]
 fn accuracy_warning_is_stable_at_all_class_and_computational_boundaries() {
     use astroterm::astro::{J2000, accuracy::*};
-    let mut sky = astroterm::sky::create_sky_from_catalog(&load_embedded_catalog().unwrap());
+    let mut sky = astroterm::sky::create_sky_from_catalog(&load_embedded_catalog().unwrap()).unwrap();
     let options = RenderOptions {
         unicode: true,
         braille: false,

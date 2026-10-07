@@ -40,12 +40,12 @@ impl Table for StarStorage {
     fn rows(&self) -> usize { self.len() }
     fn columns(&self) -> Vec<Column> { StarRow::columns() }
     fn bytes(&self) -> TableBytes {
-        let StarRowVec { u0, w, magnitude, brightness_key, distance, id, name, designation,
-            spectral_type, color, flags, precise_index } = self.owned_columns(); // adding a field requires accounting for it
+        let StarRowVec { u0, w, magnitude, brightness_key, distance, id, name,
+            display_color } = self.owned_columns(); // adding a field requires accounting for it
         let sizes = [TableBytes::vector(u0), TableBytes::vector(w), TableBytes::vector(magnitude),
             TableBytes::vector(brightness_key), TableBytes::vector(distance),
-            TableBytes::vector(id), TableBytes::vector(name), TableBytes::vector(designation),
-            TableBytes::vector(spectral_type), TableBytes::vector(color), TableBytes::vector(flags), TableBytes::vector(precise_index)];
+            TableBytes::vector(id), TableBytes::vector(name),
+            TableBytes::vector(display_color)];
         TableBytes {
             used: sizes.iter().try_fold(0_usize, |sum, size| sum.checked_add(size.used?)),
             reserved: sizes.iter().try_fold(0_usize, |sum, size| sum.checked_add(size.reserved?)),
@@ -53,9 +53,15 @@ impl Table for StarStorage {
     }
     fn preview(&self) -> Vec<(usize, Vec<String>)> {
         let rows = self.owned_columns();
-        preview_indices(self.len()).map(|i| (i, rows.get(i).expect("validated star row").to_owned().cells())).collect()
+        preview_indices(self.len()).map(|i| {
+            let row = rows.get(i).expect("validated star row").to_owned();
+            let mut cells = row.cells();
+            cells[2] = format!("{} ({:.3} mag)", row.magnitude, crate::catalog::decode_magnitude(row.magnitude));
+            cells[3] = format!("{} ({:.3} mag)", row.brightness_key, crate::catalog::decode_magnitude(row.brightness_key));
+            (i, cells)
+        }).collect()
     }
-    fn note(&self) -> Option<String> { Some("storage=owned; per-star columns only; side tables listed separately".into()) }
+    fn note(&self) -> Option<String> { Some("storage=owned; per-star columns only; side tables listed separately. Magnitudes are u16 codes: code / 1000 - 10; parentheses decode the same stored value, not another column. Brightness-bound code 0 always passes early pruning.".into()) }
 }
 
 /// Keep the original seven-value owner and its byte counts; only the debug preview gets named components.
@@ -342,22 +348,22 @@ mod tests {
     }
     #[test]
     fn complete_star_table_counts_column_capacity_and_keeps_all_fields() {
-        let mut catalog = crate::sky::prepare_owned_catalog(crate::catalog::load_embedded_catalog().unwrap());
+        let mut catalog = crate::sky::prepare_owned_catalog(crate::catalog::load_embedded_catalog().unwrap()).unwrap();
         let stars = &mut catalog.catalog.stars;
         stars.reserve(stars.len());
         let size = Table::bytes(stars);
-        let packed_row_bytes = 2 * 12 + 3 * 4 + 8 + 4 + 16 + 2 + 4 + 1 + 4;
+        let packed_row_bytes = 2 * 12 + 2 * 2 + 4 + 4 + 4 + 1;
         assert_eq!(size.used, Some(stars.len() * packed_row_bytes));
         assert!(size.reserved.unwrap() > size.used.unwrap());
         let columns = stars.columns();
         let preview = Table::preview(stars);
         assert_eq!(preview.len(), 20);
-        assert_eq!(<StarStorage as Table>::columns(stars).len(), 12);
+        assert_eq!(<StarStorage as Table>::columns(stars).len(), 8);
         for (i, cells) in preview {
-            assert_eq!(cells.len(), 12);
+            assert_eq!(cells.len(), 8);
             assert_eq!(cells[0], crate::rows::preview(&columns.u0[i]));
             assert_eq!(cells[5], columns.id[i].to_string());
-            assert_eq!(cells[11], columns.precise_index[i].to_string());
+            assert_eq!(cells[7], columns.display_color[i].to_string());
         }
         assert_eq!(Table::bytes(stars), size); // inspection retains no data and changes no capacities
     }

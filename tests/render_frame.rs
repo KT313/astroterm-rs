@@ -32,7 +32,7 @@ fn build_sky_at(datetime: &str, latitude: f64, longitude: f64) -> Sky {
         latitude: latitude * PI / 180.0,
         longitude: longitude * PI / 180.0,
     };
-    let mut sky = astroterm::sky::create_sky_from_catalog(&load_embedded_catalog().expect("embedded catalog loads"));
+    let mut sky = astroterm::sky::create_sky_from_catalog(&load_embedded_catalog().expect("embedded catalog loads")).unwrap();
     update_sky_positions(
         &mut sky,
         julian_date,

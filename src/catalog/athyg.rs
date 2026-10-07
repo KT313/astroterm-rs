@@ -29,7 +29,7 @@ const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
 const MILLIARCSECONDS_TO_RADIANS: f64 = PI / 180.0 / 3600.0 / 1000.0;
 
 /// Stars brighter than this are the Sun, which AT-HYG lists too but the sky draws as a planet.
-const SUN_MAGNITUDE_LIMIT: f32 = -20.0;
+const SUN_MAGNITUDE_LIMIT: f64 = -20.0;
 
 /// Positions of the columns used, if present. Only position and magnitude are required.
 struct Columns {
@@ -98,7 +98,7 @@ fn parse_athyg_with_times(reader: impl Read, times: &mut crate::timing::StepTime
 
             let mut stars = Vec::new();
             let mut names = StarNames::default();
-            let mut row = 0;
+            let mut row = 0_u64;
             let mut missing = 0;
             let mut sun = 0;
             let mut record = ByteRecord::new();
@@ -107,7 +107,8 @@ fn parse_athyg_with_times(reader: impl Read, times: &mut crate::timing::StepTime
                 .map_err(|error| CatalogError::Io(error.to_string()))?
             {
                 let line = record.position().map_or(0, |position| position.line());
-                if let Some(star) = parse_star(&record, &columns, line, StarId(row), &mut names)? {
+                if let Some(star) = parse_star(&record, &columns, line, StarId::try_from_index(row)?, &mut names)? {
+                    Catalog::check_star_count(stars.len() as u64 + 1)?;
                     stars.push(star);
                 } else if [columns.ra, columns.dec, columns.mag]
                     .into_iter()
@@ -188,7 +189,7 @@ fn parse_star(
     // validate every numeric input even in skipped rows and incomplete triples
     let ra = number(Some(columns.ra), "ra")?;
     let dec = number(Some(columns.dec), "dec")?;
-    let magnitude = parse_finite_f32(record, Some(columns.mag), "mag", line)?;
+    let magnitude = number(Some(columns.mag), "mag")?;
     let color_index = parse_finite_f32(record, columns.ci, "ci", line)?;
     let pm_ra = number(columns.pmra, "pmra")?.unwrap_or(0.0) * MILLIARCSECONDS_TO_RADIANS;
     let pm_dec = number(columns.pmdec, "pmdec")?.unwrap_or(0.0) * MILLIARCSECONDS_TO_RADIANS;
@@ -222,6 +223,7 @@ fn parse_star(
     if magnitude < SUN_MAGNITUDE_LIMIT {
         return Ok(None);
     }
+    crate::catalog::validate_magnitude(magnitude).map_err(|error| CatalogError::Io(format!("Dataset line {line}, star {}: {error}", id.0)))?;
     let declination = dec_degrees.to_radians();
 
     // proper motion; pmra is the motion on the sky, so divide by cos(dec) to get the change of the right ascension
@@ -234,7 +236,7 @@ fn parse_star(
         Some([class]) => [*class, b' '],
         _ => *b"  ",
     };
-    let name = text(columns.proper).map(|name| names.insert(name));
+    let name = text(columns.proper).map(|name| names.insert(name)).transpose().map_err(|e| CatalogError::Io(e.to_string()))?;
     let designation = select_designation(record, columns, hr, hip, gaia);
 
     let space_motion = prepare_space_motion(
@@ -515,7 +517,7 @@ mod tests {
             abbreviation: "Test",
             segments: vec![[2491, 99999]],
         }];
-        let sky = crate::sky::create_sky_from_catalog(&catalog);
+        let sky = crate::sky::create_sky_from_catalog(&catalog).unwrap();
         drop(catalog);
         let bright = sky.star_views().find(|star| star.id() == StarId(1)).unwrap();
         assert_eq!(sky.star_name(&bright), Some("Bright"));

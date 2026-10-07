@@ -159,7 +159,8 @@ impl StellarMotion {
     }
 
     pub fn brightest_magnitude(self, magnitude: f64) -> f64 {
-        if self.distance_pc.is_none() {
+        // Stationary stars keep their initial brightness, even when the compact direction has a rounded norm.
+        if self.distance_pc.is_none() || self.w == Vector3::default() {
             return magnitude;
         }
         let (start, end) = computational_years();

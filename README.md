@@ -95,6 +95,8 @@ A yellow warning marks dates outside tested accuracy ranges. Drawn object sizes 
 
 The first run downloads about **200 MB**; later runs reuse the file offline.
 You can also supply a local AT-HYG CSV or compressed CSV: `--dataset ./athyg_40.csv.gz`.
+Catalogs requiring special high-precision trajectories or near-zero-distance handling during preparation currently
+stop with an explicit “not implemented” error; support for sparse star exceptions is pending.
 
 On Linux, the default locations are:
 
@@ -123,9 +125,12 @@ source <(./target/release/astroterm --bash-completions)
 
 ## Differences from the C version
 
+Catalog brightness is stored in steps of 0.001 magnitude; values very close to a display threshold may round across it.
+
 This port adds pixel graphics, interactive pan/zoom/time controls, optional AT-HYG downloads, and extra labels
 when zoomed in. It also improves astronomical calculations, curved constellation lines, date handling and
-observer-local time display. Independent accuracy checks are documented in
+observer-local time display. Star labels use a proper name when available, otherwise a catalog identifier; both
+follow the same brightness rules. Independent accuracy checks are documented in
 [scripts/reference/README.md](scripts/reference/README.md).
 
 <details>

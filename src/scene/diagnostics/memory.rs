@@ -44,10 +44,10 @@ pub(in crate::scene) fn record_character_initialization(times: &mut crate::timin
 }
 
 #[inline]
-pub(in crate::scene) fn record_character_stars(times: &mut crate::timing::StepTimes, canvas: &Canvas, prepared: Option<&crate::model::PreparedScene>) {
+pub(in crate::scene) fn record_character_stars(times: &mut crate::timing::StepTimes, canvas: &Canvas) {
     use crate::timing::{Access, BufferId};
     times.record_borrow(BufferId::ProjectedView, Access::ReadOnly, || BufferShape::unknown(IndexDomain::DrawOrder));
-    if let Some(prepared) = prepared { times.record_borrow(BufferId::PreparedDisplay, Access::ReadOnly, || BufferShape::vector(&prepared.stars, IndexDomain::Catalog)); }
+    times.record_borrow(BufferId::CatalogStars, Access::ReadOnly, || BufferShape::unknown(IndexDomain::Catalog));
     times.record_borrow(BufferId::CharacterFrame, Access::Writable, || describe_canvas(canvas));
 }
 
@@ -59,10 +59,10 @@ pub(in crate::scene) fn record_pixel_horizon(times: &mut crate::timing::StepTime
 }
 
 #[inline]
-pub(in crate::scene) fn record_pixel_stars(times: &mut crate::timing::StepTimes, canvas: &tiny_skia::Pixmap, prepared: Option<&crate::model::PreparedScene>) {
+pub(in crate::scene) fn record_pixel_stars(times: &mut crate::timing::StepTimes, canvas: &tiny_skia::Pixmap) {
     use crate::timing::{Access, BufferId};
     times.record_borrow(BufferId::ProjectedView, Access::ReadOnly, || BufferShape::unknown(IndexDomain::DrawOrder));
-    if let Some(prepared) = prepared { times.record_borrow(BufferId::PreparedDisplay, Access::ReadOnly, || BufferShape::vector(&prepared.stars, IndexDomain::Catalog)); }
+    times.record_borrow(BufferId::CatalogStars, Access::ReadOnly, || BufferShape::unknown(IndexDomain::Catalog));
     times.record_borrow(BufferId::PixelScene, Access::Writable, || BufferShape::slice(canvas.data(), IndexDomain::Bytes));
 }
 

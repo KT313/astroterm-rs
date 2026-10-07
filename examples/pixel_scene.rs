@@ -8,7 +8,7 @@ use astroterm::sky::update_sky_positions;
 use astroterm::timing::StepTimes;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::env::args().nth(1).expect("output PNG path");
-    let mut sky = astroterm::sky::create_sky_from_catalog(&load_embedded_catalog()?);
+    let mut sky = astroterm::sky::create_sky_from_catalog(&load_embedded_catalog()?).unwrap();
     let mut times = StepTimes::default();
     let observer = Observer {
         latitude: 35.69_f64.to_radians(),

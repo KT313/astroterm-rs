@@ -21,14 +21,18 @@ const GRID_OFFSETS: usize = STAR_SECTIONS;
 const MOTION_BOUNDS: usize = STAR_SECTIONS + 1;
 const ENDPOINTS: usize = STAR_SECTIONS + 2;
 const NAMES: usize = STAR_SECTIONS + 3;
-const FIGURES: usize = STAR_SECTIONS + 4;
-const SECTION_COUNT: usize = STAR_SECTIONS + 5;
+const NAME_BOUNDARIES: usize = STAR_SECTIONS + 4;
+const NAME_ALTERNATIVES: usize = STAR_SECTIONS + 5;
+const FIGURES: usize = STAR_SECTIONS + 6;
+const EXCEPTIONS: usize = STAR_SECTIONS + 7;
+const CLIPPING: usize = STAR_SECTIONS + 8;
+const SECTION_COUNT: usize = STAR_SECTIONS + 9;
 
 /// Covers the layout, all numerical contracts, parsing/selection policies and embedded supplemental data.
 /// Source hashes deliberately invalidate caches even for conservative implementation-only changes.
 pub fn catalog_fingerprint() -> [u8; 32] {
     let mut hash = Sha256::new();
-    hash.update(b"astroterm catalog v3; vector columns; little-endian u64 indices; validation=1; HR=1; override=1; motion=1; quantization=1; cube-Morton=1");
+    hash.update(b"astroterm catalog v7; vector columns; little-endian u64 indices; validation=1; HR=1; override=1; motion=1; quantization=1; cube-Morton=1");
     for value in [
         crate::astro::COMPUTATIONAL_INTERVAL.start_tt,
         crate::astro::COMPUTATIONAL_INTERVAL.end_tt,
@@ -42,6 +46,7 @@ pub fn catalog_fingerprint() -> [u8; 32] {
     hash.update([crate::model::GRID_DEPTH]);
     for source in [
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/catalog/athyg.rs")).as_slice(),
+        include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/catalog/magnitude.rs")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/catalog/space_motion.rs")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/catalog/bsc5.rs")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/catalog/tables.rs")).as_slice(),
@@ -51,7 +56,6 @@ pub fn catalog_fingerprint() -> [u8; 32] {
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/catalog/mod.rs")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/catalog/names.rs")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/catalog/designation.rs")).as_slice(),
-        include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/catalog/cache/encoding.rs")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/catalog/cache/mod.rs")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/model/catalog/storage/mod.rs")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/model/catalog/storage/columns.rs")).as_slice(),
@@ -68,6 +72,8 @@ pub fn catalog_fingerprint() -> [u8; 32] {
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/sky/catalog/cache/loading.rs")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/sky/catalog/cache/format.rs")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/sky/catalog/stars/mod.rs")).as_slice(),
+        include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/sky/catalog/stars/color.rs")).as_slice(),
+        include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/model/presentation/star_color.rs")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/astro/models/stars.rs")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/data/bsc5")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/data/bsc5_names.txt")).as_slice(),
@@ -100,13 +106,19 @@ pub fn write_cached_catalog(path: &Path, prepared: &PreparedCatalog, fingerprint
     let catalog = &prepared.catalog;
     validate_catalog(catalog, &prepared.preparation, true)?;
     let figures = encode_figures(catalog.constellations())?;
+    let counts = catalog.stars.magnitude_clipping();
+    let clipping = [counts.lower, counts.upper];
     let mut sections = catalog.stars.cache_sections();
     sections.extend([
         catalog.grid.offsets.bytes(),
         bytemuck::cast_slice(prepared.preparation.motion_bounds()),
         bytemuck::cast_slice(catalog.endpoint_indices()),
         catalog.names.bytes(),
+        catalog.names.boundaries().bytes(),
+        catalog.names.ascii_alternatives().bytes(),
         &figures,
+        &[], // reserved exception payload: nonempty records are unsupported in this version
+        bytemuck::cast_slice(&clipping),
     ]);
     write_sections(path, fingerprint, &sections)
 }
@@ -116,11 +128,20 @@ pub fn load_cached_catalog(path: &Path, fingerprint: &[u8; 32]) -> io::Result<Pr
     if data.section_count() != SECTION_COUNT {
         return Err(invalid("catalog section count mismatch"));
     }
-    let stars = StarStorage::from_prepared(&data)?;
-    let names = StarNames::from_array(data.decode(NAMES)?.into())?;
+    if !data.section(EXCEPTIONS)?.is_empty() {
+        return Err(crate::model::unsupported_star_data("prepared catalog contains a nonempty star-exception table"));
+    }
+    if !data.section(STAR_SECTIONS - 1)?.is_empty() {
+        return Err(crate::model::unsupported_star_data("prepared catalog contains unsupported/orphaned precise-motion records"));
+    }
+    let counts = data.decode::<u64>(CLIPPING)?;
+    if counts.len() != 2 { return Err(invalid("invalid brightness clipping summary")); }
+    let stars = StarStorage::from_prepared(&data, crate::catalog::MagnitudeClipping { lower: counts[0], upper: counts[1] })?;
+    let names = StarNames::from_arrays(data.decode(NAMES)?.into(), data.decode(NAME_BOUNDARIES)?.into(), data.decode(NAME_ALTERNATIVES)?.into())?;
     let constellations = decode_figures(data.section(FIGURES)?)?;
-    let mut catalog = SkyCatalog {
+    let catalog = SkyCatalog {
         stars,
+        star_exceptions: Vec::new(),
         names,
         figures: std::sync::Arc::new(crate::model::ConstellationSet { figures: constellations, endpoints: data.decode(ENDPOINTS)? }),
         grid: SkyGrid::from_offsets(data.decode(GRID_OFFSETS)?.into()),
@@ -129,11 +150,11 @@ pub fn load_cached_catalog(path: &Path, fingerprint: &[u8; 32]) -> io::Result<Pr
     let preparation = CatalogPreparation { motion_bounds: data.decode(MOTION_BOUNDS)? };
     drop(data); // release the file snapshot; the catalog owns every decoded column
     validate_catalog(&catalog, &preparation, false)?;
-    catalog.singular_count = catalog.stars.iter().filter(|s| s.singular_fallback).count();
     Ok(PreparedCatalog { catalog, preparation })
 }
 
 fn validate_catalog(catalog: &SkyCatalog, preparation: &CatalogPreparation, full: bool) -> io::Result<()> {
+    catalog.validate_exception_support()?;
     catalog.stars.validate(&catalog.names, preparation.motion_bounds(), full)?;
     let n = catalog.stars.len();
     let offsets = &catalog.grid.offsets;
@@ -259,7 +280,7 @@ mod tests {
     use std::sync::Arc;
 
     fn prepared() -> PreparedCatalog {
-        crate::sky::prepare_owned_catalog(load_embedded_catalog().unwrap())
+        crate::sky::prepare_owned_catalog(load_embedded_catalog().unwrap()).unwrap()
     }
     fn render(prepared: PreparedCatalog, threshold: f64, date: f64) -> Canvas {
         let mut sky = Sky::new(Arc::new(prepared.catalog));
@@ -322,6 +343,79 @@ mod tests {
         bytes[56..60].copy_from_slice(&crc.finalize().to_le_bytes());
     }
     #[test]
+    fn exception_payloads_are_rejected_without_rebuilding_from_source() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source.csv");
+        fs::write(&source, "ra,dec,mag\n0,0,4\n").unwrap();
+        let dirs = DatasetDirectories { data: None, cache: Some(root.path().join("cache")) };
+        let dataset = Dataset::Path(source.clone());
+        let mut notices = Vec::new();
+        let ordinary = load_sky_catalog(Some(&dataset), &dirs, &mut notices).unwrap();
+        let path = cache_path(&source, dirs.cache.as_ref().unwrap()).unwrap();
+        let fingerprint = super::super::loading::fingerprint_source(&Some(path.clone()));
+        let original = PreparedCatalogBytes::open(&path, &fingerprint).unwrap();
+        for section_index in [EXCEPTIONS, STAR_SECTIONS - 1] {
+            let mut sections: Vec<Vec<u8>> = (0..SECTION_COUNT).map(|i| original.section(i).unwrap().to_vec()).collect();
+            sections[section_index] = vec![0; 56]; // nonempty placeholder or orphan; contents must never be consumed
+            write_sections(&path, &fingerprint, &sections.iter().map(Vec::as_slice).collect::<Vec<_>>()).unwrap();
+            let saved = fs::read(&path).unwrap();
+            let error = load_sky_catalog(Some(&dataset), &dirs, &mut notices).unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+            assert!(error.to_string().contains("not implemented"));
+            assert_eq!(fs::read(&path).unwrap(), saved); // unsupported input is not silently replaced by an empty table
+        }
+        let mut invalid = ordinary;
+        invalid.catalog.star_exceptions.push(crate::model::StarException {
+            catalog_row_index: 0, uses_motion_fallback: true, precise_motion_entry: 0,
+        });
+        let error = write_cached_catalog(&root.path().join("must-not-exist"), &invalid, &fingerprint).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+        assert!(!root.path().join("must-not-exist").exists());
+    }
+
+    #[test]
+    fn warm_cache_rejects_a_trajectory_requiring_motion_fallback() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cache");
+        let data = prepared();
+        let fingerprint = catalog_fingerprint();
+        write_cached_catalog(&path, &data, &fingerprint).unwrap();
+        let mut bytes = fs::read(&path).unwrap();
+        let direction = data.catalog.stars.columns().u0[0];
+        let start = section(&bytes, 1);
+        for (axis, value) in direction.into_iter().enumerate() {
+            bytes[start + axis*4..start + axis*4 + 4].copy_from_slice(&(-value * 0.001).to_le_bytes());
+        }
+        let distance = section(&bytes, 4);
+        bytes[distance..distance+4].copy_from_slice(&1_f32.to_le_bytes());
+        fix_checksum(&mut bytes);
+        fs::write(&path, bytes).unwrap();
+        assert_eq!(load_cached_catalog(&path, &fingerprint).unwrap_err().kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test]
+    fn warm_cache_validates_encoded_bounds_and_clipping_summary() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cache");
+        let data = prepared();
+        let fingerprint = catalog_fingerprint();
+        write_cached_catalog(&path, &data, &fingerprint).unwrap();
+        let original = fs::read(&path).unwrap();
+        for (index, payload, message) in [
+            (3, 65535_u16.to_le_bytes().to_vec(), "encoded brightness bound"),
+            (CLIPPING, 1_u64.to_le_bytes().to_vec(), "clipping counts"),
+        ] {
+            let mut bytes = original.clone();
+            let start = section(&bytes, index);
+            bytes[start..start + payload.len()].copy_from_slice(&payload);
+            fix_checksum(&mut bytes);
+            fs::write(&path, bytes).unwrap();
+            let error = load_cached_catalog(&path, &fingerprint).unwrap_err();
+            assert!(error.to_string().contains(message), "{error}");
+        }
+    }
+
+    #[test]
     fn corrupt_containers_and_semantic_data_are_rejected() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("catalog");
@@ -329,7 +423,7 @@ mod tests {
         let fingerprint = catalog_fingerprint();
         write_cached_catalog(&path, &source, &fingerprint).unwrap();
         let original = fs::read(&path).unwrap();
-        for case in 0..15 {
+        for case in 0..17 {
             let mut bytes = original.clone();
             match case {
                 0 => bytes.truncate(32),
@@ -358,12 +452,12 @@ mod tests {
                 }
                 8 => {
                     let start = section(&bytes, 5); // stable IDs
-                    let id = bytes[start..start + 8].to_vec();
-                    bytes[start + 8..start + 16].copy_from_slice(&id);
+                    let id = bytes[start..start + 4].to_vec();
+                    bytes[start + 4..start + 8].copy_from_slice(&id);
                 }
                 9 => {
-                    let start = section(&bytes, 7); // designations
-                    bytes[start] = 255;
+                    let start = section(&bytes, NAME_BOUNDARIES);
+                    bytes[start..start + 4].copy_from_slice(&1_u32.to_le_bytes());
                 }
                 10 => {
                     let start = section(&bytes, GRID_OFFSETS);
@@ -378,7 +472,15 @@ mod tests {
                     let invalid = if case == 12 { f32::NAN } else { -1.0 };
                     bytes[start..start + 4].copy_from_slice(&invalid.to_le_bytes());
                 }
-                _ => bytes[8..12].copy_from_slice(&2_u32.to_le_bytes()), // reject the previous schema even with a valid checksum
+                14 => bytes[8..12].copy_from_slice(&5_u32.to_le_bytes()), // reject the previous schema even with a valid checksum
+                15 => {
+                    let start = section(&bytes, 7); // palette indices
+                    bytes[start] = 8;
+                }
+                _ => {
+                    let start = section(&bytes, NAME_BOUNDARIES);
+                    bytes[start..start + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+                }
             }
             if case != 0 && case != 2 && case != 3 {
                 fix_checksum(&mut bytes);
@@ -465,7 +567,7 @@ mod tests {
     }
 
     #[test]
-    fn precision_exceptions_names_and_all_designations_survive_cached_loading() {
+    fn precision_exceptions_are_rejected_while_supported_labels_survive_cached_loading() {
         use crate::astro::{Equatorial, Vector3};
         use crate::catalog::{CatalogStar, Designation, SpaceMotion, StarId};
         let mut input = load_embedded_catalog().unwrap();
@@ -483,7 +585,7 @@ mod tests {
                 y: 0.7_f64.cos(),
                 z: 0.0,
             } * 1.01e-6;
-        let name = input.names.insert("A unicode name: α星");
+        let name = input.names.insert("A unicode name: α星").unwrap();
         for (i, designation) in [
             None,
             Some(Designation::Bayer {
@@ -508,7 +610,7 @@ mod tests {
         .enumerate()
         {
             input.stars.push(CatalogStar {
-                id: StarId(i as u64),
+                id: StarId(i as u32),
                 hr: None,
                 name: Some(name),
                 designation,
@@ -528,8 +630,12 @@ mod tests {
                 has_data: true,
             });
         }
-        let catalog = crate::sky::prepare_owned_catalog(input);
-        assert_eq!(catalog.catalog.stars.precise_count(), 7);
+        let error = crate::sky::prepare_catalog(&input).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+        assert!(error.to_string().contains("higher-precision trajectory"));
+        for star in &mut input.stars { star.space_motion.as_mut().unwrap().velocity = v * 0.001; }
+        let catalog = crate::sky::prepare_owned_catalog(input).unwrap();
+        assert_eq!(catalog.catalog.stars.precise_count(), 0);
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("cache");
         let fingerprint = catalog_fingerprint();
@@ -541,7 +647,7 @@ mod tests {
             for i in 0..storage.len() {
                 let full = storage.get(i);
                 assert_eq!(trajectories.motion(i), full.motion);
-                assert_eq!(storage.designation(i).resolve(), full.designation);
+                assert_eq!(storage.name(i), full.name);
             }
         }
 

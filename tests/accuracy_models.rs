@@ -37,7 +37,7 @@ fn observe(tt: f64, ut1: f64) -> Sky {
         longitude: -71.0589_f64.to_radians(),
     };
     let observer = prepare_observation(&mut state, time, site).unwrap();
-    let mut sky = astroterm::sky::create_sky_from_catalog(&astroterm::catalog::load_embedded_catalog().unwrap());
+    let mut sky = astroterm::sky::create_sky_from_catalog(&astroterm::catalog::load_embedded_catalog().unwrap()).unwrap();
     observe_sky(&state, &observer, 5.0, false, SkyRegion::All, &mut sky, &mut times).unwrap();
     sky
 }

@@ -13,7 +13,7 @@ fn main() {
         latitude: 42.3601_f64.to_radians(),
         longitude: -71.0589_f64.to_radians(),
     };
-    let mut sky = astroterm::sky::create_sky_from_catalog(&load_embedded_catalog().unwrap());
+    let mut sky = astroterm::sky::create_sky_from_catalog(&load_embedded_catalog().unwrap()).unwrap();
     for date in [2451545.0, 2459146.0, 2460736.9583333335] {
         update_sky_positions(&mut sky, date, &observer, f64::INFINITY, &mut StepTimes::default());
         for name in ["Vega", "Arcturus"] {

@@ -91,6 +91,6 @@ pub(super) fn describe_minimum_stars(sky: &crate::model::ProjectedSky<'_>, optio
 
 pub(super) fn describe_coverage_notice(canvas: &crate::canvas::Canvas, sky: &crate::model::ProjectedSky<'_>, times: &mut crate::timing::StepTimes) {
     times.describe("Coverage notice", || {
-        format!("warning={}; output rows={}", sky.outside_accuracy_range, usize::from(sky.outside_accuracy_range && canvas.height() > 0))
+        format!("date warning={}; brightness-bound warning={}; output rows={}", sky.outside_accuracy_range, sky.magnitude_clipping().any(), (usize::from(sky.outside_accuracy_range) + usize::from(sky.magnitude_clipping().any())).min(canvas.height()))
     });
 }

@@ -1,6 +1,6 @@
 //! Draw complete scenes in a fixed order. Supporting raster and diagnostic details stay below this module.
 use crate::canvas::Canvas;
-use crate::model::{ProjectedSky, PreparedScene, RenderOptions};
+use crate::model::{ProjectedSky, RenderOptions};
 use crate::timing::StepTimes;
 use super::raster::{draw_orientation_labels, draw_coverage_notice};
 use super::{draw_horizon_line, draw_constellations, draw_planets, draw_moon};
@@ -39,36 +39,32 @@ pub fn draw_sky_scene(canvas: &mut Canvas, options: &RenderOptions, sky: &Projec
 }
 
 pub(crate) fn draw_sky_scene_with_times(canvas: &mut Canvas, options: &RenderOptions, sky: &ProjectedSky<'_>, times: &mut StepTimes) {
-    draw_sky_scene_prepared(canvas, options, sky, times, None);
-}
-
-pub(crate) fn draw_sky_scene_prepared(canvas: &mut Canvas, options: &RenderOptions, sky: &ProjectedSky<'_>, times: &mut StepTimes, prepared: Option<&PreparedScene>) {
     times.measure("Canvas initialization", || canvas.clear());                              // clear the character cells for a new scene
     record_character_initialization(times, canvas);
     if sky.facing { times.measure("Raster horizon", || draw_horizon_line(canvas, options, sky.horizon)); } // place the horizon behind celestial objects
 
-    times.measure("Raster stars", || super::raster::draw_stars_prepared(canvas, options, sky, prepared)); // draw stars in their prepared brightness order
-    record_character_stars(times, canvas, prepared);
+    times.measure("Raster stars", || super::raster::draw_stars(canvas, options, sky)); // draw stars in their prepared brightness order
+    record_character_stars(times, canvas);
     if options.constellations { times.measure("Raster constellations", || draw_constellations(canvas, options, sky)); } // add enabled constellation lines
     times.measure("Raster planets", || draw_planets(canvas, options, sky.planets));          // place the Sun and planets over the stars
     times.measure("Raster moon", || draw_moon(canvas, options, sky));                        // add the Moon's current phase
 
     times.measure("Orientation labels", || draw_orientation_labels(canvas, options, sky)); // add horizon labels, grid or compass directions
     super::diagnostics::describe_scene(sky, options, times);
-    times.measure("Coverage notice", || draw_coverage_notice(canvas, sky));                 // reserve the last row for any date-accuracy warning
+    times.measure("Coverage notice", || draw_coverage_notice(canvas, sky));                 // reserve bottom rows for accuracy and brightness-bound notices
     super::diagnostics::describe_coverage_notice(canvas, sky, times);
 }
 
 /// Build a pixel image back to front; each calculation retains its own existing timer.
-pub(super) fn draw_pixel_sky_with_star_path(sky: &ProjectedSky<'_>, options: &RenderOptions, times: &mut StepTimes, fast_stars: bool, prepared: Option<&PreparedScene>) -> Option<image::RgbaImage> {
+pub(super) fn draw_pixel_sky_with_star_path(sky: &ProjectedSky<'_>, options: &RenderOptions, times: &mut StepTimes, fast_stars: bool) -> Option<image::RgbaImage> {
 
     let mut canvas = times.measure("Canvas initialization", || initialize_pixel_canvas(sky.viewport))?; // allocate the sky image and fill its background
     record_pixel_initialization(times, &canvas);
     times.measure("Raster horizon", || draw_pixel_horizon(&mut canvas, sky));                // place the horizon behind celestial objects
     record_pixel_horizon(times, &canvas, sky);
 
-    times.measure("Raster stars", || draw_pixel_stars(&mut canvas, sky, options, fast_stars, prepared)); // draw stars in their prepared brightness order
-    record_pixel_stars(times, &canvas, prepared);
+    times.measure("Raster stars", || draw_pixel_stars(&mut canvas, sky, options, fast_stars)); // draw stars in their prepared brightness order
+    record_pixel_stars(times, &canvas);
     times.measure("Raster constellations", || draw_pixel_constellations(&mut canvas, sky, options)); // add enabled constellation lines
     record_pixel_constellations(times, &canvas, sky);
     times.measure("Raster planets", || draw_pixel_planets(&mut canvas, sky));                // draw the Sun and planets above the stars

@@ -53,7 +53,7 @@ impl Pipeline {
     }
 }
 fn catalog() -> Arc<SkyCatalog> {
-    Arc::new(astroterm::sky::prepare_catalog(&load_embedded_catalog().unwrap()).catalog)
+    Arc::new(astroterm::sky::prepare_catalog(&load_embedded_catalog().unwrap()).unwrap().catalog)
 }
 fn options() -> RenderOptions {
     RenderOptions {
@@ -111,7 +111,6 @@ fn cached_pipeline_matches_reference_through_camera_time_and_site_changes() {
     let mut direct = Pipeline::new(cat, CacheConfig::disabled());
     let mut projection = ProjectionCache::new(CacheConfig::default());
     let mut raster = SceneCache::default();
-    astroterm::scene::prepare_scene_catalog(&mut raster, cached.sky.catalog.clone(), &mut StepTimes::default());
     let mut canvas = Canvas::new(45, 90);
     let mut maxima = [0.0_f64; 3];
     for (n, seconds) in [0.0, 1.0, 10.0, 31.0, 361.0, 5.0, -500.0, 86400.0, 0.0]
@@ -259,7 +258,7 @@ fn moving_distance_stars_preserve_magnitude_thresholds_and_order_within_ttl() {
         vec![a, b],
         Default::default(),
         vec![],
-    )).catalog);
+    )).unwrap().catalog);
     let mut cached = Pipeline::new(cat.clone(), CacheConfig::default());
     let mut direct = Pipeline::new(cat, CacheConfig::disabled());
     let view = View {

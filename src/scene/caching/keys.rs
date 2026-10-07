@@ -1,9 +1,9 @@
 //! Exact raster inputs, rather than copies of observed records. Structural comparison also handles public
 //! reference skies whose metadata or geometry changes without a production cache generation changing.
-use crate::model::{ProjectedSky, PreparedScene, RenderOptions};
+use crate::model::{ProjectedSky, RenderOptions};
 use crate::scene::{format_star_label, select_dynamically_named_stars};
-use crate::scene::raster::appearance::select_star_appearance_prepared;
-use crate::scene::resolve_star_rgb;
+use crate::scene::raster::appearance::select_star_appearance;
+use crate::scene::star_rgb;
 
 use crate::model::{SceneKey, StarKeys, PixelStarKey, CharacterStarKey};
 pub(crate) fn capture_star_keys(
@@ -11,7 +11,6 @@ pub(crate) fn capture_star_keys(
     sky: &ProjectedSky<'_>,
     options: &RenderOptions,
     characters: bool,
-    prepared: Option<&PreparedScene>,
     named_candidates: &mut Vec<usize>,
 ) {
     if characters {
@@ -19,7 +18,7 @@ pub(crate) fn capture_star_keys(
             *keys = StarKeys::Characters { glyphs: Vec::new(), labels: Vec::new() };
         }
         let StarKeys::Characters { glyphs, labels } = keys else { unreachable!() };
-        capture_character_keys(glyphs, labels, sky, options, prepared)
+        capture_character_keys(glyphs, labels, sky, options)
     } else {
         // Keep exact magnitude and base RGB: deriving final radius/strength here would repeat per-star
         // floating-point rounding on cache misses. The existing rasterizer remains the only owner of that work.
@@ -29,7 +28,8 @@ pub(crate) fn capture_star_keys(
         stars.reserve(sky.stars.len());
         named_candidates.clear();
         for (index, entry) in sky.stars.iter().enumerate() {
-            if prepared.is_some_and(|p| crate::scene::raster::prepared::is_prepared_star_named(p, &entry.star)) {
+            if entry.star.magnitude <= options.label_threshold
+                && entry.star.name().is_some() {
                 named_candidates.push(index);
             }
             if entry.star.magnitude > options.magnitude_threshold {
@@ -39,7 +39,7 @@ pub(crate) fn capture_star_keys(
                 stars.push(PixelStarKey {
                     cell,
                     magnitude: entry.star.magnitude,
-                    color: resolve_star_rgb(&entry.star, prepared),
+                    color: star_rgb(&entry.star),
                 });
             }
         }
@@ -48,7 +48,7 @@ pub(crate) fn capture_star_keys(
 
 fn capture_character_keys(
     glyphs: &mut Vec<CharacterStarKey>, labels: &mut Vec<(usize, String)>,
-    sky: &ProjectedSky<'_>, options: &RenderOptions, prepared: Option<&PreparedScene>,
+    sky: &ProjectedSky<'_>, options: &RenderOptions,
 ) {
     let dynamically_named = if options.dynamic_names {
         select_dynamically_named_stars(options, sky)
@@ -63,11 +63,11 @@ fn capture_character_keys(
             continue;
         }
         let Some(cell) = entry.cell else { continue };
-        let appearance = select_star_appearance_prepared(&entry.star, sky.names, prepared);
+        let appearance = select_star_appearance(&entry.star, sky.names);
         let label = if dynamically_named.contains(&index) {
             Some(format_star_label(&entry.star, sky.names, options.unicode))
         } else if entry.star.magnitude <= options.label_threshold {
-            appearance.label.map(std::borrow::Cow::Borrowed)
+            sky.names.get_for_mode(entry.star.name(), options.unicode).map(std::borrow::Cow::Borrowed)
         } else {
             None
         };

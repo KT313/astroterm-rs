@@ -1,8 +1,7 @@
 //! Render settings and cached display/key records.
 use crate::rows::row_columns;
 use crate::canvas::{Canvas, Color};
-use crate::model::{ProjectedPlanet, ProjectedMoon, ProjectedConstellation, ProjectionViewport as Viewport, SkyCatalog};
-use std::sync::Arc;
+use crate::model::{ProjectedPlanet, ProjectedMoon, ProjectedConstellation, ProjectionViewport as Viewport};
 
 /// Rendering choices that apply to the whole scene.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -60,6 +59,7 @@ pub(crate) struct SceneKey {
     pub(crate) viewport: Viewport,
     pub(crate) facing: bool,
     pub(crate) warning: bool,
+    pub(crate) brightness_warning: bool,
     pub(crate) options: RenderOptions,
     pub(crate) canvas_size: Option<(usize, usize)>,
 }
@@ -87,19 +87,6 @@ pub(crate) enum StarKeys {
         glyphs: Vec<CharacterStarKey>,
         labels: Vec<(usize, String)>,
     },
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct StarDisplay {
-    pub(crate) rgb: [u8; 3],
-    pub(crate) color: Option<Color>,
-    pub(crate) named: bool,
-}
-row_columns!(StarDisplay { rgb, color, named });
-
-pub(crate) struct PreparedScene {
-    pub(crate) catalog: Arc<SkyCatalog>,
-    pub(crate) stars: Vec<StarDisplay>,
 }
 
 /// How an object is drawn: a glyph for each character set, an optional label next to it, and an optional color.

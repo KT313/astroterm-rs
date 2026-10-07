@@ -42,7 +42,7 @@ fn build_catalog(count: usize) -> Catalog {
         let ra_motion = (uniform() - 0.5) * 1e-6;
         let dec_motion = (uniform() - 0.5) * 1e-6;
         catalog.stars.push(CatalogStar {
-            id: astroterm::catalog::StarId(catalog.stars.len() as u64 + 1),
+            id: astroterm::catalog::StarId(catalog.stars.len() as u32 + 1),
             space_motion: None,
             hr: None,
             name: None,
@@ -52,7 +52,7 @@ fn build_catalog(count: usize) -> Catalog {
             ra_motion,
             ra_motion_cos_dec: ra_motion * dec.cos(),
             dec_motion,
-            magnitude: magnitude as f32,
+            magnitude,
             spectral_type: *b"G2",
             color_index: None,
             has_data: true,
@@ -74,7 +74,7 @@ fn benchmark_frames(criterion: &mut Criterion) {
     ] {
         let mut sky = Sky::new(std::sync::Arc::new(astroterm::sky::prepare_owned_catalog(
             build_catalog(count),
-        ).catalog));
+        ).unwrap().catalog));
         let mut timing = StepTimes::default();
         let mut group = criterion.benchmark_group(name);
         group

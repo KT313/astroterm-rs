@@ -27,7 +27,7 @@ pub(super) fn run_render_loop(state: &mut ApplicationState, renderer: &mut Rende
 
     renderer.configure_cache(&mut state.cache.rendering, &config.cache);
 
-    prepare_frame_data(&mut state.cache, renderer, &mut state.timings);                                          // calculate values that stay the same for the whole run
+    prepare_frame_data(&mut state.cache, &mut state.timings)?;                                          // calculate values that stay the same for the whole run
     if config.debug_log_data { log_pipeline_data(state, "tmp/after-preparation.md", "after-preparation")?; }
     state.free_preparation_only_data(); // free startup-only movement bounds before frames begin
     if state.config.debug_log_data { log_pipeline_data(state, "tmp/after-preparation-cleanup.md", "after-preparation-cleanup")?; }
@@ -69,11 +69,12 @@ pub(super) fn run_render_loop(state: &mut ApplicationState, renderer: &mut Rende
 }
 
 /// Prepare values that depend only on this run's immutable catalog. Time and camera results stay in the loop.
-fn prepare_frame_data(cache: &mut Caches, renderer: &mut Renderer, times: &mut StepTimes) {
-    let Caches { sky, observation, rendering, .. } = cache;
+fn prepare_frame_data(cache: &mut Caches, times: &mut StepTimes) -> io::Result<()> {
+    let Caches { sky, observation, .. } = cache;
     let catalog = &sky.catalog;
+    catalog.validate_exception_support()?; // reject unsupported sparse data before the frame loop
     times.measure_steps("Frame preparation", |times| {
         astroterm::sky::prepare_observation_catalog(observation, catalog.clone(), times);                        // record how each star's position and brightness can change
-        renderer.prepare_catalog(rendering, catalog.clone(), times);                                             // store each star's color and whether it has a name
     });
+    Ok(())
 }

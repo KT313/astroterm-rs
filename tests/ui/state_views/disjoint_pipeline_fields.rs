@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 fn main() {
     let catalog = Catalog::new(Vec::new(), StarNames::default(), Vec::new());
-    let sky = ObservedSky::new(Arc::new(astroterm::sky::prepare_owned_catalog(catalog).catalog));
+    let sky = ObservedSky::new(Arc::new(astroterm::sky::prepare_owned_catalog(catalog).unwrap().catalog));
     let mut run = Caches {
         sky, simulation: SimulationState::default(), observation: ObservationCache::default(),
         projection: ProjectionCache::default(), rendering: RenderingState::Pending,
