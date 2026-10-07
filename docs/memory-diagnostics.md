@@ -252,3 +252,20 @@ Table paths follow these owners: `cache.simulation.solar_system`, `cache.simulat
 Older parent timing totals are not directly comparable after this split; compare complete frame times or matching
 leaf calculations. Catalog cache fingerprints include source files, so the refactor causes a one-time prepared
 catalog rebuild even though the stored catalog schema is unchanged.
+
+
+### Regional stellar caches
+
+Stellar freshness decisions count **regions**, not individual stars. `cache.simulation.stars.regions` owns one
+slot per spatial region plus the always-requested constellation region. Every star belongs to exactly one group.
+A refresh calculates all its stars, even those too faint for the current rendering threshold; diagnostics report
+newly simulated rows separately from selected output rows. The effective TTL is displayed in simulated seconds.
+Default is 864000 (10 days); this is a holding approximation, not an accuracy-certified interval. Local cache.toml
+can shorten it. `--disable-cache` forces fresh results. Region epochs may differ; observation uses current time.
+
+`Stellar region decisions` replaces per-star lookup/qualification. `Stellar batches` aggregates region output
+allocation, trajectory reads, calculation, sample assembly and stores. `Motion output assembly` gathers the
+currently selected rows. On a cache hit there are no numerical batches. Old per-star refresh counts and parent
+performance totals are not directly comparable. Single-frame benchmarks measure cold population, not warm reuse.
+The region table includes bounded nested sample previews and their allocated capacity; the memory inventory
+aggregates all disjoint regional payloads into a bounded number of rows. Processing views are not duplicate tables.

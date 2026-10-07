@@ -15,7 +15,7 @@ impl PipelineCache {
         Self { observer: ObserverPreparationCache::new(config.clone()), selection: StarSelectionCache::new(config.clone()), stars: StellarSimulationState::new(config.clone()), observation: ObservationCache::new(config) }
     }
     pub fn invalidate_view(&mut self) { self.selection.invalidate_view(); }
-    pub fn stellar_report(&self, index: usize) -> Option<CacheReport> { self.stars.stellar_report(index) }
+    pub fn region_report(&self, index: usize) -> Option<CacheReport> { self.stars.region_report(index) }
     pub fn stats(&self) -> CacheStats {
         let mut total = CacheStats::default();
         for s in [self.observer.stats(), self.selection.stats(), self.stars.stats(), self.observation.stats()] {
@@ -28,7 +28,7 @@ impl PipelineCache {
     }
 }
 pub fn prepare_stellar_catalog(storage: &mut PipelineCache, catalog: Arc<SkyCatalog>, times: &mut StepTimes) {
-    astroterm::sky::prepare_stellar_catalog(&mut storage.stars, catalog, times);
+    astroterm::sky::prepare_stellar_catalog(&mut storage.stars, catalog, astroterm::astro::J2000, times);
 }
 pub fn prepare_cached_observer(storage: &mut PipelineCache, simulation: &SimulationState, time: FrameTime, site: Observer) -> Result<ObserverState, SimulationError> {
     astroterm::sky::prepare_cached_observer(&mut storage.observer, simulation, time, site)

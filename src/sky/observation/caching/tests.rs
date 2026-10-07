@@ -26,16 +26,16 @@ fn catalog_replacement_retains_geometry_and_resets_catalog_state() {
     let saved_observer = storage.observer.observer.clone();
     let saved_light_time = storage.observer.light_time.clone();
     assert!(storage.stars.prepared_classes.is_some());
-    assert_eq!(storage.stars.stellar.len(), 6);
+    assert_eq!(storage.stars.regions.entries.iter().filter_map(|c| c.stored()).map(Vec::len).sum::<usize>(), 6);
 
     sky = ObservedSky::new(replacement.clone());
     observe_cached_sky(&mut storage, &simulation, &observer, 20.0, true, crate::model::SkyRegion::All, &mut sky, &mut times).unwrap();
     assert!(Arc::ptr_eq(storage.stars.catalog.as_ref().unwrap(), &replacement));
-    assert!(storage.stars.prepared_classes.is_none()); // automatic replacement keeps the existing classify-on-demand policy
+    assert!(storage.stars.prepared_classes.is_some()); // automatic replacement prepares the new region layout too
     assert_eq!(storage.observer.observer, saved_observer);
     assert_eq!(storage.observer.light_time, saved_light_time);
     assert_eq!(storage.stars.motion.stats.refreshes, 1);
-    assert_eq!(storage.stars.stellar_stats.refreshes, 6);
+    assert_eq!(storage.stars.region_stats.refreshes, crate::model::SIMULATION_REGION_COUNT as u64);
     assert_eq!(sky.stars, expected.stars);
     assert_eq!(sky.planets, expected.planets);
     assert_eq!(sky.moon, expected.moon);

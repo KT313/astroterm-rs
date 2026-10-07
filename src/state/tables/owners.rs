@@ -171,4 +171,4 @@ list_tables!(crate::state::ObserverPreparationCache { leaves: [bodies @ SolarSys
 list_tables!(crate::state::StarSelectionCache { leaves: [region @ CandidateSelection, candidates @ CandidateSelection, selected @ WorkingSet, working @ WorkingSet], scalars: [], groups: [] });
 
 list_tables!(crate::state::SimulationCaches { leaves: [], scalars: [], groups: [solar_system, stars] });
-list_tables!(crate::state::StellarSimulationState { leaves: [prepared_classes, stellar_scratch, stellar @ StellarState, motion @ StellarState], scalars: [], groups: [] });
+list_tables!(crate::state::StellarSimulationState { leaves: [prepared_classes, stellar_scratch, refresh_regions, regions @ StellarState, motion @ StellarState], scalars: [], groups: [] });

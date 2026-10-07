@@ -16,7 +16,7 @@ pub use observation::ObservationCache;
 pub use projection::ProjectionCache;
 pub use scene::SceneCache;
 
-pub(crate) use stellar::{MotionCache, StellarMotionBuffers};
+pub(crate) use stellar::{MotionCache, StellarRegions, StellarMotionBuffers};
 pub(crate) use selection::{RegionCache, CandidateCache, SelectedCache, WorkingCache};
 pub(crate) use observer::{ObserverBuffers, LightTimeBuffers};
 pub(crate) use observation::{EligibleCache, RelativeCache, IlluminationCache, ApparentCache, HorizontalCache};

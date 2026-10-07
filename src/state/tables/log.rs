@@ -159,7 +159,7 @@ mod tests {
             "cache.simulation.solar_system.planets", "cache.simulation.solar_system.moon", "cache.simulation.solar_system.orientation",
             "cache.simulation.stars.prepared_classes", "cache.simulation.stars.stellar_scratch", "cache.selection.region",
             "cache.selection.candidates", "cache.selection.selected", "cache.selection.working",
-            "cache.simulation.stars.stellar", "cache.simulation.stars.motion", "cache.observation.eligible",
+            "cache.simulation.stars.regions", "cache.simulation.stars.motion", "cache.observation.eligible",
             "cache.observation.corrections", "cache.observer.bodies", "cache.observation.relative",
             "cache.observation.apparent", "cache.observation.horizontal", "cache.observation.refracted",
             "cache.observer.observer", "cache.observer.light_time", "cache.observation.illumination",
@@ -211,7 +211,7 @@ mod tests {
         assert!(stars.contains(&format!("**Shape:** `[{count}, 8]`")));
         assert!(!text.contains("persistent.catalog.stars.u0"));
         assert!(stars.contains(&format!("{} rows omitted", count - 2 * EDGE_ROWS)));
-        assert!(text.contains("ttl=360 s") && text.contains("ttl=dependencies") && text.contains("invalid=false"));
+        assert!(text.contains("ttl=864000 s") && text.contains("ttl=dependencies") && text.contains("invalid=false"));
         for path in paths(&text) { assert!(data_rows(section(&text, &path)) <= 2 * EDGE_ROWS); }
 
         let star_header = stars.lines().find(|l| l.starts_with("| Row |")).unwrap();
@@ -228,7 +228,7 @@ mod tests {
         assert!(section(&text, "cache.simulation.solar_system.planets").contains(&markdown_text("sampled_state: [BodyState; 9]")));
         let trace = section(&text, "timings.trace.steps");
         assert!(trace.contains("parent\\_step\\_index: Option&lt;usize&gt;"));
-        assert!(section(&text, "cache.simulation.stars.stellar").contains("| Row | catalog\\_row\\_index: usize | direction\\_j2000: Vector3 |"));
+        assert!(section(&text, "cache.simulation.stars.regions").contains("| Row | simulation\\_region\\_id: usize | calculated\\_at\\_tt\\_jd: Option&lt;f64&gt; |"));
 
     }
 

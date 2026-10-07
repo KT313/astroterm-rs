@@ -5,6 +5,8 @@ use std::f64::consts::PI;
 
 pub const GRID_DEPTH: u8 = 6;
 pub const CELL_COUNT: usize = 6 << (2 * GRID_DEPTH);
+pub const CONSTELLATION_REGION: usize = CELL_COUNT;
+pub const SIMULATION_REGION_COUNT: usize = CELL_COUNT + 1;
 /// Fixed catalog-region padding, not a guarantee for stars that move farther from their catalog direction.
 pub const STELLAR_DRIFT_MARGIN: f64 = PI / 720.0; // 0.25 degrees
 pub const REFRACTION_MARGIN: f64 = 0.647 * PI / 180.0;

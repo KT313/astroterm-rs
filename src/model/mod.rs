@@ -9,7 +9,7 @@ mod configuration;
 mod diagnostics;
 
 pub use catalog::{
-    SkyCatalog, CatalogPreparation, PreparedCatalog, ConstellationSet, StarException, GRID_DEPTH, CELL_COUNT, STELLAR_DRIFT_MARGIN, REFRACTION_MARGIN, ABERRATION_MARGIN, SkyRegion, SelectionStats, SkyGrid,
+    SkyCatalog, CatalogPreparation, PreparedCatalog, ConstellationSet, StarException, GRID_DEPTH, CELL_COUNT, CONSTELLATION_REGION, SIMULATION_REGION_COUNT, STELLAR_DRIFT_MARGIN, REFRACTION_MARGIN, ABERRATION_MARGIN, SkyRegion, SelectionStats, SkyGrid,
     hash_direction, QUANTIZATION_MARGIN, STAR_SECTIONS, StarRow, StarRowSlice, StarRowVec, StarStorage,
 };
 pub(crate) use catalog::{SelectedRegion, StellarFields, build_caps, unsupported_star_data};
@@ -19,7 +19,7 @@ pub use celestial::{
     SimulationError, InterpolationLimits, PLANET_LIMITS, MOON_LIMITS, ORIENTATION_LIMITS, CachePolicy, RefreshCounts,
 };
 pub(crate) use celestial::{
-    BodySamples, CorrectionSelection, StellarWork, ValidityCounts, Directions, ObserverKey,
+    BodySamples, CorrectionSelection, StellarWork, Directions, ObserverKey,
     ObservationBodyKey, Sample,
 };
 pub use presentation::{

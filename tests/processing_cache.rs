@@ -233,7 +233,7 @@ fn disabling_a_model_group_still_prepares_emission_coverage_each_frame() {
 }
 
 #[test]
-fn moving_distance_stars_preserve_magnitude_thresholds_and_order_within_ttl() {
+fn moving_distance_stars_hold_magnitudes_until_regional_expiry() {
     use astroterm::catalog::{Catalog, SpaceMotion};
     let mut source = load_embedded_catalog().unwrap();
     let mut a = source.stars.remove(0);
@@ -273,19 +273,15 @@ fn moving_distance_stars_preserve_magnitude_thresholds_and_order_within_ttl() {
         cached.frame(tt, view, 5.0, false, Observer::default());
         direct.frame(tt, view, 5.0, false, Observer::default());
         assert_eq!(cached.sky.corrections.evaluated, 2);
-        assert_eq!(cached.sky.stars.len(), if seconds == 0.0 { 2 } else { 1 });
-        assert_eq!(cached.sky.corrections, direct.sky.corrections);
-        for (a, b) in cached.sky.stars.iter().zip(&direct.sky.stars) {
-            assert_eq!(
-                (a.source_index, a.magnitude, a.drawable),
-                (b.source_index, b.magnitude, b.drawable)
-            );
-            assert_eq!(
-                cached.observation.stellar_report(a.source_index).unwrap().valid_seconds,
-                0.0
-            );
-        }
+        assert_eq!(cached.sky.stars.len(), 2); // held at the first regional evaluation
+        assert_eq!(direct.sky.stars.len(), if seconds == 0.0 { 2 } else { 1 });
+        for star in &cached.sky.stars { assert_eq!(star.magnitude, 5.0); }
+        if seconds != 0.0 { assert_ne!(cached.sky.corrections, direct.sky.corrections); }
     }
+    let expired = J2000 + 11.0;
+    cached.frame(expired, view, 5.0, false, Observer::default());
+    direct.frame(expired, view, 5.0, false, Observer::default());
+    assert_eq!(cached.sky.stars, direct.sky.stars); // exact again at the refresh epoch
     // anchor both pipelines at the same epoch to isolate membership invalidation from sample-holding error
     let cat = cached.sky.catalog.clone();
     let mut cached = Pipeline::new(cat.clone(), CacheConfig::default());

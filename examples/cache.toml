@@ -6,11 +6,11 @@ enabled = true
 
 # Absolute simulated seconds on either side of an evaluation epoch, never wall-clock TTLs.
 # These are the current upper limits. Shorter values are accepted; zero disables cross-frame reuse.
-# Stellar direction/distance/magnitude share an epoch. Moving stars with known distance currently
-# refresh exactly at each requested epoch to preserve magnitude thresholds and draw-order crossings.
+# Stellar regions hold direction and magnitude for up to 10 simulated days. This is a fixed
+# approximation, not an accuracy-qualified interval; use a shorter age or --disable-cache for fresh values.
 [groups.stellar_state]
 enabled = true
-max_age_seconds = 360
+max_age_seconds = 864000
 [groups.planetary_samples]
 enabled = true
 max_age_seconds = 30

@@ -36,13 +36,15 @@ pub struct SelectedStars<'a> {
     pub(crate) key: (super::StageId, u64),
     pub(crate) epoch: f64,
     pub(crate) statistics: crate::model::SelectionStats,
+    pub(crate) regions: &'a [usize],
 }
 impl StarSelectionCache {
     pub fn stars(&self) -> SelectedStars<'_> {
         SelectedStars { catalog: self.catalog.as_ref().expect("selection prepared"), working: &self.working,
-            key: (self.identity, self.working.generation), epoch: self.requested_epoch.expect("selection prepared"), statistics: self.candidates.value().1 }
+            key: (self.identity, self.working.generation), epoch: self.requested_epoch.expect("selection prepared"), statistics: self.candidates.value().1, regions: &self.region.value().cells }
     }
 }
 impl SelectedStars<'_> {
     pub fn rows(&self) -> &[SelectedStar] { self.working.value() }
+    pub fn regions(&self) -> &[usize] { self.regions }
 }

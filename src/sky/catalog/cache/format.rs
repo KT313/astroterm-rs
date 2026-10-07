@@ -1,6 +1,6 @@
 //! Prepared-catalog cache schema, fingerprints and semantic checks. I/O lives here above the pure models;
 //! prepared arrays are decoded into owned memory before publication.
-use crate::model::{SkyCatalog, PreparedCatalog, CatalogPreparation, CELL_COUNT, SkyGrid, Constellation, StarStorage, STAR_SECTIONS};
+use crate::model::{SkyCatalog, PreparedCatalog, CatalogPreparation, CELL_COUNT, CONSTELLATION_REGION, SIMULATION_REGION_COUNT, SkyGrid, Constellation, StarStorage, STAR_SECTIONS};
 use super::super::grid::stored_cell;
 use crate::catalog::{
     StarNames,
@@ -32,7 +32,7 @@ const SECTION_COUNT: usize = STAR_SECTIONS + 9;
 /// Source hashes deliberately invalidate caches even for conservative implementation-only changes.
 pub fn catalog_fingerprint() -> [u8; 32] {
     let mut hash = Sha256::new();
-    hash.update(b"astroterm catalog v7; vector columns; little-endian u64 indices; validation=1; HR=1; override=1; motion=1; quantization=1; cube-Morton=2; all-stars-in-regions=1");
+    hash.update(b"astroterm catalog v7; vector columns; little-endian u64 indices; validation=1; HR=1; override=1; motion=1; quantization=1; cube-Morton=3; exclusive-constellation-region=1");
     for value in [
         crate::astro::COMPUTATIONAL_INTERVAL.start_tt,
         crate::astro::COMPUTATIONAL_INTERVAL.end_tt,
@@ -158,15 +158,15 @@ fn validate_catalog(catalog: &SkyCatalog, preparation: &CatalogPreparation, full
     catalog.stars.validate(&catalog.names, preparation.motion_bounds(), full)?;
     let n = catalog.stars.len();
     let offsets = &catalog.grid.offsets;
-    if offsets.len() != CELL_COUNT + 1
+    if offsets.len() != SIMULATION_REGION_COUNT + 1
         || offsets[0] != 0
         || offsets.windows(2).any(|p| p[0] > p[1])
-        || offsets[CELL_COUNT] != n
+        || offsets[SIMULATION_REGION_COUNT] != n
     {
         return Err(invalid("invalid grid offsets"));
     }
     let mut ids = HashSet::with_capacity(n);
-    for cell in 0..CELL_COUNT {
+    for cell in 0..SIMULATION_REGION_COUNT {
         let (start, end) = (offsets[cell], offsets[cell + 1]);
         for i in start..end {
             if !ids.insert(catalog.stars.id(i)) {
@@ -179,7 +179,7 @@ fn validate_catalog(catalog: &SkyCatalog, preparation: &CatalogPreparation, full
             {
                 return Err(invalid("unsorted brightness keys/IDs"));
             }
-            if full && stored_cell(&catalog.stars, i) != cell {
+            if full && cell < CELL_COUNT && stored_cell(&catalog.stars, i) != cell {
                 return Err(invalid("star assigned to wrong cell"));
             }
         }
@@ -197,6 +197,9 @@ fn validate_catalog(catalog: &SkyCatalog, preparation: &CatalogPreparation, full
     endpoints.dedup();
     if endpoints.as_slice() != catalog.endpoint_indices() {
         return Err(invalid("endpoint union mismatch"));
+    }
+    if !endpoints.iter().copied().eq(offsets[CONSTELLATION_REGION]..n) {
+        return Err(invalid("constellation region differs from endpoint union"));
     }
     Ok(())
 }
@@ -459,7 +462,7 @@ mod tests {
                     bytes[start..start + 8].copy_from_slice(&1_u64.to_le_bytes());
                 }
                 17 => {
-                    let start = section(&bytes, GRID_OFFSETS) + CELL_COUNT * 8;
+                    let start = section(&bytes, GRID_OFFSETS) + SIMULATION_REGION_COUNT * 8;
                     bytes[start..start + 8].copy_from_slice(&((source.catalog.stars.len() - 1) as u64).to_le_bytes()); // reject an unindexed tail
                 }
                 11 => {

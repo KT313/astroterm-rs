@@ -95,7 +95,8 @@ type from `ProjectionViewport`.
 ## Catalog: prepared once, shared by reference
 
 Definitions are under `model/catalog/records.rs`, `model/catalog/storage/`, `model/catalog/grid.rs` and `catalog/cache/`. `sky` prepares the
-catalog; frame processing reads it. Catalog indices follow cell, conservative brightness bound and descending ID.
+catalog; frame processing reads it. Catalog indices follow simulation region, conservative brightness bound and descending ID.
+Spatial regions exclude endpoints; the final region contains exactly the unique figure endpoint union.
 
 | Storage | Contents and readers | Lifetime |
 |---|---|---|
@@ -149,30 +150,44 @@ reception observer remains unchanged while emission requests refresh the indepen
 Getters never invoke an ephemeris. Synthetic callers may still prepare a custom observer and sample its supplied
 emission epochs without rebuilding its geometry.
 
-`StarSelectionCache` owns `region`, `candidates`, `selected` and `working`. The four selection passes preserve
-the fixed 0.25° motion allowance, aberration, quantization and refraction margins, and full-scan fallback
-outside the supported interval. Every star belongs to its catalog-epoch region; there is no separate fast-moving
-population. Narrow-view selection can miss stars that drift beyond the fixed allowance. Moving-region handling
-is deferred; intrinsic motion calculations are unchanged. Endpoint-only rows remain non-drawable. `SelectedStars` is a read-only
-view of the working rows, catalog identity, requested epoch and source generation; it owns no row buffers.
+`StarSelectionCache` owns `region`, `candidates`, `selected` and `working`. Spatial selection keeps its fixed
+0.25° drift allowance and aberration/refraction/quantization margins. The final simulation region exclusively
+owns the unique constellation endpoints and is always requested, even with lines disabled. Endpoint dots still
+pass brightness and projection checks; faint endpoints can support lines without becoming drawable dots.
+Outside the interval all regions are requested. Fast non-endpoint stars still use fixed catalog regions and can
+be missed after large drift. `SelectedStars` borrows both the requested region IDs (before brightness filtering)
+and the working rows, along with catalog identity, requested epoch and source generation.
 
-`StellarSimulationState` owns `prepared_classes`, `stellar`, `stellar_scratch`, `stellar_stats` and `motion` under
-`cache.simulation.stars`. `sky::prepare_stellar_catalog` prepares classifications once. `sky::simulate_stars` works
-only on selected rows; numerical passes receive only trajectory and magnitude columns through `StellarFields`.
-Intrinsic outputs are J2000 unit directions and current magnitudes, not AU positions. Per-star samples survive
-camera changes and are qualified under the existing cache rules. Moving distance-bearing stars retain exact
-current brightness; stars have no light-time iteration. The sample map does not evict during a run. Scratch
-contains at most 1024 live records and clears after each refresh while retaining capacity.
+`StellarSimulationState` owns `regions`, `refresh_regions`, `prepared_classes`, bounded `stellar_scratch`, regional
+statistics/generation and the selected-order `motion` output. `prepare_stellar_catalog` takes start TT explicitly
+and initializes every slot empty/invalid before the loop. Lazy headless setup uses the first requested TT.
+Each requested region checks one timestamp/invalidation flag, then refreshes its complete catalog range when
+needed. The constellation region follows precisely the same numerical/cache path. No per-star cache map remains.
+Numerical passes borrow trajectory/magnitude columns, evaluate in f64, and append samples in catalog order.
+
+The default/max stellar TTL is 864000 simulated seconds in `cache/policy/config.rs`; existing config overrides may
+shorten it. Values are held, not interpolated or accuracy-qualified. Both direction and magnitude can remain at a
+region's calculation epoch even after simulation time changes. Age is absolute in TT, including reverse playback;
+the exact boundary is reusable, and hits never slide timestamps. `--disable-cache`, disabled groups and zero TTL
+recalculate all requested regions. Model formulas and solar-system policies are unchanged.
+
+Regional freshness is checked before the assembled `motion` result can be reused. That output is keyed by selection
+identity/generation and the generation of regional values, with dependency-only lifetime. It never restarts the
+regions' TTLs. Sorted rows and offsets give a linear gather with no per-star cache decisions. Each dot/line endpoint
+uses one sample from its sole owning region. Regions are retained until catalog replacement; no eviction/pooling.
+The table logger reports the original regional owner and nested allocation sizes with bounded previews; the
+feature-gated inventory aggregates sample payloads without emitting thousands of per-region rows.
 
 `StellarResults` borrows the intrinsic results and their matching selection. Owner identity plus local cache
 generation prevents equal generations in different selection owners from being mistaken for the same data.
-Constructors also check catalog/epoch matching; observation checks the observer epoch. The small identity tokens
+Constructors also check catalog/request-epoch matching; observation checks the current observer epoch.
+The requested epoch is not a claim that all region values were calculated then. The small identity tokens
 are assigned when owners are created, not per star or frame, and own no heap. No borrowed view is stored inside
 another owner. Mutation while a view is live is restricted by Rust's borrow checker.
 
 `ObservationCache` now owns only `eligible`, `corrections`, `relative`, `illumination`, `apparent`, `horizontal`
 and `refracted`, plus source provenance. `sky::observe_cached_sky` consumes prepared read-only views. It checks
-current brightness, retains necessary correction rows, builds calculated output, subtracts the observer for
+the supplied (possibly held) brightness, retains necessary correction rows, builds calculated output, subtracts the observer for
 bodies, computes Moon illumination, and applies aberration, horizon rotation and optional refraction. It cannot
 mutate model samples or perform selection. Snapshot hits restore the appropriate directions; refreshes keep
 freshly calculated directions. No corrected direction feeds back into intrinsic simulation.

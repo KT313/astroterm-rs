@@ -79,13 +79,14 @@ fn stellar_batch_trace_is_bounded_and_counts_all_appended_samples() {
     assert_eq!(sky.stars.len(), count);
     let trace = traced.trace().unwrap();
     let output = trace.steps.iter().find(|s| s.name == "Motion output assembly").unwrap();
-    assert!(output.memory_aggregated);
     assert_eq!(output.memory_events.len(), 1);
-    assert_eq!(output.memory_events[0].calls, 3);
-    assert_eq!(output.memory_events[0].total_elements, Some(count));
-    let lookup = trace.steps.iter().find(|s| s.name == "Stellar cache lookup and decisions").unwrap();
-    assert!(lookup.memory_events.len() <= 6);
-    assert_eq!(lookup.memory_events[0].calls, 3);
+    assert!(matches!(output.memory_events[0].event, MemoryEvent::Operation { elements: Some(n), .. } if n == count));
+    let lookup = trace.steps.iter().find(|s| s.name == "Stellar region decisions").unwrap();
+    assert!(lookup.memory_events.len() <= 8);
+    let assembled = trace.steps.iter().find(|s| s.name == "Region sample assembly").unwrap();
+    assert!(assembled.memory_aggregated);
+    assert_eq!(assembled.memory_events[0].total_elements, Some(count));
+    assert!(trace.steps.len() < 100); // independent of requested region/star count
     let clear = trace.steps.iter().find(|s| s.name == "Stellar scratch clear").unwrap();
     let MemoryEvent::Operation { before: Some(before), after: Some(after), .. } = clear.memory_events[0].event else { panic!("scratch clear boundaries"); };
     assert_eq!(before.capacity, after.capacity);

@@ -1,7 +1,7 @@
 //! Catalog preparation details; ordering and representative choices stay identical to the source loader.
 use crate::catalog::{CatalogStar, StarId, ConstellationFigure};
 use crate::model::{StarStorage, Constellation};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use super::{grid, prepare_star};
 
 pub(super) fn prepare_compact_stars(entries: impl Iterator<Item = CatalogStar>, source_names: &crate::catalog::StarNames) -> std::io::Result<(StarStorage, Vec<f32>, crate::catalog::StarNames)> {
@@ -26,8 +26,10 @@ pub(super) fn prepare_compact_stars(entries: impl Iterator<Item = CatalogStar>, 
     Ok((stars, bounds, labels.finish()))
 }
 
-pub(super) fn sort_stars_by_region_and_brightness(stars: &mut StarStorage, bounds: &mut [f32]) {
-    let cells: Vec<_> = (0..stars.len()).map(|i| grid::stored_cell(stars, i)).collect();
+pub(super) fn sort_stars_by_region_and_brightness(stars: &mut StarStorage, bounds: &mut [f32], endpoints: &HashSet<StarId>) {
+    let cells: Vec<_> = (0..stars.len()).map(|i| {
+        if endpoints.contains(&stars.id(i)) { crate::model::CONSTELLATION_REGION } else { grid::stored_cell(stars, i) }
+    }).collect();
     let mut order: Vec<_> = (0..stars.len()).collect();
     order.sort_unstable_by(|&a, &b| {
         cells[a]
@@ -38,6 +40,13 @@ pub(super) fn sort_stars_by_region_and_brightness(stars: &mut StarStorage, bound
     stars.reorder(&order, bounds);
     drop(order);
     drop(cells);
+}
+
+/// Resolve retained segments before sorting, so only actual endpoint IDs enter the dedicated region.
+pub(super) fn collect_endpoint_ids(stars: &StarStorage, hr_by_id: &HashMap<StarId, u32>, figures: &[ConstellationFigure]) -> HashSet<StarId> {
+    let indices = index_representative_positions(stars, hr_by_id);
+    let resolved = resolve_constellation_figures(figures, &indices);
+    collect_constellation_endpoints(&resolved).into_iter().map(|i| stars.id(i)).collect()
 }
 
 pub(super) fn index_representative_ids(representatives: &HashMap<u32, StarId>) -> HashMap<StarId, u32> {

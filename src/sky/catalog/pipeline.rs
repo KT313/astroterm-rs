@@ -1,6 +1,6 @@
 //! Prepare immutable star storage and resolve constellation indices once.
 use crate::model::{ObservedStar, ObservedSky, SkyCatalog, PreparedCatalog, CatalogPreparation};
-use super::{grid, preparation::{prepare_compact_stars, sort_stars_by_region_and_brightness, index_representative_ids, index_representative_positions, resolve_constellation_figures, collect_constellation_endpoints}};
+use super::{grid, preparation::{prepare_compact_stars, sort_stars_by_region_and_brightness, index_representative_ids, index_representative_positions, resolve_constellation_figures, collect_constellation_endpoints, collect_endpoint_ids}};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -34,13 +34,15 @@ fn build_catalog(
     figures: &[ConstellationFigure],
 ) -> std::io::Result<PreparedCatalog> {
     let (mut stars, mut bounds, names) = prepare_compact_stars(entries, &names)?;                 // keep valid stars in compact column storage
-    sort_stars_by_region_and_brightness(&mut stars, &mut bounds);                // put nearby stars together, brightest first with stable ties
-    let grid = grid::build_grid(&stars);
-
     let hr_by_id = index_representative_ids(representatives);       // retain the chosen star for each shared HR catalog number
+    let endpoints = collect_endpoint_ids(&stars, &hr_by_id, figures);
+    sort_stars_by_region_and_brightness(&mut stars, &mut bounds, &endpoints); // each star belongs to one spatial or constellation region
+    drop(endpoints);
+
     let index_by_hr = index_representative_positions(&stars, &hr_by_id); // find those stars after sorting
     let constellations = resolve_constellation_figures(figures, &index_by_hr); // turn line endpoints into star-array indices
     let endpoint_indices = collect_constellation_endpoints(&constellations); // record the unique stars needed by the figures
+    let grid = grid::build_grid(&stars, &endpoint_indices);
     let singular_count = 0; // exceptional catalogs are rejected until sparse handling is implemented
     let catalog = SkyCatalog {
         singular_count,

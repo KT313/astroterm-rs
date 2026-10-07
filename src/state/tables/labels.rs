@@ -15,8 +15,11 @@ pub(super) fn label_columns(path: &str, columns: &mut [Column]) {
 // The named-field crosswalk is below row_columns! in rows/mod.rs. Anonymous-row mappings (label -> storage):
 // label_byte_boundary -> names.boundaries[row]; unicode_and_ascii_entries -> names.ascii_alternatives[row].
 // precise-motion direction x/y/z -> [0]/[1]/[2]; scaled velocity x/y/z -> [3]/[4]/[5]; distance -> [6].
-// catalog_row_boundary -> grid.offsets[row]; sky_region_index -> region.cells[row].
-// catalog_row_index -> endpoint_indices/candidate_indices/candidates/selected[row], or the stellar HashMap key.
+// catalog_row_boundary -> grid.offsets[row]; sky_region_index -> region.cells[row] (including the final constellation region).
+// stellar_scratch (initial_magnitude, trajectory_parameters, motion_properties, calculated_sample) -> magnitude/motion/class/sample.
+// regional table (simulation_region_id, calculated_at_tt_jd, reuse_window_simulation_seconds) -> entry index/calculated_at/valid_seconds.
+// regional has_been_invalidated/generation are Cache fields; sample_count/samples inspect its original stored Vec.
+// catalog_row_index -> endpoint_indices/candidate_indices/candidates/selected[row], or an endpoint row.
 // motion (direction_j2000, current_magnitude) -> tuple .0/.1; passes_brightness_filter -> eligible[row].
 // working_row_index -> corrections.indices[row]; moon_illumination/moon_phase -> illumination tuple .0/.1.
 // projection star key (direction, passes_brightness_filter) -> tuple .0/.1.
@@ -24,7 +27,7 @@ pub(super) fn label_columns(path: &str, columns: &mut [Column]) {
 // projection stars (observed_star_index, screen_coordinates) -> tuple .0/.1; projected_star_index -> order[row].
 // body key (body_kind, direction) -> tuple .0/.1; constellation key (catalog_row_index, direction, current_magnitude) -> .0/.1/.2.
 // screen_endpoint_pair -> horizon[row]; screen_coordinates/label_text -> labels[row].0/.1.
-// projected_star_index -> named_candidates[row]; has_been_invalidated -> stellar entry's Cache.has_been_invalidated.
+// projected_star_index -> named_candidates[row]; has_been_invalidated -> region entry's Cache.has_been_invalidated.
 // character/glyph_dimensions_and_spacing/coverage_mask_bytes -> glyph HashMap key / Glyph.metrics / Glyph.coverage.len().
 // *_pixel_row/text_row/*_chunk label the existing bounded preview; they are not additional stored fields.
 fn table_labels(path: &str) -> &'static [&'static str] {
@@ -42,8 +45,8 @@ fn table_labels(path: &str) -> &'static [&'static str] {
         "cache.selection.region" => &["sky_region_index"],
         "cache.selection.working" => &["catalog_row_index", "is_draw_candidate"],
         "cache.simulation.stars.prepared_classes" => &["motion_properties"],
-        "cache.simulation.stars.stellar_scratch" => &["catalog_row_index", "initial_magnitude", "needs_recalculation", "trajectory_parameters", "motion_properties", "calculated_sample", "reuse_window_simulation_seconds", "calculated_at_tt_jd"],
-        "cache.simulation.stars.stellar" => &["catalog_row_index", "direction_j2000", "current_magnitude", "used_tangential_motion_fallback", "has_been_invalidated"],
+        "cache.simulation.stars.stellar_scratch" => &["initial_magnitude", "trajectory_parameters", "motion_properties", "calculated_sample"],
+        "cache.simulation.stars.refresh_regions" => &["simulation_region_id"],
         "cache.simulation.stars.motion" => &["direction_j2000", "current_magnitude"],
         "cache.observation.eligible" => &["passes_brightness_filter"],
         "cache.observation.corrections" => &["working_row_index"],
@@ -113,7 +116,7 @@ pub(super) fn column_notes(path: &str) -> &'static [&'static str] {
         "persistent.catalog.names.ascii_alternatives" => &["Sparse [Unicode entry, ASCII entry] pairs, sorted by Unicode entry. Both reference the same shared label buffer through its boundaries. Labels without a pair use the same text in either mode."],
         "persistent.catalog.star_exceptions" => &["Reserved sparse table: catalog_row_index refers to the final sorted star table; precise_motion_entry is one-based, zero means none. All nonempty exception tables are rejected until sparse support is implemented."],
         "persistent.catalog.stars.precise_motions" => &["Reserved payload; accepted catalogs keep this empty. Seven components of each original packed row are shown separately for readability; storage is unchanged. Direction uses J2000 axes, velocity is scaled per Julian year, distance is in parsecs; zero distance means unavailable."],
-        "persistent.catalog.grid.offsets" => &["Adjacent boundaries delimit a sky region's catalog rows. The last boundary is the end of the full catalog; every star belongs to an ordinary region."],
+        "persistent.catalog.grid.offsets" => &["Adjacent boundaries delimit a sky region's catalog rows. The last boundary ends the catalog. The final range contains constellation endpoints exclusively; preceding ranges are spatial regions."],
         "persistent.catalog.grid.coarse_caps" | "persistent.catalog.grid.fine_caps" => &["A cap covers a circular patch of sky: its center is a unit direction in J2000 axes and its radius is an angle in radians."],
         "persistent.catalog.names" => &["Rows preview chunks of the shared UTF-8 text buffer, not individual names; the boundary table locates each label."],
         "preparation" => &["Conservative maximum angular drift from the initial direction over the supported interval, in radians. Freed after preparation."],
@@ -129,8 +132,8 @@ pub(super) fn column_notes(path: &str) -> &'static [&'static str] {
             "Emission times are TT Julian dates ordered: Sun, Mercury, Venus, Earth, Mars, Jupiter, Saturn, Uranus, Neptune, Moon. Before light-time sampling they are initialized to reception time.",
         ],
         "cache.simulation.stars.prepared_classes" => &["Motion property bits: bit 0 (1) = stationary; bit 1 (2) = has usable distance. These determine which propagation and brightness calculations apply."],
-        "cache.simulation.stars.stellar_scratch" => &["catalog_row_index addresses the persistent star table. Times are TT Julian dates; reuse duration is simulated seconds. motion_properties uses bit 0 = stationary, bit 1 = usable distance; empty scratch retains capacity only."],
-        "cache.simulation.stars.stellar" | "cache.simulation.stars.motion" => &["Directions are evaluated at the sample time but expressed in fixed J2000 axes. Magnitudes are current apparent brightness, with smaller numbers brighter. The fallback ignores radial distance change and keeps brightness constant."],
+        "cache.simulation.stars.stellar_scratch" => &["Numeric inputs and output for one bounded batch, in catalog order. motion_properties uses bit 0 = stationary, bit 1 = usable distance; empty scratch retains capacity only. No per-star cache metadata."],
+        "cache.simulation.stars.motion" => &["Directions are evaluated at the sample time but expressed in fixed J2000 axes. Magnitudes are brightness held at each region calculation epoch, with smaller numbers brighter; the gathered output timestamp does not replace the region timestamps. The fallback ignores radial distance change and keeps brightness constant."],
         "cache.observation.eligible" => &["Rows follow the working table; true means the star passed candidate membership and current brightness checks, before screen projection."],
         "cache.observation.corrections" => &["Each index addresses cache.selection.working, not the catalog or the final observed-star table."],
         "cache.observer.bodies" => &["Emission-time body states use J2000 axes, AU and AU/day relative to the solar-system center of mass. The separate Moon value is described in the table's existing notes."],
@@ -189,6 +192,6 @@ mod tests {
         assert_eq!(names::<CharacterStarKey>("cache.rendering.characters.scene_cache.characters.key.stars"), ["screen_coordinates", "symbol", "terminal_color"]);
         assert_eq!(names::<ProjectedArc>("arc"), ["start_coordinates", "end_coordinates", "path_coordinates", "includes_original_start", "includes_original_end"]);
         assert_eq!(names::<ObserverState>("cache.observer.observer")[8], "body_emission_times_tt_jd");
-        assert_eq!(names::<StellarWork>("cache.simulation.stars.stellar_scratch")[7], "calculated_at_tt_jd");
+        assert_eq!(names::<StellarWork>("cache.simulation.stars.stellar_scratch")[3], "calculated_sample");
     }
 }

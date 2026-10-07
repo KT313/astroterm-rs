@@ -26,31 +26,32 @@ fn synthetic_observer() -> astroterm::model::ObserverState {
 fn cone(x: f64, y: f64) -> SkyRegion { SkyRegion::Cone { center: Vector3 { x, y, z: 0.0 }, radius: 0.1 } }
 
 #[test]
-fn selection_changes_reuse_intrinsic_samples_and_only_calculate_new_rows() {
+fn selection_changes_reuse_intrinsic_regions() {
     let catalog = catalog();
     let observer = synthetic_observer();
     let mut selection = StarSelectionCache::default();
     let mut stars = StellarSimulationState::default();
     let mut times = StepTimes::default();
     sky::select_cached_stars(&mut selection, &catalog, &observer, 5.0, false, cone(1.0, 0.0), &mut times);
-    let first = selection.stars().rows()[0].source_index;
+    let first = astroterm::model::hash_direction(astroterm::model::GRID_DEPTH, catalog.stars.stored_direction(selection.stars().rows()[0].source_index));
+    let requested = selection.stars().regions().len() as u64;
     assert_eq!(selection.stars().rows().len(), 1);
     sky::simulate_stars(&mut stars, selection.stars(), observer.time.tt, &mut times);
-    assert_eq!(stars.stellar_report(first).unwrap().stats.refreshes, 1);
-    assert_eq!(stars.stats().refreshes, 2); // one per-star sample, one working-order result
+    assert_eq!(stars.region_report(first).unwrap().stats.refreshes, 1);
+    assert_eq!(stars.stats().refreshes, requested + 1); // requested regions and one working-order result
 
     sky::select_cached_stars(&mut selection, &catalog, &observer, 5.0, false, SkyRegion::All, &mut times);
     sky::simulate_stars(&mut stars, selection.stars(), observer.time.tt, &mut times);
-    assert_eq!(stars.stellar_report(first).unwrap().stats.refreshes, 1);
-    for row in selection.stars().rows() { assert_eq!(stars.stellar_report(row.source_index).unwrap().stats.refreshes, 1); }
-    assert_eq!(stars.stats().refreshes, 5); // three stars total and two assembled results
+    assert_eq!(stars.region_report(first).unwrap().stats.refreshes, 1);
+    for &region in selection.stars().regions() { assert_eq!(stars.region_report(region).unwrap().stats.refreshes, 1); }
+    assert_eq!(stars.stats().refreshes, astroterm::model::SIMULATION_REGION_COUNT as u64 + 2);
 
     sky::select_cached_stars(&mut selection, &catalog, &observer, 5.0, false, cone(0.0, 1.0), &mut times);
     sky::simulate_stars(&mut stars, selection.stars(), observer.time.tt, &mut times);
     let result = stars.results(selection.stars());
     assert_eq!(result.samples().len(), 1);
     assert!(result.samples()[0].0.y > 0.99);
-    assert_eq!(stars.stellar_report(first).unwrap().stats.refreshes, 1);
+    assert_eq!(stars.region_report(first).unwrap().stats.refreshes, 1);
 }
 
 #[test]

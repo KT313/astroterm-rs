@@ -2,19 +2,22 @@
 use crate::model::{StarStorage, SkyRegion, QUANTIZATION_MARGIN};
 use std::f64::consts::PI;
 use crate::model::{
-    ABERRATION_MARGIN, CELL_COUNT, GRID_DEPTH, REFRACTION_MARGIN, STELLAR_DRIFT_MARGIN, SelectionStats, SkyGrid, SelectedRegion,
+    ABERRATION_MARGIN, CELL_COUNT, CONSTELLATION_REGION, SIMULATION_REGION_COUNT, GRID_DEPTH, REFRACTION_MARGIN, STELLAR_DRIFT_MARGIN, SelectionStats, SkyGrid, SelectedRegion,
 };
 const NUMERIC_SLACK: f64 = 1e-10;
 
-/// Every star belongs to the ordinary region containing its stored catalog-epoch direction.
+/// Geometric cell for a stored direction; constellation endpoints instead belong to the dedicated region.
 pub(crate) fn stored_cell(stars: &StarStorage, index: usize) -> usize {
     crate::model::hash_direction(GRID_DEPTH, stars.stored_direction(index))
 }
 
 /// Build region boundaries covering every row of the prepared star order.
-pub(crate) fn build_grid(stars: &StarStorage) -> SkyGrid {
-    let mut offsets = vec![0; CELL_COUNT + 1];
-    for index in 0..stars.len() {
+pub(crate) fn build_grid(stars: &StarStorage, endpoints: &[usize]) -> SkyGrid {
+    let mut offsets = vec![0; SIMULATION_REGION_COUNT + 1];
+    let ordinary_count = stars.len() - endpoints.len();
+    assert!(endpoints.iter().copied().eq(ordinary_count..stars.len()), "constellation region must contain exactly the endpoints");
+    offsets[CONSTELLATION_REGION + 1] = endpoints.len();
+    for index in 0..ordinary_count {
         offsets[stored_cell(stars, index) + 1] += 1;
     }
     for i in 1..offsets.len() {
@@ -51,14 +54,14 @@ pub(crate) fn select_region(
 ) -> SelectedRegion {
     if !crate::astro::COMPUTATIONAL_INTERVAL.contains(observer.time.tt) {
         return SelectedRegion {
-            cells: Vec::new(),
+            cells: (0..SIMULATION_REGION_COUNT).collect(),
             brute_force: true,
         };
     }
     let mut cells = Vec::new();
     match region {
         SkyRegion::Cone { center, radius } if radius < 150_f64.to_radians() => {
-            let margin = 0.1_f64.to_radians() / 3600.0 // intrinsic stellar-cache angular allowance
+            let margin = 0.1_f64.to_radians() / 3600.0 // retained numerical padding; the fixed regional TTL is not angular-error qualified
                 + STELLAR_DRIFT_MARGIN
                 + QUANTIZATION_MARGIN
                 + ABERRATION_MARGIN.max(
@@ -88,6 +91,7 @@ pub(crate) fn select_region(
             }
         }
     }
+    cells.push(CONSTELLATION_REGION); // endpoint dots and lines share one always-requested group
     SelectedRegion {
         cells,
         brute_force: false,
@@ -104,7 +108,7 @@ pub(crate) fn count_region_stars(grid: &SkyGrid, region: &SelectedRegion, total:
         .iter()
         .map(|&cell| grid.offsets[cell + 1] - grid.offsets[cell])
         .sum::<usize>();
-    (region.cells.len(), count)
+    (region.cells.len() - 1, count)
 }
 
 /// Collect the brightness-qualified prefix from each selected region.
@@ -128,7 +132,7 @@ pub(crate) fn select_brightness(
         cells: if region.brute_force {
             CELL_COUNT
         } else {
-            region.cells.len()
+            region.cells.len() - 1
         },
         candidates: indices.len(),
         brute_force: region.brute_force,

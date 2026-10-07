@@ -60,7 +60,7 @@ def check(binary, name, flags):
     assert "UTC JD=2460735.958333333" in report, "single frame must use exact requested UTC"
     names = re.findall(r"^\d+ +(.*?): [\d.]+ ms$", report, re.M)
     assert names.count("Present") == 1
-    for stage in ["Frame preparation", "Stellar classifications"]:
+    for stage in ["Frame preparation", "Stellar classifications", "Stellar region initialization"]:
         assert names.count(stage) == 1, stage
         assert names.index(stage) < names.index("Solar-system simulation"), stage
     for before, after in [("Dataset loading", "Solar-system simulation"), ("Solar-system simulation", "Observer preparation"),
@@ -74,8 +74,9 @@ def check(binary, name, flags):
     assert "output corrected stars=" in report and "output visible stars=" in report
     assert "direct diagnostics=" in report and "self/unattributed=" in report
     assert "sum of " in report and "no per-star timers" in report
-    assert "zero validity:" in report and "validity probe evaluations=" in report
-    for stage in ["Motion and magnitude calculation", "Stellar validity qualification", "Selected index copy",
+    assert "requested spatial regions=" in report and "newly simulated stars=" in report
+    assert "no per-star cache checks" in report and "effective TTL=" in report
+    for stage in ["Motion and magnitude calculation", "Stellar region decisions", "Stellar region stores", "Selected index copy",
                   "Corrected-star buffer construction", "Projected view assembly", "Raster cache key"]:
         assert stage in names, stage
     assert names.count("Planet samples") == 3, "repeated light-time passes must not be aggregated"

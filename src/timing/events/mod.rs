@@ -10,7 +10,7 @@ use std::mem::size_of;
 pub enum BufferId {
     CatalogStars, CatalogTrajectories, CatalogClassifications, CatalogGrid, CatalogNames, CatalogFigures, CatalogEndpoints,
     PlanetSamples, LunarSamples, OrientationSamples, ObserverGeometry, EmissionTimes,
-    RegionSelection, BrightnessCandidates, ValidatedCandidates, WorkingStars, StellarSamples, StellarScratch,
+    RegionSelection, BrightnessCandidates, ValidatedCandidates, WorkingStars, StellarSamples, StellarScratch, StellarRefreshRegions,
     MotionSamples, VisibilityFlags, CorrectionSelection, ObservedStars, ObservedBodies, BodySamples, RelativeBodies,
     MoonIllumination, ApparentDirections, HorizontalDirections, RefractedDirections,
     ProjectedCells, ProjectionCandidate, ProjectionBodyCandidate, ProjectionFigureCandidate, ProjectionHorizonCandidate, DrawOrderCandidate, DrawOrderScratch,
@@ -26,7 +26,7 @@ pub enum Access { ReadOnly, Writable }
 
 /// The meaning of indices, not a claim that all those entries were accessed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum IndexDomain { Catalog, Working, Observed, Visible, DrawOrder, Cells, Pixels, Bytes, Glyphs, ModelSamples, Objects, Unknown }
+pub enum IndexDomain { Catalog, Working, Observed, Visible, DrawOrder, Cells, Pixels, Bytes, Glyphs, ModelSamples, Objects, Regions, Unknown }
 
 /// Direct element storage only; nested payload and allocator overhead are not inferred from sizeof(T).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

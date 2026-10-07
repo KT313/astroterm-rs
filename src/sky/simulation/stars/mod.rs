@@ -1,4 +1,4 @@
-//! Intrinsic stellar motion and brightness over selected catalog rows.
+//! Complete regional intrinsic samples, then selected-row output for observation.
 mod pipeline;
 mod processing;
 #[path = "processing/diagnostics.rs"] mod diagnostics;

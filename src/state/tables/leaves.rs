@@ -1,7 +1,7 @@
 //! Original table owners and bounded previews. No catalog columns are split into separate borrowed tables.
 use super::{Table, TableBytes, preview_indices};
 use crate::rows::{Column, Row, Preview, preview, preview_text, preview_chars, plain_column};
-use crate::astro::{Vector3, models::stars::StellarSample};
+use crate::astro::Vector3;
 use crate::cache::Cache;
 use crate::canvas::Canvas;
 use crate::catalog::{StarNames, cache::CatalogArray};
@@ -186,25 +186,38 @@ fn preview_map<K: Ord + Copy + std::hash::Hash, V>(map: &HashMap<K, V>, mut cell
     keys.sort_unstable();
     preview_indices(keys.len()).map(|i| (i, cells(keys[i], &map[&keys[i]]))).collect()
 }
-impl Table for HashMap<usize, Cache<(), StellarSample>> {
-    fn shape(&self) -> Vec<usize> { vec![self.len()] }
-    fn rows(&self) -> usize { self.len() }
-    fn bytes(&self) -> TableBytes { TableBytes::known(self.len() * size_of::<(usize, Cache<(), StellarSample>)>(), self.capacity() * size_of::<(usize, Cache<(), StellarSample>)>()) }
+/// One bounded table for the original region collection, including its nested sample allocations.
+impl Table for crate::state::StellarRegions {
+    fn shape(&self) -> Vec<usize> { vec![self.entries.len()] }
+    fn rows(&self) -> usize { self.entries.len() }
+    fn bytes(&self) -> TableBytes {
+        let mut bytes = TableBytes::vector(&self.entries);
+        for samples in self.entries.iter().filter_map(Cache::stored) {
+            let nested = TableBytes::vector(samples);
+            bytes.used = bytes.used.and_then(|n| n.checked_add(nested.used?));
+            bytes.reserved = bytes.reserved.and_then(|n| n.checked_add(nested.reserved?));
+        }
+        bytes
+    }
     fn columns(&self) -> Vec<Column> {
-        let mut columns = vec![Column { name: "catalog_index", dtype: type_name::<usize>() }];
-        columns.extend(StellarSample::columns());
-        columns.push(Column { name: "invalid", dtype: type_name::<bool>() });
-        columns
+        vec![Column { name: "simulation_region_id", dtype: "usize" }, Column { name: "calculated_at_tt_jd", dtype: "Option<f64>" },
+            Column { name: "reuse_window_simulation_seconds", dtype: "f64" }, Column { name: "has_been_invalidated", dtype: "bool" },
+            Column { name: "generation", dtype: "u64" }, Column { name: "sample_count", dtype: "usize" },
+            Column { name: "samples", dtype: "Vec<StellarSample>" }]
     }
     fn preview(&self) -> Vec<(usize, Vec<String>)> {
-        preview_map(self, |key, cache| {
-            let mut cells = vec![key.to_string()];
-            cells.extend(cache.stored().map_or_else(|| vec!["none".into(); StellarSample::columns().len()], Row::cells));
-            cells.push(cache.has_been_invalidated.to_string());
-            cells
-        })
+        preview_indices(self.entries.len()).map(|region| {
+            let entry = &self.entries[region];
+            let samples = entry.stored().map_or_else(|| "none".into(), |samples| {
+                preview_indices(samples.len()).map(|i| format!("{i}: {}", samples[i].cells().join(", "))).collect::<Vec<_>>().join("; ")
+            });
+            (region, vec![region.to_string(), format!("{:?}", entry.calculated_at), entry.valid_seconds.to_string(),
+                entry.has_been_invalidated.to_string(), entry.generation.to_string(), entry.stored().map_or(0, Vec::len).to_string(), samples])
+        }).collect()
     }
-    fn note(&self) -> Option<String> { Some("entry payload estimate; reserved excludes hash bucket/control overhead".into()) }
+    fn note(&self) -> Option<String> {
+        Some("Original region slots plus their owned sample payloads; nested capacity included, allocator overhead excluded. Final region owns constellation stars exclusively. Sample offset addresses catalog row grid.offsets[region] + offset. none differs from a valid empty vector. Previews are bounded.".into())
+    }
 }
 impl Table for HashMap<char, Glyph> {
     fn shape(&self) -> Vec<usize> { vec![self.len()] }

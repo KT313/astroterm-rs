@@ -14,4 +14,4 @@ pub(crate) use observation::{
     BodySamples, CorrectionSelection, Directions, ObserverKey,
     BodyKey as ObservationBodyKey,
 };
-pub(crate) use simulation::{Sample, StellarWork, ValidityCounts};
+pub(crate) use simulation::{Sample, StellarWork};

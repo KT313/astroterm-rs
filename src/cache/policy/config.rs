@@ -2,6 +2,8 @@
 use serde::Deserialize;
 use std::{collections::BTreeMap, io, path::Path};
 
+pub const STELLAR_REGION_TTL_SECONDS: f64 = 10.0 * 86_400.0;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Group {
@@ -47,7 +49,7 @@ impl Group {
     ];
     pub fn maximum_age(self) -> Option<f64> {
         match self {
-            Self::StellarState => Some(360.0),
+            Self::StellarState => Some(STELLAR_REGION_TTL_SECONDS),
             Self::PlanetarySamples => Some(30.0),
             Self::LunarSamples => Some(12.0),
             Self::SlowOrientation => Some(60.0),
@@ -169,7 +171,7 @@ mod tests {
             "[groups.raster]\nmax_age_seconds=1",
             "[groups.stellar_state]\nmax_age_seconds=nan",
             "[groups.stellar_state]\nmax_age_seconds=-1",
-            "[groups.stellar_state]\nmax_age_seconds=361",
+            "[groups.stellar_state]\nmax_age_seconds=864001",
         ] {
             assert!(CacheConfig::parse(text).is_err(), "{text}");
         }

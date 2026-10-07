@@ -10,7 +10,7 @@ mod diagnostics;
 #[path = "inventory/buffers.rs"]
 mod buffers;
 
-pub use config::{CacheConfig, Group, GroupPolicy};
+pub use config::{CacheConfig, Group, GroupPolicy, STELLAR_REGION_TTL_SECONDS};
 pub use state::{Cache, CacheStats, RefreshReason, StoreOutcome};
 pub use diagnostics::{CacheReport, Quality, format_stats};
 #[cfg(feature = "memory-diagnostics")]

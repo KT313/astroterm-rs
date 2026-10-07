@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::state::StellarSimulationState;
 use crate::model::SkyCatalog;
 use crate::timing::{StepTimes, Access, BufferId, BufferShape, IndexDomain};
-pub fn prepare_stellar_catalog(storage: &mut StellarSimulationState, catalog: Arc<SkyCatalog>, times: &mut StepTimes) {
+pub fn prepare_stellar_catalog(storage: &mut StellarSimulationState, catalog: Arc<SkyCatalog>, start_tt: f64, times: &mut StepTimes) {
     *storage = StellarSimulationState::new(storage.config.clone());
     let classes: Vec<_> = times.measure("Stellar classifications", || {
         let trajectories = catalog.stars.borrow_trajectory_fields();
@@ -24,6 +24,8 @@ pub fn prepare_stellar_catalog(storage: &mut StellarSimulationState, catalog: Ar
             classes.len() * std::mem::size_of::<crate::astro::models::stars::StellarClass>()
         )
     });
+    times.measure("Stellar region initialization", || storage.initialize_regions(start_tt));
+    times.record_build(BufferId::StellarSamples, || BufferShape::vector(&storage.regions.entries, IndexDomain::Regions));
     storage.prepared_classes = Some(classes);
     storage.catalog = Some(catalog);
 }

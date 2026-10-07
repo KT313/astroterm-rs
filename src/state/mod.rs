@@ -15,7 +15,7 @@ pub use processing::{
 };
 pub(crate) use processing::{
     ObserverBuffers, LightTimeBuffers, RegionCache, CandidateCache, SelectedCache, WorkingCache, MotionCache,
-    EligibleCache, RelativeCache, IlluminationCache, ApparentCache, HorizontalCache, StellarMotionBuffers,
+    EligibleCache, RelativeCache, IlluminationCache, ApparentCache, HorizontalCache, StellarRegions, StellarMotionBuffers,
     StarProjectionBuffers, DrawOrderBuffers,
 };
 pub use rendering::{RenderingState, CompressionSupport, CharacterState, PixelState, Presenter, TextRasterizer};

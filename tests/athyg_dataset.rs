@@ -42,13 +42,16 @@ fn athyg_matches_the_embedded_catalog() {
     let sky = astroterm::sky::prepare_catalog(&athyg).unwrap();
     assert_eq!(sky.catalog.constellations().len(), 88);
     assert_eq!(sky.catalog.stars.len(), athyg.stars.iter().filter(|star| star.has_data).count());
-    assert_eq!(sky.catalog.grid.offsets[astroterm::model::CELL_COUNT], sky.catalog.stars.len());
-    for (cell, range) in sky.catalog.grid.offsets.windows(2).enumerate() {
+    assert_eq!(sky.catalog.grid.offsets[astroterm::model::SIMULATION_REGION_COUNT], sky.catalog.stars.len());
+    for (cell, range) in sky.catalog.grid.offsets.windows(2).take(astroterm::model::CELL_COUNT).enumerate() {
         for index in range[0]..range[1] {
             assert_eq!(astroterm::model::hash_direction(astroterm::model::GRID_DEPTH, sky.catalog.stars.stored_direction(index)), cell);
         }
     }
-    eprintln!("All {} AT-HYG stars belong to ordinary sky regions", sky.catalog.stars.len());
+    let constellation_start = sky.catalog.grid.offsets[astroterm::model::CONSTELLATION_REGION];
+    assert_eq!(sky.catalog.stars.len() - constellation_start, 692);
+    assert!(sky.catalog.endpoint_indices().iter().copied().eq(constellation_start..sky.catalog.stars.len()));
+    eprintln!("All {} AT-HYG stars partition into ordinary regions plus 692 exclusive endpoints", sky.catalog.stars.len());
     assert_eq!(
         sky.catalog.constellations()
             .iter()

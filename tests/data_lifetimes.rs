@@ -39,7 +39,7 @@ fn cold_and_warm_cleanup_preserve_rows_shared_identity_and_frame_results() {
         let stars_pointer = columns.u0.as_ptr();
         let rows: Vec<_> = catalog.stars.iter().collect();
         assert_eq!(app.preparation().unwrap().motion_bounds().len(), rows.len());
-        astroterm::sky::prepare_stellar_catalog(&mut app.cache.simulation.stars, catalog.clone(), &mut app.timings);
+        astroterm::sky::prepare_stellar_catalog(&mut app.cache.simulation.stars, catalog.clone(), astroterm::astro::J2000, &mut app.timings);
         observe(&mut app, J2000);
         let expected = app.cache.sky.stars.clone();
         let stats = app.cache.observation.stats();
