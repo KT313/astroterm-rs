@@ -64,18 +64,17 @@ pub(super) fn refresh_regions(storage: &mut StellarMotionBuffers<'_>, catalog: S
                     for index in batch_start..batch_end {
                         let motion = catalog.motion(index);
                         let class = storage.prepared_classes.map_or_else(|| motion.classify(), |classes| classes[index]);
-                        storage.scratch.push(StellarWork { magnitude: catalog.magnitude(index), motion, class, sample: None });
+                        storage.scratch.push(StellarWork { magnitude: catalog.magnitude(index), motion, class });
                     }
                 });
                 times.record_borrow(BufferId::CatalogTrajectories, Access::ReadOnly, || BufferShape::unknown(IndexDomain::Catalog));
                 times.record_build(BufferId::StellarScratch, || BufferShape::vector(storage.scratch, IndexDomain::Catalog));
                 times.measure("Motion and magnitude calculation", || {
-                    for item in storage.scratch.iter_mut() {
-                        item.sample = Some(item.motion.evaluate_classified(years, item.magnitude, item.class));
+                    for item in storage.scratch.iter() {
+                        samples.push(item.motion.evaluate_classified(years, item.magnitude, item.class));
                     }
                 });
-                times.record_memory(times.last_memory_step(), || MemoryEvent::operation(BufferId::StellarScratch, Operation::Write, None, None, Some(batch_end - batch_start), None));
-                times.measure("Region sample assembly", || samples.extend(storage.scratch.iter().map(|item| item.sample.unwrap())));
+                times.record_borrow(BufferId::StellarScratch, Access::ReadOnly, || BufferShape::vector(storage.scratch, IndexDomain::Catalog));
                 times.record_memory(times.last_memory_step(), || MemoryEvent::operation(BufferId::StellarSamples, Operation::Append, None, None,
                     Some(batch_end - batch_start), (batch_end - batch_start).checked_mul(std::mem::size_of::<crate::astro::models::stars::StellarSample>())));
             }

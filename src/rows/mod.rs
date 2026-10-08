@@ -92,7 +92,7 @@ macro_rules! row_columns {
 // observer_body -> anchor; surface_coordinates -> site; height_above_surface_m -> height_m; frame_time -> time;
 // observer_position_and_velocity -> state; reference_to_body_rotation -> inertial_to_fixed;
 // reference_to_horizon_rotation -> inertial_to_horizon; has_atmosphere -> atmosphere; body_emission_times_tt_jd -> emission_tt;
-// needs_recalculation -> refresh; trajectory_parameters -> motion; motion_properties -> class; calculated_sample -> sample;
+// needs_recalculation -> refresh; trajectory_parameters -> motion; motion_properties -> class;
 // reuse_window_simulation_seconds -> valid_seconds; calculated_at_tt_jd -> calculated_at;
 // direction_j2000 -> direction; used_tangential_motion_fallback -> used_singular_fallback;
 // position_au -> position; velocity_au_per_day -> velocity (BodyState only);

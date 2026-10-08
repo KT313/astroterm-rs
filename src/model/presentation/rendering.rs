@@ -48,19 +48,19 @@ pub struct Frame {
 
 #[derive(Clone, PartialEq)]
 pub(crate) struct SceneKey {
-    pub(crate) stars: StarKeys,
-    pub(crate) planets: Vec<ProjectedPlanet>,
-    pub(crate) moon: Option<ProjectedMoon>,
-    pub(crate) constellations: Vec<ProjectedConstellation>,
-    pub(crate) horizon: Vec<[(i32, i32); 2]>,
-    pub(crate) labels: Vec<((i32, i32), &'static str)>,
-    pub(crate) viewport: Viewport,
+    pub(crate) viewport: Viewport, // compare small settings before the potentially large drawing inputs
     pub(crate) pixel_fov_degrees: Option<f64>,
     pub(crate) facing: bool,
     pub(crate) warning: bool,
     pub(crate) brightness_warning: bool,
     pub(crate) options: RenderOptions,
     pub(crate) canvas_size: Option<(usize, usize)>,
+    pub(crate) stars: StarKeys,
+    pub(crate) planets: Vec<ProjectedPlanet>,
+    pub(crate) moon: Option<ProjectedMoon>,
+    pub(crate) constellations: Vec<ProjectedConstellation>,
+    pub(crate) horizon: Vec<[(i32, i32); 2]>,
+    pub(crate) labels: Vec<((i32, i32), &'static str)>,
 }
 
 /// One straight-alpha star pixel: RGB channels and opacity are independent floats in 0..1.

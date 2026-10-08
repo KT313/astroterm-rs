@@ -16,7 +16,7 @@ pub(super) fn label_columns(path: &str, columns: &mut [Column]) {
 // label_byte_boundary -> names.boundaries[row]; unicode_and_ascii_entries -> names.ascii_alternatives[row].
 // precise-motion direction x/y/z -> [0]/[1]/[2]; scaled velocity x/y/z -> [3]/[4]/[5]; distance -> [6].
 // catalog_row_boundary -> grid.offsets[row]; sky_region_index -> region.cells[row] (including the final constellation region).
-// stellar_scratch (initial_magnitude, trajectory_parameters, motion_properties, calculated_sample) -> magnitude/motion/class/sample.
+// stellar_scratch (initial_magnitude, trajectory_parameters, motion_properties) -> magnitude/motion/class.
 // regional table (simulation_region_id, calculated_at_tt_jd, reuse_window_simulation_seconds) -> entry index/calculated_at/valid_seconds.
 // regional has_been_invalidated/generation are Cache fields; sample_count/samples inspect its original stored Vec.
 // catalog_row_index -> endpoint_indices/candidate_indices/candidates/selected[row], or an endpoint row.
@@ -45,7 +45,7 @@ fn table_labels(path: &str) -> &'static [&'static str] {
         "cache.selection.region" => &["sky_region_index"],
         "cache.selection.working" => &["catalog_row_index", "is_draw_candidate"],
         "cache.simulation.stars.prepared_classes" => &["motion_properties"],
-        "cache.simulation.stars.stellar_scratch" => &["initial_magnitude", "trajectory_parameters", "motion_properties", "calculated_sample"],
+        "cache.simulation.stars.stellar_scratch" => &["initial_magnitude", "trajectory_parameters", "motion_properties"],
         "cache.simulation.stars.refresh_regions" => &["simulation_region_id"],
         "cache.simulation.stars.motion" => &["direction_j2000", "current_magnitude"],
         "cache.observation.eligible" => &["passes_brightness_filter"],
@@ -132,7 +132,7 @@ pub(super) fn column_notes(path: &str) -> &'static [&'static str] {
             "Emission times are TT Julian dates ordered: Sun, Mercury, Venus, Earth, Mars, Jupiter, Saturn, Uranus, Neptune, Moon. Before light-time sampling they are initialized to reception time.",
         ],
         "cache.simulation.stars.prepared_classes" => &["Motion property bits: bit 0 (1) = stationary; bit 1 (2) = has usable distance. These determine which propagation and brightness calculations apply."],
-        "cache.simulation.stars.stellar_scratch" => &["Numeric inputs and output for one bounded batch, in catalog order. motion_properties uses bit 0 = stationary, bit 1 = usable distance; empty scratch retains capacity only. No per-star cache metadata."],
+        "cache.simulation.stars.stellar_scratch" => &["Numeric inputs for one bounded batch, in catalog order; calculated samples go straight into the region's output vector. motion_properties uses bit 0 = stationary, bit 1 = usable distance; empty scratch retains capacity only. No per-star cache metadata."],
         "cache.simulation.stars.motion" => &["Directions are evaluated at the sample time but expressed in fixed J2000 axes. Magnitudes are brightness held at each region calculation epoch, with smaller numbers brighter; the gathered output timestamp does not replace the region timestamps. The fallback ignores radial distance change and keeps brightness constant."],
         "cache.observation.eligible" => &["Rows follow the working table; true means the star passed candidate membership and current brightness checks, before screen projection."],
         "cache.observation.corrections" => &["Each index addresses cache.selection.working, not the catalog or the final observed-star table."],
@@ -192,6 +192,6 @@ mod tests {
         assert_eq!(names::<CharacterStarKey>("cache.rendering.characters.scene_cache.characters.key.stars"), ["screen_coordinates", "symbol", "terminal_color"]);
         assert_eq!(names::<ProjectedArc>("arc"), ["start_coordinates", "end_coordinates", "path_coordinates", "includes_original_start", "includes_original_end"]);
         assert_eq!(names::<ObserverState>("cache.observer.observer")[8], "body_emission_times_tt_jd");
-        assert_eq!(names::<StellarWork>("cache.simulation.stars.stellar_scratch")[3], "calculated_sample");
+        assert_eq!(names::<StellarWork>("cache.simulation.stars.stellar_scratch"), ["initial_magnitude", "trajectory_parameters", "motion_properties"]);
     }
 }

@@ -144,7 +144,11 @@ pub fn draw_text(
         } else {
             ch
         };
-        if !state.glyphs.contains_key(&ch) {
+        let glyph = if let Some(glyph) = state.glyphs.get(&ch) {
+            #[cfg(feature = "memory-diagnostics")]
+            if let Some(counts) = &mut state.glyph_operations { counts.reused += 1; }
+            glyph
+        } else {
             if state.glyphs.len() >= MAX_CACHED_GLYPHS {
                 #[cfg(feature = "memory-diagnostics")]
                 if let Some(counts) = &mut state.glyph_operations { counts.cleared += 1; counts.cleared_masks += state.glyphs.len(); }
@@ -156,12 +160,8 @@ pub fn draw_text(
                 counts.built += 1;
                 counts.coverage_bytes += coverage.len();
             }
-            state.glyphs.insert(ch, Glyph { metrics, coverage });
-        } else {
-            #[cfg(feature = "memory-diagnostics")]
-            if let Some(counts) = &mut state.glyph_operations { counts.reused += 1; }
-        }
-        let glyph = &state.glyphs[&ch];
+            state.glyphs.entry(ch).or_insert(Glyph { metrics, coverage })
+        };
         let x0 = pen + glyph.metrics.xmin;
         let y0 = origin.1 + state.baseline.round() as i32 - glyph.metrics.ymin - glyph.metrics.height as i32;
         for y in top.max(y0)..bottom.min(y0 + glyph.metrics.height as i32) {
@@ -268,6 +268,27 @@ mod tests {
         assert!(renderer.glyphs.is_empty());
         draw_text(&mut renderer, &mut image, "A", (0, 0), (40, 40), [255, 255, 255]);
         assert!(image.pixels().any(|p| p[1] > 0));
+    }
+
+    #[test]
+    fn full_glyph_cache_keeps_hits_and_clears_only_for_a_missing_glyph() {
+        let mut renderer = create_text_rasterizer().unwrap();
+        let (metrics, coverage) = renderer.font.rasterize('A', renderer.size);
+        renderer.glyphs.insert('A', Glyph { metrics, coverage: coverage.clone() });
+        for index in 1..MAX_CACHED_GLYPHS {
+            let ch = char::from_u32(0xe000 + index as u32).unwrap();
+            renderer.glyphs.insert(ch, Glyph { metrics, coverage: coverage.clone() });
+        }
+        let mut image = RgbaImage::new(20, 20);
+        draw_text(&mut renderer, &mut image, "A", (0, 0), (20, 20), [255; 3]);
+        assert_eq!(renderer.glyphs.len(), MAX_CACHED_GLYPHS);
+        image.fill(0);
+        draw_text(&mut renderer, &mut image, "B", (0, 0), (20, 20), [255; 3]);
+        assert_eq!(renderer.glyphs.len(), 1);
+        assert!(renderer.glyphs.contains_key(&'B'));
+        let mut expected = RgbaImage::new(20, 20);
+        draw_text(&mut create_text_rasterizer().unwrap(), &mut expected, "B", (0, 0), (20, 20), [255; 3]);
+        assert_eq!(image, expected);
     }
 
     #[test]

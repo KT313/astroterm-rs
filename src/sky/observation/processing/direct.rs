@@ -22,7 +22,7 @@ pub(crate) fn apply_direct_observation(working: &[SelectedStar], motion: &[(Vect
 
     // form observer-relative geometry before the direction-only corrections
     let (relative_moon, relative_sun) = times.measure("Observer subtraction", || {
-        subtract_observer_position(bodies, observer, output)
+        subtract_observer_position(&bodies, observer, output)
     });
     times.measure("Moon illumination", || {
         update_moon_illumination(relative_moon, relative_sun, output)

@@ -132,6 +132,5 @@ pub(crate) struct StellarWork {
     pub(crate) magnitude: f64,
     pub(crate) motion: crate::astro::models::stars::StellarMotion,
     pub(crate) class: crate::astro::models::stars::StellarClass,
-    pub(crate) sample: Option<crate::astro::models::stars::StellarSample>,
 }
-row_columns!(StellarWork { magnitude, motion, class, sample });
+row_columns!(StellarWork { magnitude, motion, class });

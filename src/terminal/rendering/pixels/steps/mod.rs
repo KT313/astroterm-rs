@@ -96,7 +96,24 @@ pub(in crate::terminal) fn compose_pixel_sky(state: &mut PixelState, times: &mut
 }
 
 fn compose_sky_image(sky: &image::RgbaImage, frame: &mut image::RgbaImage, x: i64, y: i64) {
-    image::imageops::replace(frame, sky, x, y);
+    let target_x = x.clamp(0, i64::from(frame.width())) as usize;
+    let target_y = y.clamp(0, i64::from(frame.height())) as usize;
+    let source_x = x.saturating_neg().clamp(0, i64::from(sky.width())) as usize;
+    let source_y = y.saturating_neg().clamp(0, i64::from(sky.height())) as usize;
+    let width = (frame.width() as usize - target_x).min(sky.width() as usize - source_x);
+    let height = (frame.height() as usize - target_y).min(sky.height() as usize - source_y);
+    if width == 0 || height == 0 { return; }
+
+    let source_stride = sky.width() as usize * 4;
+    let target_stride = frame.width() as usize * 4;
+    let row_bytes = width * 4;
+    let source = sky.as_raw();
+    let target = frame.as_mut();
+    for row in 0..height {
+        let source_start = (source_y + row) * source_stride + source_x * 4;
+        let target_start = (target_y + row) * target_stride + target_x * 4;
+        target[target_start..target_start + row_bytes].copy_from_slice(&source[source_start..source_start + row_bytes]); // copy the clipped row, including its unchanged alpha
+    }
 }
 
 pub(in crate::terminal) fn prepare_pixel_fields(state: &mut PixelState, sky: &ProjectedSky<'_>, view: &View, date: f64, clock: &SimulationClock, observer: &Observer, times: &mut StepTimes) {
@@ -455,6 +472,23 @@ mod lifetime_tests {
             } else {
                 Some(crate::scene::create_text_rasterizer().unwrap())
             },
+        }
+    }
+
+    #[test]
+    fn sky_row_copy_matches_image_replace_for_clipping_and_extreme_offsets() {
+        for (source_width, source_height, target_width, target_height) in [(5, 3, 8, 6), (8, 6, 5, 3), (5, 3, 5, 3), (0, 3, 5, 3), (5, 0, 0, 3), (5, 3, 5, 0)] {
+            let source = image::RgbaImage::from_fn(source_width, source_height, |x, y| image::Rgba([x as u8, y as u8, (x + y) as u8, (x * 31 + y * 17) as u8]));
+            let original = image::RgbaImage::from_fn(target_width, target_height, |x, y| image::Rgba([91, x as u8, y as u8, 37]));
+            for x in [i64::MIN, -9, -5, -4, -1, 0, 1, 4, 5, 8, i64::MAX] {
+                for y in [i64::MIN, -7, -3, -2, -1, 0, 1, 2, 3, 6, i64::MAX] {
+                    let mut expected = original.clone();
+                    image::imageops::replace(&mut expected, &source, x, y);
+                    let mut actual = original.clone();
+                    compose_sky_image(&source, &mut actual, x, y);
+                    assert_eq!(actual, expected, "source={source_width}x{source_height}, target={target_width}x{target_height}, offset=({x}, {y})");
+                }
+            }
         }
     }
 

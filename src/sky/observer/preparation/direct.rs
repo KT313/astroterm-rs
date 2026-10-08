@@ -58,8 +58,9 @@ pub fn prepare_light_time_samples(
     observer: &mut ObserverState,
     times: &mut StepTimes,
 ) -> Result<(), SimulationError> {
+    let mut requests = Vec::with_capacity(9);
     for _ in 0..2 {
-        let mut requests = Vec::with_capacity(9);
+        requests.clear(); // reuse the buffer for the refined emission times
         for body in BodyId::PLANETS
             .into_iter()
             .chain([BodyId::Moon])

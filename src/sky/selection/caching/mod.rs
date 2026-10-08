@@ -6,7 +6,7 @@ use crate::model::{SkyCatalog, ObserverState};
 use crate::cache::{CacheConfig, Group};
 use crate::timing::{StepTimes, BufferId, BufferShape, IndexDomain, Access, MemoryEvent, Operation};
 use crate::sky::{snapshot_cache, record_cache};
-use super::processing::{filter_brightness_candidates, merge_constellation_endpoints};
+use super::processing::merge_sorted_constellation_endpoints;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn update_region_filtering(
@@ -55,8 +55,7 @@ pub(super) fn update_brightness_bounds(
 }
 
 pub(super) fn update_candidate_validation(
-    selected_cache: &mut SelectedCache, candidates: &CandidateCache, config: &CacheConfig, epoch: f64, threshold: f64,
-    catalog: &SkyCatalog, times: &mut StepTimes,
+    selected_cache: &mut SelectedCache, candidates: &CandidateCache, config: &CacheConfig, epoch: f64, times: &mut StepTimes,
 ) {
     let memory_before = times.inspect_memory(|| snapshot_cache(selected_cache));
     times.measure("Candidate validation", || {
@@ -67,7 +66,7 @@ pub(super) fn update_candidate_validation(
             ),
             epoch,
             config.allows(Group::WorkingSet),
-            || filter_brightness_candidates(catalog, epoch, threshold, Some(&candidates.value().0)),
+            || candidates.value().0.clone(), // the internal producer already checks bounds and brightness, or supplies all rows outside the interval
         );
     });
     record_cache(times, BufferId::ValidatedCandidates, memory_before, selected_cache);
@@ -89,19 +88,7 @@ pub(super) fn update_constellation_endpoints(
         times.record_memory(times.last_memory_step(), || MemoryEvent::unknown_operation(BufferId::WorkingStars,
             if refresh { Operation::Refresh(working_cache.stats.last_reason.expect("refresh reason")) } else { Operation::Reuse }));
         if refresh {
-            let selected = times.measure("Selected index copy", || selected_cache.value().clone());
-            times.record_memory(times.last_memory_step(), || {
-                let shape = BufferShape::vector(&selected, IndexDomain::Catalog);
-                MemoryEvent::operation(BufferId::ValidatedCandidates, Operation::Copy, None, Some(shape), shape.len, shape.logical_bytes())
-            });
-            times.describe("Selected index copy", || {
-                format!(
-                    "copied indices={}; bytes={}",
-                    selected.len(),
-                    selected.len() * std::mem::size_of::<usize>()
-                )
-            });
-            let working = merge_constellation_endpoints(selected, endpoints, times);
+            let working = merge_sorted_constellation_endpoints(selected_cache.value(), endpoints, times);
             let outcome = times.measure("Working-set cache store", || {
                 working_cache.store(selected_cache.generation, epoch, 0.0, working)
             });

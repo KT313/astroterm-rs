@@ -85,10 +85,10 @@ fn update_cached_light_time(
 
 
 pub fn prepare_cached_bodies(storage: &mut ObserverPreparationCache, simulation: &SimulationState, observer: &ObserverState, times: &mut StepTimes) -> Result<(), SimulationError> {
-    let previous = times.trace().map(|_| vec![storage.bodies.report("Body sampling")]);
+    let previous = times.trace().map(|_| [storage.bodies.report("Body sampling")]);
     update_body_sampling(&mut storage.bodies, &storage.config, observer.time.tt, observer, simulation, times)?;
     times.describe("Body sampling", || format!("requested Sun/planets={}; Moon=1; output states={} at emission epochs", storage.bodies.value().planets.len(), storage.bodies.value().planets.len() + 1));
-    crate::sky::describe_cache_reports(previous, || vec![storage.bodies.report("Body sampling")], times);
+    crate::sky::describe_cache_reports(previous, || [storage.bodies.report("Body sampling")], times);
     Ok(())
 }
 fn update_body_sampling(

@@ -6,7 +6,7 @@ pub(super) fn describe_observation(storage: &ObservationCache, stars: crate::sta
         return;
     }
     let working = stars.selection.working.value();
-    let drawable = storage.eligible.value().iter().filter(|&&yes| yes).count();
+    let drawable = output.stars.len() - output.corrections.endpoint_only; // retained stars are drawable stars plus faint constellation endpoints
     times.describe("Current brightness", || {
         let eligible = working.iter().filter(|s| s.drawable).count();
         format!("input working stars={}; excluded from drawing by candidate membership={}; then rejected current magnitude > {threshold}={}; drawable={drawable}; output flags={} (no records removed yet)", working.len(), working.len()-eligible, eligible-drawable, storage.eligible.value().len())

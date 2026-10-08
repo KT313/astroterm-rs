@@ -25,9 +25,8 @@ use crate::astro::Vector3;
 #[allow(clippy::too_many_arguments)]
 pub(super) fn project_cached_stars(storage: &mut ProjectionCache, sky: &ObservedSky, view: &View, viewport: Viewport, epoch: f64, camera: CartesianCamera, times: &mut StepTimes) {
     let reuse = storage.config.allows(Group::Projection);
-    let rejected_projection = update_star_projection(storage.star_buffers(), sky, view, viewport, epoch, reuse, camera, times);
+    let (drawable, rejected_projection) = update_star_projection(storage.star_buffers(), sky, view, viewport, epoch, reuse, camera, times);
     times.describe("Star projection", || {
-        let drawable = sky.stars.iter().filter(|s| s.drawable).count();
         format!("input observed stars={}; rejected not drawable={}; projection inputs={drawable}; rejected singular/invalid={}; then rejected outside unit disk={}; output visible stars={}; viewport={}x{}; cache={:?} (rejection counts are newly executed work only)", sky.stars.len(), sky.stars.len()-drawable, rejected_projection[0], rejected_projection[1], storage.stars.value().len(), viewport.width, viewport.height, storage.stars.stats)
     });
 
@@ -209,7 +208,9 @@ fn update_order_buffers(buffers: crate::state::DrawOrderBuffers<'_>, sky: &Obser
 }
 
 #[allow(clippy::too_many_arguments)]
-fn update_star_projection(buffers: crate::state::StarProjectionBuffers<'_>, sky: &ObservedSky, view: &View, viewport: Viewport, epoch: f64, reuse: bool, camera: CartesianCamera, times: &mut StepTimes) -> [usize; 2] {
+fn update_star_projection(buffers: crate::state::StarProjectionBuffers<'_>, sky: &ObservedSky, view: &View, viewport: Viewport, epoch: f64, reuse: bool, camera: CartesianCamera, times: &mut StepTimes) -> (usize, [usize; 2]) {
+    let count_drawable = times.trace().is_some();
+    let mut drawable = 0;
     let mut rejected = [0; 2];
     times.measure_steps("Star projection", |times| {
         {
@@ -221,7 +222,14 @@ fn update_star_projection(buffers: crate::state::StarProjectionBuffers<'_>, sky:
         let before_key = times.inspect_memory(|| BufferShape::vector(&buffers.candidate.0, IndexDomain::Observed));
         times.measure("Projection cache key", || {
             buffers.candidate.0.clear();
-            buffers.candidate.0.extend(sky.stars.iter().map(|s| (s.position, s.drawable)));
+            if count_drawable {
+                buffers.candidate.0.extend(sky.stars.iter().map(|s| {
+                    drawable += usize::from(s.drawable); // count during the required copy, including cache hits
+                    (s.position, s.drawable)
+                }));
+            } else {
+                buffers.candidate.0.extend(sky.stars.iter().map(|s| (s.position, s.drawable)));
+            }
             buffers.candidate.1 = *view;
             buffers.candidate.2 = viewport;
         });
@@ -232,7 +240,8 @@ fn update_star_projection(buffers: crate::state::StarProjectionBuffers<'_>, sky:
         times.record_candidate_decision(times.last_memory_step(), BufferId::ProjectionCandidate, BufferId::ProjectedCells, refresh, buffers.cells.stats.last_reason);
         if refresh {
             let cells = times.measure("Visible star calculation", || {
-                sky.stars.iter().enumerate().filter(|(_, s)| s.drawable).filter_map(|(index, star)| {
+                let mut cells = Vec::with_capacity(sky.stars.len()); // reserve the maximum before filtering to avoid growth copies
+                cells.extend(sky.stars.iter().enumerate().filter(|(_, s)| s.drawable).filter_map(|(index, star)| {
                     let Some(point) = crate::projection::project_camera(camera, star.position) else {
                         rejected[0] += 1;
                         return None;
@@ -242,7 +251,8 @@ fn update_star_projection(buffers: crate::state::StarProjectionBuffers<'_>, sky:
                         return None;
                     }
                     Some((index, crate::projection::project_to_cell(viewport, point)))
-                }).collect::<Vec<_>>()
+                }));
+                cells
             });
             times.record_memory(times.last_memory_step(), || {
                 let shape = BufferShape::vector(&cells, IndexDomain::Visible);
@@ -257,7 +267,7 @@ fn update_star_projection(buffers: crate::state::StarProjectionBuffers<'_>, sky:
             record_candidate_clear(times, BufferId::ProjectionCandidate, before_clear, &buffers.candidate.0, IndexDomain::Observed);
         }
     });
-    rejected
+    (drawable, rejected)
 }
 
 #[cfg(test)]
@@ -550,6 +560,30 @@ mod ownership_tests {
         project_cached_sky(&mut storage, &sky, &view, viewport, 0.0, &mut times);
         assert_eq!(storage.order_candidate.capacity(), 0);
         assert_eq!(storage.order.generation, generations.1);
+    }
+
+    #[test]
+    fn star_projection_reports_drawable_counts_on_refresh_and_hit() {
+        let mut sky = fixture();
+        sky.stars[0].drawable = false;
+        sky.stars[1].position = Vector3 { x: 0.0, y: 0.0, z: -1.0 };
+        sky.stars[2].position = Vector3 { x: 0.75_f64.sqrt(), y: 0.0, z: -0.5 };
+        let view = View::default();
+        let viewport = Viewport { width: 80, height: 40 };
+        for config in [CacheConfig::default(), CacheConfig::disabled()] {
+            let enabled = config.enabled;
+            let mut storage = ProjectionCache::new(config);
+            for frame in 0..2 {
+                let mut times = StepTimes::with_trace(true);
+                project_cached_sky(&mut storage, &sky, &view, viewport, 0.0, &mut times);
+                let step = times.trace().unwrap().steps.iter().find(|step| step.name == "Star projection").unwrap();
+                let details = &step.details[0];
+                let rejected = usize::from(frame == 0 || !enabled);
+                assert!(details.contains("input observed stars=6; rejected not drawable=1; projection inputs=5;"));
+                assert!(details.contains(&format!("rejected singular/invalid={rejected}; then rejected outside unit disk={rejected}; output visible stars=3;")));
+                assert_eq!(borrow_projected(&storage, &sky, &view, viewport), crate::projection::project_sky(&sky, &view, viewport).view(&sky));
+            }
+        }
     }
 
     #[test]

@@ -39,7 +39,7 @@ pub(crate) fn record_observer_memory(times: &mut StepTimes, before: &crate::cach
 
 
 /// Attach cache deltas within the producer's active parent, without relying on report-vector positions.
-pub(crate) fn describe_cache_reports(previous: Option<Vec<crate::cache::CacheReport>>, current: impl FnOnce() -> Vec<crate::cache::CacheReport>, times: &mut StepTimes) {
+pub(crate) fn describe_cache_reports<R: IntoIterator<Item = crate::cache::CacheReport>>(previous: Option<R>, current: impl FnOnce() -> R, times: &mut StepTimes) {
     let Some(previous) = previous else { return; };
     times.measure_diagnostics(|times| {
         for (before, after) in previous.into_iter().zip(current()) {

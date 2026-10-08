@@ -141,12 +141,8 @@ pub(crate) fn select_brightness(
 }
 
 fn append_bright(keys: &[u16], range: std::ops::Range<usize>, threshold: f64, indices: &mut Vec<usize>) {
-    for i in range {
-        if !crate::catalog::passes_brightness_bound(keys[i], threshold) {
-            break;
-        }
-        indices.push(i);
-    }
+    let count = keys[range.clone()].partition_point(|&key| crate::catalog::passes_brightness_bound(key, threshold));
+    indices.extend(range.start..range.start + count); // each region is already ordered from brightest bound to dimmest
 }
 
 #[cfg(test)]
@@ -157,6 +153,23 @@ mod tests {
     use super::*;
     use crate::astro::{Equatorial, Horizontal, apply_refraction};
     use proptest::prelude::*;
+
+    #[test]
+    fn brightness_prefix_matches_linear_selection_at_encoded_boundaries() {
+        let keys: Vec<_> = (0..=u16::MAX).collect();
+        for code in [0, 1, 9999, 10000, 10001, 15000, u16::MAX] {
+            let value = crate::catalog::decode_magnitude(code);
+            for threshold in [value.next_down(), value, value.next_up(), f64::NEG_INFINITY, f64::INFINITY, f64::NAN] {
+                for range in [0..keys.len(), 1..keys.len(), 10000..10000, 9999..10002] {
+                    let expected: Vec<_> = range.clone().take_while(|&i| crate::catalog::passes_brightness_bound(keys[i], threshold)).collect();
+                    let mut actual = vec![usize::MAX];
+                    append_bright(&keys, range, threshold, &mut actual);
+                    assert_eq!(&actual[1..], expected);
+                    assert_eq!(actual[0], usize::MAX); // appending a region preserves earlier regions
+                }
+            }
+        }
+    }
 
     #[test]
     fn refraction_margin_covers_the_clamped_formula() {

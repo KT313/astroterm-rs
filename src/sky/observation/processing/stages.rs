@@ -16,13 +16,13 @@ pub(super) fn filter_current_magnitudes(threshold: f64, output: &mut ObservedSky
 }
 
 pub(super) fn subtract_observer_position(
-    samples: BodySamples,
+    samples: &BodySamples,
     observer: &ObserverState,
     output: &mut ObservedSky,
 ) -> (Vector3, Vector3) {
     let relative_moon = samples.moon.position - observer.state.position;
     let relative_sun = samples.planets[0].position - observer.state.position;
-    for (planet, state) in output.planets.iter_mut().zip(samples.planets) {
+    for (planet, state) in output.planets.iter_mut().zip(&samples.planets) {
         planet.position = state.position - observer.state.position;
     }
     output.moon.position = relative_moon;

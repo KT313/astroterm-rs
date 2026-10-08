@@ -93,9 +93,11 @@ pub(super) fn project_visible_cell(camera: &CartesianCamera, viewport: Viewport,
 }
 
 fn project_visible_stars(sky: &ObservedSky, camera: &CartesianCamera, viewport: Viewport) -> Vec<(usize, Cell)> {
-    sky.star_views().enumerate().filter(|(_, star)| star.drawable).filter_map(|(index, star)| {
+    let mut cells = Vec::with_capacity(sky.stars.len()); // reserve the maximum before filtering to avoid growth copies
+    cells.extend(sky.star_views().enumerate().filter(|(_, star)| star.drawable).filter_map(|(index, star)| {
         project_visible_cell(camera, viewport, star.position).map(|cell| (index, cell))
-    }).collect()
+    }));
+    cells
 }
 
 pub(in crate::projection) fn project_bodies(
@@ -129,6 +131,7 @@ pub(in crate::projection) fn project_constellations(
     view: &View,
     viewport: Viewport,
 ) -> Vec<ProjectedConstellation> {
+    let camera = crate::projection::prepare_camera(view); // all segments share the same viewing direction and scale
     let find_star = |index| {
         stars
             .binary_search_by_key(&index, |star| star.source_index)
@@ -153,7 +156,7 @@ pub(in crate::projection) fn project_constellations(
             }
             let arcs = endpoints
                 .chunks_exact(2)
-                .flat_map(|pair| project_constellation_segment(view, viewport, pair[0].position, pair[1].position))
+                .flat_map(|pair| project_constellation_segment_with_camera(view, viewport, camera, pair[0].position, pair[1].position))
                 .collect();
             Some(ProjectedConstellation {
                 maximum_magnitude,
@@ -178,9 +181,13 @@ pub fn project_light_direction(view: &View, moon: Vector3, sun: Vector3) -> Opti
 
 /// Sample clipped great-circle arcs with at most a quarter-viewport-unit midpoint deviation. Both renderers
 /// consume this geometry; endpoints keep their star markers, while inserted vertices never create markers.
+#[cfg(test)]
 pub fn project_constellation_segment(view: &View, viewport: Viewport, from: Vector3, to: Vector3) -> Vec<ProjectedArc> {
+    project_constellation_segment_with_camera(view, viewport, crate::projection::prepare_camera(view), from, to)
+}
+
+fn project_constellation_segment_with_camera(view: &View, viewport: Viewport, camera: CartesianCamera, from: Vector3, to: Vector3) -> Vec<ProjectedArc> {
     let mut arcs = Vec::new();
-    let camera = crate::projection::prepare_camera(view);
     let project = |angle| {
         crate::projection::project_camera(camera, offset_vector_towards(from, to, angle))
             .map(ScreenPoint::clamp_to_edge)

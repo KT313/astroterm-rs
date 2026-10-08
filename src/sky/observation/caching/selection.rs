@@ -65,12 +65,20 @@ pub(in crate::sky::observation) fn update_correction_selection(
             let drawable = eligible.value();
             let samples = &motion.value().0;
             output.stars.clear();
-            output.stars.extend(selection.indices.iter().map(|&index| ObservedStar {
-                source_index: working[index].source_index,
-                drawable: drawable[index],
-                position: samples[index].0,
-                magnitude: samples[index].1,
-            }));
+            if selection.stats.skipped == 0 {
+                let count = selection.indices.len();
+                let rows = working[..count].iter().zip(&drawable[..count]).zip(&samples[..count]); // every working row survived, so their order is already correct
+                output.stars.extend(rows.map(|((star, &drawable), &(position, magnitude))| ObservedStar {
+                    source_index: star.source_index, drawable, position, magnitude,
+                }));
+            } else {
+                output.stars.extend(selection.indices.iter().map(|&index| ObservedStar {
+                    source_index: working[index].source_index,
+                    drawable: drawable[index],
+                    position: samples[index].0,
+                    magnitude: samples[index].1,
+                }));
+            }
             output.corrections = selection.stats;
         });
         {

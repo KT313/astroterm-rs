@@ -5,8 +5,7 @@ use crate::timing::StepTimes;
 
 pub(super) fn describe_scene(sky: &ProjectedSky<'_>, options: &RenderOptions, times: &mut StepTimes) {
     times.describe("Raster stars", || {
-        let bright = sky.stars.iter().filter(|s| s.star.magnitude <= options.magnitude_threshold).count();
-        let placed = sky.stars.iter().filter(|s| s.star.magnitude <= options.magnitude_threshold && s.cell.is_some()).count();
+        let (bright, placed) = count_drawable_stars(sky, options);
         format!("input stars={}; rejected current magnitude > {}={}; then rejected missing cell={}; submitted stars={placed}; later objects may overwrite these", sky.stars.len(), options.magnitude_threshold, sky.stars.len()-bright, bright-placed)
     });
     describe_scene_geometry(sky, options, times);
@@ -29,16 +28,19 @@ fn describe_scene_geometry(sky: &ProjectedSky<'_>, options: &RenderOptions, time
         )
     });
     times.describe("Raster constellations", || {
-        let eligible: Vec<_> = sky.constellations.iter().filter(|c| c.maximum_magnitude <= options.magnitude_threshold).collect();
-        let submitted = if options.constellations { eligible.iter().flat_map(|c| &c.arcs).map(|a| a.points.len().saturating_sub(1)).sum() } else { 0 };
-        format!("input figures={}; enabled={}; skipped disabled={}; then rejected figure magnitude={}; submitted line segments={submitted}", sky.constellations.len(), options.constellations, if options.constellations { 0 } else { sky.constellations.len() }, if options.constellations { sky.constellations.len()-eligible.len() } else { 0 })
+        let (eligible, submitted) = sky.constellations.iter().filter(|c| c.maximum_magnitude <= options.magnitude_threshold).fold((0, 0), |(count, submitted), figure| {
+            let segments = if options.constellations { figure.arcs.iter().map(|arc| arc.points.len().saturating_sub(1)).sum() } else { 0 };
+            (count + 1, submitted + segments)
+        });
+        format!("input figures={}; enabled={}; skipped disabled={}; then rejected figure magnitude={}; submitted line segments={submitted}", sky.constellations.len(), options.constellations, if options.constellations { 0 } else { sky.constellations.len() }, if options.constellations { sky.constellations.len()-eligible } else { 0 })
     });
     times.describe("Raster planets", || {
+        let submitted = sky.planets.iter().filter(|planet| planet.cell.is_some()).count();
         format!(
             "input Sun/planets={}; rejected missing cell={}; submitted={}; no magnitude filtering",
             sky.planets.len(),
-            sky.planets.iter().filter(|p| p.cell.is_none()).count(),
-            sky.planets.iter().filter(|p| p.cell.is_some()).count()
+            sky.planets.len() - submitted,
+            submitted
         )
     });
     times.describe("Raster moon", || {
@@ -79,8 +81,7 @@ pub(super) fn describe_pixel_scene(sky: &ProjectedSky<'_>, options: &RenderOptio
     times.describe("Star brightness preparation", || format!("field of view={} degrees; star opacity multiplier={zoom_boost}; catalog magnitudes unchanged", sky.fov_degrees));
     times.describe("Star layer initialization", || format!("pixels={pixels}; element bytes={}; straight-alpha f32 RGB and opacity; reusable capacity", std::mem::size_of::<crate::model::StarPixel>()));
     times.describe("Raster stars", || {
-        let bright = sky.stars.iter().filter(|s| s.star.magnitude <= options.magnitude_threshold).count();
-        let placed = sky.stars.iter().filter(|s| s.star.magnitude <= options.magnitude_threshold && s.cell.is_some()).count();
+        let (bright, placed) = count_drawable_stars(sky, options);
         format!("input stars={}; rejected magnitude={}; then rejected missing cell={}; then omitted edge stars={}; submitted stars={submitted}; four pixels per star; prepared inputs reused", sky.stars.len(), sky.stars.len()-bright, bright-placed, placed-submitted)
     });
     times.describe("Star opacity floor", || format!("input/output pixels={pixels}; minimum opacity={}; zero opacity and RGB unchanged", crate::constants::MIN_STAR_PIXEL_OPACITY));
@@ -91,4 +92,12 @@ pub(super) fn describe_coverage_notice(canvas: &crate::canvas::Canvas, sky: &cra
     times.describe("Coverage notice", || {
         format!("date warning={}; brightness-bound warning={}; output rows={}", sky.outside_accuracy_range, sky.magnitude_clipping().any(), (usize::from(sky.outside_accuracy_range) + usize::from(sky.magnitude_clipping().any())).min(canvas.height()))
     });
+}
+
+fn count_drawable_stars(sky: &ProjectedSky<'_>, options: &RenderOptions) -> (usize, usize) {
+    sky.stars.iter().fold((0, 0), |(bright, placed), star| {
+        if star.star.magnitude <= options.magnitude_threshold {
+            (bright + 1, placed + usize::from(star.cell.is_some()))
+        } else { (bright, placed) }
+    })
 }

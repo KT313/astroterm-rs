@@ -45,6 +45,13 @@ fn observation_hits_equal_refresh_and_bypass_report_executed_work_only() {
     let mut sky = ObservedSky::new(catalog.clone());
     let first = frame(&mut simulation, &mut cache, &mut sky, 20.0, true);
     assert!(operations(&first, BufferId::BrightnessCandidates).contains(&Operation::Store { value_changed: true }));
+    let subtraction = first.trace().unwrap().steps.iter().find(|step| step.name == "Observer subtraction").unwrap();
+    assert!(subtraction.memory_events.iter().any(|event| matches!(event.event,
+        MemoryEvent::Borrow { buffer: BufferId::BodySamples, access: astroterm::timing::Access::ReadOnly, shape }
+            if shape.len == Some(sky.planets.len() + 1))));
+    assert!(!subtraction.memory_events.iter().any(|event| matches!(event.event,
+        MemoryEvent::Operation { buffer: BufferId::BodySamples, operation: Operation::Copy, .. })));
+
     let expected = sky.clone();
     let second = frame(&mut simulation, &mut cache, &mut sky, 20.0, true);
     assert_eq!(sky, expected);
@@ -83,9 +90,13 @@ fn stellar_batch_trace_is_bounded_and_counts_all_appended_samples() {
     assert!(matches!(output.memory_events[0].event, MemoryEvent::Operation { elements: Some(n), .. } if n == count));
     let lookup = trace.steps.iter().find(|s| s.name == "Stellar region decisions").unwrap();
     assert!(lookup.memory_events.len() <= 8);
-    let assembled = trace.steps.iter().find(|s| s.name == "Region sample assembly").unwrap();
-    assert!(assembled.memory_aggregated);
-    assert_eq!(assembled.memory_events[0].total_elements, Some(count));
+    let calculated = trace.steps.iter().find(|s| s.name == "Motion and magnitude calculation").unwrap();
+    assert!(calculated.memory_aggregated);
+    let appended = calculated.memory_events.iter().find(|record| matches!(record.event,
+        MemoryEvent::Operation { buffer: BufferId::StellarSamples, operation: Operation::Append, .. })).unwrap();
+    assert_eq!(appended.total_elements, Some(count));
+    assert!(!trace.steps.iter().any(|s| s.name == "Region sample assembly"));
+    assert!(!operations(&traced, BufferId::StellarScratch).contains(&Operation::Write));
     assert!(trace.steps.len() < 100); // independent of requested region/star count
     let clear = trace.steps.iter().find(|s| s.name == "Stellar scratch clear").unwrap();
     let MemoryEvent::Operation { before: Some(before), after: Some(after), .. } = clear.memory_events[0].event else { panic!("scratch clear boundaries"); };

@@ -123,7 +123,8 @@ fn prepare_samples<T: Clone>(
         ModelFamily::Moon => 2,
         ModelFamily::Orientation => 1,
     };
-    let mut prepared: Vec<Sample<T>> = Vec::with_capacity(2);
+    let capacity = epochs.len().saturating_add(samples.len()).min(maximum_samples * 2); // allow requested samples plus bounded retained history
+    let mut prepared: Vec<Sample<T>> = Vec::with_capacity(capacity);
     for &tt in epochs {
         if prepared.iter().any(|sample| sample.covers(tt)) {
             continue;

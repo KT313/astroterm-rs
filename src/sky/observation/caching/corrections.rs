@@ -14,7 +14,7 @@ pub(in crate::sky::observation) fn update_observer_subtraction(
             epoch,
             config.allows(Group::SolarSystemGeometry),
             || {
-                subtract_observer_position(bodies_cache.value().clone(), observer, output);
+                subtract_observer_position(bodies_cache.value(), observer, output);
                 (
                     output.planets.iter().map(|p| p.position).collect(),
                     output.moon.position,
@@ -29,10 +29,11 @@ pub(in crate::sky::observation) fn update_observer_subtraction(
     record_cache(times, BufferId::RelativeBodies, memory_before, relative_cache);
     {
         if memory_before.is_some_and(|(_, stats)| relative_cache.stats.refreshes != stats.refreshes) {
-            times.record_memory(times.last_memory_step(), || {
-                let count = bodies_cache.value().planets.len() + 1;
-                MemoryEvent::operation(BufferId::BodySamples, Operation::Copy, None, None, Some(count), count.checked_mul(std::mem::size_of::<crate::astro::models::BodyState>()))
-            });
+            times.record_borrow(BufferId::BodySamples, Access::ReadOnly, || BufferShape {
+                len: Some(bodies_cache.value().planets.len() + 1), capacity: None,
+                element_bytes: Some(std::mem::size_of::<crate::astro::models::BodyState>()),
+                domain: IndexDomain::Objects, quality: crate::cache::Quality::ExactPayload,
+            }); // read the original planet and Moon samples without cloning their storage
         }
         times.record_memory(times.last_memory_step(), || {
             let count = output.planets.len() + 1;

@@ -46,10 +46,15 @@ pub(crate) fn merge_constellation_endpoints(
             selected.len()
         )
     });
-    let input_shape = times.inspect_memory(|| crate::timing::BufferShape::vector(&selected, crate::timing::IndexDomain::Catalog));
+    merge_sorted_constellation_endpoints(&selected, endpoints, times)
+}
+
+/// Merge borrowed, strictly increasing candidate and endpoint indices; neither input is copied or sorted.
+pub(super) fn merge_sorted_constellation_endpoints(selected: &[usize], endpoints: &[usize], times: &mut crate::timing::StepTimes) -> Vec<SelectedStar> {
+    let input_shape = times.inspect_memory(|| crate::timing::BufferShape::slice(selected, crate::timing::IndexDomain::Catalog));
     let working = times.measure("Endpoint index merge", || {
         let mut working = Vec::with_capacity(selected.len() + endpoints.len());
-        let mut candidates = selected.into_iter().peekable();
+        let mut candidates = selected.iter().copied().peekable();
         let mut endpoints = endpoints.iter().copied().peekable();
         while candidates.peek().is_some() || endpoints.peek().is_some() {
             let index = candidates
@@ -91,6 +96,23 @@ pub(crate) fn merge_constellation_endpoints(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn borrowed_sorted_merge_matches_normalized_generic_merge() {
+        for selected_mask in 0..16 {
+            for endpoint_mask in 0..16 {
+                let selected: Vec<_> = (0..4).filter(|i| selected_mask & (1 << i) != 0).map(|i| i * 3).collect();
+                let endpoints: Vec<_> = (0..4).filter(|i| endpoint_mask & (1 << i) != 0).map(|i| i * 3).collect();
+                let mut arbitrary = selected.clone();
+                arbitrary.reverse();
+                arbitrary.extend_from_slice(&selected);
+                let expected = merge_constellation_endpoints(arbitrary, &endpoints, &mut Default::default());
+                let mut times = crate::timing::StepTimes::with_trace(true);
+                assert_eq!(merge_sorted_constellation_endpoints(&selected, &endpoints, &mut times), expected);
+                assert_eq!(times.trace().unwrap().steps.iter().map(|step| step.name).collect::<Vec<_>>(), ["Endpoint index merge"]);
+            }
+        }
+    }
 
     #[test]
     fn endpoint_merge_preserves_source_order_and_membership_without_metadata() {

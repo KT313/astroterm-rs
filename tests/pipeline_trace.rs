@@ -110,6 +110,8 @@ fn tracing_preserves_observation_projection_and_raster_with_cache_or_bypass() {
             if let Some(trace) = times.trace() {
                 let step = |name| trace.steps.iter().find(|s| s.name == name).unwrap();
                 assert!(step("Region filtering").details[0].contains(&format!("input stars={}", catalog.stars.len())));
+                let drawable_stars = sky.stars.iter().filter(|star| star.drawable).count();
+                assert!(step("Current brightness").details[0].contains(&format!("drawable={drawable_stars};")));
                 assert!(
                     step("Correction selection").details[0]
                         .contains(&format!("output corrected stars={}", sky.stars.len()))
