@@ -1,7 +1,7 @@
 # astroterm-rs
 
 A Rust port of astroterm with some extra stuff. 
-A terminal star map showing stars, planets, the Moon, and constellations,
+A terminal star map showing stars, planets, the Moon, and constellations.
 
 > [NOTE]  
 > This code is ported from [astroterm](https://github.com/da-luce/astroterm) by  
