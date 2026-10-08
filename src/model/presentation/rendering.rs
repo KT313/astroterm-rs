@@ -55,6 +55,7 @@ pub(crate) struct SceneKey {
     pub(crate) horizon: Vec<[(i32, i32); 2]>,
     pub(crate) labels: Vec<((i32, i32), &'static str)>,
     pub(crate) viewport: Viewport,
+    pub(crate) pixel_fov_degrees: Option<f64>,
     pub(crate) facing: bool,
     pub(crate) warning: bool,
     pub(crate) brightness_warning: bool,

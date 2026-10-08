@@ -79,6 +79,7 @@ pub fn project_sky_with_times(
         moon,
         constellations,
         facing: view.is_facing(),
+        fov_degrees: view.fov_degrees,
         viewport,
         horizon,
         horizon_labels,

@@ -74,8 +74,9 @@ fn describe_scene_geometry(sky: &ProjectedSky<'_>, options: &RenderOptions, time
     });
 }
 
-pub(super) fn describe_pixel_scene(sky: &ProjectedSky<'_>, options: &RenderOptions, pixels: usize, submitted: usize, times: &mut StepTimes) {
+pub(super) fn describe_pixel_scene(sky: &ProjectedSky<'_>, options: &RenderOptions, pixels: usize, submitted: usize, zoom_boost: f64, times: &mut StepTimes) {
     describe_scene_geometry(sky, options, times);
+    times.describe("Star brightness preparation", || format!("field of view={} degrees; star opacity multiplier={zoom_boost}; catalog magnitudes unchanged", sky.fov_degrees));
     times.describe("Star layer initialization", || format!("pixels={pixels}; element bytes={}; straight-alpha f32 RGB and opacity; reusable capacity", std::mem::size_of::<crate::model::StarPixel>()));
     times.describe("Raster stars", || {
         let bright = sky.stars.iter().filter(|s| s.star.magnitude <= options.magnitude_threshold).count();

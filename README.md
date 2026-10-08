@@ -138,7 +138,7 @@ labels are independent. Use `--disable-dynamic-names` to hide star labels; the f
 been removed. Independent accuracy checks are documented in
 [scripts/reference/README.md](scripts/reference/README.md).
 
-In pixel mode, stars use equal-size four-pixel dots; brightness comes from opacity and overlapping stars blend.
+In pixel mode, stars use equal-size four-pixel dots; overlapping stars blend and zooming in boosts their brightness.
 Stars whose complete dot would cross the image boundary are omitted. The Sun, planets and Moon retain their sizes.
 
 <details>

@@ -204,6 +204,8 @@ pub struct ProjectedSky<'a> {
     pub constellations: &'a [ProjectedConstellation],
     pub names: &'a StarNames,
     pub facing: bool,
+    /// Angular view width, carried through for zoom-dependent pixel-star brightness.
+    pub fov_degrees: f64,
     pub viewport: ProjectionViewport,
     pub horizon: &'a [[Cell; 2]],
     pub horizon_labels: &'a [(Cell, &'static str)],
@@ -229,6 +231,8 @@ pub struct ProjectionData {
     pub moon: ProjectedMoon,
     pub constellations: Vec<ProjectedConstellation>,
     pub facing: bool,
+    /// Angular view width, carried through for zoom-dependent pixel-star brightness.
+    pub fov_degrees: f64,
     pub viewport: ProjectionViewport,
     pub horizon: Vec<[Cell; 2]>,
     pub horizon_labels: Vec<(Cell, &'static str)>,
@@ -245,6 +249,7 @@ impl ProjectionData {
             catalog_singular_count: self.catalog_singular_count,
             runtime_singular_count: self.runtime_singular_count,
             facing: self.facing,
+            fov_degrees: self.fov_degrees,
             viewport: self.viewport,
             stars: ProjectedStars::new(observed, &self.stars, &self.order),
             planets: &self.planets, moon: &self.moon, constellations: &self.constellations,

@@ -8,7 +8,7 @@ use super::diagnostics::memory::{record_character_initialization, record_charact
 
 use super::raster::pixels::{
     initialize_pixel_canvas, draw_pixel_horizon, draw_pixel_stars, draw_pixel_constellations, draw_pixel_planets,
-    draw_pixel_moon, draw_pixel_grid, initialize_star_layer, apply_minimum_star_opacity, composite_star_layer,
+    draw_pixel_moon, draw_pixel_grid, initialize_star_layer, calculate_zoom_opacity_boost, apply_minimum_star_opacity, composite_star_layer,
 };
 use super::diagnostics::memory::{
     record_pixel_horizon, record_pixel_constellations, record_pixel_planets,
@@ -61,7 +61,8 @@ pub(super) fn draw_pixel_sky_from_inputs(layer: &mut Vec<crate::model::StarPixel
 
     times.measure("Star layer initialization", || initialize_star_layer(layer, sky.viewport))?; // clear reusable floating-point pixels to transparent black
     record_star_layer(times, layer, true);
-    let submitted = times.measure("Raster stars", || draw_pixel_stars(layer, sky.viewport.width, stars)); // mix four pixels per star in drawing order
+    let zoom_boost = times.measure("Star brightness preparation", || calculate_zoom_opacity_boost(sky.fov_degrees)); // compensate for fewer overlaps in a narrower view
+    let submitted = times.measure("Raster stars", || draw_pixel_stars(layer, sky.viewport.width, zoom_boost, stars)); // mix four pixels per star in drawing order
     record_star_layer(times, layer, false);
     times.measure("Star opacity floor", || apply_minimum_star_opacity(layer));                // make faint nonempty pixels visible without changing their colors
     record_star_layer(times, layer, false);
@@ -82,6 +83,6 @@ pub(super) fn draw_pixel_sky_from_inputs(layer: &mut Vec<crate::model::StarPixel
 
     let image = times.measure("Raster finalization", || image::RgbaImage::from_raw(canvas.width(), canvas.height(), canvas.take())); // transfer the finished pixels without changing their order
     record_pixel_finalization(times, image.as_ref());
-    super::diagnostics::describe_pixel_scene(sky, options, layer.len(), submitted, times);
+    super::diagnostics::describe_pixel_scene(sky, options, layer.len(), submitted, zoom_boost, times);
     image
 }

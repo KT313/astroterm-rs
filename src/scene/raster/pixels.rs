@@ -6,7 +6,7 @@ mod validation;
 use image::RgbaImage;
 use crate::scene::pipeline::draw_pixel_sky_from_inputs;
 
-pub(in crate::scene) use stars::{initialize_star_layer, draw_pixel_stars, apply_minimum_star_opacity, composite_star_layer};
+pub(in crate::scene) use stars::{initialize_star_layer, calculate_zoom_opacity_boost, draw_pixel_stars, apply_minimum_star_opacity, composite_star_layer};
 pub(crate) use stars::{pixel_star_fits, select_pixel_star_labels};
 use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Stroke, Transform};
 

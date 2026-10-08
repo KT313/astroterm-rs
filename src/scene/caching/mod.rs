@@ -30,6 +30,7 @@ fn capture_scene_key(
     let key = candidate.get_or_insert_with(|| SceneKey {
         stars: StarKeys::Pixels(Vec::new()),
         planets: Vec::new(), moon: None, constellations: Vec::new(), horizon: Vec::new(), labels: Vec::new(),
+        pixel_fov_degrees: canvas_size.is_none().then_some(sky.fov_degrees),
         viewport: sky.viewport, facing: sky.facing, warning: sky.outside_accuracy_range, brightness_warning: sky.magnitude_clipping().any(), options, canvas_size,
     });
     clear_scene_candidate(key); // also resets a candidate left behind by a failed image allocation
@@ -40,6 +41,7 @@ fn capture_scene_key(
     key.horizon.extend_from_slice(sky.horizon);
     key.labels.extend_from_slice(sky.horizon_labels);
     key.viewport = sky.viewport;
+    key.pixel_fov_degrees = canvas_size.is_none().then_some(sky.fov_degrees); // a centered star can brighten without moving to another pixel
     key.facing = sky.facing;
     key.warning = sky.outside_accuracy_range;
     key.brightness_warning = sky.magnitude_clipping().any();

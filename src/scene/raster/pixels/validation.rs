@@ -46,6 +46,50 @@ fn cached_fresh_and_bypassed_images_match_at_tiny_and_large_dimensions() {
 }
 
 #[test]
+fn zoom_refreshes_brightness_even_when_projected_star_inputs_do_not_move() {
+    use crate::constants::{STAR_OPACITY_REFERENCE_MAGNITUDE, STAR_OPACITY_MAGNITUDE_SCALE,
+        STAR_BRIGHTNESS_REFERENCE_FOV_DEGREES, STAR_BRIGHTNESS_ZOOM_POWER};
+    for projection in [crate::model::ProjectionKind::Stereographic, crate::model::ProjectionKind::Equidistant] {
+        let (mut sky, _) = fixture(32, 32);
+        for star in &mut sky.stars { star.position.z = -1.0; }
+        sky.stars[0].position.z = 1.0;
+        sky.stars[0].magnitude = STAR_OPACITY_REFERENCE_MAGNITUDE + 1.0 / STAR_OPACITY_MAGNITUDE_SCALE;
+        let options = RenderOptions { magnitude_threshold: f64::INFINITY, ..options() };
+        let original_stars = sky.stars.clone();
+        let mut cache = SceneCache::default();
+        let mut baseline = None;
+        let mut initial_inputs = None;
+        for fov in [STAR_BRIGHTNESS_REFERENCE_FOV_DEGREES, STAR_BRIGHTNESS_REFERENCE_FOV_DEGREES / 2.0,
+            STAR_BRIGHTNESS_REFERENCE_FOV_DEGREES] {
+            let view = View { projection, fov_degrees: fov, ..View::default() };
+            let data = project_sky(&sky, &view, Viewport { width: 32, height: 32 });
+            assert_eq!(data.fov_degrees, fov);
+            let projected = data.view(&sky);
+            assert_eq!(projected.fov_degrees, fov);
+            let refreshes = cache.stats().refreshes;
+            let actual = crate::scene::draw_pixels(&mut cache, &projected, &options, 0.0, &mut StepTimes::default()).unwrap().clone();
+            assert_eq!(cache.stats().refreshes, refreshes + 1);
+            let inputs = &cache.pixels.key().unwrap().stars;
+            if let Some(expected) = &initial_inputs { assert!(inputs == expected); }
+            else { initial_inputs = Some(inputs.clone()); }
+            assert_eq!(actual, draw_pixel_sky(&projected, &options, &mut StepTimes::default()).unwrap());
+            if fov == STAR_BRIGHTNESS_REFERENCE_FOV_DEGREES {
+                if let Some(expected) = &baseline { assert_eq!(&actual, expected); }
+                else { baseline = Some(actual.clone()); }
+            } else if STAR_BRIGHTNESS_ZOOM_POWER > 0.0 {
+                assert_ne!(&actual, baseline.as_ref().unwrap());
+                let (y, x) = projected.stars.get(0).cell.unwrap();
+                assert!(actual[(x as u32, y as u32)][2] > baseline.as_ref().unwrap()[(x as u32, y as u32)][2]);
+            }
+            let hits = cache.stats().hits;
+            assert_eq!(crate::scene::draw_pixels(&mut cache, &projected, &options, 0.0, &mut StepTimes::default()), Some(&actual));
+            assert_eq!(cache.stats().hits, hits + 1);
+        }
+        assert_eq!(sky.stars, original_stars); // zoom changes display opacity, never physical magnitudes or positions
+    }
+}
+
+#[test]
 fn edge_stars_are_omitted_before_drawing_and_do_not_use_label_slots() {
     let (sky, mut data) = fixture(64, 48);
     let brightest = *data.order.last().unwrap();

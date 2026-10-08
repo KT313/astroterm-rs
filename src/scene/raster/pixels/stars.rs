@@ -1,10 +1,9 @@
 //! Fixed four-pixel stars with straight RGB and independent opacity. No drawing-library blending is used here.
 use crate::constants::{DYNAMIC_NAME_COUNT, MAX_IMAGE_PIXELS, MIN_STAR_PIXEL_OPACITY,
-    STAR_OPACITY_REFERENCE_MAGNITUDE, STAR_OPACITY_MAGNITUDE_SCALE};
+    STAR_OPACITY_REFERENCE_MAGNITUDE, STAR_OPACITY_MAGNITUDE_SCALE, MIN_FOV_DEGREES,
+    STAR_BRIGHTNESS_REFERENCE_FOV_DEGREES, STAR_BRIGHTNESS_ZOOM_POWER};
 use crate::model::{Cell, PixelStarKey, ProjectedSky, ProjectionViewport, RenderOptions, StarPixel};
 use tiny_skia::Pixmap;
-
-const PIXEL_COVERAGE: f32 = 0.25; // each of the four neighboring pixels receives a quarter-strength contribution
 
 /// Validate the whole footprint once during preparation; drawing uses only accepted coordinates.
 pub(crate) fn pixel_star_fits((y, x): Cell, viewport: ProjectionViewport) -> bool {
@@ -39,17 +38,23 @@ pub(in crate::scene) fn initialize_star_layer(layer: &mut Vec<StarPixel>, viewpo
     Some(())
 }
 
-fn calculate_star_opacity(magnitude: f64) -> f32 {
+/// A visual compensation for fewer overlapping stars when zoomed in, independent of catalog brightness.
+pub(in crate::scene) fn calculate_zoom_opacity_boost(fov_degrees: f64) -> f64 {
+    let zoom = (STAR_BRIGHTNESS_REFERENCE_FOV_DEGREES / fov_degrees.max(MIN_FOV_DEGREES)).max(1.0);
+    zoom.powf(STAR_BRIGHTNESS_ZOOM_POWER)
+}
+
+fn calculate_star_opacity(magnitude: f64, zoom_boost: f64) -> f32 {
     let exponent = -STAR_OPACITY_MAGNITUDE_SCALE * (magnitude - STAR_OPACITY_REFERENCE_MAGNITUDE);
-    10_f64.powf(exponent).clamp(f64::from(f32::MIN_POSITIVE), 1.0) as f32 // keep very faint finite stars nonzero until the floor pass
+    (10_f64.powf(exponent) * zoom_boost).clamp(f64::from(f32::MIN_POSITIVE), 1.0) as f32 // keep very faint finite stars nonzero until the floor pass
 }
 
 /// Inputs already passed the full-footprint check for this viewport. Normal Rust bounds checks stay enabled.
-pub(in crate::scene) fn draw_pixel_stars(layer: &mut [StarPixel], width: usize, stars: impl IntoIterator<Item = PixelStarKey>) -> usize {
+pub(in crate::scene) fn draw_pixel_stars(layer: &mut [StarPixel], width: usize, zoom_boost: f64, stars: impl IntoIterator<Item = PixelStarKey>) -> usize {
     let mut submitted = 0;
     for star in stars {
         let rgb = star.color.map(|c| f32::from(c) / 255.0);
-        let opacity = calculate_star_opacity(star.magnitude) * PIXEL_COVERAGE;
+        let opacity = calculate_star_opacity(star.magnitude, zoom_boost); // apply the chosen opacity to each pixel without reducing it
         let (y, x) = (star.cell.0 as usize, star.cell.1 as usize);
         let bottom_right = y * width + x;
         for offset in [bottom_right - width - 1, bottom_right - width, bottom_right - 1, bottom_right] {
@@ -62,11 +67,12 @@ pub(in crate::scene) fn draw_pixel_stars(layer: &mut [StarPixel], width: usize, 
 
 fn blend_star_pixel(pixel: &mut StarPixel, rgb: [f32; 3], opacity: f32) {
     if opacity == 0.0 { return; }
-    let weight_sum = pixel.opacity + opacity;
+    let old_weight = pixel.opacity * (1.0 - opacity); // a more opaque new star leaves less of the previous color
+    let combined_opacity = old_weight + opacity;
     for (old, new) in pixel.rgb.iter_mut().zip(rgb) {
-        *old = (*old * pixel.opacity + new * opacity) / weight_sum;
+        *old = (*old * old_weight + new * opacity) / combined_opacity;
     }
-    pixel.opacity = opacity + pixel.opacity * (1.0 - opacity);
+    pixel.opacity = combined_opacity;
 }
 
 pub(in crate::scene) fn apply_minimum_star_opacity(layer: &mut [StarPixel]) {
@@ -94,10 +100,10 @@ mod tests {
     fn close(actual: f32, expected: f32) { assert!((actual - expected).abs() < 1e-5, "{actual} != {expected}"); }
 
     #[test]
-    fn custom_color_weights_and_opacity_match_the_orange_blue_example() {
+    fn source_over_color_weights_attenuate_the_existing_orange_pixel() {
         let mut actual = pixel([255.0, 231.0, 176.0], 0.05);
         blend_star_pixel(&mut actual, [176.0 / 255.0, 229.0 / 255.0, 1.0], 0.1);
-        for (a, e) in actual.rgb.into_iter().zip([607.0 / 765.0, 689.0 / 765.0, 686.0 / 765.0]) { close(a, e); }
+        for (a, e) in actual.rgb.into_iter().zip([5815.0 / 7395.0, 6659.0 / 7395.0, 6684.0 / 7395.0]) { close(a, e); } // old/new color weights are 9/29 and 20/29
         close(actual.opacity, 0.145);
         let original = actual;
         blend_star_pixel(&mut actual, [0.0; 3], 0.0);
@@ -105,7 +111,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_same_color_and_three_star_sequences_preserve_the_custom_rule() {
+    fn empty_same_color_and_three_star_sequences_preserve_source_over() {
         let mut actual = StarPixel::default();
         blend_star_pixel(&mut actual, [1.0, 0.0, 0.0], 0.1);
         assert_eq!(actual, pixel([255.0, 0.0, 0.0], 0.1));
@@ -113,15 +119,30 @@ mod tests {
         close(actual.opacity, 0.19);
         assert_eq!(actual.rgb, [1.0, 0.0, 0.0]);
         blend_star_pixel(&mut actual, [0.0, 0.0, 1.0], 0.2);
-        close(actual.rgb[0], 0.19 / 0.39);
-        close(actual.rgb[2], 0.2 / 0.39);
+        close(actual.rgb[0], 0.152 / 0.352);
+        close(actual.rgb[2], 0.2 / 0.352);
         close(actual.opacity, 0.352);
         let mut reversed = StarPixel::default();
         for (rgb, alpha) in [([0.0, 0.0, 1.0], 0.2), ([1.0, 0.0, 0.0], 0.1), ([1.0, 0.0, 0.0], 0.1)] {
             blend_star_pixel(&mut reversed, rgb, alpha);
         }
         close(reversed.opacity, actual.opacity);
-        assert_ne!(reversed.rgb, actual.rgb); // combined opacity is not the original sum of color weights
+        assert_ne!(reversed.rgb, actual.rgb); // later stars cover earlier colors, so drawing order still matters
+    }
+
+    #[test]
+    fn new_star_opacity_controls_its_color_share_over_an_opaque_pixel() {
+        for opacity in [0.2, 0.5, 0.8, 1.0] {
+            let mut actual = pixel([255.0, 0.0, 0.0], 1.0);
+            blend_star_pixel(&mut actual, [0.0, 0.0, 1.0], opacity);
+            close(actual.rgb[0], 1.0 - opacity);
+            close(actual.rgb[2], opacity);
+            assert_eq!(actual.opacity, 1.0);
+        }
+        let mut actual = pixel([255.0; 3], 1.0);
+        let orange = [1.0, 231.0 / 255.0, 176.0 / 255.0];
+        blend_star_pixel(&mut actual, orange, 1.0);
+        assert_eq!(actual.rgb, orange); // a fully opaque new star replaces the old color completely
     }
 
     #[test]
@@ -134,10 +155,28 @@ mod tests {
         assert_eq!(layer[1].opacity, MIN_STAR_PIXEL_OPACITY);
         assert_eq!(layer[2..], before[2..]);
         assert_eq!(layer.iter().map(|p| p.rgb).collect::<Vec<_>>(), before.iter().map(|p| p.rgb).collect::<Vec<_>>());
-        close(calculate_star_opacity(0.0), 1.0);
-        close(calculate_star_opacity(5.0), 0.01);
-        assert_eq!(calculate_star_opacity(-10.0), 1.0);
-        assert!(calculate_star_opacity(55.535) * PIXEL_COVERAGE > 0.0);
+        close(calculate_star_opacity(STAR_OPACITY_REFERENCE_MAGNITUDE, 1.0), 1.0);
+        close(calculate_star_opacity(STAR_OPACITY_REFERENCE_MAGNITUDE + 2.0 / STAR_OPACITY_MAGNITUDE_SCALE, 1.0), 0.01);
+        assert_eq!(calculate_star_opacity(STAR_OPACITY_REFERENCE_MAGNITUDE - 1.0, 1.0), 1.0);
+        assert!(calculate_star_opacity(55.535, 1.0) > 0.0);
+    }
+
+    #[test]
+    fn zoom_boost_preserves_wide_views_and_brightens_narrow_views_continuously() {
+        let reference = STAR_BRIGHTNESS_REFERENCE_FOV_DEGREES;
+        assert_eq!(calculate_zoom_opacity_boost(reference), 1.0);
+        assert_eq!(calculate_zoom_opacity_boost(reference * 2.0), 1.0);
+        let half = calculate_zoom_opacity_boost(reference / 2.0);
+        assert!((half - 2_f64.powf(STAR_BRIGHTNESS_ZOOM_POWER)).abs() < 1e-12);
+        let quarter = calculate_zoom_opacity_boost(reference / 4.0);
+        assert!((quarter - half * half).abs() < 1e-12);
+        assert!((calculate_zoom_opacity_boost(reference - 1e-6) - 1.0).abs() < 1e-6);
+        assert!(calculate_zoom_opacity_boost(MIN_FOV_DEGREES).is_finite());
+
+        let magnitude = STAR_OPACITY_REFERENCE_MAGNITUDE + 1.0 / STAR_OPACITY_MAGNITUDE_SCALE;
+        close(calculate_star_opacity(magnitude, 1.0), 0.1);
+        close(calculate_star_opacity(magnitude, half), (0.1 * half).min(1.0) as f32);
+        assert_eq!(calculate_star_opacity(STAR_OPACITY_REFERENCE_MAGNITUDE, quarter), 1.0);
     }
 
     #[test]
@@ -154,17 +193,23 @@ mod tests {
     }
 
     #[test]
-    fn four_pixels_have_equal_coverage_with_no_large_canvas_fallback() {
+    fn all_four_pixels_receive_full_star_opacity_at_small_and_large_dimensions() {
         for (width, height, x, y) in [(2, 2, 1, 1), (4097, 3, 4096, 2), (3, 4097, 2, 4096)] {
             let viewport = ProjectionViewport { width, height };
             let mut layer = Vec::new();
             initialize_star_layer(&mut layer, viewport).unwrap();
             assert!(pixel_star_fits((y, x), viewport));
-            let star = PixelStarKey { cell: (y, x), magnitude: 0.0, color: [255, 0, 0] };
-            assert_eq!(draw_pixel_stars(&mut layer, width, [star]), 1);
+            let star = PixelStarKey { cell: (y, x), magnitude: STAR_OPACITY_REFERENCE_MAGNITUDE, color: [255, 0, 0] };
+            assert_eq!(draw_pixel_stars(&mut layer, width, 1.0, [star]), 1);
             let lit: Vec<_> = layer.iter().filter(|p| p.opacity > 0.0).collect();
             assert_eq!(lit.len(), 4);
-            assert!(lit.iter().all(|p| p.opacity == 0.25 && p.rgb == [1.0, 0.0, 0.0]));
+            assert!(lit.iter().all(|p| p.opacity == 1.0 && p.rgb == [1.0, 0.0, 0.0]));
+
+            initialize_star_layer(&mut layer, viewport).unwrap();
+            draw_pixel_stars(&mut layer, width, 1.0, [PixelStarKey { magnitude: STAR_OPACITY_REFERENCE_MAGNITUDE + 2.0 / STAR_OPACITY_MAGNITUDE_SCALE, ..star }]);
+            let lit: Vec<_> = layer.iter().filter(|p| p.opacity > 0.0).collect();
+            assert_eq!(lit.len(), 4);
+            for pixel in lit { close(pixel.opacity, 0.01); } // faint stars retain the configured curve too
         }
     }
 

@@ -238,6 +238,8 @@ all rendering algorithms.
 Pixel rasterization borrows the candidate key's filtered star inputs directly. Star labels use a local range over
 at most `DYNAMIC_NAME_COUNT` entries at the bright end of the projected order; no label-candidate buffer is retained.
 Sun, planet and Moon labels are independent of that limit.
+Projected views carry their FOV so pixel-star brightness can increase when zoomed in. The pixel scene key includes
+this value even when projected cells are unchanged; character scene keys do not depend on this display adjustment.
 Pixel labels skip stars omitted by the four-pixel boundary check, walking backward only until enough eligible
 stars are found. This needs no heap allocation; a view with many edge stars may require inspecting more than N.
 
