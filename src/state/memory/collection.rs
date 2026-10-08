@@ -1,12 +1,8 @@
 //! Bounded collection of typed storage inventories. No interpretation of debugger/allocator layouts.
+use crate::constants::{INVENTORY_DETAIL_CHILDREN, INVENTORY_MAX_CHILDREN, INVENTORY_MAX_DEPTH, INVENTORY_MAX_ROWS, INVENTORY_MAX_VISITS};
 use std::mem::size_of;
 use crate::cache::{BufferDescriptor, BufferSink, InventorySnapshot, Kind, Owner, Quality};
 
-pub const MAX_ROWS: usize = 4096;
-pub const MAX_DEPTH: usize = 16;
-pub const MAX_CHILDREN: usize = 128;
-pub const DETAIL_CHILDREN: usize = 4;
-pub const MAX_VISITS: usize = 8192;
 
 pub struct InventoryCollector {
     snapshot: InventorySnapshot,
@@ -22,7 +18,7 @@ fn group_child_name(name: &str) -> Option<(&str, &str)> {
     let start = if name.starts_with('[') { 0 } else if name.starts_with("sample[") { 6 } else { return None; };
     let end = name[start..].find(']')? + start;
     let index = name[start + 1..end].parse::<usize>().ok()?;
-    (index >= DETAIL_CHILDREN).then_some((&name[..start], &name[end + 1..]))
+    (index >= INVENTORY_DETAIL_CHILDREN).then_some((&name[..start], &name[end + 1..]))
 }
 
 fn merge_count(a: Option<usize>, b: Option<usize>) -> Option<usize> {
@@ -94,7 +90,7 @@ impl InventoryCollector {
             };
             return;
         }
-        if self.snapshot.rows.len() == MAX_ROWS {
+        if self.snapshot.rows.len() == INVENTORY_MAX_ROWS {
             self.snapshot.omitted_nodes = self.snapshot.omitted_nodes.saturating_add(1);
             return;
         }
@@ -110,7 +106,7 @@ impl InventoryCollector {
 }
 impl BufferSink for InventoryCollector {
     fn enter(&mut self, name: &str, inline_bytes: usize) -> bool {
-        if self.parents.len() >= MAX_DEPTH || self.snapshot.rows.len() >= MAX_ROWS || self.visits >= MAX_VISITS {
+        if self.parents.len() >= INVENTORY_MAX_DEPTH || self.snapshot.rows.len() >= INVENTORY_MAX_ROWS || self.visits >= INVENTORY_MAX_VISITS {
             self.snapshot.omitted_nodes = self.snapshot.omitted_nodes.saturating_add(1);
             return false;
         }
@@ -141,12 +137,12 @@ impl BufferSink for InventoryCollector {
     }
     fn unknown(&mut self, note: &'static str) { self.append(Kind::Unknown, 0, None, (None, None), Quality::Unknown, note); }
     fn child_limit(&mut self, requested: usize) -> usize {
-        let allowed = requested.min(MAX_CHILDREN).min(MAX_VISITS.saturating_sub(self.visits)).min(MAX_ROWS.saturating_sub(self.snapshot.rows.len()));
+        let allowed = requested.min(INVENTORY_MAX_CHILDREN).min(INVENTORY_MAX_VISITS.saturating_sub(self.visits)).min(INVENTORY_MAX_ROWS.saturating_sub(self.snapshot.rows.len()));
         self.snapshot.omitted_nodes = self.snapshot.omitted_nodes.saturating_add(requested - allowed);
         allowed
     }
     fn begin_shared(&mut self, identity: usize, inline_bytes: usize) -> bool {
-        if self.snapshot.rows.len() >= MAX_ROWS { self.snapshot.omitted_nodes = self.snapshot.omitted_nodes.saturating_add(1); return false; }
+        if self.snapshot.rows.len() >= INVENTORY_MAX_ROWS { self.snapshot.omitted_nodes = self.snapshot.omitted_nodes.saturating_add(1); return false; }
         if !self.first_allocation(Kind::Heap, identity) {
             self.append(Kind::Alias, 0, None, (None, None), Quality::ExactPayload, "shared allocation already counted in this snapshot");
             return false;
@@ -158,7 +154,7 @@ impl BufferSink for InventoryCollector {
     }
     fn end_shared(&mut self) { self.owner = self.shared_owners.pop().expect("balanced shared scopes"); }
     fn mapping(&mut self, identity: usize, length: usize) {
-        if self.snapshot.rows.len() >= MAX_ROWS { self.snapshot.omitted_nodes = self.snapshot.omitted_nodes.saturating_add(1); return; }
+        if self.snapshot.rows.len() >= INVENTORY_MAX_ROWS { self.snapshot.omitted_nodes = self.snapshot.omitted_nodes.saturating_add(1); return; }
         if self.first_allocation(Kind::Mapping, identity) {
             self.append(Kind::Mapping, 0, None, (Some(length), Some(length)), Quality::ExactPayload, "logical mapping length, not heap or resident pages");
         } else {

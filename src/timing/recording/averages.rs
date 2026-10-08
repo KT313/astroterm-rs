@@ -1,13 +1,14 @@
 //! Per-step registration and smoothing; frame orchestration stays in pipeline.rs.
-use super::{StepRecord, StepTime, StepTimes, EMA_FACTOR};
+use crate::constants::TIMING_EMA_FACTOR;
+use super::{StepRecord, StepTime, StepTimes};
 #[cfg(feature = "memory-diagnostics")]
-use super::{memory, run};
+use super::memory;
 
 impl StepTimes {
     pub(super) fn reset_frame_samples(&mut self) {
         for (step, record) in self.steps.iter_mut().zip(&mut self.records) {
             if self.per_frame && record.frame_seconds.is_none() && record.initialized {
-                step.average_seconds *= EMA_FACTOR; // a skipped optional stage cost zero in the completed frame
+                step.average_seconds *= TIMING_EMA_FACTOR; // a skipped optional stage cost zero in the completed frame
             }
             record.previous_average = record.initialized.then_some(step.average_seconds);
             record.frame_seconds = None;
@@ -34,7 +35,7 @@ impl StepTimes {
         } else {
             (record.initialized.then_some(step.average_seconds), seconds)
         };
-        step.average_seconds = previous.map_or(sample, |old| old * EMA_FACTOR + sample * (1.0 - EMA_FACTOR));
+        step.average_seconds = previous.map_or(sample, |old| old * TIMING_EMA_FACTOR + sample * (1.0 - TIMING_EMA_FACTOR));
         record.initialized = true;
     }
 
@@ -53,7 +54,7 @@ impl StepTimes {
             return Some(index);
         }
         #[cfg(feature = "memory-diagnostics")]
-        if self.memory_bounded && self.steps.len() >= run::MAX_TIMING_PATHS {
+        if self.memory_bounded && self.steps.len() >= crate::constants::MAX_TIMING_PATHS {
             self.registry_omitted = self.registry_omitted.saturating_add(1);
             return None;
         }
@@ -147,6 +148,6 @@ mod tests {
         times.record("Refraction", 1.0);
         times.begin_frame();
         times.begin_frame();
-        assert_eq!(times.steps()[0].average_seconds, EMA_FACTOR);
+        assert_eq!(times.steps()[0].average_seconds, TIMING_EMA_FACTOR);
     }
 }

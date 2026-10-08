@@ -1,10 +1,10 @@
 //! Straight-line J2000 stellar motion, f64. Directions and scaled velocities are dimensionless and per Julian year;
 //! distances are parsecs. Bounds and brightness keys cover the shared TT computational interval, not physical
 //! catalog accuracy. Missing/singular distances use tangential motion and constant brightness.
+use crate::constants::SINGULAR_RATIO;
 use crate::rows::{row_columns, plain_rows};
 use crate::astro::{COMPUTATIONAL_INTERVAL, Equatorial, J2000, JULIAN_YEAR_DAYS, Vector3};
 
-pub const SINGULAR_RATIO: f64 = 1e-3;
 
 /// Catalog-only motion properties. Epoch-dependent singular handling remains in evaluation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

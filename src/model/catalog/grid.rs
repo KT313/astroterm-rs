@@ -1,18 +1,9 @@
 //! Cube-map storage, representation construction and shared selection records.
+use crate::constants::GRID_DEPTH;
 use crate::rows::row_columns;
 use crate::astro::Vector3;
 use std::f64::consts::PI;
 
-pub const GRID_DEPTH: u8 = 6;
-pub const CELL_COUNT: usize = 6 << (2 * GRID_DEPTH);
-pub const CONSTELLATION_REGION: usize = CELL_COUNT;
-pub const SIMULATION_REGION_COUNT: usize = CELL_COUNT + 1;
-/// Fixed catalog-region padding, not a guarantee for stars that move farther from their catalog direction.
-pub const STELLAR_DRIFT_MARGIN: f64 = PI / 720.0; // 0.25 degrees
-pub const REFRACTION_MARGIN: f64 = 0.647 * PI / 180.0;
-/// Qualified against 200,001 Earth-velocity samples plus maximum WGS84 site spin (21.219703″).
-/// Selection also expands this from the actual observer velocity, independently of the sampled bound.
-pub const ABERRATION_MARGIN: f64 = 22.0 * PI / (180.0 * 3600.0);
 const NUMERIC_SLACK: f64 = 1e-10;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -122,7 +113,7 @@ impl SkyGrid {
     pub(crate) fn from_offsets(offsets: crate::catalog::cache::CatalogArray<usize>) -> Self {
         Self {
             offsets,
-            coarse_caps: build_caps(4),
+            coarse_caps: build_caps(crate::constants::GRID_COARSE_DEPTH),
             fine_caps: build_caps(GRID_DEPTH),
         }
     }

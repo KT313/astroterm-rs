@@ -1,4 +1,5 @@
 //! Camera transforms, field-of-view controls, and clipped sky geometry.
+use crate::constants::{DEFAULT_FOV_DEGREES, MIN_FOV_DEGREES};
 mod cartesian;
 mod maps;
 mod sky;
@@ -13,7 +14,7 @@ pub(crate) use sky::{project_horizon_labels, project_horizon_line};
 #[cfg(test)]
 pub(crate) use sky::{compute_visible_horizon_half_range, project_constellation_segment};
 
-use crate::model::{ArcPart, Polar, ProjectionKind, View, ViewCenter, DEFAULT_FOV_DEGREES, MIN_FOV_DEGREES};
+use crate::model::{ArcPart, Polar, ProjectionKind, View, ViewCenter};
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 use crate::astro::{Horizontal, horizontal_to_spherical};
 

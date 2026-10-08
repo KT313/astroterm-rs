@@ -165,7 +165,7 @@ Each requested region checks one timestamp/invalidation flag, then refreshes its
 needed. The constellation region follows precisely the same numerical/cache path. No per-star cache map remains.
 Numerical passes borrow trajectory/magnitude columns, evaluate in f64, and append samples in catalog order.
 
-The default/max stellar TTL is 864000 simulated seconds in `cache/policy/config.rs`; existing config overrides may
+The default/max stellar TTL is 864000 simulated seconds in `constants.rs`; existing config overrides may
 shorten it. Values are held, not interpolated or accuracy-qualified. Both direction and magnitude can remain at a
 region's calculation epoch even after simulation time changes. Age is absolute in TT, including reverse playback;
 the exact boundary is reusable, and hits never slide timestamps. `--disable-cache`, disabled groups and zero TTL
@@ -337,3 +337,11 @@ the present whole-interval bound: the interval contains J2000, so its minimum is
 Table previews report u16 storage and show both code and decoded magnitude in the same cell; no second decoded
 column is retained. `persistent.catalog.magnitude_clipping` exposes the inline counters. Quantization can create
 new brightness ties and change near-threshold visibility or labels; draw-order ties still use stable IDs.
+
+
+Tunable cache durations, grid settings, control/view defaults, drawing limits and diagnostic caps live in
+`src/constants.rs`, below all application layers. Modules import constants directly from `crate::constants`.
+Physical constants, formula coefficients, protocol/file-format definitions and validated fast-path parameters
+remain next to their algorithms. Solar-system cache configuration and default sample windows share the same
+seconds constants. Prepared-catalog fingerprints include the storage-affecting settings by value, so changing
+an unrelated display limit or TTL alone does not force a catalog rebuild.

@@ -1,8 +1,8 @@
 //! Validated, startup-only update policies. Durations are absolute simulated seconds from a sample epoch.
+use crate::constants::{STELLAR_REGION_TTL_SECONDS, PLANETARY_SAMPLE_TTL_SECONDS, LUNAR_SAMPLE_TTL_SECONDS, ORIENTATION_SAMPLE_TTL_SECONDS};
 use serde::Deserialize;
 use std::{collections::BTreeMap, io, path::Path};
 
-pub const STELLAR_REGION_TTL_SECONDS: f64 = 10.0 * 86_400.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -50,9 +50,9 @@ impl Group {
     pub fn maximum_age(self) -> Option<f64> {
         match self {
             Self::StellarState => Some(STELLAR_REGION_TTL_SECONDS),
-            Self::PlanetarySamples => Some(30.0),
-            Self::LunarSamples => Some(12.0),
-            Self::SlowOrientation => Some(60.0),
+            Self::PlanetarySamples => Some(PLANETARY_SAMPLE_TTL_SECONDS),
+            Self::LunarSamples => Some(LUNAR_SAMPLE_TTL_SECONDS),
+            Self::SlowOrientation => Some(ORIENTATION_SAMPLE_TTL_SECONDS),
             _ => None,
         }
     }

@@ -33,7 +33,7 @@ fn selection_changes_reuse_intrinsic_regions() {
     let mut stars = StellarSimulationState::default();
     let mut times = StepTimes::default();
     sky::select_cached_stars(&mut selection, &catalog, &observer, 5.0, false, cone(1.0, 0.0), &mut times);
-    let first = astroterm::model::hash_direction(astroterm::model::GRID_DEPTH, catalog.stars.stored_direction(selection.stars().rows()[0].source_index));
+    let first = astroterm::model::hash_direction(astroterm::constants::GRID_DEPTH, catalog.stars.stored_direction(selection.stars().rows()[0].source_index));
     let requested = selection.stars().regions().len() as u64;
     assert_eq!(selection.stars().rows().len(), 1);
     sky::simulate_stars(&mut stars, selection.stars(), observer.time.tt, &mut times);
@@ -44,7 +44,7 @@ fn selection_changes_reuse_intrinsic_regions() {
     sky::simulate_stars(&mut stars, selection.stars(), observer.time.tt, &mut times);
     assert_eq!(stars.region_report(first).unwrap().stats.refreshes, 1);
     for &region in selection.stars().regions() { assert_eq!(stars.region_report(region).unwrap().stats.refreshes, 1); }
-    assert_eq!(stars.stats().refreshes, astroterm::model::SIMULATION_REGION_COUNT as u64 + 2);
+    assert_eq!(stars.stats().refreshes, astroterm::constants::SIMULATION_REGION_COUNT as u64 + 2);
 
     sky::select_cached_stars(&mut selection, &catalog, &observer, 5.0, false, cone(0.0, 1.0), &mut times);
     sky::simulate_stars(&mut stars, selection.stars(), observer.time.tt, &mut times);

@@ -1,5 +1,6 @@
 //! Render original table owners as Markdown, with bounded first/last-row previews.
-use super::{Tables, Table, EDGE_ROWS};
+use crate::constants::{MAX_TABLE_TEXT_CHARS, TABLE_PREVIEW_EDGE_ROWS};
+use super::{Tables, Table};
 use crate::cache::Group;
 use crate::rows::short_type_name;
 use crate::state::ApplicationState;
@@ -8,8 +9,6 @@ use std::fs::OpenOptions;
 use std::io::{self, Write};
 use std::path::Path;
 
-/// Longest note text before it is cut; individual cells are bounded by the row formatter.
-const MAX_TEXT: usize = 160;
 
 impl ApplicationState {
     /// Append a Markdown dump to a file, or print it to stdout when no path is given.
@@ -75,8 +74,8 @@ fn write_preview(out: &mut dyn Write, path: &str, table: &dyn Table) -> io::Resu
     write_markdown_row(out, "Row", &headers, width)?;
     writeln!(out, "| ---: |{}", " --- |".repeat(width))?;
     for (position, (index, cells)) in prepared.iter().enumerate() {
-        if table.rows() > 2 * EDGE_ROWS && position == EDGE_ROWS {
-            write_markdown_row(out, "…", &[format!("{} rows omitted", table.rows() - 2 * EDGE_ROWS)], width)?;
+        if table.rows() > 2 * TABLE_PREVIEW_EDGE_ROWS && position == TABLE_PREVIEW_EDGE_ROWS {
+            write_markdown_row(out, "…", &[format!("{} rows omitted", table.rows() - 2 * TABLE_PREVIEW_EDGE_ROWS)], width)?;
         }
         write_markdown_row(out, &index.to_string(), cells, width)?;
     }
@@ -110,7 +109,7 @@ fn markdown_text(text: &str) -> String {
     escaped
 }
 fn truncate(text: &str) -> String {
-    match text.char_indices().nth(MAX_TEXT) {
+    match text.char_indices().nth(MAX_TABLE_TEXT_CHARS) {
         Some((cut, _)) => format!("{}…", &text[..cut]),
         None => text.to_string(),
     }
@@ -210,9 +209,9 @@ mod tests {
         let stars = section(&text, "persistent.catalog.stars");
         assert!(stars.contains(&format!("**Shape:** `[{count}, 8]`")));
         assert!(!text.contains("persistent.catalog.stars.u0"));
-        assert!(stars.contains(&format!("{} rows omitted", count - 2 * EDGE_ROWS)));
+        assert!(stars.contains(&format!("{} rows omitted", count - 2 * TABLE_PREVIEW_EDGE_ROWS)));
         assert!(text.contains("ttl=864000 s") && text.contains("ttl=dependencies") && text.contains("invalid=false"));
-        for path in paths(&text) { assert!(data_rows(section(&text, &path)) <= 2 * EDGE_ROWS); }
+        for path in paths(&text) { assert!(data_rows(section(&text, &path)) <= 2 * TABLE_PREVIEW_EDGE_ROWS); }
 
         let star_header = stars.lines().find(|l| l.starts_with("| Row |")).unwrap();
         let mut columns = crate::model::StarRow::columns();
@@ -250,9 +249,9 @@ mod tests {
 
     #[test]
     fn truncation_keeps_whole_characters() {
-        let long: String = "é".repeat(MAX_TEXT + 5);
+        let long: String = "é".repeat(MAX_TABLE_TEXT_CHARS + 5);
         let cut = truncate(&long);
-        assert_eq!(cut.chars().count(), MAX_TEXT + 1);
+        assert_eq!(cut.chars().count(), MAX_TABLE_TEXT_CHARS + 1);
         assert!(cut.ends_with('…'));
         assert_eq!(truncate("short"), "short");
     }

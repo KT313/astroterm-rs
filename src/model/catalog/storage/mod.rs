@@ -1,6 +1,7 @@
 //! Immutable structure-of-arrays storage. Arithmetic is f64 after expanding the compact inputs; only a sparse
 //! exception-table skeleton reserves future support; unsupported trajectories fail preparation explicitly.
 //! The per-star columns are declared once in `columns.rs`; `columns()` borrows all of them for one pass.
+use crate::constants::{MAX_DIRECTION_ERROR, QUANTIZATION_MARGIN};
 mod columns;
 mod views;
 pub(crate) use views::StellarFields;
@@ -18,10 +19,6 @@ use crate::catalog::cache::{
 use crate::catalog::{NameId, StarId, MagnitudeClipping, decode_magnitude, encode_magnitude, encode_brightness_bound};
 use std::io;
 
-/// The grid uses the effective stored trajectory, so this covers cell-direction rounding and f64 bound
-/// arithmetic, not the original catalog's quantization error. Model error is certified separately below.
-pub const QUANTIZATION_MARGIN: f64 = 0.1 * std::f64::consts::PI / (180.0 * 3600.0);
-const MAX_DIRECTION_ERROR: f64 = 0.5 * std::f64::consts::PI / (180.0 * 3600.0);
 
 #[derive(Clone, Debug, Default)]
 pub struct StarStorage {

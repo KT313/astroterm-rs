@@ -1,20 +1,13 @@
 //! The metadata panel's layout: one line per field, values aligned at tab stops as in the original curses version.
 
+use crate::constants::{METADATA_PANEL_WIDTH, METADATA_TAB_WIDTH, METADATA_VALUE_COLUMN};
 use crate::canvas::Canvas;
 use crate::model::MetadataField;
 
-/// Columns of the metadata panel, enough for the longest line (elapsed time).
-const PANEL_WIDTH: usize = 45;
-
-/// Tab stops are every 8 columns, as in curses.
-const TAB_WIDTH: usize = 8;
-
-/// Values start at this column at the earliest, so they line up for short labels too.
-const VALUE_COLUMN: usize = 16;
 
 /// Draw the metadata fields onto the panel canvas, resizing it to fit the lines.
 pub fn draw_metadata_panel(canvas: &mut Canvas, fields: &[MetadataField]) {
-    canvas.resize(fields.len(), PANEL_WIDTH);
+    canvas.resize(fields.len(), METADATA_PANEL_WIDTH);
     canvas.clear();
     for (row, field) in fields.iter().enumerate() {
         let line = format_field(&format!("{}: ", field.label), &field.value);
@@ -25,7 +18,7 @@ pub fn draw_metadata_panel(canvas: &mut Canvas, fields: &[MetadataField]) {
 /// `label` followed by a tab (expanded to the next tab stop, at least the value column) and `value`.
 fn format_field(label: &str, value: &str) -> String {
     let width = label.chars().count();
-    let tab_stop = ((width / TAB_WIDTH + 1) * TAB_WIDTH).max(VALUE_COLUMN);
+    let tab_stop = ((width / METADATA_TAB_WIDTH + 1) * METADATA_TAB_WIDTH).max(METADATA_VALUE_COLUMN);
     format!("{label}{}{value}", " ".repeat(tab_stop - width))
 }
 
@@ -59,7 +52,7 @@ mod tests {
         ]);
         let mut canvas = Canvas::new(0, 0);
         draw_metadata_panel(&mut canvas, &fields);
-        assert_eq!((canvas.height(), canvas.width()), (10, PANEL_WIDTH));
+        assert_eq!((canvas.height(), canvas.width()), (10, METADATA_PANEL_WIDTH));
 
         let lines: Vec<String> = canvas
             .to_lines()

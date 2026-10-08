@@ -28,7 +28,7 @@ pub(super) fn prepare_compact_stars(entries: impl Iterator<Item = CatalogStar>, 
 
 pub(super) fn sort_stars_by_region_and_brightness(stars: &mut StarStorage, bounds: &mut [f32], endpoints: &HashSet<StarId>) {
     let cells: Vec<_> = (0..stars.len()).map(|i| {
-        if endpoints.contains(&stars.id(i)) { crate::model::CONSTELLATION_REGION } else { grid::stored_cell(stars, i) }
+        if endpoints.contains(&stars.id(i)) { crate::constants::CONSTELLATION_REGION } else { grid::stored_cell(stars, i) }
     }).collect();
     let mut order: Vec<_> = (0..stars.len()).collect();
     order.sort_unstable_by(|&a, &b| {

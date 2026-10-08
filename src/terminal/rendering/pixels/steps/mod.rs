@@ -31,7 +31,7 @@ pub(in crate::terminal) fn initialize_pixel_canvas(state: &mut PixelState, times
         Ok::<_, io::Error>(Some(image::RgbaImage::from_pixel(
             width,
             height,
-            image::Rgba(crate::scene::BACKGROUND),
+            image::Rgba(crate::constants::PIXEL_BACKGROUND_RGBA),
         )))
     })?;
     if let Some(frame) = &state.frame_image { times.record_shape(BufferId::FrameImage, Operation::Build, None, || BufferShape::vector(frame.as_raw(), IndexDomain::Bytes)); } // retained result is freshly allocated each frame
@@ -415,7 +415,6 @@ fn describe_upload(state: &PixelState) -> BufferShape {
     shape.capacity = Some(state.upload.capacity());
     shape
 }
-
 
 
 #[cfg(test)]

@@ -46,7 +46,7 @@ impl StepTimes {
     #[cfg(feature = "memory-diagnostics")]
     pub fn capture_memory(&mut self, capture: impl FnOnce(&Self) -> crate::cache::InventorySnapshot) {
         let Some(trace) = &mut self.trace else { return; };
-        let limit = if self.memory_bounded { super::run::MAX_TRACE_INVENTORIES } else { 2 };
+        let limit = if self.memory_bounded { crate::constants::MAX_TRACE_INVENTORIES } else { 2 };
         if trace.memory_snapshots.len() >= limit {
             trace.bounds.omitted_inventories = trace.bounds.omitted_inventories.saturating_add(1);
             return;
@@ -76,7 +76,7 @@ impl StepTimes {
         };
         let start = std::time::Instant::now();
         #[cfg(feature = "memory-diagnostics")]
-        if self.memory_bounded && (self.memory_suppressed != 0 || trace.detail_count >= super::run::MAX_TRACE_DETAILS || trace.detail_bytes >= super::run::MAX_TRACE_TEXT_BYTES) {
+        if self.memory_bounded && (self.memory_suppressed != 0 || trace.detail_count >= crate::constants::MAX_TRACE_DETAILS || trace.detail_bytes >= crate::constants::MAX_TRACE_TEXT_BYTES) {
             trace.bounds.omitted_details = trace.bounds.omitted_details.saturating_add(1);
             return;
         }
@@ -95,7 +95,7 @@ impl StepTimes {
             let detail = describe();
             #[cfg(feature = "memory-diagnostics")]
             let detail = if self.memory_bounded {
-                let limit = super::run::MAX_DETAIL_BYTES.min(super::run::MAX_TRACE_TEXT_BYTES - trace.detail_bytes);
+                let limit = crate::constants::MAX_DETAIL_BYTES.min(crate::constants::MAX_TRACE_TEXT_BYTES - trace.detail_bytes);
                 let mut end = detail.len().min(limit);
                 while !detail.is_char_boundary(end) { end -= 1; }
                 trace.bounds.truncated_text_bytes = trace.bounds.truncated_text_bytes.saturating_add(detail.len() - end);
@@ -165,7 +165,7 @@ impl StepTimes {
     pub(super) fn start_trace(&mut self, name: &'static str) -> Option<usize> {
         let trace = self.trace.as_mut()?;
         #[cfg(feature = "memory-diagnostics")]
-        if self.memory_bounded && (trace.steps.len() >= super::run::MAX_TRACE_STEPS || trace.active.len() >= super::run::MAX_TRACE_DEPTH || self.memory_suppressed != 0) {
+        if self.memory_bounded && (trace.steps.len() >= crate::constants::MAX_TRACE_STEPS || trace.active.len() >= crate::constants::MAX_TRACE_DEPTH || self.memory_suppressed != 0) {
             if self.memory_suppressed == 0 {
                 let parent = trace.active.last().copied();
                 if let Some(step) = trace.steps.iter_mut().rev().find(|step| step.name == name && step.parent == parent) {

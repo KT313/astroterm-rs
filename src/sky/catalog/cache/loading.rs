@@ -1,5 +1,6 @@
 //! Loading details keep I/O failures and optional diagnostics outside the catalog pipeline.
-use crate::model::{PreparedCatalog, CELL_COUNT};
+use crate::constants::CELL_COUNT;
+use crate::model::PreparedCatalog;
 use crate::catalog::{datasets::DatasetDirectories, cache::supported, load_embedded_catalog};
 use crate::timing::StepTimes;
 use sha2::{Digest, Sha256};

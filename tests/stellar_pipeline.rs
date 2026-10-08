@@ -1,5 +1,5 @@
 //! 3D motion, conservative selection, current-magnitude ordering and endpoint independence.
-use astroterm::state::{SimulationState};
+use astroterm::state::SimulationState;
 use astroterm::astro::{Horizontal, J2000, JULIAN_YEAR_DAYS, Matrix3, Observer};
 use astroterm::canvas::Canvas;
 use astroterm::catalog::{Catalog, CatalogStar, ConstellationFigure, SpaceMotion, StarId, StarNames};
@@ -233,9 +233,9 @@ fn singular_trajectories_are_rejected_and_supported_fast_motion_stays_indexed() 
     let cat = catalog(vec![fast], vec![]);
     assert!(cat.star_exceptions.is_empty());
     assert_eq!(cat.singular_count, 0);
-    assert_eq!(cat.grid.offsets[astroterm::model::CELL_COUNT], cat.stars.len());
+    assert_eq!(cat.grid.offsets[astroterm::constants::CELL_COUNT], cat.stars.len());
     let index = cat.stars.iter().position(|star| star.id == StarId(2)).unwrap();
-    let cell = astroterm::model::hash_direction(astroterm::model::GRID_DEPTH, cat.stars.stored_direction(index));
+    let cell = astroterm::model::hash_direction(astroterm::constants::GRID_DEPTH, cat.stars.stored_direction(index));
     assert!((cat.grid.offsets[cell]..cat.grid.offsets[cell + 1]).contains(&index));
     let mut sky = ObservedSky::new(cat);
     let (simulation, observer) = setup(1000.0);

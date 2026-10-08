@@ -11,7 +11,7 @@ pub use raster::{
     draw_moon, draw_planets, draw_stars, format_star_label, select_moon_appearance, select_planet_appearance,
     select_star_appearance,
 };
-pub use raster::pixels::{BACKGROUND, draw_pixel_sky};
+pub use raster::pixels::draw_pixel_sky;
 pub use text::{begin_text_frame, create_text_rasterizer, draw_metadata_panel, draw_text, paint_text_buffer, set_text_cell_size};
 
 pub(crate) use pipeline::draw_characters_with_times;

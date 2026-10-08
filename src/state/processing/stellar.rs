@@ -1,8 +1,9 @@
 //! Intrinsic samples owned once per region. Camera and observer state never enter this owner.
+use crate::constants::SIMULATION_REGION_COUNT;
 use std::sync::Arc;
 use crate::astro::{Vector3, models::stars::StellarSample};
 use crate::cache::{Cache, CacheConfig, CacheStats};
-use crate::model::{SkyCatalog, SIMULATION_REGION_COUNT};
+use crate::model::SkyCatalog;
 use crate::state::WorkingCache;
 pub(crate) type MotionCache = Cache<(super::StageId, u64, u64), (Vec<(Vector3, f64)>, usize)>;
 

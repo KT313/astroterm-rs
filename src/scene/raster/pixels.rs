@@ -1,4 +1,5 @@
 //! Pure RGBA rasterization of the projected sky. Viewport units are pixels; no terminal I/O or astronomy lives here.
+use crate::constants::PIXEL_BACKGROUND_RGBA;
 mod minimum_star;
 #[cfg(test)]
 mod validation;
@@ -12,7 +13,6 @@ use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Stroke, Transform};
 use crate::model::{RenderOptions, ObservedStarView, PlanetKind, ProjectedSky, ScreenPoint};
 use crate::timing::StepTimes;
 
-pub const BACKGROUND: [u8; 4] = [3, 6, 14, 255];
 
 pub fn draw_pixel_sky(sky: &ProjectedSky<'_>, options: &RenderOptions, times: &mut StepTimes) -> Option<RgbaImage> {
     draw_pixel_sky_with_star_path(sky, options, times, true)
@@ -23,11 +23,11 @@ pub(in crate::scene) fn initialize_pixel_canvas(viewport: crate::model::Projecti
         u32::try_from(viewport.width).ok()?,
         u32::try_from(viewport.height).ok()?,
     );
-    if u64::from(width) * u64::from(height) > 16_777_216 {
+    if u64::from(width) * u64::from(height) > crate::constants::MAX_IMAGE_PIXELS as u64 {
         return None;
     }
     let mut canvas = Pixmap::new(width, height)?;
-    canvas.fill(Color::from_rgba8(BACKGROUND[0], BACKGROUND[1], BACKGROUND[2], 255));
+    canvas.fill(Color::from_rgba8(PIXEL_BACKGROUND_RGBA[0], PIXEL_BACKGROUND_RGBA[1], PIXEL_BACKGROUND_RGBA[2], 255));
     Some(canvas)
 }
 

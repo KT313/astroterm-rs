@@ -9,8 +9,8 @@ mod configuration;
 mod diagnostics;
 
 pub use catalog::{
-    SkyCatalog, CatalogPreparation, PreparedCatalog, ConstellationSet, StarException, GRID_DEPTH, CELL_COUNT, CONSTELLATION_REGION, SIMULATION_REGION_COUNT, STELLAR_DRIFT_MARGIN, REFRACTION_MARGIN, ABERRATION_MARGIN, SkyRegion, SelectionStats, SkyGrid,
-    hash_direction, QUANTIZATION_MARGIN, STAR_SECTIONS, StarRow, StarRowSlice, StarRowVec, StarStorage,
+    SkyCatalog, CatalogPreparation, PreparedCatalog, ConstellationSet, StarException, SkyRegion, SelectionStats, SkyGrid,
+    hash_direction, STAR_SECTIONS, StarRow, StarRowSlice, StarRowVec, StarStorage,
 };
 pub(crate) use catalog::{SelectedRegion, StellarFields, build_caps, unsupported_star_data};
 pub use celestial::{
@@ -29,7 +29,7 @@ pub use presentation::{
     MetadataField, StarColor,
 };
 pub(crate) use presentation::{
-    DEFAULT_FOV_DEGREES, MIN_FOV_DEGREES, DrawRecord, StarKey, ProjectionBodyKey, ConstellationKey, HorizonGeometry,
+    DrawRecord, StarKey, ProjectionBodyKey, ConstellationKey, HorizonGeometry,
     SceneKey, PixelStarKey, CharacterStarKey, StarKeys, Glyph,
 };
 pub use configuration::{Config, SimulationSettings, TerminalSettings, RendererKind, GraphicsProtocol};

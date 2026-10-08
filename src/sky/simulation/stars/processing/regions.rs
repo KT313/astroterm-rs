@@ -1,7 +1,7 @@
 //! Region decisions never inspect individual samples. Numerical work runs only for requested stale regions.
-use crate::{cache::{Group, RefreshReason}, state::StellarMotionBuffers, model::{StellarFields, StellarWork, CONSTELLATION_REGION},
+use crate::constants::{CONSTELLATION_REGION, STELLAR_BATCH_SIZE};
+use crate::{cache::{Group, RefreshReason}, state::StellarMotionBuffers, model::{StellarFields, StellarWork},
     timing::{StepTimes, Access, BufferId, BufferShape, IndexDomain, MemoryEvent, Operation}, astro::models::stars::years_since_j2000};
-const BATCH_SIZE: usize = 1024;
 
 pub(super) fn check_requested_regions(storage: &mut StellarMotionBuffers<'_>, epoch: f64, times: &mut StepTimes) {
     let ttl = storage.config.age_seconds(Group::StellarState);
@@ -47,7 +47,7 @@ pub(super) fn refresh_regions(storage: &mut StellarMotionBuffers<'_>, catalog: S
     let before = times.inspect_memory(|| BufferShape::vector(storage.scratch, IndexDomain::Catalog));
     times.measure("Stellar scratch preparation", || {
         storage.scratch.clear();
-        storage.scratch.reserve(BATCH_SIZE);
+        storage.scratch.reserve(STELLAR_BATCH_SIZE);
     });
     times.record_shape(BufferId::StellarScratch, Operation::Reserve, before, || BufferShape::vector(storage.scratch, IndexDomain::Catalog));
 
@@ -57,8 +57,8 @@ pub(super) fn refresh_regions(storage: &mut StellarMotionBuffers<'_>, catalog: S
             let mut samples = times.measure("Region output allocation", || Vec::with_capacity(end - start));
             times.record_memory(times.last_memory_step(), || MemoryEvent::operation(BufferId::StellarSamples, Operation::Reserve, None,
                 Some(BufferShape::vector(&samples, IndexDomain::Catalog)), Some(end - start), None));
-            for batch_start in (start..end).step_by(BATCH_SIZE) {
-                let batch_end = (batch_start + BATCH_SIZE).min(end);
+            for batch_start in (start..end).step_by(STELLAR_BATCH_SIZE) {
+                let batch_end = (batch_start + STELLAR_BATCH_SIZE).min(end);
                 times.measure("Trajectory reads", || {
                     storage.scratch.clear();
                     for index in batch_start..batch_end {
@@ -89,5 +89,5 @@ pub(super) fn refresh_regions(storage: &mut StellarMotionBuffers<'_>, catalog: S
             times.record_store(BufferId::StellarSamples, outcome);
         }
     });
-    times.describe("Stellar batches", || format!("refreshed regions={}; newly simulated stars={simulated}; complete region ranges, including faint stars; batch limit={BATCH_SIZE}; fixed TTL={ttl} simulated seconds; no per-star validity qualification", storage.refresh_regions.len()));
+    times.describe("Stellar batches", || format!("refreshed regions={}; newly simulated stars={simulated}; complete region ranges, including faint stars; batch limit={STELLAR_BATCH_SIZE}; fixed TTL={ttl} simulated seconds; no per-star validity qualification", storage.refresh_regions.len()));
 }

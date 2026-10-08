@@ -107,7 +107,7 @@ pub(crate) enum Target { Trace(usize), Batch(usize) }
 #[path = "recording/enabled.rs"]
 mod enabled;
 #[cfg(feature = "memory-diagnostics")]
-pub use enabled::{RecordedMemoryEvent, MAX_MEMORY_EVENTS_PER_STEP};
+pub use enabled::RecordedMemoryEvent;
 #[cfg(feature = "memory-diagnostics")]
 pub(crate) use enabled::write_events;
 #[cfg(not(feature = "memory-diagnostics"))]

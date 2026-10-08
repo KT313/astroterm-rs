@@ -1,8 +1,9 @@
 //! Fixed catalog-epoch regions and conservative brightness selection. Motion beyond the fixed margin may be culled.
-use crate::model::{StarStorage, SkyRegion, QUANTIZATION_MARGIN};
+use crate::constants::{ABERRATION_MARGIN, CELL_COUNT, CONSTELLATION_REGION, GRID_DEPTH, QUANTIZATION_MARGIN, REFRACTION_MARGIN, SIMULATION_REGION_COUNT, STELLAR_DRIFT_MARGIN};
+use crate::model::{StarStorage, SkyRegion};
 use std::f64::consts::PI;
 use crate::model::{
-    ABERRATION_MARGIN, CELL_COUNT, CONSTELLATION_REGION, SIMULATION_REGION_COUNT, GRID_DEPTH, REFRACTION_MARGIN, STELLAR_DRIFT_MARGIN, SelectionStats, SkyGrid, SelectedRegion,
+    SelectionStats, SkyGrid, SelectedRegion,
 };
 const NUMERIC_SLACK: f64 = 1e-10;
 
@@ -25,7 +26,7 @@ pub(crate) fn build_grid(stars: &StarStorage, endpoints: &[usize]) -> SkyGrid {
     }
     SkyGrid {
         offsets: offsets.into(),
-        coarse_caps: crate::model::build_caps(4),
+        coarse_caps: crate::model::build_caps(crate::constants::GRID_COARSE_DEPTH),
         fine_caps: crate::model::build_caps(GRID_DEPTH),
     }
 }
@@ -78,7 +79,7 @@ pub(crate) fn select_region(
                 if !cap.intersects(center, radius) {
                     continue;
                 }
-                for child in parent * 16..(parent + 1) * 16 {
+                for child in parent * crate::constants::GRID_CHILDREN_PER_COARSE_CELL..(parent + 1) * crate::constants::GRID_CHILDREN_PER_COARSE_CELL {
                     if !fine || grid.fine_caps[child].intersects(center, radius) {
                         cells.push(child);
                     }
@@ -172,7 +173,7 @@ mod tests {
     fn caps_cover_vertices_edges_and_nested_children_including_face_seams() {
         for depth in [4, 6] {
             let caps = build_caps(depth);
-            let coarse = build_caps(4);
+            let coarse = build_caps(crate::constants::GRID_COARSE_DEPTH);
             let n = 1_usize << depth;
             for face in 0..6 {
                 for x in 0..n {

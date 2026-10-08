@@ -33,7 +33,7 @@ impl SkyCatalog {
         Self {
             stars: StarStorage::default(),
             star_exceptions: Vec::new(),
-            grid: SkyGrid::from_offsets(vec![0; crate::model::SIMULATION_REGION_COUNT + 1].into()),
+            grid: SkyGrid::from_offsets(vec![0; crate::constants::SIMULATION_REGION_COUNT + 1].into()),
             singular_count: 0,
             names: StarNames::default(),
             figures: Arc::new(ConstellationSet::default()),

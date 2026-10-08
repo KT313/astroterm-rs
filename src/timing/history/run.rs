@@ -1,17 +1,8 @@
 //! Bounded startup, latest-frame and partial-frame evidence for opt-in continuous diagnostics.
+use crate::constants::{MAX_AGGREGATE_PATHS, MAX_DETAIL_BYTES, MAX_TIMING_PATHS, MAX_TRACE_DEPTH, MAX_TRACE_DETAILS, MAX_TRACE_EVENTS, MAX_TRACE_INVENTORIES, MAX_TRACE_STEPS, MAX_TRACE_TEXT_BYTES};
 use super::{PipelineTrace, StepTimes};
 use std::io::{self, Write};
 
-/// Each retained segment has its own limits. Static labels are borrowed; descriptor strings are owned.
-pub const MAX_TRACE_STEPS: usize = 1024;
-pub const MAX_TRACE_DEPTH: usize = 32;
-pub const MAX_TRACE_EVENTS: usize = 8192;
-pub const MAX_TRACE_DETAILS: usize = 4096;
-pub const MAX_TRACE_TEXT_BYTES: usize = 256 * 1024;
-pub const MAX_DETAIL_BYTES: usize = 4096;
-pub const MAX_TRACE_INVENTORIES: usize = 1;
-pub const MAX_TIMING_PATHS: usize = 512;
-pub const MAX_AGGREGATE_PATHS: usize = 1024;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TraceBounds {
@@ -106,7 +97,7 @@ impl PipelineTrace {
         self.detail_count = 0;
         self.detail_bytes = 0;
         for step in &mut self.steps {
-            let keep = step.memory_events.len().min(super::memory::MAX_MEMORY_EVENTS_PER_STEP).min(MAX_TRACE_EVENTS - self.event_count);
+            let keep = step.memory_events.len().min(crate::constants::MAX_MEMORY_EVENTS_PER_STEP).min(MAX_TRACE_EVENTS - self.event_count);
             step.memory_omitted = step.memory_omitted.saturating_add(step.memory_events.len() - keep);
             step.memory_events.truncate(keep);
             step.memory_events.shrink_to_fit();
@@ -283,9 +274,9 @@ mod tests {
     fn event_caps_apply_per_step_and_segment_without_evaluating_denied_events() {
         let mut times = StepTimes::default();
         times.enable_memory_run(true);
-        for _ in 0..MAX_TRACE_EVENTS / super::super::memory::MAX_MEMORY_EVENTS_PER_STEP {
+        for _ in 0..MAX_TRACE_EVENTS / crate::constants::MAX_MEMORY_EVENTS_PER_STEP {
             times.measure("Data", || ());
-            for _ in 0..super::super::memory::MAX_MEMORY_EVENTS_PER_STEP { times.record_memory(times.last_memory_step(), event); }
+            for _ in 0..crate::constants::MAX_MEMORY_EVENTS_PER_STEP { times.record_memory(times.last_memory_step(), event); }
             times.record_memory(times.last_memory_step(), || panic!("per-step cap"));
         }
         times.measure("No more events", || ());

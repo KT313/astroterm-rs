@@ -1,5 +1,6 @@
 //! Placing the canvases on the screen and writing them to the terminal.
 
+use crate::constants::DEFAULT_CELL_ASPECT_RATIO;
 use std::io::{self, IsTerminal, Write};
 
 use crossterm::cursor::MoveTo;
@@ -10,8 +11,6 @@ use unicode_width::UnicodeWidthChar;
 
 use crate::canvas::{Canvas, Color};
 
-/// Cell aspect ratio assumed when it can't be detected.
-const DEFAULT_CELL_ASPECT_RATIO: f64 = 2.0;
 
 use crate::model::TerminalViewport as Viewport;
 

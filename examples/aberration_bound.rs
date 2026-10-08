@@ -24,7 +24,7 @@ fn main() {
         count + 1,
         maximum.0.to_degrees() * 3600.0,
         maximum.1,
-        astroterm::model::ABERRATION_MARGIN.to_degrees() * 3600.0
+        astroterm::constants::ABERRATION_MARGIN.to_degrees() * 3600.0
     );
-    assert!(maximum.0 < astroterm::model::ABERRATION_MARGIN);
+    assert!(maximum.0 < astroterm::constants::ABERRATION_MARGIN);
 }

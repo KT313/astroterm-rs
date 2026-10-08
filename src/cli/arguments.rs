@@ -29,7 +29,7 @@ pub struct Arguments {
 
     /// Raster text scale relative to terminal cells [0.25–4], for Sixel/Kitty/iTerm2 only. 1 restores the
     /// terminal-cell-sized layout; characters and native half-block text are unaffected.
-    #[arg(long, default_value_t = 0.85, value_name = "factor", allow_negative_numbers = true)]
+    #[arg(long, default_value_t = crate::constants::DEFAULT_PIXEL_TEXT_SCALE, value_name = "factor", allow_negative_numbers = true)]
     pub text_scale: f64,
 
     /// Observer latitude [-90°, 90°] (default: 0.0)
@@ -65,7 +65,7 @@ pub struct Arguments {
         long,
         value_name = "float",
         allow_negative_numbers = true,
-        default_value_t = 5.0,
+        default_value_t = crate::constants::DEFAULT_MAGNITUDE_THRESHOLD,
         hide_default_value = true
     )]
     pub threshold: f32,
@@ -76,7 +76,7 @@ pub struct Arguments {
         long = "label-thresh",
         value_name = "float",
         allow_negative_numbers = true,
-        default_value_t = 0.25,
+        default_value_t = crate::constants::DEFAULT_LABEL_THRESHOLD,
         hide_default_value = true
     )]
     pub label_threshold: f32,
@@ -91,7 +91,7 @@ pub struct Arguments {
         long,
         value_name = "float",
         allow_negative_numbers = true,
-        default_value_t = 1.0,
+        default_value_t = crate::constants::DEFAULT_SIMULATION_SPEED,
         hide_default_value = true
     )]
     pub speed: f64,

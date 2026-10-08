@@ -1,20 +1,10 @@
 //! Interactive controls and their effect on the view and the simulation clock. Which keys or other input trigger
 //! them is up to the backend (see `terminal::keys`).
 
+use crate::constants::{MAX_INTERACTIVE_SPEED, PAN_STEP_FRACTION, SPEED_FACTOR, ZOOM_FACTOR};
 use crate::astro::SimulationClock;
 use crate::model::View;
 
-/// Fraction of the field of view that one pan step turns the view.
-const PAN_STEP_FRACTION: f64 = 1.0 / 20.0;
-
-/// Field of view change of one zoom step.
-const ZOOM_FACTOR: f64 = 1.25;
-
-/// Speed change of one speed step.
-const SPEED_FACTOR: f64 = 10.0;
-
-/// Interactive speed changes saturate here, preventing overflow after repeated key presses.
-pub const MAX_INTERACTIVE_SPEED: f64 = 1e12;
 
 /// An action the user can trigger while the sky is shown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

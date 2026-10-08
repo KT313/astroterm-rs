@@ -103,7 +103,7 @@ pub fn fit_pixel_terminal(state: &mut PixelState, session: &mut TerminalSession)
         .viewport
         .width
         .checked_mul(state.viewport.height)
-        .is_none_or(|size| size > 16_777_216)
+        .is_none_or(|size| size > crate::constants::MAX_IMAGE_PIXELS)
     {
         return Err(io::Error::other("terminal image exceeds 16 megapixels"));
     }

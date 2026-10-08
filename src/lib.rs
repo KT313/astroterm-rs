@@ -22,6 +22,8 @@
 //! Earth is the only production anchor. Common f64 states use equatorial J2000 axes, AU and AU/day, with
 //! a barycentric origin. [`sky`] documents the observer site and apparent-place corrections.
 
+/// Tunable defaults, resource limits and cache durations; independent of all application layers.
+pub mod constants;
 pub mod astro;
 pub mod cache;
 pub mod canvas;

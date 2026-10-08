@@ -5,7 +5,7 @@
 //! are one unnamed column each, or one per tuple element. Types are named by `std::any::type_name` and shortened
 //! for display by `short_type_name`.
 mod formatting;
-pub use formatting::{Preview, CellWriter, preview, preview_text, preview_chars, MAX_CELL_CHARS, MAX_NESTED_ITEMS, MAX_PREVIEW_DEPTH};
+pub use formatting::{Preview, CellWriter, preview, preview_text, preview_chars};
 pub(crate) use formatting::debug_preview;
 use std::fmt::Debug;
 
@@ -51,7 +51,7 @@ macro_rules! row_columns {
         impl$(<$($generic: ::std::fmt::Debug + $crate::rows::Preview),+>)? $crate::rows::Preview for $type$(<$($generic),+>)? {
             fn write_preview(&self, out: &mut $crate::rows::CellWriter, depth: usize) -> ::std::fmt::Result {
                 use ::std::fmt::Write;
-                if depth >= $crate::rows::MAX_PREVIEW_DEPTH { return out.write_str(concat!(stringify!($type), " { … }")); }
+                if depth >= $crate::constants::MAX_PREVIEW_DEPTH { return out.write_str(concat!(stringify!($type), " { … }")); }
                 out.write_str(concat!(stringify!($type), " { "))?;
                 let Self { $($field),+ $($rest)* } = self;
                 let mut separator = "";

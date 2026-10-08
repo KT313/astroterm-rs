@@ -1,5 +1,6 @@
 //! Drawing stars, constellation figures, planets and the Moon.
 
+use crate::constants::DYNAMIC_NAME_COUNT;
 use std::borrow::Cow;
 
 use crate::canvas::{Canvas, draw_line_braille};
@@ -10,8 +11,6 @@ use super::appearance::{format_star_label, select_moon_appearance, select_planet
 use crate::model::RenderOptions;
 use super::draw_line;
 
-/// With dynamic names, the brightest stars in view are named until at least this many objects in view have labels.
-const DYNAMIC_NAME_COUNT: usize = 5;
 
 /// Draw the stars bright enough for the threshold, dimmest first. Named stars brighter than the label threshold get
 /// labels, and with dynamic names also the brightest stars in view when few objects in view have labels.

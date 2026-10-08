@@ -1,8 +1,6 @@
 //! Aggregate flat batch passes while preserving their existing event and timing boundaries.
 use super::StepTimes;
 #[cfg(feature = "memory-diagnostics")]
-use super::run;
-#[cfg(feature = "memory-diagnostics")]
 use std::time::Instant;
 
 impl StepTimes {
@@ -24,7 +22,7 @@ impl StepTimes {
             #[cfg(feature = "memory-diagnostics")]
             if self.memory_enabled && let Some(index) = index {
                 let start = Instant::now();
-                let available = if self.memory_bounded { run::MAX_TRACE_EVENTS.saturating_sub(self.trace.as_ref().unwrap().event_count) } else { usize::MAX };
+                let available = if self.memory_bounded { crate::constants::MAX_TRACE_EVENTS.saturating_sub(self.trace.as_ref().unwrap().event_count) } else { usize::MAX };
                 let destination = &mut self.trace.as_mut().unwrap().steps[index];
                 destination.memory_events = record.memory_events.iter().take(available).cloned().collect();
                 destination.memory_omitted = record.memory_events.iter().skip(available).fold(record.memory_omitted, |sum, event| sum.saturating_add(usize::try_from(event.calls).unwrap_or(usize::MAX)));

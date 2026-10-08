@@ -1,9 +1,10 @@
 //! Small synthetic contracts for complete regional samples, independent ages and exclusive endpoints.
+use crate::constants::{CONSTELLATION_REGION, GRID_DEPTH, SIMULATION_REGION_COUNT, STELLAR_REGION_TTL_SECONDS};
 use std::sync::Arc;
 use crate::{astro::{J2000, Matrix3, Observer, Vector3, models::{BodyState, stars::years_since_j2000}},
-    cache::{CacheConfig, Group, GroupPolicy, RefreshReason, STELLAR_REGION_TTL_SECONDS},
+    cache::{CacheConfig, Group, GroupPolicy, RefreshReason},
     catalog::{Catalog, ConstellationFigure, SpaceMotion, StarId},
-    model::{SkyCatalog, FrameTime, SkyRegion, CONSTELLATION_REGION, SIMULATION_REGION_COUNT, GRID_DEPTH, hash_direction},
+    model::{SkyCatalog, FrameTime, SkyRegion, hash_direction},
     state::{StellarSimulationState, StarSelectionCache}, sky, timing::StepTimes};
 
 fn catalog() -> Arc<SkyCatalog> {

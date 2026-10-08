@@ -1,9 +1,7 @@
 //! Bounded cell formatting. Collections stop before visiting hidden elements; strings stop before escaping text.
+use crate::constants::{MAX_CELL_CHARS, MAX_NESTED_ITEMS, MAX_PREVIEW_DEPTH};
 use std::fmt::{self, Write};
 
-pub const MAX_CELL_CHARS: usize = 160;
-pub const MAX_NESTED_ITEMS: usize = 4;
-pub const MAX_PREVIEW_DEPTH: usize = 3;
 
 /// Types explicitly supported by table previews. No blanket Debug implementation expands arbitrary containers.
 pub trait Preview {

@@ -1,15 +1,11 @@
 //! Camera settings and projected records; algorithms live in projection.
+use crate::constants::DEFAULT_FOV_DEGREES;
 use crate::rows::row_columns;
 use crate::astro::{Horizontal, Vector3};
 use std::f64::consts::{PI, FRAC_PI_2};
 use crate::model::{ObservedStarView, PlanetKind};
 use crate::catalog::{StarNames, StarId};
 
-/// Field of view that maps exactly onto the unit circle without scaling.
-pub(crate) const DEFAULT_FOV_DEGREES: f64 = 180.0;
-
-/// Smallest field of view that zooming in reaches.
-pub(crate) const MIN_FOV_DEGREES: f64 = 1.0;
 
 /// Where the center of the view points.
 #[derive(Clone, Copy, Debug, PartialEq)]

@@ -23,17 +23,13 @@ mod reporting;
 pub use trace::{PipelineTrace, TraceStep};
 pub use memory::{Access, BufferId, BufferShape, IndexDomain, MemoryEvent, MemoryStepId, Operation};
 #[cfg(feature = "memory-diagnostics")]
-pub use memory::{RecordedMemoryEvent, MAX_MEMORY_EVENTS_PER_STEP};
+pub use memory::RecordedMemoryEvent;
 #[cfg(feature = "memory-diagnostics")]
-pub use run::{MemoryFrame, MemoryRun, StepAggregate, TraceBounds, MAX_TRACE_STEPS, MAX_TRACE_DEPTH,
-    MAX_TRACE_EVENTS, MAX_TRACE_DETAILS, MAX_TRACE_TEXT_BYTES, MAX_DETAIL_BYTES, MAX_TRACE_INVENTORIES,
-    MAX_TIMING_PATHS, MAX_AGGREGATE_PATHS};
+pub use run::{MemoryFrame, MemoryRun, StepAggregate, TraceBounds};
 pub(crate) use formatting::format_bytes;
 #[cfg(feature = "memory-diagnostics")]
 pub(crate) use formatting::format_count;
 
-/// Weight of the previous average in the exponential moving average; the newest frame gets the rest.
-const EMA_FACTOR: f64 = 0.95;
 
 /// The smoothed duration of one step.
 #[derive(Clone, Copy, Debug, PartialEq)]

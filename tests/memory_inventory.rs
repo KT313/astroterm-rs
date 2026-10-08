@@ -1,11 +1,11 @@
 //! Inventories use live typed containers without changing computation or cache state.
+use astroterm::constants::{INVENTORY_DETAIL_CHILDREN, INVENTORY_MAX_CHILDREN, INVENTORY_MAX_DEPTH, INVENTORY_MAX_ROWS};
 use std::{collections::HashMap, mem::size_of, sync::Arc};
 use astroterm::cache::{
     Cache, CacheConfig, BufferSink, InventorySnapshot, Kind, Owner, Quality, ReportBuffers, report_field,
 };
 use astroterm::state::{
-    ApplicationState, Caches, collect_inventory, write_inventory, MAX_ROWS, MAX_DEPTH, MAX_CHILDREN,
-};
+    ApplicationState, Caches, collect_inventory, write_inventory, };
 use astroterm::cli::Arguments;
 use astroterm::cli::build_config;
 use clap::Parser;
@@ -95,11 +95,11 @@ fn bounded_nested_inspection_and_unknown_sizes_are_explicit() {
         fn report_buffers(&self, sink: &mut dyn BufferSink) { report_field(sink, "child", &self.0); }
     }
     let mut node = Node(None);
-    for _ in 0..MAX_DEPTH * 2 { node = Node(Some(Box::new(node))); }
+    for _ in 0..INVENTORY_MAX_DEPTH * 2 { node = Node(Some(Box::new(node))); }
     assert!(collect_inventory("deep", &node).omitted_nodes > 0);
-    let nested = vec![vec![String::from("payload"); MAX_CHILDREN + 1]; MAX_CHILDREN + 1];
+    let nested = vec![vec![String::from("payload"); INVENTORY_MAX_CHILDREN + 1]; INVENTORY_MAX_CHILDREN + 1];
     let report = collect_inventory("large", &nested);
-    assert!(report.rows.len() <= MAX_ROWS);
+    assert!(report.rows.len() <= INVENTORY_MAX_ROWS);
     assert!(report.omitted_nodes > 0);
     let opaque = collect_inventory("unknown", &Opaque);
     assert!(opaque.rows.iter().any(|r| r.kind == Kind::Unknown && r.reserved.is_none()));
@@ -180,7 +180,7 @@ fn snapshot_callbacks_are_lazy_and_history_is_limited_to_two() {
 
 #[test]
 fn nested_children_are_grouped_without_losing_inspected_payloads() {
-    use astroterm::state::{DETAIL_CHILDREN, sum_known_payload};
+    use astroterm::state::sum_known_payload;
     let values: Vec<Vec<u8>> = (0..88).map(|i| vec![7; i + 1]).collect();
     let snapshot = collect_inventory("figures", &values);
     let total = sum_known_payload(&snapshot, Owner::Application);
@@ -189,13 +189,13 @@ fn nested_children_are_grouped_without_losing_inspected_payloads() {
     assert_eq!(total.unknown_records, 0);
     assert_eq!(snapshot.omitted_nodes, 0);
     let grouped = snapshot.rows.iter().find(|r| r.kind == Kind::Heap && r.path.ends_with("[*]")).unwrap();
-    assert_eq!(grouped.grouped_rows, 88 - DETAIL_CHILDREN);
+    assert_eq!(grouped.grouped_rows, 88 - INVENTORY_DETAIL_CHILDREN);
     assert!(snapshot.rows.len() < 20);
-    let large: Vec<Vec<u8>> = (0..MAX_CHILDREN + 10).map(|_| vec![0; 3]).collect();
+    let large: Vec<Vec<u8>> = (0..INVENTORY_MAX_CHILDREN + 10).map(|_| vec![0; 3]).collect();
     let partial = collect_inventory("bounded", &large);
     assert!(partial.omitted_nodes >= 10);
     assert_eq!(sum_known_payload(&partial, Owner::Application).used,
-        Some(large.len() * size_of::<Vec<u8>>() + MAX_CHILDREN * 3)); // no extrapolation of uninspected children
+        Some(large.len() * size_of::<Vec<u8>>() + INVENTORY_MAX_CHILDREN * 3)); // no extrapolation of uninspected children
 }
 
 #[test]

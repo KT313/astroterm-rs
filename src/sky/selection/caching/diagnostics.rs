@@ -4,7 +4,7 @@ pub(in crate::sky::selection) fn describe_selection(storage: &StarSelectionCache
     times.measure_diagnostics(|times| {
         let total = catalog.stars.len();
         let (cells, regional) = crate::sky::count_region_stars(&catalog.grid, storage.region.value(), total);
-        times.describe("Region filtering", || format!("input stars={total}; selected spatial cells={cells}/{}; constellation region requested=true; retained by catalog region={regional}; rejected region={}; brute-force={}", crate::model::CELL_COUNT, total - regional, storage.candidates.value().1.brute_force));
+        times.describe("Region filtering", || format!("input stars={total}; selected spatial cells={cells}/{}; constellation region requested=true; retained by catalog region={regional}; rejected region={}; brute-force={}", crate::constants::CELL_COUNT, total - regional, storage.candidates.value().1.brute_force));
         times.describe("Brightness bounds", || format!("input regional stars={regional}; rejected interval magnitude bound > {threshold}={}; output candidates={}; brute-force bypass={}", regional - storage.candidates.value().0.len(), storage.candidates.value().0.len(), storage.candidates.value().1.brute_force));
         times.describe("Candidate validation", || {
             let candidates = &storage.candidates.value().0;

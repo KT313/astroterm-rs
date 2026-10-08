@@ -1,5 +1,6 @@
 //! Antialiased monochrome font masks blended into an opaque RGBA frame. The bundled font keeps rendering
 //! independent of installed fonts; unsupported characters use its visible replacement glyph.
+use crate::constants::MAX_CACHED_GLYPHS;
 use fontdue::{Font, FontSettings};
 use image::RgbaImage;
 use std::collections::HashMap;
@@ -13,7 +14,6 @@ use unicode_width::UnicodeWidthChar;
 # [cfg (feature = "memory-diagnostics")] use crate::timing::Operation;
 
 const FONT: &[u8] = include_bytes!("../../../data/fonts/DejaVuSansMono.ttf");
-const MAX_CACHED_GLYPHS: usize = 512;
 
 use crate::model::Glyph;
 

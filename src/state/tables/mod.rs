@@ -13,6 +13,7 @@
 //! Rule: a concrete type implements `Table` or `Tables`, never both, so the pass-through impls (`Option`, `Box`,
 //! `&T`, `Arc`) stay unambiguous. Leaf impls for foreign and model types live in `leaves.rs`, owner listings in
 //! `owners.rs`.
+use crate::constants::TABLE_PREVIEW_EDGE_ROWS;
 mod leaves;
 mod log;
 mod labels;
@@ -34,10 +35,9 @@ impl TableBytes {
     }
 }
 
-pub const EDGE_ROWS: usize = 10;
 /// Source indices of the non-overlapping first and last rows.
 pub(crate) fn preview_indices(count: usize) -> impl Iterator<Item = usize> {
-    (0..count.min(EDGE_ROWS)).chain(count.min(EDGE_ROWS).max(count.saturating_sub(EDGE_ROWS))..count)
+    (0..count.min(TABLE_PREVIEW_EDGE_ROWS)).chain(count.min(TABLE_PREVIEW_EDGE_ROWS).max(count.saturating_sub(TABLE_PREVIEW_EDGE_ROWS))..count)
 }
 
 /// One original table. Previewing borrows its owner; only the selected rows are formatted.

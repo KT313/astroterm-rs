@@ -59,8 +59,8 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
 
     // frame rate and view
     let default_fps = match arguments.renderer {
-        crate::model::RendererKind::Chars => 24,
-        crate::model::RendererKind::Pixels => 12,
+        crate::model::RendererKind::Chars => crate::constants::DEFAULT_CHARACTER_FPS,
+        crate::model::RendererKind::Pixels => crate::constants::DEFAULT_PIXEL_FPS,
     };
     let fps = u32::try_from(arguments.fps.unwrap_or(default_fps))
         .ok()

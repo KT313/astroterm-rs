@@ -12,7 +12,7 @@ pub use projection::{
 pub use rendering::{RenderOptions, TerminalViewport, Frame, Appearance};
 pub use metadata::{ObserverTimeZone, MetadataField};
 pub(crate) use projection::{
-    DEFAULT_FOV_DEGREES, MIN_FOV_DEGREES, DrawRecord, StarKey, BodyKey as ProjectionBodyKey, ConstellationKey,
+    DrawRecord, StarKey, BodyKey as ProjectionBodyKey, ConstellationKey,
     HorizonGeometry,
 };
 pub(crate) use rendering::{SceneKey, PixelStarKey, CharacterStarKey, StarKeys, Glyph};

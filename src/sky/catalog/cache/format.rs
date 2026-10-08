@@ -1,6 +1,7 @@
 //! Prepared-catalog cache schema, fingerprints and semantic checks. I/O lives here above the pure models;
 //! prepared arrays are decoded into owned memory before publication.
-use crate::model::{SkyCatalog, PreparedCatalog, CatalogPreparation, CELL_COUNT, CONSTELLATION_REGION, SIMULATION_REGION_COUNT, SkyGrid, Constellation, StarStorage, STAR_SECTIONS};
+use crate::constants::{CELL_COUNT, CONSTELLATION_REGION, SIMULATION_REGION_COUNT};
+use crate::model::{SkyCatalog, PreparedCatalog, CatalogPreparation, SkyGrid, Constellation, StarStorage, STAR_SECTIONS};
 use super::super::grid::stored_cell;
 use crate::catalog::{
     StarNames,
@@ -37,13 +38,14 @@ pub fn catalog_fingerprint() -> [u8; 32] {
         crate::astro::COMPUTATIONAL_INTERVAL.start_tt,
         crate::astro::COMPUTATIONAL_INTERVAL.end_tt,
         crate::astro::JULIAN_YEAR_DAYS,
-        crate::astro::models::stars::SINGULAR_RATIO,
-        crate::model::STELLAR_DRIFT_MARGIN,
-        crate::model::QUANTIZATION_MARGIN,
+        crate::constants::SINGULAR_RATIO,
+        crate::constants::STELLAR_DRIFT_MARGIN,
+        crate::constants::QUANTIZATION_MARGIN,
+        crate::constants::MAX_DIRECTION_ERROR,
     ] {
         hash.update(value.to_le_bytes());
     }
-    hash.update([crate::model::GRID_DEPTH]);
+    hash.update([crate::constants::GRID_DEPTH]);
     for source in [
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/catalog/athyg.rs")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/catalog/magnitude.rs")).as_slice(),

@@ -1,8 +1,9 @@
 //! Human-readable views of captured inventory records. No live application data is accessed here.
+use crate::constants::{INVENTORY_DETAIL_CHILDREN, INVENTORY_MAX_CHILDREN, INVENTORY_MAX_DEPTH, INVENTORY_MAX_ROWS, INVENTORY_MAX_VISITS};
 use std::io::{self, Write};
 use crate::timing::{format_bytes, format_count};
 use crate::cache::{BufferDescriptor, InventorySnapshot, Kind, Owner, Quality};
-use super::{sum_known_payload, sum_payload, MAX_ROWS, MAX_DEPTH, MAX_CHILDREN, DETAIL_CHILDREN, MAX_VISITS};
+use super::{sum_known_payload, sum_payload};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Group { Catalog, Simulation, Selection, Observer, Observation, Projection, Rendering, Configuration, Diagnostics, External, Other }
@@ -88,7 +89,7 @@ fn write_inventory_header(snapshot: &InventorySnapshot, output: &mut impl Write)
     writeln!(output, "\nMemory inventory: {} (captured before terminal cleanup; TT Julian date={tt})", snapshot.label)?;
     writeln!(output, "Payload only: reserved includes used; do not add them. Shared allocations and mapped files count once per snapshot. Mapping length is not RSS. Aliases/borrowed rows add no owned payload.")?;
     writeln!(output, "Group subtotals partition the same owner totals below; do not add both. Shared payload belongs to the first inspected path; later paths are references, not another allocation.")?;
-    writeln!(output, "Root inline: {}. Inspection limits: {MAX_ROWS} rows, {MAX_DEPTH} levels, {MAX_CHILDREN} nested entries per container, {MAX_VISITS} visits; omitted nodes={}", format_bytes(Some(snapshot.root_inline)), snapshot.omitted_nodes)?;
+    writeln!(output, "Root inline: {}. Inspection limits: {INVENTORY_MAX_ROWS} rows, {INVENTORY_MAX_DEPTH} levels, {INVENTORY_MAX_CHILDREN} nested entries per container, {INVENTORY_MAX_VISITS} visits; omitted nodes={}", format_bytes(Some(snapshot.root_inline)), snapshot.omitted_nodes)?;
     let partial = snapshot.rows.iter().filter(|r| r.quality != Quality::ExactPayload).fold(0_usize, |n, row| n.saturating_add(row.grouped_rows));
     writeln!(output, "Payload coverage: {}; estimated/unknown records={partial}. Unknown contributions do not erase known amounts; omitted children are not extrapolated.", if partial > 0 || snapshot.omitted_nodes > 0 { "partial" } else { "known payload only (allocator/OS overhead excluded)" })?;
     Ok(())
@@ -106,7 +107,7 @@ fn write_inventory_notes(snapshot: &InventorySnapshot, output: &mut impl Write) 
     writeln!(output, "Mapped logical bytes: {}. Collector retained payload: {}; temporary scratch: {}; capture: {:.3} ms", format_bytes(sum_mappings(snapshot.rows.iter())), format_bytes(snapshot.collector_retained_bytes), format_bytes(snapshot.collector_temporary_bytes), snapshot.capture_seconds * 1000.0)?;
     writeln!(output, "Collector figures describe this capture; diagnostic rows describe history already retained when captured. They overlap and must not be summed blindly. Report formatting/output happen later and are excluded from capture time.")?;
     writeln!(output, "Retained scratch may have len=0 and nonzero capacity after clear. Pixel image/ratatui results remain inspectable but are rebuilt per frame; state ownership does not promise allocation reuse.")?;
-    writeln!(output, "sample[n] labels are snapshot-local ordinals. [*] sums inspected children after the first {DETAIL_CHILDREN} examples. Small local buffers, allocator metadata and opaque library internals remain partial.")?;
+    writeln!(output, "sample[n] labels are snapshot-local ordinals. [*] sums inspected children after the first {INVENTORY_DETAIL_CHILDREN} examples. Small local buffers, allocator metadata and opaque library internals remain partial.")?;
     Ok(())
 }
 

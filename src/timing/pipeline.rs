@@ -1,8 +1,6 @@
 //! Run timed steps in execution order; detailed recording and retention live in private helpers.
 use super::{StepTime, StepTimes};
 use std::time::Instant;
-#[cfg(feature = "memory-diagnostics")]
-use super::run;
 
 #[cfg(feature = "memory-diagnostics")]
 use super::{MemoryFrame, MemoryRun, PipelineTrace};
@@ -57,7 +55,7 @@ impl StepTimes {
         self.register_step(name); // reserve the parent before its children, so the panel reads in pipeline order
         let start = Instant::now();
         #[cfg(feature = "memory-diagnostics")]
-        let retain_parent = !self.memory_bounded || self.parents.len() < run::MAX_TRACE_DEPTH; // trace suppression does not bound this separate parent-path stack
+        let retain_parent = !self.memory_bounded || self.parents.len() < crate::constants::MAX_TRACE_DEPTH; // trace suppression does not bound this separate parent-path stack
         #[cfg(not(feature = "memory-diagnostics"))]
         let retain_parent = true;
         if retain_parent { self.parents.push(name); }

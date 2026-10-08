@@ -1,5 +1,7 @@
 //! Time, sampling and error records independent of simulation storage.
 use crate::rows::row_columns;
+use crate::constants::{PLANETARY_SAMPLE_TTL_SECONDS, LUNAR_SAMPLE_TTL_SECONDS, ORIENTATION_SAMPLE_TTL_SECONDS,
+    PLANET_POSITION_ERROR_AU, PLANET_VELOCITY_ERROR_AU_DAY, MOON_POSITION_ERROR_AU, MOON_VELOCITY_ERROR_AU_DAY, ORIENTATION_ERROR_ARCSECONDS};
 use crate::astro::{COMPUTATIONAL_INTERVAL, models::BodyId};
 use std::fmt;
 
@@ -57,19 +59,19 @@ pub struct InterpolationLimits {
     pub orientation_arcseconds: f64,
 }
 pub const PLANET_LIMITS: InterpolationLimits = InterpolationLimits {
-    position_au: 3e-8,
-    velocity_au_day: 5e-5,
+    position_au: PLANET_POSITION_ERROR_AU,
+    velocity_au_day: PLANET_VELOCITY_ERROR_AU_DAY,
     orientation_arcseconds: 0.0,
 };
 pub const MOON_LIMITS: InterpolationLimits = InterpolationLimits {
-    position_au: 1e-9,
-    velocity_au_day: 1e-6,
+    position_au: MOON_POSITION_ERROR_AU,
+    velocity_au_day: MOON_VELOCITY_ERROR_AU_DAY,
     orientation_arcseconds: 0.0,
 };
 pub const ORIENTATION_LIMITS: InterpolationLimits = InterpolationLimits {
     position_au: 0.0,
     velocity_au_day: 0.0,
-    orientation_arcseconds: 0.2,
+    orientation_arcseconds: ORIENTATION_ERROR_ARCSECONDS,
 };
 
 /// Sampled interpolation policy, days either side of the sample. Outside the computational interval only an exact
@@ -83,9 +85,9 @@ pub struct CachePolicy {
 impl Default for CachePolicy {
     fn default() -> Self {
         Self {
-            planets_days: 30.0 / 86400.0,
-            moon_days: 12.0 / 86400.0,
-            orientation_days: 60.0 / 86400.0,
+            planets_days: PLANETARY_SAMPLE_TTL_SECONDS / 86400.0,
+            moon_days: LUNAR_SAMPLE_TTL_SECONDS / 86400.0,
+            orientation_days: ORIENTATION_SAMPLE_TTL_SECONDS / 86400.0,
         }
     }
 }

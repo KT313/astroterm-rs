@@ -30,7 +30,7 @@ pub(super) fn validate_frame_size(screen: Rect, font: FontSize) -> io::Result<(u
         u32::from(screen.width) * u32::from(font.width),
         u32::from(screen.height) * u32::from(font.height),
     );
-    if width == 0 || height == 0 || u64::from(width) * u64::from(height) > 16_777_216 {
+    if width == 0 || height == 0 || u64::from(width) * u64::from(height) > crate::constants::MAX_IMAGE_PIXELS as u64 {
         return Err(io::Error::other(
             "terminal image exceeds 16 megapixels or has zero size",
         ));

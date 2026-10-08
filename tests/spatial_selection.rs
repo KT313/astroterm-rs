@@ -1,7 +1,8 @@
 //! Spatial and brightness selection against an independent full scan of the same immutable stored trajectories.
 //! Region equality is qualified only for motion within the fixed padding. All-sky/fallback cases cover every star;
 //! a separate regression explicitly records the temporary loss of large-drift coverage in narrow views.
-use astroterm::state::{SimulationState};
+use astroterm::constants::{CELL_COUNT, GRID_DEPTH};
+use astroterm::state::SimulationState;
 use astroterm::astro::{COMPUTATIONAL_INTERVAL, J2000, JULIAN_YEAR_DAYS, Observer, Vector3, refract_direction};
 use astroterm::canvas::Canvas;
 use astroterm::catalog::{CatalogStar, SpaceMotion, StarId, load_embedded_catalog};
@@ -131,7 +132,7 @@ fn compare_prepared(
         let covered: Vec<_> = full.catalog.stars.iter().map(|star| {
             let direction = star.motion.evaluate(years, star.magnitude).direction;
             let initial = star.motion.u0;
-            initial.cross(direction).length().atan2(initial.dot(direction)) <= astroterm::model::STELLAR_DRIFT_MARGIN
+            initial.cross(direction).length().atan2(initial.dot(direction)) <= astroterm::constants::STELLAR_DRIFT_MARGIN
         }).collect();
         for star in selected.stars.iter_mut().chain(full.stars.iter_mut()) {
             star.drawable &= covered[star.source_index];
@@ -400,7 +401,7 @@ fn seam_threshold_horizon_and_view_edge_cases_are_not_culled() {
 #[test]
 fn fast_stars_use_ordinary_regions_and_large_drift_has_no_special_selection() {
     use astroterm::astro::Matrix3;
-    use astroterm::model::{CELL_COUNT, GRID_DEPTH, SkyRegion, hash_direction};
+    use astroterm::model::{SkyRegion, hash_direction};
     let mut source = load_embedded_catalog().unwrap();
     let mut fast = source.stars[0].clone();
     fast.has_data = true;
@@ -423,7 +424,7 @@ fn fast_stars_use_ordinary_regions_and_large_drift_has_no_special_selection() {
     assert_eq!(catalog.grid.offsets[CELL_COUNT], 2); // no tail remains outside the region boundaries
     let index = catalog.stars.iter().position(|star| star.id == StarId(1)).unwrap();
     let motion = catalog.stars.motion(index);
-    assert!(motion.motion_bound() > astroterm::model::STELLAR_DRIFT_MARGIN);
+    assert!(motion.motion_bound() > astroterm::constants::STELLAR_DRIFT_MARGIN);
     let cell = hash_direction(GRID_DEPTH, motion.u0);
     assert_eq!(catalog.grid.offsets[cell + 1] - catalog.grid.offsets[cell], 2); // speed does not change region assignment
 

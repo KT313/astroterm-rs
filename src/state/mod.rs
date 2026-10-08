@@ -22,6 +22,5 @@ pub use rendering::{RenderingState, CompressionSupport, CharacterState, PixelSta
 pub use tables::{Table, TableBytes, TableVisitor, Tables};
 #[cfg(feature = "memory-diagnostics")]
 pub use memory::{
-    InventoryCollector, KnownPayload, MAX_ROWS, MAX_DEPTH, MAX_CHILDREN, DETAIL_CHILDREN, MAX_VISITS,
-    collect_inventory, capture_run_inventory, sum_known_payload, write_inventory,
+    InventoryCollector, KnownPayload, collect_inventory, capture_run_inventory, sum_known_payload, write_inventory,
 };

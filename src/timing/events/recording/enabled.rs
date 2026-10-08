@@ -1,4 +1,5 @@
 //! Feature-enabled event storage and diagnostic-time accounting.
+use crate::constants::MAX_MEMORY_EVENTS_PER_STEP;
 use super::{Access, BufferShape, MemoryEvent, MemoryStepId, Operation, StepTimes, Target};
 use crate::timing::{format_bytes as bytes, format_count as count};
 use std::{io::{self, Write}, time::Instant};
@@ -24,7 +25,6 @@ impl RecordedMemoryEvent {
     }
 }
 
-pub const MAX_MEMORY_EVENTS_PER_STEP: usize = 128;
 
 pub(crate) fn append_event(events: &mut Vec<RecordedMemoryEvent>, omitted: &mut usize, event: MemoryEvent, aggregate: bool) {
     if aggregate && let Some(record) = events.iter_mut().find(|record| record.event.same_kind(event)) {
@@ -71,7 +71,7 @@ impl StepTimes {
         if !valid { return; }
         if let Target::Trace(i) = id.0 {
             let trace = self.trace.as_mut().unwrap();
-            if self.memory_bounded && (trace.event_count >= crate::timing::MAX_TRACE_EVENTS || trace.steps[i].memory_events.len() >= MAX_MEMORY_EVENTS_PER_STEP) {
+            if self.memory_bounded && (trace.event_count >= crate::constants::MAX_TRACE_EVENTS || trace.steps[i].memory_events.len() >= MAX_MEMORY_EVENTS_PER_STEP) {
                 trace.steps[i].memory_omitted = trace.steps[i].memory_omitted.saturating_add(1);
                 return;
             }
@@ -89,7 +89,7 @@ impl StepTimes {
             Target::Batch(i) => {
                 let record = &mut self.records[i];
                 let existing = record.memory_events.iter().any(|record| record.event.same_kind(event));
-                if self.memory_bounded && self.memory_batch_events >= crate::timing::MAX_TRACE_EVENTS && !existing {
+                if self.memory_bounded && self.memory_batch_events >= crate::constants::MAX_TRACE_EVENTS && !existing {
                     record.memory_omitted = record.memory_omitted.saturating_add(1);
                 } else {
                     let before = record.memory_events.len();

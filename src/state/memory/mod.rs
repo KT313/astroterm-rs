@@ -2,7 +2,7 @@
 mod collection;
 mod report;
 
-pub use collection::{InventoryCollector, KnownPayload, MAX_ROWS, MAX_DEPTH, MAX_CHILDREN, DETAIL_CHILDREN, MAX_VISITS, sum_known_payload};
+pub use collection::{InventoryCollector, KnownPayload, sum_known_payload};
 pub use report::write_inventory;
 use collection::sum_payload;
 use std::mem::size_of;

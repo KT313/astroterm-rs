@@ -1,4 +1,5 @@
 //! Original table owners and bounded previews. No catalog columns are split into separate borrowed tables.
+use crate::constants::TABLE_BYTE_PREVIEW_CHUNK_SIZE;
 use super::{Table, TableBytes, preview_indices};
 use crate::rows::{Column, Row, Preview, preview, preview_text, preview_chars, plain_column};
 use crate::astro::Vector3;
@@ -111,40 +112,39 @@ impl Table for Opaque {
 
 /// Adapters retain the original buffer owner so allocation capacity remains available.
 pub(crate) enum Bytes<'a> { Binary(&'a Vec<u8>), Text(&'a String) }
-const CHUNK: usize = 64;
 impl<'a> Bytes<'a> {
     pub fn binary(value: &'a Vec<u8>) -> Self { Self::Binary(value) }
     pub fn string(value: &'a String) -> Self { Self::Text(value) }
     fn data(&self) -> &[u8] { match self { Self::Binary(v) => v, Self::Text(v) => v.as_bytes() } }
 }
 fn preview_bytes(bytes: &[u8], text: bool) -> Vec<(usize, Vec<String>)> {
-    preview_indices(bytes.len().div_ceil(CHUNK)).map(|i| {
+    preview_indices(bytes.len().div_ceil(TABLE_BYTE_PREVIEW_CHUNK_SIZE)).map(|i| {
         let boundary = |mut offset: usize| {
             if text { while offset < bytes.len() && bytes[offset] & 0xc0 == 0x80 { offset += 1; } }
             offset
         };
-        let chunk = &bytes[boundary(i * CHUNK)..boundary(((i + 1) * CHUNK).min(bytes.len()))];
+        let chunk = &bytes[boundary(i * TABLE_BYTE_PREVIEW_CHUNK_SIZE)..boundary(((i + 1) * TABLE_BYTE_PREVIEW_CHUNK_SIZE).min(bytes.len()))];
         (i, vec![if text { preview(String::from_utf8_lossy(chunk).as_ref()) } else { preview(chunk) }])
     }).collect()
 }
 impl Table for Bytes<'_> {
     fn shape(&self) -> Vec<usize> { vec![self.data().len()] }
-    fn rows(&self) -> usize { self.data().len().div_ceil(CHUNK) }
+    fn rows(&self) -> usize { self.data().len().div_ceil(TABLE_BYTE_PREVIEW_CHUNK_SIZE) }
     fn bytes(&self) -> TableBytes {
         let capacity = match self { Self::Binary(v) => v.capacity(), Self::Text(v) => v.capacity() };
         TableBytes::known(self.data().len(), capacity)
     }
     fn columns(&self) -> Vec<Column> { match self { Self::Text(_) => plain_column::<str>(), Self::Binary(_) => plain_column::<u8>() } }
     fn preview(&self) -> Vec<(usize, Vec<String>)> { preview_bytes(self.data(), matches!(self, Self::Text(_))) }
-    fn note(&self) -> Option<String> { Some(format!("rows are {CHUNK}-byte chunks")) }
+    fn note(&self) -> Option<String> { Some(format!("rows are {TABLE_BYTE_PREVIEW_CHUNK_SIZE}-byte chunks")) }
 }
 impl Table for StarNames {
     fn shape(&self) -> Vec<usize> { vec![self.bytes().len()] }
-    fn rows(&self) -> usize { self.bytes().len().div_ceil(CHUNK) }
+    fn rows(&self) -> usize { self.bytes().len().div_ceil(TABLE_BYTE_PREVIEW_CHUNK_SIZE) }
     fn bytes(&self) -> TableBytes { TableBytes::known(self.bytes().len(), self.capacity()) }
     fn columns(&self) -> Vec<Column> { plain_column::<str>() }
     fn preview(&self) -> Vec<(usize, Vec<String>)> { preview_bytes(self.bytes(), true) }
-    fn note(&self) -> Option<String> { Some(format!("rows are {CHUNK}-byte chunks")) }
+    fn note(&self) -> Option<String> { Some(format!("rows are {TABLE_BYTE_PREVIEW_CHUNK_SIZE}-byte chunks")) }
 }
 pub(crate) struct TimingSteps<'a>(pub &'a StepTimes);
 impl Table for TimingSteps<'_> {

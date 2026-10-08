@@ -1,6 +1,7 @@
 //! Key bindings: which terminal keys trigger which controls, and the help text listing them. Both come from one table,
 //! so they can't drift apart.
 
+use crate::constants::KEYS_COLUMN_WIDTH;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::controls::Control;
@@ -68,8 +69,6 @@ const KEY_BINDINGS: &[KeyBinding] = &[
     },
 ];
 
-/// Width of the keys column in the help text.
-const KEYS_COLUMN_WIDTH: usize = 18;
 
 /// The control bound to a key, if any. With `quit_on_any_key`, every key quits.
 ///
