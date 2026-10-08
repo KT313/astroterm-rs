@@ -128,7 +128,6 @@ impl Tables for PixelState {
 impl Tables for SceneCache {
     fn visit_tables(&self, prefix: &str, visit: &mut TableVisitor<'_>) {
         let path = |name: &str| join(prefix, name);
-        visit(&path("named_candidates"), &self.named_candidates, None);
         if let Some(key) = &self.pixel_candidate { key.visit_tables(&path("pixel_candidate"), visit); }
         if let Some(key) = &self.character_candidate { key.visit_tables(&path("character_candidate"), visit); }
         visit(&path("pixels"), &self.pixels, Some(Group::Raster));

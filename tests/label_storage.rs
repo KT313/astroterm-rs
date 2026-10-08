@@ -45,7 +45,7 @@ fn labels_are_shared_and_cached_without_changing_source_ids() {
 }
 
 #[test]
-fn identifiers_and_proper_names_follow_the_same_ordinary_label_rule() {
+fn identifiers_and_proper_names_follow_the_same_brightest_star_rule() {
     let source = source();
     for (id, unicode, expected) in [(0, false, "Named 星"), (1, false, "Alp2 Cen"), (1, true, "α² Cen"), (2, false, "HIP 42")] {
         let mut sky = create_sky_from_catalog(&source).unwrap();
@@ -57,7 +57,7 @@ fn identifiers_and_proper_names_follow_the_same_ordinary_label_rule() {
         let index = sky.star_views().position(|star| star.id() == StarId(id)).unwrap();
         sky.stars[index].position = Vector3 { x: 0.0, y: 0.0, z: 1.0 };
         let options = RenderOptions { unicode, braille: false, color: false, constellations: false, grid: false,
-            magnitude_threshold: 5.0, label_threshold: 0.0, dynamic_names: false };
+            magnitude_threshold: 5.0, dynamic_names: true };
         let view = View::default();
         let projected = astroterm::projection::project_sky(&sky, &view, ProjectionViewport { width: 80, height: 40 });
         let mut canvas = Canvas::new(40, 80);

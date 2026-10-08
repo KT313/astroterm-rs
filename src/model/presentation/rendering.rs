@@ -18,9 +18,7 @@ pub struct RenderOptions {
     pub grid: bool,
     /// Only draw stars at least this bright (magnitude at most this value).
     pub magnitude_threshold: f64,
-    /// Only label stars at least this bright.
-    pub label_threshold: f64,
-    /// Name the brightest stars in view too, until at least 5 objects in view have labels.
+    /// Label up to DYNAMIC_NAME_COUNT brightest visible stars, independently of solar-system labels.
     pub dynamic_names: bool,
 }
 
@@ -64,7 +62,7 @@ pub(crate) struct SceneKey {
     pub(crate) canvas_size: Option<(usize, usize)>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct PixelStarKey {
     pub(crate) cell: (i32, i32),
     pub(crate) magnitude: f64,

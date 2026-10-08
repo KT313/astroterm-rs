@@ -14,7 +14,7 @@ fn fixture() -> ObservedSky {
     create_sky_from_catalog(&Catalog::new(catalog.stars, StarNames::default(), vec![])).unwrap()
 }
 fn options() -> RenderOptions {
-    RenderOptions { unicode: true, braille: false, color: true, constellations: true, grid: false, magnitude_threshold: 5.0, label_threshold: 0.25, dynamic_names: false }
+    RenderOptions { unicode: true, braille: false, color: true, constellations: true, grid: false, magnitude_threshold: 5.0, dynamic_names: false }
 }
 fn trace(enabled: bool) -> StepTimes {
     let mut times = StepTimes::with_trace(true);

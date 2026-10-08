@@ -1,7 +1,6 @@
 //! Drawing stars, constellation figures, planets and the Moon.
 
 use crate::constants::DYNAMIC_NAME_COUNT;
-use std::borrow::Cow;
 
 use crate::canvas::{Canvas, draw_line_braille};
 use crate::model::{ProjectedArc, ProjectedPlanet, ProjectedSky};
@@ -12,14 +11,9 @@ use crate::model::RenderOptions;
 use super::draw_line;
 
 
-/// Draw the stars bright enough for the threshold, dimmest first. Named stars brighter than the label threshold get
-/// labels, and with dynamic names also the brightest stars in view when few objects in view have labels.
+/// Draw stars dimmest first; optionally label only the brightest visible stars.
 pub fn draw_stars(canvas: &mut Canvas, options: &RenderOptions, sky: &ProjectedSky<'_>) {
-    let dynamically_named = if options.dynamic_names {
-        select_dynamically_named_stars(options, sky)
-    } else {
-        Vec::new()
-    };
+    let dynamically_named = select_dynamically_named_stars(options, sky);
 
     for (index, entry) in sky.stars.iter().enumerate() {
         if entry.star.magnitude > options.magnitude_threshold {
@@ -28,8 +22,6 @@ pub fn draw_stars(canvas: &mut Canvas, options: &RenderOptions, sky: &ProjectedS
         let star = entry.star;
         let label = if dynamically_named.contains(&index) {
             Some(format_star_label(&star, sky.names, options.unicode))
-        } else if star.magnitude <= options.label_threshold {
-            sky.names.get_for_mode(star.name(), options.unicode).map(Cow::Borrowed)
         } else {
             None
         };
@@ -43,29 +35,14 @@ pub fn draw_stars(canvas: &mut Canvas, options: &RenderOptions, sky: &ProjectedS
     }
 }
 
-/// Indices of the stars to name in addition to the usual labels: the brightest drawn stars in view without a label,
-/// until at least [`DYNAMIC_NAME_COUNT`] objects in view (the Sun, planets, Moon and labelled stars) have labels.
-pub(crate) fn select_dynamically_named_stars(options: &RenderOptions, sky: &ProjectedSky<'_>) -> Vec<usize> {
-    // the Sun, planets and Moon are always labelled
-    let planets_in_view = sky.planets.iter().filter(|planet| planet.cell.is_some()).count();
-    let mut labelled = planets_in_view + usize::from(sky.moon.cell.is_some());
-
-    // then stars, brightest first: ones labelled anyway only count, the others get a name
-    let mut selected = Vec::new();
-    for (index, entry) in sky.stars.iter().enumerate().rev() {
-        let star = entry.star;
-        if labelled >= DYNAMIC_NAME_COUNT || star.magnitude > options.magnitude_threshold {
-            break; // enough labels, or this and all following stars are too dim to be drawn
-        }
-        if entry.cell.is_none() {
-            continue;
-        }
-        if star.magnitude > options.label_threshold || star.name().is_none() {
-            selected.push(index);
-        }
-        labelled += 1;
-    }
-    selected
+/// Select the brightest end of the projected draw order without scanning the whole star list.
+/// Projection stores only visible cells in dim-to-bright order; names are available through catalog identifiers.
+pub(crate) fn select_dynamically_named_stars(options: &RenderOptions, sky: &ProjectedSky<'_>) -> std::ops::Range<usize> {
+    let end = sky.stars.len();
+    if !options.dynamic_names { return end..end; } // solar-system labels have their own independent rules
+    let count = sky.stars.iter().rev().take(DYNAMIC_NAME_COUNT)
+        .take_while(|entry| entry.star.magnitude <= options.magnitude_threshold).count();
+    end - count..end // retain dim-to-bright order when labels overlap
 }
 
 /// Draw the stick figures of all constellations whose stars are all bright enough for the threshold.
@@ -157,7 +134,7 @@ mod tests {
         let projected_data = project_sky(sky, view, Viewport { height: 41, width: 81 });
         let projected = projected_data.view(sky);
         super::select_dynamically_named_stars(options, &projected)
-            .into_iter()
+            .rev()
             .map(|index| {
                 sky.star_views()
                     .position(|star| star.id() == projected.stars.get(index).star.id())
@@ -218,7 +195,6 @@ mod tests {
         constellations: true,
         grid: false,
         magnitude_threshold: 5.0,
-        label_threshold: 0.25,
         dynamic_names: false,
     };
 
@@ -314,7 +290,7 @@ mod tests {
         sky
     }
 
-    /// Seven stars, brightest first, all dimmer than the label threshold; the brightest has no proper name.
+    /// Seven stars, brightest first; the first uses a catalog identifier.
     fn pick_unlabelled_stars(sky: &Sky) -> Vec<usize> {
         let mut brightest_first: Vec<usize> = (0..sky.stars.len()).collect();
         brightest_first.sort_unstable_by(|&a, &b| {
@@ -326,7 +302,7 @@ mod tests {
         let unnamed = brightest_first
             .iter()
             .position(|&index| {
-                sky.star_name(&sky.stars[index]).is_some_and(|name| name.starts_with("HR ")) && sky.stars[index].magnitude > ASCII.label_threshold
+                sky.star_name(&sky.stars[index]).is_some_and(|name| name.starts_with("HR "))
             })
             .unwrap();
         brightest_first[unnamed..unnamed + 7].to_vec()
@@ -349,18 +325,18 @@ mod tests {
     }
 
     #[test]
-    fn planets_moon_and_labelled_stars_in_view_count_toward_the_five() {
+    fn planets_and_moon_do_not_reduce_the_five_star_labels() {
         let stars = pick_unlabelled_stars(&place_in_view(&[]));
         let vega = place_in_view(&[])
             .star_views()
             .position(|star| star.id().0 == 7001)
-            .unwrap(); // brighter than the label threshold, and named
+            .unwrap(); // a bright star with a proper name
         let mut sky = place_in_view(&[&stars[..], &[vega]].concat());
         sky.planets[3].position = horizontal(100.0, 70.0).to_unit_vector();
         sky.moon.position = horizontal(200.0, 70.0).to_unit_vector();
         assert_eq!(
             select_dynamically_named_stars(&View::default(), &DYNAMIC, &sky),
-            stars[..2]
+            [&[vega][..], &stars[..4]].concat()
         );
     }
 
@@ -381,7 +357,7 @@ mod tests {
         let projected = data.view(&sky);
         assert_eq!(projected.stars.iter().map(|s| s.star.id().0).collect::<Vec<_>>(), [0, 1, 2, 3, 4, 5]);
         let labels = super::select_dynamically_named_stars(&DYNAMIC, &projected);
-        assert_eq!(labels.iter().map(|&i| projected.stars.get(i).star.id().0).collect::<Vec<_>>(), [5, 4, 3, 2, 1]);
+        assert_eq!(labels.rev().map(|i| projected.stars.get(i).star.id().0).collect::<Vec<_>>(), [5, 4, 3, 2, 1]);
     }
 
     #[test]
@@ -397,8 +373,7 @@ mod tests {
             sky.stars[index].magnitude = 4.0 - step as f64;
             assert!(sky.star_name(&sky.stars[index]).unwrap().starts_with("HR "));
         }
-        let expected = indices.iter().rev().take(5).copied()
-            .filter(|&index| sky.stars[index].magnitude > DYNAMIC.label_threshold).collect::<Vec<_>>();
+        let expected = indices.iter().rev().take(5).copied().collect::<Vec<_>>();
         assert_eq!(
             select_dynamically_named_stars(&View::default(), &DYNAMIC, &sky),
             expected
@@ -406,7 +381,7 @@ mod tests {
     }
 
     #[test]
-    fn automatic_proper_names_use_current_label_threshold() {
+    fn bright_proper_names_obey_the_label_switch() {
         let initial = place_in_view(&[]);
         let vega = initial.star_views().position(|star| star.id().0 == 7001).unwrap();
         let mut sky = place_in_view(&[vega]);
@@ -416,6 +391,8 @@ mod tests {
         assert!(!canvas.to_lines().concat().contains("Vega"));
         sky.stars[vega].magnitude = 0.1;
         draw_stars(&mut canvas, &View::default(), &ASCII, &sky);
+        assert!(!canvas.to_lines().concat().contains("Vega"));
+        draw_stars(&mut canvas, &View::default(), &DYNAMIC, &sky);
         assert!(canvas.to_lines().concat().contains("Vega"));
     }
 
@@ -437,7 +414,7 @@ mod tests {
     }
 
     #[test]
-    fn without_dynamic_names_only_bright_named_stars_are_labelled() {
+    fn without_dynamic_names_no_stars_are_labelled() {
         let stars = pick_unlabelled_stars(&place_in_view(&[]));
         let sky = place_in_view(&stars);
         let mut canvas = Canvas::new(41, 81);

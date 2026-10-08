@@ -46,7 +46,6 @@ fn main() {
         constellations: true,
         grid: false,
         magnitude_threshold: 5.0,
-        label_threshold: 0.25,
         dynamic_names: true,
     };
     let observer = Observer {
@@ -120,7 +119,6 @@ fn measure_matrix(sky: &mut Sky) {
                     constellations,
                     grid: false,
                     magnitude_threshold: threshold,
-                    label_threshold: 0.25,
                     dynamic_names: true,
                 };
                 let mut timing = StepTimes::default();

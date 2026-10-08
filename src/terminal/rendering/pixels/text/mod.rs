@@ -18,7 +18,6 @@ pub(super) fn compose_text(
     fields: &[MetadataField],
     notice: Option<&str>,
     times: &mut crate::timing::StepTimes,
-    named_candidates: Option<&[usize]>,
 ) -> Buffer {
     // assemble every text layer in memory before either image encoding or terminal output
     let mut buffer = times.measure("Text canvas", || Buffer::empty(screen));
@@ -32,14 +31,11 @@ pub(super) fn compose_text(
         )
     });
     let (eligible, submitted, visited) = times.measure("Star labels", || {
-        draw_star_labels(&mut buffer, sky, options, area, named_candidates)
+        draw_star_labels(&mut buffer, sky, options, area)
     });
-    {
-        times.record_borrow(BufferId::TextCells, Access::Writable, || BufferShape::vector(&buffer.content, IndexDomain::Cells));
-        if let Some(indices) = named_candidates { times.record_borrow(BufferId::NamedCandidates, Access::ReadOnly, || BufferShape::slice(indices, IndexDomain::DrawOrder)); }
-    }
-    times.describe("Star labels", || format!("input stars={}; label candidates={eligible}; skipped by label rules or missing cell={}; clipped label origins={}; submitted labels={submitted}; label threshold={}; dynamic names={}", sky.stars.len(), sky.stars.len()-eligible, eligible-submitted, options.label_threshold, options.dynamic_names));
-    times.describe("Star labels", || format!("prepared named candidates={:?}; visited candidates={visited}; dynamic candidates selected separately; labels retain projected draw order", named_candidates.map(<[usize]>::len)));
+    times.record_borrow(BufferId::TextCells, Access::Writable, || BufferShape::vector(&buffer.content, IndexDomain::Cells));
+    times.describe("Star labels", || format!("input stars={}; label candidates={eligible}; skipped by label rules or missing cell={}; clipped label origins={}; submitted labels={submitted}; dynamic names={}", sky.stars.len(), sky.stars.len()-eligible, eligible-submitted, options.dynamic_names));
+    times.describe("Star labels", || format!("visited candidates={visited}; selected from the brightest end; solar-system labels are independent"));
     times.measure("Body labels", || draw_body_labels(&mut buffer, sky, area));
     times.describe("Body labels", || {
         format!(
@@ -92,42 +88,20 @@ fn draw_star_labels(
     sky: &ProjectedSky<'_>,
     options: &RenderOptions,
     area: Rect,
-    named_candidates: Option<&[usize]>,
 ) -> (usize, usize, usize) {
     let mut eligible = 0;
     let mut submitted = 0;
     let cell = |position| map_pixel_to_cell(sky, area, position);
-    let named = if options.dynamic_names {
-        select_dynamically_named_stars(options, sky)
-    } else {
-        Vec::new()
-    };
-    let mut candidates = named_candidates.map(|indices| indices.to_vec());
-    if let Some(indices) = &mut candidates {
-        indices.extend(named.iter().copied());
-        indices.sort_unstable();
-        indices.dedup(); // preserve the original dim-to-bright label overwrite order
-    }
-    let count = candidates.as_ref().map_or(sky.stars.len(), Vec::len);
-    for slot in 0..count {
-        let index = candidates.as_ref().map_or(slot, |indices| indices[slot]);
-        let entry = &sky.stars.get(index);
-        let Some(position) = entry.cell else {
-            continue;
-        };
-        let label = if named.contains(&index) {
-            Some(format_star_label(&entry.star, sky.names, true))
-        } else if entry.star.magnitude <= options.label_threshold {
-            sky.names.get_for_mode(entry.star.name(), true).map(std::borrow::Cow::Borrowed)
-        } else {
-            None
-        };
-        if let Some(label) = label {
-            let (row, col) = cell(position);
-            let [r, g, b] = crate::scene::star_rgb(&entry.star);
-            eligible += 1;
-            submitted += usize::from(put_label(buffer, area, row - 1, col + 1, &label, Color::Rgb(r, g, b)));
-        }
+    let candidates = select_dynamically_named_stars(options, sky);
+    let count = candidates.len();
+    for index in candidates {
+        let entry = sky.stars.get(index);
+        let Some(position) = entry.cell else { continue; };
+        let label = format_star_label(&entry.star, sky.names, true);
+        let (row, col) = cell(position);
+        let [r, g, b] = crate::scene::star_rgb(&entry.star);
+        eligible += 1;
+        submitted += usize::from(put_label(buffer, area, row - 1, col + 1, &label, Color::Rgb(r, g, b)));
     }
     (eligible, submitted, count)
 }
@@ -245,12 +219,9 @@ fn put_label(buffer: &mut Buffer, area: Rect, row: i32, col: i32, text: &str, co
 #[cfg(test)]
 mod prepared_tests {
     use super::*;
-    use crate::astro::Horizontal;
-    use crate::catalog::{Catalog, StarNames, load_embedded_catalog};
+    use crate::catalog::load_embedded_catalog;
     use crate::model::{ProjectionViewport as Viewport, View};
     use crate::projection::project_sky;
-    use crate::state::SceneCache;
-    use crate::timing::StepTimes;
 
     #[test]
     fn pixel_notices_keep_clipping_date_and_fallback_on_separate_rows() {
@@ -283,68 +254,59 @@ mod prepared_tests {
     }
 
     #[test]
-    fn prepared_label_candidates_preserve_order_clipping_and_dynamic_names() {
+    fn labels_visit_only_the_brightest_tail_even_with_visible_planets() {
+        use crate::astro::Vector3;
+        use crate::constants::DYNAMIC_NAME_COUNT;
         let mut parsed = load_embedded_catalog().unwrap();
-        parsed.stars.truncate(12);
-        let mut names = StarNames::default();
-        let name = names.insert("Named 星").unwrap();
-        for (i, star) in parsed.stars.iter_mut().enumerate() {
-            star.name = (i % 3 == 0).then_some(name);
-            star.magnitude = i as f64 * 0.25;
-        }
-        let mut sky = crate::sky::create_sky_from_catalog(&Catalog::new(parsed.stars, names, vec![])).unwrap();
-        for star in &mut sky.stars {
-            star.position = Horizontal {
-                azimuth: 0.5,
-                altitude: 1.1,
-            }
-            .to_unit_vector();
-        }
-        let mut cache = SceneCache::default();
+        parsed.stars.truncate(20);
+        for (i, star) in parsed.stars.iter_mut().enumerate() { star.magnitude = i as f64 * 0.25; }
+        let mut sky = crate::sky::create_sky_from_catalog(&parsed).unwrap();
+        for star in &mut sky.stars { star.position = Vector3 { x: 0.0, y: 0.0, z: 1.0 }; }
+        for planet in &mut sky.planets { planet.position = Vector3 { x: 0.0, y: 0.0, z: 1.0 }; }
+        sky.moon.position = Vector3 { x: 0.0, y: 0.0, z: 1.0 };
         let area = Rect::new(0, 0, 40, 20);
-        let mut options = RenderOptions {
-            unicode: true,
-            braille: false,
-            color: true,
-            constellations: false,
-            grid: false,
-            magnitude_threshold: 5.0,
-            label_threshold: 0.25,
-            dynamic_names: true,
-        };
-        for phase in 0..6 {
-            let mut projected = project_sky(&sky, &View::default(), Viewport { width: 160, height: 80 });
-            projected.planets.iter_mut().for_each(|p| p.cell = None);
-            projected.moon.cell = None;
-            match phase {
-                1 => options.label_threshold = 5.0,
-                2 => options.dynamic_names = false,
-                3 => projected.order.reverse(),
-                4 => {
-                    projected.order.remove(0);
-                    projected.stars[projected.order[0]].1 = (0, 0);
-                }
-                5 => projected.order.clear(),
-                _ => {}
-            }
-            crate::scene::draw_pixels(&mut cache, &projected.view(&sky), &options, 0.0, &mut StepTimes::default()).cloned()
-                .unwrap();
-            let mut expected = Buffer::empty(area);
-            let mut actual = Buffer::empty(area);
-            let expected_counts = draw_star_labels(&mut expected, &projected.view(&sky), &options, area, None);
-            let actual_counts = draw_star_labels(
-                &mut actual,
-                &projected.view(&sky),
-                &options,
-                area,
-                Some(cache.named_candidates()),
-            );
-            assert_eq!(actual, expected);
-            assert_eq!(
-                (actual_counts.0, actual_counts.1),
-                (expected_counts.0, expected_counts.1)
-            );
-            assert!(actual_counts.2 <= expected_counts.2);
+        let options = RenderOptions { unicode: true, braille: false, color: true, constellations: false,
+            grid: false, magnitude_threshold: 5.0, dynamic_names: true };
+        for (threshold, enabled, expected) in [(5.0, true, DYNAMIC_NAME_COUNT), (0.25, true, 2),
+            (-1.0, true, 0), (5.0, false, 0)] {
+            let options = RenderOptions { magnitude_threshold: threshold, dynamic_names: enabled, ..options };
+            let projected = project_sky(&sky, &View::default(), Viewport { width: 160, height: 80 });
+            let mut buffer = Buffer::empty(area);
+            let (eligible, submitted, visited) = draw_star_labels(&mut buffer, &projected.view(&sky), &options, area);
+            assert_eq!((eligible, submitted, visited), (expected, expected, expected));
+        }
+    }
+
+    #[test]
+    fn pixel_labels_remain_current_when_the_sky_image_is_reused() {
+        use crate::astro::Vector3;
+        use crate::catalog::StarNames;
+        use crate::state::SceneCache;
+        use crate::timing::StepTimes;
+        let mut cache = SceneCache::default();
+        let options = RenderOptions { unicode: true, braille: false, color: true, constellations: false,
+            grid: false, magnitude_threshold: 5.0, dynamic_names: true };
+        let area = Rect::new(0, 0, 40, 20);
+        for name in ["Before", "After"] {
+            let mut parsed = load_embedded_catalog().unwrap();
+            parsed.stars.truncate(1);
+            parsed.names = StarNames::default();
+            parsed.stars[0].name = Some(parsed.names.insert(name).unwrap());
+            parsed.stars[0].magnitude = 1.0;
+            let mut sky = crate::sky::create_sky_from_catalog(&parsed).unwrap();
+            sky.stars[0].position = Vector3 { x: 0.0, y: 0.0, z: 1.0 };
+            let mut data = project_sky(&sky, &View::default(), Viewport { width: 160, height: 80 });
+            let projected = data.view(&sky);
+            crate::scene::draw_pixels(&mut cache, &projected, &options, 0.0, &mut StepTimes::default()).unwrap();
+            let mut buffer = Buffer::empty(area);
+            assert_eq!(draw_star_labels(&mut buffer, &projected, &options, area), (1, 1, 1));
+            assert!(buffer.content.iter().map(|cell| cell.symbol()).collect::<String>().contains(name));
+            if name == "After" { assert_eq!(cache.stats().hits, 1); }
+
+            data.stars[0].1 = (0, 0); // a clipped text origin does not force a scan for replacement labels
+            assert_eq!(draw_star_labels(&mut buffer, &data.view(&sky), &options, area), (1, 0, 1));
+            data.order.clear();
+            assert_eq!(draw_star_labels(&mut buffer, &data.view(&sky), &options, area), (0, 0, 0));
         }
     }
 }

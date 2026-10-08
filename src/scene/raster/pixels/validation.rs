@@ -16,7 +16,6 @@ fn options(threshold: f64) -> RenderOptions {
         constellations: true,
         grid: true,
         magnitude_threshold: threshold,
-        label_threshold: 0.25,
         dynamic_names: true,
     }
 }
@@ -63,6 +62,41 @@ fn complete_scenes_match_for_mixed_radii_and_large_canvas_fallback() {
         let expected =
             draw_pixel_sky_with_star_path(&projected, &options(10.0), &mut StepTimes::default(), false).unwrap();
         assert_eq!(actual, expected, "{width}x{height}");
+    }
+}
+
+#[test]
+fn prepared_inputs_preserve_the_previous_star_pixels_and_order() {
+    let mut source = load_embedded_catalog().unwrap();
+    source.stars.truncate(8);
+    let mut sky = crate::sky::create_sky_from_catalog(&source).unwrap();
+    for (i, star) in sky.stars.iter_mut().enumerate() {
+        star.magnitude = [-1.0, 2.0, 5.0, 7.03125, 10.0, 20.0, 8.0, 4.0][i];
+        star.position = crate::astro::Vector3 { x: 0.0, y: 0.0, z: 1.0 };
+    }
+    let mut data = project_sky(&sky, &View::default(), Viewport { width: 64, height: 48 });
+    for (i, (_, cell)) in data.stars.iter_mut().enumerate() {
+        *cell = [(0, 0), (47, 63), (24, 32), (24, 32)][i % 4]; // include overlaps and partially clipped stars
+    }
+    for threshold in [5.0, 10.0, 20.0] {
+        let options = options(threshold);
+        let projected = data.view(&sky);
+        let mut cache = crate::state::SceneCache::default();
+        crate::scene::caching::prepare_pixel_candidate(&mut cache, &projected, &options, 0.0, &mut StepTimes::default());
+        let crate::model::StarKeys::Pixels(inputs) = &cache.pixel_candidate.as_ref().unwrap().stars else { unreachable!() };
+        let mut actual = initialize_pixel_canvas(projected.viewport).unwrap();
+        draw_pixel_stars(&mut actual, inputs.iter().copied(), true);
+
+        let mut expected = initialize_pixel_canvas(projected.viewport).unwrap();
+        for entry in projected.stars.iter() {
+            if entry.star.magnitude > threshold { continue; }
+            let Some((y, x)) = entry.cell else { continue; };
+            let radius = (2.8 - 0.32 * entry.star.magnitude).clamp(0.55, 4.0) as f32;
+            let strength = (1.0 - 0.045 * (entry.star.magnitude + 1.46)).clamp(0.16, 1.0);
+            let rgb = star_rgb(&entry.star).map(|c| (f64::from(c) * strength).round() as u8);
+            draw_disc(&mut expected, x as f32, y as f32, radius, rgb); // independent original circle path
+        }
+        assert_eq!(actual.data(), expected.data(), "threshold={threshold}");
     }
 }
 

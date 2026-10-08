@@ -131,10 +131,11 @@ stars may be missing from a view; special handling for them is currently deferre
 Stellar direction and brightness are cached by region for up to 10 simulated days by default. Use
 `--disable-cache` for fresh calculations every frame, or shorten `stellar_state` in the [cache configuration](examples/cache.toml).
 
-This port adds pixel graphics, interactive pan/zoom/time controls, optional AT-HYG downloads, and extra labels
-when zoomed in. It also improves astronomical calculations, curved constellation lines, date handling and
-observer-local time display. Star labels use a proper name when available, otherwise a catalog identifier; both
-follow the same brightness rules. Independent accuracy checks are documented in
+This port adds pixel graphics, interactive pan/zoom/time controls and optional AT-HYG downloads. It also improves
+astronomical calculations, curved constellation lines, date handling and observer-local time display.
+The five brightest visible stars get labels, using a proper name or catalog identifier. Sun, planet and Moon
+labels are independent. Use `--disable-dynamic-names` to hide star labels; the former `--label-thresh` option has
+been removed. Independent accuracy checks are documented in
 [scripts/reference/README.md](scripts/reference/README.md).
 
 <details>

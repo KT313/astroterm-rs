@@ -235,9 +235,12 @@ A view's immutable borrows must end before its observation or projection backing
 and invalidates the appropriate scene data. `state/rendering/mod.rs` lists the fields; `terminal` and `scene` contain
 all rendering algorithms.
 
+Pixel rasterization borrows the candidate key's filtered star inputs directly. Star labels use a local range over
+at most `DYNAMIC_NAME_COUNT` entries at the bright end of the projected order; no label-candidate buffer is retained.
+Sun, planet and Moon labels are independent of that limit.
+
 | Owner/fields | Producer → consumer; units | Retention/reset |
 |---|---|---|
-| `SceneCache.prepared`, `named_candidates` | Catalog display preparation / pixel-key scan → appearance and labels; catalog and projected draw-order indices respectively | Prepared data retained; candidates rebuilt per key capture |
 | Scene candidates and committed keys | Raster input capture → exact comparison; display values plus copied body/arc/horizon geometry | Hits clear flat vectors while retaining capacity; nested strings/arcs drop; refresh transfers candidate; failed pixel draws retain it for reset/retry |
 | Scene pixel/character results | Raster passes → composition; RGBA pixels or canvas cells | Intentional image clone per output; character clone on refresh and restore on hit |
 | Character `frame`, `presenter` | Sky/panel drawing → full-screen composition → diff writer | Resize replaces canvases and discards previous-frame snapshot; successful presentation updates previous |

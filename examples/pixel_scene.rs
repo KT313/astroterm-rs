@@ -32,7 +32,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         constellations: true,
         grid: false,
         magnitude_threshold: 5.0,
-        label_threshold: 0.25,
         dynamic_names: true,
     };
     draw_pixel_sky(&projected, &options, &mut times).unwrap().save(path)?;

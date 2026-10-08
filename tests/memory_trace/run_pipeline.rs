@@ -43,7 +43,7 @@ fn run_frames(catalog: Arc<SkyCatalog>, config: &CacheConfig, diagnostics: bool)
     let mut projection = ProjectionCache::new(config.clone());
     let mut scene = SceneCache::default();
     scene.configure(config);
-    let options = RenderOptions { unicode: true, braille: false, color: true, constellations: false, grid: false, magnitude_threshold: 8.0, label_threshold: 0.25, dynamic_names: false };
+    let options = RenderOptions { unicode: true, braille: false, color: true, constellations: false, grid: false, magnitude_threshold: 8.0, dynamic_names: false };
     let mut results = Vec::new();
     for (index, date) in [J2000, J2000, J2000 + 0.001].into_iter().enumerate() {
         times.begin_frame();

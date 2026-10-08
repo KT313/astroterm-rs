@@ -16,16 +16,14 @@ pub(crate) fn describe_candidate(key: &SceneKey) -> BufferShape {
 }
 
 
-#[allow(clippy::ptr_arg)] // describe retained capacity without traversing candidates
 #[inline]
-pub(crate) fn record_scene_candidate(times: &mut crate::timing::StepTimes, buffer: crate::timing::BufferId, before: Option<BufferShape>, key: &SceneKey, names: Option<&Vec<usize>>) {
+pub(crate) fn record_scene_candidate(times: &mut crate::timing::StepTimes, buffer: crate::timing::BufferId, before: Option<BufferShape>, key: &SceneKey) {
     use crate::timing::{Access, BufferId, Operation};
     times.record_shape(buffer, Operation::Clear, before, || {
         let mut shape = before.unwrap_or(BufferShape::unknown(IndexDomain::DrawOrder)); shape.len = Some(0); shape
     });
     times.record_borrow(BufferId::ProjectedView, Access::ReadOnly, || BufferShape::unknown(IndexDomain::DrawOrder));
     times.record_borrow(buffer, Access::Writable, || describe_candidate(key));
-    if let Some(names) = names { times.record_shape(BufferId::NamedCandidates, Operation::Build, None, || BufferShape::vector(names, IndexDomain::DrawOrder)); }
     times.record_shape(buffer, Operation::Build, None, || describe_candidate(key));
     times.record_unknown(buffer, Operation::Copy); // nested arc/label payload is not rescanned
 }

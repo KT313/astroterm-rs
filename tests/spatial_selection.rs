@@ -155,7 +155,6 @@ fn compare_prepared(
         constellations: true,
         grid: false,
         magnitude_threshold: threshold,
-        label_threshold: 0.25,
         dynamic_names: true,
     };
     let mut ca = Canvas::new(81, 161);

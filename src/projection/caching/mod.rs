@@ -303,7 +303,6 @@ mod draw_order_tests {
             constellations: false,
             grid: false,
             magnitude_threshold: 5.0,
-            label_threshold: -1.0,
             dynamic_names: true,
         };
         for config in [CacheConfig::default(), CacheConfig::disabled()] {
@@ -337,8 +336,7 @@ mod draw_order_tests {
                     }
                 });
                 let expected_ids: Vec<_> = expected.iter().map(|s| s.id()).collect();
-                let expected_names: Vec<_> = expected.iter().rev().take(5)
-                    .filter(|s| s.magnitude > options.label_threshold || s.name().is_none()).map(|s| s.id()).collect();
+                let expected_names: Vec<_> = expected.iter().skip(expected.len().saturating_sub(5)).map(|s| s.id()).collect();
                 for _ in 0..2 {
                     crate::projection::project_cached_sky(&mut cache, &sky,
                         &View::default(),

@@ -1,5 +1,6 @@
 //! State-owned whole-sky caches. Metadata and terminal presentation are assembled after these immutable results.
 mod keys;
+pub(in crate::scene) use keys::prepare_pixel_star_inputs;
 use crate::timing::{BufferId, Operation};
 use super::diagnostics::memory::{describe_candidate, describe_canvas, record_scene_candidate, record_scene_commit};
 
@@ -11,6 +12,7 @@ use crate::cache::CacheConfig;
 use crate::state::SceneCache;
 use crate::model::{RenderOptions};
 use super::draw_sky_scene_with_times;
+#[cfg(test)]
 use super::raster::pixels::draw_pixel_sky;
 use crate::cache::Group;
 use crate::canvas::Canvas;
@@ -24,7 +26,6 @@ fn capture_scene_key(
     sky: &ProjectedSky<'_>,
     options: RenderOptions,
     canvas_size: Option<(usize, usize)>,
-    named_candidates: &mut Vec<usize>,
 ) {
     let key = candidate.get_or_insert_with(|| SceneKey {
         stars: StarKeys::Pixels(Vec::new()),
@@ -32,7 +33,7 @@ fn capture_scene_key(
         viewport: sky.viewport, facing: sky.facing, warning: sky.outside_accuracy_range, brightness_warning: sky.magnitude_clipping().any(), options, canvas_size,
     });
     clear_scene_candidate(key); // also resets a candidate left behind by a failed image allocation
-    capture_star_keys(&mut key.stars, sky, &options, canvas_size.is_some(), named_candidates);
+    capture_star_keys(&mut key.stars, sky, &options, canvas_size.is_some());
     key.planets.extend_from_slice(sky.planets);
     key.moon = sky.moon.cell.map(|_| (*sky.moon).clone());
     key.constellations.extend_from_slice(sky.constellations);
@@ -50,10 +51,10 @@ fn capture_scene_key(
 pub(super) fn prepare_pixel_candidate(storage: &mut SceneCache, sky: &ProjectedSky<'_>, options: &RenderOptions, epoch: f64, times: &mut StepTimes) -> bool {
     let candidate_before = times.inspect_memory(|| storage.pixel_candidate.as_ref().map(describe_candidate)).flatten();
     times.measure("Raster cache key", || {
-        capture_scene_key(&mut storage.pixel_candidate, sky, *options, None, &mut storage.named_candidates)
+        capture_scene_key(&mut storage.pixel_candidate, sky, *options, None)
     });
     let key = storage.pixel_candidate.as_ref().expect("raster candidate captured");
-    record_scene_candidate(times, BufferId::PixelCandidate, candidate_before, key, Some(&storage.named_candidates));
+    record_scene_candidate(times, BufferId::PixelCandidate, candidate_before, key);
     times.describe("Raster cache key", || describe_star_keys(&key.stars, sky.stars.len()));
     let refresh = times.measure("Raster cache decision", || {
         storage.pixels
@@ -64,7 +65,9 @@ pub(super) fn prepare_pixel_candidate(storage: &mut SceneCache, sky: &ProjectedS
 }
 
 pub(super) fn refresh_pixel_scene(storage: &mut SceneCache, sky: &ProjectedSky<'_>, options: &RenderOptions, epoch: f64, times: &mut StepTimes) -> Option<()> {
-    let image = draw_pixel_sky(sky, options, times)?;
+    let key = storage.pixel_candidate.as_ref().expect("raster candidate captured");
+    let StarKeys::Pixels(stars) = &key.stars else { unreachable!("pixel drawing requires pixel inputs") };
+    let image = super::pipeline::draw_pixel_sky_from_inputs(sky, options, times, true, stars.iter().copied())?;
     let outcome = times.measure("Raster cache store", || {
         let key = storage.pixel_candidate.take().expect("raster candidate captured");
         storage.pixels.store(key, epoch, 0.0, image)
@@ -89,11 +92,10 @@ pub(super) fn prepare_character_candidate(storage: &mut SceneCache, canvas: &Can
             sky,
             *options,
             Some((canvas.height(), canvas.width())),
-            &mut storage.named_candidates,
         )
     });
     let key = storage.character_candidate.as_ref().expect("raster candidate captured");
-    record_scene_candidate(times, BufferId::CharacterCandidate, candidate_before, key, None);
+    record_scene_candidate(times, BufferId::CharacterCandidate, candidate_before, key);
     times.describe("Raster cache key", || describe_star_keys(&key.stars, sky.stars.len()));
     let refresh = times.measure("Raster cache decision", || {
         storage.characters

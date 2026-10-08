@@ -128,7 +128,6 @@ fn benchmark_frames(criterion: &mut Criterion) {
                         constellations,
                         grid: false,
                         magnitude_threshold: threshold,
-                        label_threshold: 0.25,
                         dynamic_names: true,
                     };
                     update_sky_positions(&mut sky, date, &observer, threshold, &mut timing);

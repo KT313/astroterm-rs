@@ -27,7 +27,7 @@ pub(super) fn label_columns(path: &str, columns: &mut [Column]) {
 // projection stars (observed_star_index, screen_coordinates) -> tuple .0/.1; projected_star_index -> order[row].
 // body key (body_kind, direction) -> tuple .0/.1; constellation key (catalog_row_index, direction, current_magnitude) -> .0/.1/.2.
 // screen_endpoint_pair -> horizon[row]; screen_coordinates/label_text -> labels[row].0/.1.
-// projected_star_index -> named_candidates[row]; has_been_invalidated -> region entry's Cache.has_been_invalidated.
+// has_been_invalidated -> region entry's Cache.has_been_invalidated.
 // character/glyph_dimensions_and_spacing/coverage_mask_bytes -> glyph HashMap key / Glyph.metrics / Glyph.coverage.len().
 // *_pixel_row/text_row/*_chunk label the existing bounded preview; they are not additional stored fields.
 fn table_labels(path: &str) -> &'static [&'static str] {
@@ -65,7 +65,6 @@ fn table_labels(path: &str) -> &'static [&'static str] {
         "timings.trace.steps" => &["step_name", "nesting_depth", "elapsed_seconds", "details", "own_diagnostic_seconds", "parent_step_index"],
         _ if path.ends_with(".horizon") => &["screen_endpoint_pair"],
         _ if path.ends_with(".labels") => &["screen_coordinates", "label_text"],
-        _ if path.ends_with(".named_candidates") => &["projected_star_index"],
         _ if path.ends_with(".raster_text.glyphs") => &["character", "glyph_dimensions_and_spacing", "coverage_mask_bytes"],
         _ if path.ends_with(".frame_image") || path.ends_with(".scene_cache.pixels") => &["rgba_pixel_row"],
         _ if path.ends_with(".rgb") => &["rgb_pixel_row"],
@@ -147,7 +146,6 @@ pub(super) fn column_notes(path: &str) -> &'static [&'static str] {
             "Source star_index_pairs refer to catalog rows. For projected figures, faintest_endpoint_magnitude is the largest magnitude among the defining stars; larger means fainter.",
             "Nested ProjectedArc fields: start/end = screen coordinates; points = sampled path coordinates; includes_start/includes_end mean the section reaches the original star endpoints rather than a clipping boundary.",
         ],
-        _ if path.ends_with(".named_candidates") => &["Indices refer to the projected stars in drawing order, not catalog rows; candidates have prepared labels and pass the ordinary label threshold; dynamic candidates are added separately."],
         _ if path.ends_with(".raster_text.glyphs") => &["Coverage mask bytes describe how much each glyph pixel is filled. Metrics contain glyph size, placement offsets and advance spacing."],
         _ if path.starts_with("cache.projection.") || path.contains("scene_cache") => &["Screen coordinates are (row, column), local to the sky viewport; units are terminal cells or pixels according to the renderer. RGB channels range from 0 to 255; terminal colors use named palette entries. Magnitudes use smaller numbers for brighter stars."],
         _ => &[],

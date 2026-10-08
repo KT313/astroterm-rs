@@ -107,7 +107,6 @@ fn real_catalog_cache_preserves_the_rendered_frame() {
             constellations: true,
             grid: false,
             magnitude_threshold: 5.0,
-            label_threshold: 0.25,
             dynamic_names: true,
         };
         draw_sky_scene(

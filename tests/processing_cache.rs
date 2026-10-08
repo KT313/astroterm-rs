@@ -65,7 +65,6 @@ fn options() -> RenderOptions {
         constellations: true,
         grid: false,
         magnitude_threshold: 6.0,
-        label_threshold: 0.5,
         dynamic_names: true,
     }
 }

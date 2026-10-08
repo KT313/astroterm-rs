@@ -51,7 +51,6 @@ fn main() {
                     constellations: true,
                     grid: false,
                     magnitude_threshold: 10.0,
-                    label_threshold: 0.25,
                     dynamic_names: true,
                 };
                 let mut totals = [0.0; 4];

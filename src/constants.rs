@@ -41,7 +41,6 @@ pub const DEFAULT_CHARACTER_FPS: i64 = 24;                                      
 pub const DEFAULT_PIXEL_FPS: i64 = 12;                                                    // target frames per second for pixel rendering unless overridden
 pub const DEFAULT_PIXEL_TEXT_SCALE: f64 = 0.85;                                           // draw pixel text at 85% of terminal-cell size unless overridden
 pub const DEFAULT_MAGNITUDE_THRESHOLD: f32 = 5.0;                                         // faintest stars shown by default; larger magnitudes are dimmer
-pub const DEFAULT_LABEL_THRESHOLD: f32 = 0.25;                                            // label stars this bright or brighter by default; smaller is brighter
 pub const DEFAULT_SIMULATION_SPEED: f64 = 1.0;                                            // simulated seconds per real second; 1 means normal speed
 pub const MIN_FOV_DEGREES: f64 = 1.0;                                                     // smallest view width allowed when zooming in
 pub const PAN_STEP_FRACTION: f64 = 1.0 / 20.0;                                            // move by one twentieth of the current view width per arrow press
@@ -53,7 +52,7 @@ pub const DEFAULT_CELL_ASPECT_RATIO: f64 = 2.0;                                 
 // Drawing, labels and text layout
 pub const MAX_IMAGE_PIXELS: usize = 16_777_216;                                           // maximum width × height allowed for a pixel image
 pub const PIXEL_BACKGROUND_RGBA: [u8; 4] = [3, 6, 14, 255];                               // dark sky background; the last value must stay 255 for full opacity
-pub const DYNAMIC_NAME_COUNT: usize = 5;                                                  // add bright-star labels until this many visible objects have names
+pub const DYNAMIC_NAME_COUNT: usize = 5;                                                  // label at most this many visible stars; planets and Moon are separate
 pub const MAX_CACHED_GLYPHS: usize = 512;                                                 // maximum saved character images before clearing the glyph cache
 pub const METADATA_PANEL_WIDTH: usize = 45;                                               // width of the metadata text panel, in character columns
 pub const METADATA_TAB_WIDTH: usize = 8;                                                  // spacing between tab stops in the metadata panel

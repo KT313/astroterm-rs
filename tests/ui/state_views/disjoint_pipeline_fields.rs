@@ -21,7 +21,7 @@ fn main() {
     let viewport = ProjectionViewport { width: 8, height: 8 };
     let options = RenderOptions {
         unicode: false, braille: false, color: false, constellations: false, grid: false,
-        magnitude_threshold: 5.0, label_threshold: 0.0, dynamic_names: false,
+        magnitude_threshold: 5.0, dynamic_names: false,
     };
 
     let Caches { sky, projection, simulation, .. } = &mut run;

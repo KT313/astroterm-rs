@@ -29,7 +29,6 @@ fn scenes_preserve_glyphs_colors_and_wide_cell_occupancy() {
         constellations: true,
         grid: false,
         magnitude_threshold: 5.0,
-        label_threshold: 0.25,
         dynamic_names: true,
     };
     for (name, facing, fov, equidistant, unicode, braille, grid, refraction, dynamic_names) in [
@@ -134,7 +133,6 @@ fn filtered_updates_match_full_updates_across_threshold_changes() {
             constellations: true,
             grid: false,
             magnitude_threshold: threshold,
-            label_threshold: 0.25,
             dynamic_names: true,
         };
         draw_sky_scene(&mut filtered_canvas, &view, &options, &filtered);
@@ -157,7 +155,6 @@ fn accuracy_warning_is_stable_at_all_class_and_computational_boundaries() {
         constellations: false,
         grid: false,
         magnitude_threshold: -100.0,
-        label_threshold: -100.0,
         dynamic_names: false,
     };
     let mut description = String::new();

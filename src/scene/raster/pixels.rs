@@ -37,27 +37,14 @@ pub(in crate::scene) fn draw_pixel_horizon(canvas: &mut Pixmap, sky: &ProjectedS
     }
 }
 
-pub(in crate::scene) fn draw_pixel_stars(
-    canvas: &mut Pixmap,
-    sky: &ProjectedSky<'_>,
-    options: &RenderOptions,
-    fast_stars: bool,
-) {
-    for star in sky.stars.iter() {
-        if star.star.magnitude > options.magnitude_threshold {
-            continue;
-        }
-        if let Some((y, x)) = star.cell {
-            let magnitude = star.star.magnitude;
-            let radius = (2.8 - 0.32 * magnitude).clamp(0.55, 4.0) as f32;
-            let strength = (1.0 - 0.045 * (magnitude + 1.46)).clamp(0.16, 1.0);
-            let color = star_rgb(&star.star)
-                .map(|c| (f64::from(c) * strength).round() as u8);
-            if fast_stars && radius == MINIMUM_STAR_RADIUS && draw_minimum_star(canvas, x, y, color) {
-                continue;
-            }
-            draw_disc(canvas, x as f32, y as f32, radius, color);
-        }
+pub(in crate::scene) fn draw_pixel_stars(canvas: &mut Pixmap, stars: impl IntoIterator<Item = crate::model::PixelStarKey>, fast_stars: bool) {
+    for star in stars {
+        let (y, x) = star.cell; // filtering, coordinates and base colors were prepared before drawing
+        let radius = (2.8 - 0.32 * star.magnitude).clamp(0.55, 4.0) as f32;
+        let strength = (1.0 - 0.045 * (star.magnitude + 1.46)).clamp(0.16, 1.0);
+        let color = star.color.map(|c| (f64::from(c) * strength).round() as u8);
+        if fast_stars && radius == MINIMUM_STAR_RADIUS && draw_minimum_star(canvas, x, y, color) { continue; }
+        draw_disc(canvas, x as f32, y as f32, radius, color);
     }
 }
 

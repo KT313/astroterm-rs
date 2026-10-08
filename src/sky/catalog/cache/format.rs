@@ -300,7 +300,6 @@ mod tests {
             constellations: true,
             grid: false,
             magnitude_threshold: threshold,
-            label_threshold: 0.25,
             dynamic_names: true,
         };
         draw_sky_scene(

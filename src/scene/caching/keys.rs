@@ -11,7 +11,6 @@ pub(crate) fn capture_star_keys(
     sky: &ProjectedSky<'_>,
     options: &RenderOptions,
     characters: bool,
-    named_candidates: &mut Vec<usize>,
 ) {
     if characters {
         if !matches!(keys, StarKeys::Characters { .. }) {
@@ -26,35 +25,23 @@ pub(crate) fn capture_star_keys(
         let StarKeys::Pixels(stars) = keys else { unreachable!() };
         stars.clear();
         stars.reserve(sky.stars.len());
-        named_candidates.clear();
-        for (index, entry) in sky.stars.iter().enumerate() {
-            if entry.star.magnitude <= options.label_threshold
-                && entry.star.name().is_some() {
-                named_candidates.push(index);
-            }
-            if entry.star.magnitude > options.magnitude_threshold {
-                continue;
-            }
-            if let Some(cell) = entry.cell {
-                stars.push(PixelStarKey {
-                    cell,
-                    magnitude: entry.star.magnitude,
-                    color: star_rgb(&entry.star),
-                });
-            }
-        }
+        stars.extend(prepare_pixel_star_inputs(sky, options));
     }
+}
+
+/// Resolve only the star fields used by pixel drawing; callers may collect them or draw headlessly.
+pub(in crate::scene) fn prepare_pixel_star_inputs<'a>(sky: &'a ProjectedSky<'_>, options: &'a RenderOptions) -> impl Iterator<Item = PixelStarKey> + 'a {
+    sky.stars.iter().filter_map(move |entry| {
+        if entry.star.magnitude > options.magnitude_threshold { return None; }
+        entry.cell.map(|cell| PixelStarKey { cell, magnitude: entry.star.magnitude, color: star_rgb(&entry.star) })
+    })
 }
 
 fn capture_character_keys(
     glyphs: &mut Vec<CharacterStarKey>, labels: &mut Vec<(usize, String)>,
     sky: &ProjectedSky<'_>, options: &RenderOptions,
 ) {
-    let dynamically_named = if options.dynamic_names {
-        select_dynamically_named_stars(options, sky)
-    } else {
-        Vec::new()
-    };
+    let dynamically_named = select_dynamically_named_stars(options, sky);
     glyphs.clear();
     glyphs.reserve(sky.stars.len());
     labels.clear();
@@ -66,8 +53,6 @@ fn capture_character_keys(
         let appearance = select_star_appearance(&entry.star, sky.names);
         let label = if dynamically_named.contains(&index) {
             Some(format_star_label(&entry.star, sky.names, options.unicode))
-        } else if entry.star.magnitude <= options.label_threshold {
-            sky.names.get_for_mode(entry.star.name(), options.unicode).map(std::borrow::Cow::Borrowed)
         } else {
             None
         };

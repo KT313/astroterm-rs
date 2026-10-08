@@ -70,17 +70,6 @@ pub struct Arguments {
     )]
     pub threshold: f32,
 
-    /// Label stars brighter than this magnitude (default: 0.25)
-    #[arg(
-        short = 'l',
-        long = "label-thresh",
-        value_name = "float",
-        allow_negative_numbers = true,
-        default_value_t = crate::constants::DEFAULT_LABEL_THRESHOLD,
-        hide_default_value = true
-    )]
-    pub label_threshold: f32,
-
     /// Frames per second (default: 24 for characters, 12 for pixels)
     #[arg(short = 'f', long, value_name = "int", allow_negative_numbers = true)]
     pub fps: Option<i64>,
@@ -145,8 +134,8 @@ pub struct Arguments {
     #[arg(long, value_name = "name|path")]
     pub dataset: Option<PathBuf>,
 
-    /// Don't name extra stars when zooming in. By default, if fewer than 5 objects in view have names, the brightest
-    /// visible stars are named too (with their catalog number if they have no proper name)
+    /// Hide star labels. By default, label the five brightest visible stars, using catalog identifiers when
+    /// proper names are unavailable. Sun, planet and Moon labels are independent
     #[arg(long = "disable-dynamic-names")]
     pub disable_dynamic_names: bool,
 

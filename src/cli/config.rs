@@ -38,7 +38,6 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
     for (value, name) in [
         (arguments.speed, "Speed"),
         (f64::from(arguments.threshold), "Magnitude threshold"),
-        (f64::from(arguments.label_threshold), "Label threshold"),
         (arguments.latitude, "Latitude"),
         (arguments.longitude, "Longitude"),
     ] {
@@ -76,7 +75,6 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
         constellations: arguments.constellations,
         grid: arguments.grid,
         magnitude_threshold: f64::from(arguments.threshold),
-        label_threshold: f64::from(arguments.label_threshold),
         dynamic_names: !arguments.disable_dynamic_names,
     };
     let simulation = SimulationSettings {
@@ -249,16 +247,21 @@ mod tests {
         );
         assert_eq!(config.simulation.start_julian_date, 2451545.0);
         assert_eq!(config.view, View::default());
-        assert_eq!(
-            (config.render.magnitude_threshold, config.render.label_threshold),
-            (5.0, 0.25)
-        );
+        assert_eq!(config.render.magnitude_threshold, 5.0);
         assert_eq!(
             (config.fps, config.simulation.speed, config.terminal.aspect_ratio),
             (24, 1.0, None)
         );
         assert!(!config.terminal.metadata_panel && !config.simulation.refraction && !config.terminal.quit_on_any_key);
         assert!(!config.terminal.frame_times && config.render.dynamic_names);
+    }
+
+    #[test]
+    fn star_labels_have_one_switch_and_no_magnitude_threshold_option() {
+        assert!(config_from(&[]).unwrap().render.dynamic_names);
+        assert!(!config_from(&["--disable-dynamic-names"]).unwrap().render.dynamic_names);
+        assert!(Arguments::try_parse_from(["astroterm", "--label-thresh", "1"]).is_err());
+        assert!(Arguments::try_parse_from(["astroterm", "-l", "1"]).is_err());
     }
 
     #[test]
@@ -306,7 +309,6 @@ mod tests {
         for flag in [
             "--speed",
             "--threshold",
-            "--label-thresh",
             "--latitude",
             "--longitude",
             "--aspect-ratio",

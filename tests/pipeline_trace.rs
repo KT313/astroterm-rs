@@ -65,7 +65,6 @@ fn tracing_preserves_observation_projection_and_raster_with_cache_or_bypass() {
         constellations: true,
         grid: false,
         magnitude_threshold: 5.0,
-        label_threshold: 0.25,
         dynamic_names: true,
     };
     for config in [CacheConfig::default(), CacheConfig::disabled()] {

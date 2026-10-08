@@ -17,7 +17,6 @@ fn options() -> RenderOptions {
         constellations: true,
         grid: false,
         magnitude_threshold: 5.0,
-        label_threshold: 0.25,
         dynamic_names: true,
     }
 }
@@ -244,13 +243,6 @@ fn catalog_palette_matches_reference_after_catalog_switch_and_cache_bypass() {
                 projected.order.remove(0);
             }
             check_pixels(&mut cache, &projected.view(sky), &options());
-            let expected: Vec<_> = projected.view(sky)
-                .stars
-                .iter()
-                .enumerate()
-                .filter_map(|(i, star)| (star.star.name().is_some() && star.star.magnitude <= options().label_threshold).then_some(i))
-                .collect();
-            assert_eq!(cache.named_candidates(), expected);
             check_characters(&mut cache, &projected.view(sky), &options(), (40, 60));
         }
     }

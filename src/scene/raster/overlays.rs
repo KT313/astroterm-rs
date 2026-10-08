@@ -126,7 +126,6 @@ mod tests {
         constellations: true,
         grid: false,
         magnitude_threshold: 5.0,
-        label_threshold: 0.25,
         dynamic_names: false,
     };
 

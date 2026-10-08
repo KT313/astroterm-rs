@@ -176,7 +176,6 @@ pub(in crate::terminal) fn layout_pixel_text(state: &mut PixelState, sky: &Proje
             &state.fields,
             notice,
             times,
-            Some(state.scene_cache.named_candidates()),
         )
     });
     text_cell

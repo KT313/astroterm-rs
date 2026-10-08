@@ -110,7 +110,7 @@ fn clipping_notice_coexists_with_date_notice_and_cache_tracks_it() {
     let view = View::default();
     let viewport = ProjectionViewport { width: 140, height: 8 };
     let options = RenderOptions { unicode: true, braille: false, color: false, constellations: false, grid: false,
-        magnitude_threshold: -50.0, label_threshold: -50.0, dynamic_names: false };
+        magnitude_threshold: -50.0, dynamic_names: false };
     let mut cache = SceneCache::default();
     let mut canvas = Canvas::new(8, 140);
     for sky in [&plain, &clipped, &clipped, &plain] {
