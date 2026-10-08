@@ -67,7 +67,7 @@ pub(super) fn prepare_pixel_candidate(storage: &mut SceneCache, sky: &ProjectedS
 pub(super) fn refresh_pixel_scene(storage: &mut SceneCache, sky: &ProjectedSky<'_>, options: &RenderOptions, epoch: f64, times: &mut StepTimes) -> Option<()> {
     let key = storage.pixel_candidate.as_ref().expect("raster candidate captured");
     let StarKeys::Pixels(stars) = &key.stars else { unreachable!("pixel drawing requires pixel inputs") };
-    let image = super::pipeline::draw_pixel_sky_from_inputs(sky, options, times, true, stars.iter().copied())?;
+    let image = super::pipeline::draw_pixel_sky_from_inputs(&mut storage.star_layer, sky, options, times, stars.iter().copied())?;
     let outcome = times.measure("Raster cache store", || {
         let key = storage.pixel_candidate.take().expect("raster candidate captured");
         storage.pixels.store(key, epoch, 0.0, image)

@@ -8,10 +8,11 @@ use super::diagnostics::memory::{record_character_initialization, record_charact
 
 use super::raster::pixels::{
     initialize_pixel_canvas, draw_pixel_horizon, draw_pixel_stars, draw_pixel_constellations, draw_pixel_planets,
-    draw_pixel_moon, draw_pixel_grid,
+    draw_pixel_moon, draw_pixel_grid, initialize_star_layer, apply_minimum_star_opacity, composite_star_layer,
 };
 use super::diagnostics::memory::{
-    record_pixel_horizon, record_pixel_stars, record_pixel_constellations, record_pixel_planets,
+    record_pixel_horizon, record_pixel_constellations, record_pixel_planets,
+    record_star_layer, record_star_composition,
     record_pixel_initialization, record_pixel_finalization,
 };
 
@@ -55,23 +56,23 @@ pub(crate) fn draw_sky_scene_with_times(canvas: &mut Canvas, options: &RenderOpt
     super::diagnostics::describe_coverage_notice(canvas, sky, times);
 }
 
-/// Build a pixel image back to front; each calculation retains its own existing timer.
-pub(super) fn draw_pixel_sky_with_star_path(sky: &ProjectedSky<'_>, options: &RenderOptions, times: &mut StepTimes, fast_stars: bool) -> Option<image::RgbaImage> {
+/// Paint straight-alpha stars, then composite them into an opaque scene before other objects and text.
+pub(super) fn draw_pixel_sky_from_inputs(layer: &mut Vec<crate::model::StarPixel>, sky: &ProjectedSky<'_>, options: &RenderOptions, times: &mut StepTimes, stars: impl IntoIterator<Item = crate::model::PixelStarKey>) -> Option<image::RgbaImage> {
 
-    let stars = super::caching::prepare_pixel_star_inputs(sky, options);
-    draw_pixel_sky_from_inputs(sky, options, times, fast_stars, stars)
-}
-
-/// Paint prepared star inputs; the production cache lends its existing list without another catalog pass.
-pub(super) fn draw_pixel_sky_from_inputs(sky: &ProjectedSky<'_>, options: &RenderOptions, times: &mut StepTimes, fast_stars: bool, stars: impl IntoIterator<Item = crate::model::PixelStarKey>) -> Option<image::RgbaImage> {
+    times.measure("Star layer initialization", || initialize_star_layer(layer, sky.viewport))?; // clear reusable floating-point pixels to transparent black
+    record_star_layer(times, layer, true);
+    let submitted = times.measure("Raster stars", || draw_pixel_stars(layer, sky.viewport.width, stars)); // mix four pixels per star in drawing order
+    record_star_layer(times, layer, false);
+    times.measure("Star opacity floor", || apply_minimum_star_opacity(layer));                // make faint nonempty pixels visible without changing their colors
+    record_star_layer(times, layer, false);
 
     let mut canvas = times.measure("Canvas initialization", || initialize_pixel_canvas(sky.viewport))?; // allocate the sky image and fill its background
     record_pixel_initialization(times, &canvas);
     times.measure("Raster horizon", || draw_pixel_horizon(&mut canvas, sky));                // place the horizon behind celestial objects
     record_pixel_horizon(times, &canvas, sky);
 
-    times.measure("Raster stars", || draw_pixel_stars(&mut canvas, stars, fast_stars)); // draw stars in their prepared brightness order
-    record_pixel_stars(times, &canvas);
+    times.measure("Star layer composition", || composite_star_layer(&mut canvas, layer));    // apply opacity once over the background and horizon
+    record_star_composition(times, layer, &canvas);
     times.measure("Raster constellations", || draw_pixel_constellations(&mut canvas, sky, options)); // add enabled constellation lines
     record_pixel_constellations(times, &canvas, sky);
     times.measure("Raster planets", || draw_pixel_planets(&mut canvas, sky));                // draw the Sun and planets above the stars
@@ -81,7 +82,6 @@ pub(super) fn draw_pixel_sky_from_inputs(sky: &ProjectedSky<'_>, options: &Rende
 
     let image = times.measure("Raster finalization", || image::RgbaImage::from_raw(canvas.width(), canvas.height(), canvas.take())); // transfer the finished pixels without changing their order
     record_pixel_finalization(times, image.as_ref());
-    super::diagnostics::describe_scene(sky, options, times);
-    super::diagnostics::describe_minimum_stars(sky, options, fast_stars, times);
+    super::diagnostics::describe_pixel_scene(sky, options, layer.len(), submitted, times);
     image
 }

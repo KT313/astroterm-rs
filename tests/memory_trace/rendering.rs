@@ -44,6 +44,8 @@ fn raster_hit_only_clears_candidate_and_borrows_output_without_repainting() {
     assert_eq!(draw_pixels(&mut cache, &projected, &options(), J2000, &mut hit).cloned().unwrap(), expected);
     assert!(contains(&operations(&hit, "Raster cache decision"), BufferId::PixelScene, Operation::Reuse));
     assert!(operations(&hit, "Canvas initialization").is_empty());
+    assert!(operations(&hit, "Star layer initialization").is_empty());
+    assert!(contains(&operations(&first, "Star layer initialization"), BufferId::StarLayer, Operation::Build));
     assert!(operations(&hit, "Raster cache store").is_empty());
     let clears = operations(&hit, "Raster candidate clear");
     let MemoryEvent::Operation { before: Some(before), after: Some(after), .. } = clears[0] else { panic!("candidate shapes"); };

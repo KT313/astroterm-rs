@@ -57,10 +57,17 @@ pub(in crate::scene) fn record_pixel_horizon(times: &mut crate::timing::StepTime
 }
 
 #[inline]
-pub(in crate::scene) fn record_pixel_stars(times: &mut crate::timing::StepTimes, canvas: &tiny_skia::Pixmap) {
+#[allow(clippy::ptr_arg)] // report retained capacity as well as live pixels
+pub(in crate::scene) fn record_star_layer(times: &mut crate::timing::StepTimes, layer: &Vec<crate::model::StarPixel>, initialized: bool) {
+    use crate::timing::{Access, BufferId, Operation};
+    times.record_borrow(BufferId::StarLayer, Access::Writable, || BufferShape::vector(layer, IndexDomain::Pixels));
+    if initialized { times.record_shape(BufferId::StarLayer, Operation::Build, None, || BufferShape::vector(layer, IndexDomain::Pixels)); }
+}
+
+#[inline]
+pub(in crate::scene) fn record_star_composition(times: &mut crate::timing::StepTimes, layer: &[crate::model::StarPixel], canvas: &tiny_skia::Pixmap) {
     use crate::timing::{Access, BufferId};
-    times.record_borrow(BufferId::ProjectedView, Access::ReadOnly, || BufferShape::unknown(IndexDomain::DrawOrder));
-    times.record_borrow(BufferId::CatalogStars, Access::ReadOnly, || BufferShape::unknown(IndexDomain::Catalog));
+    times.record_borrow(BufferId::StarLayer, Access::ReadOnly, || BufferShape::slice(layer, IndexDomain::Pixels));
     times.record_borrow(BufferId::PixelScene, Access::Writable, || BufferShape::slice(canvas.data(), IndexDomain::Bytes));
 }
 

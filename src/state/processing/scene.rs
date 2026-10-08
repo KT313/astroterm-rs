@@ -6,6 +6,9 @@ use crate::model::SceneKey;
 #[derive(Default)]
 pub struct SceneCache {
     pub(crate) config: CacheConfig,
+    /// Straight-alpha star pixels in row order. Refilled on redraw; capacity survives frames and resize.
+    /// Kept separate from tiny-skia's premultiplied scene; 16 bytes per pixel, reported in memory diagnostics.
+    pub(crate) star_layer: Vec<crate::model::StarPixel>,
     /// Exact raster inputs in draw order. Hits clear live entries but retain flat capacities;
     /// successful refreshes transfer the candidate into the matching cache. Failed pixel draws retain it.
     /// Nested label strings and constellation arc payloads are dropped when the candidate is cleared.
@@ -40,4 +43,4 @@ impl SceneCache {
     }
 }
 #[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(SceneCache { config, pixel_candidate, character_candidate, pixels, characters });
+crate::cache::report_fields!(SceneCache { config, star_layer, pixel_candidate, character_candidate, pixels, characters });

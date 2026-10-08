@@ -114,9 +114,11 @@ fn tracing_preserves_observation_projection_and_raster_with_cache_or_bypass() {
                     step("Correction selection").details[0]
                         .contains(&format!("output corrected stars={}", sky.stars.len()))
                 );
-                assert!(
-                    step("Raster stars").details[0].contains(&format!("submitted stars={}", projected.stars.len()))
-                );
+                let drawable = projected.stars.iter().filter(|entry| entry.cell.is_some_and(|(y, x)| {
+                    x > 0 && y > 0 && (x as usize) < viewport.width && (y as usize) < viewport.height
+                })).count();
+                assert!(step("Raster stars").details[0].contains(&format!("submitted stars={drawable}")));
+                assert!(step("Raster stars").details[0].contains(&format!("omitted edge stars={}", projected.stars.len()-drawable)));
                 assert!(step("Refraction").details[0].contains("no membership filtering"));
                 let names = trace.steps.iter().map(|s| s.name).collect::<Vec<_>>();
                 for (before, after) in [

@@ -19,7 +19,7 @@ pub(crate) fn capture_star_keys(
         let StarKeys::Characters { glyphs, labels } = keys else { unreachable!() };
         capture_character_keys(glyphs, labels, sky, options)
     } else {
-        // Keep exact magnitude and base RGB: deriving final radius/strength here would repeat per-star
+        // Keep exact magnitude and base RGB: deriving final opacity here would repeat per-star
         // floating-point rounding on cache misses. The existing rasterizer remains the only owner of that work.
         if !matches!(keys, StarKeys::Pixels(_)) { *keys = StarKeys::Pixels(Vec::new()); }
         let StarKeys::Pixels(stars) = keys else { unreachable!() };
@@ -33,7 +33,8 @@ pub(crate) fn capture_star_keys(
 pub(in crate::scene) fn prepare_pixel_star_inputs<'a>(sky: &'a ProjectedSky<'_>, options: &'a RenderOptions) -> impl Iterator<Item = PixelStarKey> + 'a {
     sky.stars.iter().filter_map(move |entry| {
         if entry.star.magnitude > options.magnitude_threshold { return None; }
-        entry.cell.map(|cell| PixelStarKey { cell, magnitude: entry.star.magnitude, color: star_rgb(&entry.star) })
+        entry.cell.filter(|&cell| crate::scene::pixel_star_fits(cell, sky.viewport))
+            .map(|cell| PixelStarKey { cell, magnitude: entry.star.magnitude, color: star_rgb(&entry.star) })
     })
 }
 

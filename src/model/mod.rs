@@ -30,7 +30,7 @@ pub use presentation::{
 };
 pub(crate) use presentation::{
     DrawRecord, StarKey, ProjectionBodyKey, ConstellationKey, HorizonGeometry,
-    SceneKey, PixelStarKey, CharacterStarKey, StarKeys, Glyph,
+    SceneKey, StarPixel, PixelStarKey, CharacterStarKey, StarKeys, Glyph,
 };
 pub use configuration::{Config, SimulationSettings, TerminalSettings, RendererKind, GraphicsProtocol};
 

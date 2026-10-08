@@ -238,9 +238,12 @@ all rendering algorithms.
 Pixel rasterization borrows the candidate key's filtered star inputs directly. Star labels use a local range over
 at most `DYNAMIC_NAME_COUNT` entries at the bright end of the projected order; no label-candidate buffer is retained.
 Sun, planet and Moon labels are independent of that limit.
+Pixel labels skip stars omitted by the four-pixel boundary check, walking backward only until enough eligible
+stars are found. This needs no heap allocation; a view with many edge stars may require inspecting more than N.
 
 | Owner/fields | Producer → consumer; units | Retention/reset |
 |---|---|---|
+| `SceneCache.star_layer` | Prepared pixel-star inputs → custom RGB/opacity blend → opacity floor → opaque sky composition; row-major `StarPixel` values | 16 bytes per pixel (f32 RGB + opacity); reset and reused on refresh, unchanged on hit; capacity retained across resize |
 | Scene candidates and committed keys | Raster input capture → exact comparison; display values plus copied body/arc/horizon geometry | Hits clear flat vectors while retaining capacity; nested strings/arcs drop; refresh transfers candidate; failed pixel draws retain it for reset/retry |
 | Scene pixel/character results | Raster passes → composition; RGBA pixels or canvas cells | Intentional image clone per output; character clone on refresh and restore on hit |
 | Character `frame`, `presenter` | Sky/panel drawing → full-screen composition → diff writer | Resize replaces canvases and discards previous-frame snapshot; successful presentation updates previous |

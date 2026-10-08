@@ -1,13 +1,13 @@
 //! Pure RGBA rasterization of the projected sky. Viewport units are pixels; no terminal I/O or astronomy lives here.
 use crate::constants::PIXEL_BACKGROUND_RGBA;
-mod minimum_star;
+mod stars;
 #[cfg(test)]
 mod validation;
 use image::RgbaImage;
-use crate::scene::pipeline::draw_pixel_sky_with_star_path;
+use crate::scene::pipeline::draw_pixel_sky_from_inputs;
 
-pub(in crate::scene) use minimum_star::MINIMUM_STAR_RADIUS;
-use minimum_star::draw_minimum_star;
+pub(in crate::scene) use stars::{initialize_star_layer, draw_pixel_stars, apply_minimum_star_opacity, composite_star_layer};
+pub(crate) use stars::{pixel_star_fits, select_pixel_star_labels};
 use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Stroke, Transform};
 
 use crate::model::{RenderOptions, ObservedStarView, PlanetKind, ProjectedSky, ScreenPoint};
@@ -15,7 +15,9 @@ use crate::timing::StepTimes;
 
 
 pub fn draw_pixel_sky(sky: &ProjectedSky<'_>, options: &RenderOptions, times: &mut StepTimes) -> Option<RgbaImage> {
-    draw_pixel_sky_with_star_path(sky, options, times, true)
+    let mut storage = crate::state::SceneCache::default(); // headless callers still use an explicit buffer owner
+    let stars = super::super::caching::prepare_pixel_star_inputs(sky, options);
+    draw_pixel_sky_from_inputs(&mut storage.star_layer, sky, options, times, stars)
 }
 
 pub(in crate::scene) fn initialize_pixel_canvas(viewport: crate::model::ProjectionViewport) -> Option<Pixmap> {
@@ -34,17 +36,6 @@ pub(in crate::scene) fn initialize_pixel_canvas(viewport: crate::model::Projecti
 pub(in crate::scene) fn draw_pixel_horizon(canvas: &mut Pixmap, sky: &ProjectedSky<'_>) {
     for &[a, b] in sky.horizon {
         draw_segment(canvas, a, b, [80, 110, 150], 1.2);
-    }
-}
-
-pub(in crate::scene) fn draw_pixel_stars(canvas: &mut Pixmap, stars: impl IntoIterator<Item = crate::model::PixelStarKey>, fast_stars: bool) {
-    for star in stars {
-        let (y, x) = star.cell; // filtering, coordinates and base colors were prepared before drawing
-        let radius = (2.8 - 0.32 * star.magnitude).clamp(0.55, 4.0) as f32;
-        let strength = (1.0 - 0.045 * (star.magnitude + 1.46)).clamp(0.16, 1.0);
-        let color = star.color.map(|c| (f64::from(c) * strength).round() as u8);
-        if fast_stars && radius == MINIMUM_STAR_RADIUS && draw_minimum_star(canvas, x, y, color) { continue; }
-        draw_disc(canvas, x as f32, y as f32, radius, color);
     }
 }
 

@@ -15,7 +15,7 @@ pub enum BufferId {
     MoonIllumination, ApparentDirections, HorizontalDirections, RefractedDirections,
     ProjectedCells, ProjectionCandidate, ProjectionBodyCandidate, ProjectionFigureCandidate, ProjectionHorizonCandidate, DrawOrderCandidate, DrawOrderScratch,
     DrawOrder, ProjectedBodies, ProjectedFigures, ProjectedHorizon, ProjectedView,
-    PixelCandidate, CharacterCandidate, PixelScene, CharacterScene,
+    PixelCandidate, CharacterCandidate, StarLayer, PixelScene, CharacterScene,
     CharacterFrame, PanelCanvas, PresenterScreen, PreviousFrame, FrameImage, HalfblockTransfer, RgbImage, MetadataFields,
     StepFields, TextCells, ComposedCells, GlyphMasks, Font, EncodedImage, UploadBytes, CompressedBytes, SerializedBytes,
     SerializationBlank,

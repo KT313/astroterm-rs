@@ -1,6 +1,6 @@
 //! Shared text layout in cells, painted into the final bitmap for graphics protocols or merged into half-block cells.
 use crate::model::{MetadataField, ProjectedSky, RenderOptions};
-use crate::scene::{format_star_label, select_dynamically_named_stars, planet_rgb};
+use crate::scene::{format_star_label, select_pixel_star_labels, planet_rgb};
 use crate::timing::{Access, BufferId, BufferShape, IndexDomain, Operation};
 use ratatui::{
     buffer::Buffer,
@@ -92,7 +92,7 @@ fn draw_star_labels(
     let mut eligible = 0;
     let mut submitted = 0;
     let cell = |position| map_pixel_to_cell(sky, area, position);
-    let candidates = select_dynamically_named_stars(options, sky);
+    let candidates = select_pixel_star_labels(options, sky);
     let count = candidates.len();
     for index in candidates {
         let entry = sky.stars.get(index);
@@ -303,7 +303,7 @@ mod prepared_tests {
             assert!(buffer.content.iter().map(|cell| cell.symbol()).collect::<String>().contains(name));
             if name == "After" { assert_eq!(cache.stats().hits, 1); }
 
-            data.stars[0].1 = (0, 0); // a clipped text origin does not force a scan for replacement labels
+            data.stars[0].1 = (1, 1); // a clipped text origin does not force a scan for replacement labels
             assert_eq!(draw_star_labels(&mut buffer, &data.view(&sky), &options, area), (1, 0, 1));
             data.order.clear();
             assert_eq!(draw_star_labels(&mut buffer, &data.view(&sky), &options, area), (0, 0, 0));

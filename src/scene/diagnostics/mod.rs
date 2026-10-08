@@ -4,6 +4,15 @@ use crate::model::{RenderOptions, ProjectedSky};
 use crate::timing::StepTimes;
 
 pub(super) fn describe_scene(sky: &ProjectedSky<'_>, options: &RenderOptions, times: &mut StepTimes) {
+    times.describe("Raster stars", || {
+        let bright = sky.stars.iter().filter(|s| s.star.magnitude <= options.magnitude_threshold).count();
+        let placed = sky.stars.iter().filter(|s| s.star.magnitude <= options.magnitude_threshold && s.cell.is_some()).count();
+        format!("input stars={}; rejected current magnitude > {}={}; then rejected missing cell={}; submitted stars={placed}; later objects may overwrite these", sky.stars.len(), options.magnitude_threshold, sky.stars.len()-bright, bright-placed)
+    });
+    describe_scene_geometry(sky, options, times);
+}
+
+fn describe_scene_geometry(sky: &ProjectedSky<'_>, options: &RenderOptions, times: &mut StepTimes) {
     times.describe("Canvas initialization", || {
         format!(
             "output canvas={}x{}; elements={}; background initialized",
@@ -18,11 +27,6 @@ pub(super) fn describe_scene(sky: &ProjectedSky<'_>, options: &RenderOptions, ti
             sky.horizon.len(),
             if sky.facing { sky.horizon.len() } else { 0 }
         )
-    });
-    times.describe("Raster stars", || {
-        let bright = sky.stars.iter().filter(|s| s.star.magnitude <= options.magnitude_threshold).count();
-        let placed = sky.stars.iter().filter(|s| s.star.magnitude <= options.magnitude_threshold && s.cell.is_some()).count();
-        format!("input stars={}; rejected current magnitude > {}={}; then rejected missing cell={}; submitted stars={placed}; later objects may overwrite these", sky.stars.len(), options.magnitude_threshold, sky.stars.len()-bright, bright-placed)
     });
     times.describe("Raster constellations", || {
         let eligible: Vec<_> = sky.constellations.iter().filter(|c| c.maximum_magnitude <= options.magnitude_threshold).collect();
@@ -70,23 +74,16 @@ pub(super) fn describe_scene(sky: &ProjectedSky<'_>, options: &RenderOptions, ti
     });
 }
 
-pub(super) fn describe_minimum_stars(sky: &crate::model::ProjectedSky<'_>, options: &crate::model::RenderOptions, fast_stars: bool, times: &mut crate::timing::StepTimes) {
+pub(super) fn describe_pixel_scene(sky: &ProjectedSky<'_>, options: &RenderOptions, pixels: usize, submitted: usize, times: &mut StepTimes) {
+    describe_scene_geometry(sky, options, times);
+    times.describe("Star layer initialization", || format!("pixels={pixels}; element bytes={}; straight-alpha f32 RGB and opacity; reusable capacity", std::mem::size_of::<crate::model::StarPixel>()));
     times.describe("Raster stars", || {
-        let tiny = sky
-            .stars
-            .iter()
-            .filter(|s| {
-                s.cell.is_some()
-                    && s.star.magnitude <= options.magnitude_threshold
-                    && (2.8 - 0.32 * s.star.magnitude).clamp(0.55, 4.0) as f32 == super::raster::pixels::MINIMUM_STAR_RADIUS
-            })
-            .count();
-        format!(
-            "minimum-radius stars={tiny}; fast path enabled={}; pixel bounds <=4096={}",
-            fast_stars,
-            sky.viewport.width <= 4096 && sky.viewport.height <= 4096
-        )
+        let bright = sky.stars.iter().filter(|s| s.star.magnitude <= options.magnitude_threshold).count();
+        let placed = sky.stars.iter().filter(|s| s.star.magnitude <= options.magnitude_threshold && s.cell.is_some()).count();
+        format!("input stars={}; rejected magnitude={}; then rejected missing cell={}; then omitted edge stars={}; submitted stars={submitted}; four pixels per star; prepared inputs reused", sky.stars.len(), sky.stars.len()-bright, bright-placed, placed-submitted)
     });
+    times.describe("Star opacity floor", || format!("input/output pixels={pixels}; minimum opacity={}; zero opacity and RGB unchanged", crate::constants::MIN_STAR_PIXEL_OPACITY));
+    times.describe("Star layer composition", || format!("input star pixels={pixels}; straight RGB multiplied by opacity once; output scene opacity=1"));
 }
 
 pub(super) fn describe_coverage_notice(canvas: &crate::canvas::Canvas, sky: &crate::model::ProjectedSky<'_>, times: &mut crate::timing::StepTimes) {

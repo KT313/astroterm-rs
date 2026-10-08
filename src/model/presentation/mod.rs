@@ -15,4 +15,4 @@ pub(crate) use projection::{
     DrawRecord, StarKey, BodyKey as ProjectionBodyKey, ConstellationKey,
     HorizonGeometry,
 };
-pub(crate) use rendering::{SceneKey, PixelStarKey, CharacterStarKey, StarKeys, Glyph};
+pub(crate) use rendering::{SceneKey, StarPixel, PixelStarKey, CharacterStarKey, StarKeys, Glyph};

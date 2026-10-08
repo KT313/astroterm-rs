@@ -62,6 +62,15 @@ pub(crate) struct SceneKey {
     pub(crate) canvas_size: Option<(usize, usize)>,
 }
 
+/// One straight-alpha star pixel: RGB channels and opacity are independent floats in 0..1.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct StarPixel {
+    pub(crate) rgb: [f32; 3],
+    pub(crate) opacity: f32,
+}
+row_columns!(StarPixel { rgb, opacity });
+// rgb = unscaled red/green/blue in 0..1; opacity = combined star coverage, also in 0..1.
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct PixelStarKey {
     pub(crate) cell: (i32, i32),

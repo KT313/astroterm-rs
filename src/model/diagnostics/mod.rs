@@ -13,7 +13,7 @@ use crate::model::{
 report_flat!(crate::model::StarException, Star, ObservedStar, Planet, Moon, PlanetKind, CorrectionStats, ObserverState, Anchor, MoonIllumination,
     crate::model::SkyRegion, crate::astro::MoonPhase, SelectedStar, StellarWork, View, ViewCenter, ProjectionKind, ArcPart, CartesianCamera,
     ScreenPoint, Polar, ProjectionViewport, ProjectedPlanet, ProjectedMoon, DrawRecord,
-    crate::model::StarColor, PixelStarKey, CharacterStarKey, RenderOptions, TerminalViewport, TerminalSettings,
+    crate::model::StarColor, crate::model::StarPixel, PixelStarKey, CharacterStarKey, RenderOptions, TerminalViewport, TerminalSettings,
     RendererKind, GraphicsProtocol, FrameTime, ModelFamily, StateRequest, CachePolicy, RefreshCounts,
     InterpolationLimits, crate::model::CellCap, crate::model::SelectionStats,
     crate::astro::Vector3, crate::astro::Matrix3, crate::astro::Observer, crate::astro::models::BodyState,

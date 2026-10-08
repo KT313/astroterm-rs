@@ -1,186 +1,124 @@
-//! Reference-image checks and an opt-in real-catalog comparison for the minimum-star fast path.
-use crate::state::{SimulationState};
+//! Scene-level checks for the straight-alpha star layer, cache reuse, labels and unrelated drawing layers.
 use super::*;
-use crate::astro::Observer;
-use crate::catalog::{Catalog, load_embedded_catalog};
-use crate::model::{ObservedSky, SkyCatalog, ProjectionViewport as Viewport, View, FrameTime};
+use crate::astro::Vector3;
+use crate::catalog::load_embedded_catalog;
+use crate::model::{Sky, ProjectionData, ProjectionViewport as Viewport, View};
 use crate::projection::project_sky;
-use crate::sky::{observe_sky, prepare_observation, update_solar_system};
-use std::{sync::Arc, time::Instant};
+use crate::state::SceneCache;
 
-fn options(threshold: f64) -> RenderOptions {
-    RenderOptions {
-        unicode: true,
-        braille: true,
-        color: true,
-        constellations: true,
-        grid: true,
-        magnitude_threshold: threshold,
-        dynamic_names: true,
-    }
+fn options() -> RenderOptions {
+    RenderOptions { unicode: true, braille: true, color: true, constellations: true, grid: false,
+        magnitude_threshold: 20.0, dynamic_names: true }
 }
-fn observe(catalog: Arc<SkyCatalog>, threshold: f64) -> ObservedSky {
-    let mut sky = ObservedSky::new(catalog);
-    let time = FrameTime::from_utc(2460735.9583333335);
-    let mut simulation = SimulationState::default();
-    update_solar_system(&mut simulation, time, &[], &mut StepTimes::default()).unwrap();
-    let site = Observer {
-        latitude: 35.69_f64.to_radians(),
-        longitude: 139.69_f64.to_radians(),
-    };
-    let observer = prepare_observation(&mut simulation, time, site).unwrap();
-    observe_sky(
-        &simulation,
-        &observer,
-        threshold,
-        false,
-        crate::model::SkyRegion::All,
-        &mut sky,
-        &mut StepTimes::default(),
-    )
-    .unwrap();
-    sky
-}
-
-#[test]
-fn complete_scenes_match_for_mixed_radii_and_large_canvas_fallback() {
-    let source = load_embedded_catalog().unwrap();
-    let mut stars = source.stars;
-    for (i, star) in stars.iter_mut().enumerate() {
-        star.magnitude = [2.0, 7.0, 7.03125, 7.03124, 8.0, 10.0][i % 6];
-    }
-    let catalog = Catalog::new(stars, source.names, source.constellations);
-    let sky = observe(Arc::new(crate::sky::prepare_owned_catalog(catalog).unwrap().catalog), 10.0);
-    for (width, height) in [(1, 1), (200, 200), (1102, 1102), (4097, 17), (17, 4097)] {
-        let view = View {
-            fov_degrees: 225.0,
-            ..View::default()
-        };
-        let projected_data = project_sky(&sky, &view, Viewport { width, height });
-        let projected = projected_data.view(&sky);
-        let actual = draw_pixel_sky(&projected, &options(10.0), &mut StepTimes::default()).unwrap();
-        let expected =
-            draw_pixel_sky_with_star_path(&projected, &options(10.0), &mut StepTimes::default(), false).unwrap();
-        assert_eq!(actual, expected, "{width}x{height}");
-    }
-}
-
-#[test]
-fn prepared_inputs_preserve_the_previous_star_pixels_and_order() {
+fn fixture(width: usize, height: usize) -> (Sky, ProjectionData) {
     let mut source = load_embedded_catalog().unwrap();
     source.stars.truncate(8);
+    source.constellations.clear();
+    for (i, star) in source.stars.iter_mut().enumerate() { star.magnitude = i as f64; }
     let mut sky = crate::sky::create_sky_from_catalog(&source).unwrap();
-    for (i, star) in sky.stars.iter_mut().enumerate() {
-        star.magnitude = [-1.0, 2.0, 5.0, 7.03125, 10.0, 20.0, 8.0, 4.0][i];
-        star.position = crate::astro::Vector3 { x: 0.0, y: 0.0, z: 1.0 };
-    }
-    let mut data = project_sky(&sky, &View::default(), Viewport { width: 64, height: 48 });
-    for (i, (_, cell)) in data.stars.iter_mut().enumerate() {
-        *cell = [(0, 0), (47, 63), (24, 32), (24, 32)][i % 4]; // include overlaps and partially clipped stars
-    }
-    for threshold in [5.0, 10.0, 20.0] {
-        let options = options(threshold);
-        let projected = data.view(&sky);
-        let mut cache = crate::state::SceneCache::default();
-        crate::scene::caching::prepare_pixel_candidate(&mut cache, &projected, &options, 0.0, &mut StepTimes::default());
-        let crate::model::StarKeys::Pixels(inputs) = &cache.pixel_candidate.as_ref().unwrap().stars else { unreachable!() };
-        let mut actual = initialize_pixel_canvas(projected.viewport).unwrap();
-        draw_pixel_stars(&mut actual, inputs.iter().copied(), true);
+    for star in &mut sky.stars { star.position = Vector3 { x: 0.0, y: 0.0, z: 1.0 }; }
+    for planet in &mut sky.planets { planet.position = Vector3 { x: 0.0, y: 0.0, z: -1.0 }; }
+    sky.moon.position = Vector3 { x: 0.0, y: 0.0, z: -1.0 };
+    let data = project_sky(&sky, &View::default(), Viewport { width, height });
+    (sky, data)
+}
 
-        let mut expected = initialize_pixel_canvas(projected.viewport).unwrap();
-        for entry in projected.stars.iter() {
-            if entry.star.magnitude > threshold { continue; }
-            let Some((y, x)) = entry.cell else { continue; };
-            let radius = (2.8 - 0.32 * entry.star.magnitude).clamp(0.55, 4.0) as f32;
-            let strength = (1.0 - 0.045 * (entry.star.magnitude + 1.46)).clamp(0.16, 1.0);
-            let rgb = star_rgb(&entry.star).map(|c| (f64::from(c) * strength).round() as u8);
-            draw_disc(&mut expected, x as f32, y as f32, radius, rgb); // independent original circle path
+#[test]
+fn cached_fresh_and_bypassed_images_match_at_tiny_and_large_dimensions() {
+    let mut cache = SceneCache::default();
+    for (width, height) in [(1, 1), (2, 2), (64, 48), (4097, 3), (3, 4097)] {
+        let (sky, data) = fixture(width, height);
+        let projected = data.view(&sky);
+        let expected = draw_pixel_sky(&projected, &options(), &mut StepTimes::default()).unwrap();
+        for _ in 0..2 {
+            assert_eq!(crate::scene::draw_pixels(&mut cache, &projected, &options(), 0.0, &mut StepTimes::default()), Some(&expected));
         }
-        assert_eq!(actual.data(), expected.data(), "threshold={threshold}");
+        assert!(expected.pixels().all(|p| p[3] == 255));
+        assert_eq!(cache.star_layer.len(), width * height);
+        let allocation = cache.star_layer.as_ptr();
+        cache.invalidate();
+        assert_eq!(crate::scene::draw_pixels(&mut cache, &projected, &options(), 0.0, &mut StepTimes::default()), Some(&expected));
+        assert_eq!(cache.star_layer.as_ptr(), allocation);
+        cache.configure(&crate::cache::CacheConfig::disabled());
+        assert_eq!(crate::scene::draw_pixels(&mut cache, &projected, &options(), 0.0, &mut StepTimes::default()), Some(&expected));
+        cache.configure(&crate::cache::CacheConfig::default());
     }
 }
 
-/// Compare actual uncached redraws; scene reuse cannot hide either rasterizer's cost. Source and image paths are
-/// explicit environment inputs so normal tests neither load the external catalog nor create image artifacts.
 #[test]
-#[ignore = "release pixel raster comparison; optionally set ASTROTERM_DATASET and ASTROTERM_RASTER_OUTPUT"]
-fn compare_minimum_star_rasterizers() {
-    use crate::catalog::datasets::{Dataset, DatasetDirectories};
-    let dataset = std::env::var_os("ASTROTERM_DATASET").map(|p| Dataset::Path(p.into()));
-    let directories = DatasetDirectories {
-        data: None,
-        cache: Some(std::env::temp_dir().join("astroterm-processing-probe")),
-    };
-    let catalog =
-        Arc::new(crate::sky::load_sky_catalog(dataset.as_ref(), &directories, &mut std::io::stderr()).unwrap().catalog);
-    for threshold in [5.0, 10.0] {
-        let sky = observe(catalog.clone(), threshold);
-        for fov in [225.0, 115.2, 12.4] {
-            let view = View {
-                fov_degrees: fov,
-                ..View::default()
-            };
-            let projected_data = project_sky(
-                &sky,
-                &view,
-                Viewport {
-                    width: 1102,
-                    height: 1102,
-                },
-            );
-            let projected = projected_data.view(&sky);
-            let mut durations = [Vec::new(), Vec::new()];
-            let mut star_durations = [Vec::new(), Vec::new()];
-            for frame in 0..8 {
-                let mut images = [None, None];
-                for mode in if frame % 2 == 0 { [0, 1] } else { [1, 0] } {
-                    let mut times = StepTimes::default();
-                    let start = Instant::now();
-                    images[mode] =
-                        draw_pixel_sky_with_star_path(&projected, &options(threshold), &mut times, mode == 1);
-                    let elapsed = start.elapsed().as_secs_f64() * 1000.0;
-                    if frame > 0 {
-                        durations[mode].push(elapsed);
-                        star_durations[mode].push(
-                            times
-                                .steps()
-                                .iter()
-                                .find(|s| s.name == "Raster stars")
-                                .unwrap()
-                                .average_seconds
-                                * 1000.0,
-                        );
-                    }
-                }
-                assert_eq!(images[0], images[1], "threshold={threshold} fov={fov} frame={frame}");
-                if frame == 0
-                    && threshold == 10.0
-                    && let Some(directory) = std::env::var_os("ASTROTERM_RASTER_OUTPUT")
-                {
-                    let directory = std::path::PathBuf::from(directory);
-                    std::fs::create_dir_all(&directory).unwrap();
-                    for (mode, image) in images.iter().enumerate() {
-                        image
-                            .as_ref()
-                            .unwrap()
-                            .save(directory.join(format!("{fov}-{}.png", if mode == 0 { "reference" } else { "fast" })))
-                            .unwrap();
-                    }
-                }
-                std::hint::black_box(images);
-            }
-            let mean = |v: &Vec<f64>| v.iter().sum::<f64>() / v.len() as f64;
-            let minimum_stars = projected
-                .stars
-                .iter()
-                .filter(|s| (2.8 - 0.32 * s.star.magnitude).clamp(0.55, 4.0) as f32 == MINIMUM_STAR_RADIUS)
-                .count();
-            println!(
-                "{}",
-                serde_json::json!({"threshold":threshold,"fov":fov,"visible_stars":projected.stars.len(),
-                "minimum_stars":minimum_stars,"reference_raster_ms":mean(&durations[0]),"fast_raster_ms":mean(&durations[1]),
-                "reference_stars_ms":mean(&star_durations[0]),"fast_stars_ms":mean(&star_durations[1]),"different_bytes":0,"measured_frames":7})
-            );
+fn edge_stars_are_omitted_before_drawing_and_do_not_use_label_slots() {
+    let (sky, mut data) = fixture(64, 48);
+    let brightest = *data.order.last().unwrap();
+    let second = data.order[data.order.len()-2];
+    data.stars[brightest].1 = (0, 20);
+    data.stars[second].1 = (20, 0);
+    let projected = data.view(&sky);
+    let selected = select_pixel_star_labels(&options(), &projected).collect::<Vec<_>>();
+    assert_eq!(selected, vec![1, 2, 3, 4, 5]); // the last two entries are brighter but have no complete footprint
+    let mut times = StepTimes::with_trace(true);
+    let mut cache = SceneCache::default();
+    crate::scene::draw_pixels(&mut cache, &projected, &options(), 0.0, &mut times).unwrap();
+    let trace = times.trace().unwrap();
+    let stars = trace.steps.iter().find(|s| s.name == "Raster stars").unwrap();
+    assert!(stars.details[0].contains("omitted edge stars=2; submitted stars=6"));
+    let names: Vec<_> = trace.steps.iter().map(|s| s.name).collect();
+    for pair in [ ["Star layer initialization", "Raster stars"], ["Raster stars", "Star opacity floor"],
+        ["Star opacity floor", "Canvas initialization"], ["Raster horizon", "Star layer composition"],
+        ["Star layer composition", "Raster planets"] ] {
+        assert!(names.iter().position(|&n| n == pair[0]).unwrap() < names.iter().position(|&n| n == pair[1]).unwrap());
+    }
+    let labels_off = RenderOptions { dynamic_names: false, ..options() };
+    assert_eq!(select_pixel_star_labels(&labels_off, &projected).len(), 0);
+}
+
+#[test]
+fn empty_star_layer_does_not_change_horizon_constellations_planets_moon_or_grid() {
+    let (sky, mut data) = fixture(64, 48);
+    data.order.clear();
+    data.facing = true;
+    data.horizon = vec![[(12, 0), (12, 63)]];
+    data.planets[0].cell = Some((20, 20));
+    data.moon.cell = Some((30, 40));
+    data.constellations.push(crate::model::ProjectedConstellation { maximum_magnitude: 2.0,
+        arcs: vec![crate::model::ProjectedArc { start: (3, 4), end: (15, 50), points: vec![(3, 4), (15, 50)],
+            includes_start: true, includes_end: true }] });
+    let options = RenderOptions { grid: true, ..options() };
+    for facing in [true, false] {
+        data.facing = facing;
+        let projected = data.view(&sky);
+        let actual = draw_pixel_sky(&projected, &options, &mut StepTimes::default()).unwrap();
+        let mut expected = initialize_pixel_canvas(projected.viewport).unwrap();
+        draw_pixel_horizon(&mut expected, &projected);
+        draw_pixel_constellations(&mut expected, &projected, &options);
+        draw_pixel_planets(&mut expected, &projected);
+        draw_pixel_moon(&mut expected, &projected);
+        draw_pixel_grid(&mut expected, &projected, &options);
+        assert_eq!(actual.as_raw(), expected.data());
+    }
+}
+
+#[test]
+fn blended_layer_table_reports_straight_colors_and_owned_capacity() {
+    use crate::state::Tables;
+    let (sky, data) = fixture(16, 16);
+    let mut cache = SceneCache::default();
+    crate::scene::draw_pixels(&mut cache, &data.view(&sky), &options(), 0.0, &mut StepTimes::default()).unwrap();
+    let mut found = false;
+    cache.visit_tables("scene", &mut |path, table, _| {
+        if path == "scene.star_layer" {
+            found = true;
+            assert_eq!(table.rows(), 256);
+            assert_eq!(table.bytes().used, Some(256 * 16));
+            assert!(table.bytes().reserved.unwrap() >= 256 * 16);
+            assert_eq!(table.columns().iter().map(|c| c.name).collect::<Vec<_>>(), ["rgb", "opacity"]);
         }
+    });
+    assert!(found);
+    #[cfg(feature = "memory-diagnostics")]
+    {
+        let inventory = crate::state::collect_inventory("scene", &cache);
+        let row = inventory.rows.iter().find(|r| r.kind == crate::cache::Kind::Heap && r.path.ends_with(".star_layer")).unwrap();
+        assert_eq!(row.used, Some(256 * 16));
+        assert!(row.reserved.unwrap() >= 256 * 16);
     }
 }
