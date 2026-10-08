@@ -15,6 +15,9 @@
 //! `owners.rs`.
 use crate::constants::TABLE_PREVIEW_EDGE_ROWS;
 mod leaves;
+mod regions;
+#[cfg(feature = "memory-diagnostics")]
+pub(crate) use regions::observation_nested_bytes as observation_region_bytes;
 mod log;
 mod labels;
 

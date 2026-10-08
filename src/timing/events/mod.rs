@@ -10,6 +10,8 @@ use std::mem::size_of;
 pub enum BufferId {
     CatalogStars, CatalogTrajectories, CatalogClassifications, CatalogGrid, CatalogNames, CatalogFigures, CatalogEndpoints,
     PlanetSamples, LunarSamples, OrientationSamples, ObserverGeometry, EmissionTimes,
+    RegionalBrightness, RegionalValidation, RegionalVisibility, RegionalCorrections, RegionalApparent,
+    RegionalProjectionKeys, RegionalProjectedCells, RegionalOrderKeys, RegionalDrawOrder,
     RegionSelection, BrightnessCandidates, ValidatedCandidates, WorkingStars, StellarSamples, StellarScratch, StellarRefreshRegions,
     MotionSamples, VisibilityFlags, CorrectionSelection, ObservedStars, ObservedBodies, BodySamples, RelativeBodies,
     MoonIllumination, ApparentDirections, HorizontalDirections, RefractedDirections,

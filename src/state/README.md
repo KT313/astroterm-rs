@@ -150,7 +150,11 @@ reception observer remains unchanged while emission requests refresh the indepen
 Getters never invoke an ephemeris. Synthetic callers may still prepare a custom observer and sample its supplied
 emission epochs without rebuilding its geometry.
 
-`StarSelectionCache` owns `region`, `candidates`, `selected` and `working`. Spatial selection keeps its fixed
+`StarSelectionCache` owns spatial selection, regional brightness/validation slots, and the combined `candidates`,
+`selected` and `working` arrays. Regional slots keep only a qualifying catalog prefix `(start, end)`: brightness
+keys depend on threshold and interval status, validation keys on that region's prefix generation. Only requested
+regions are checked; offscreen entries remain retained. Equal prefixes preserve versions even if thresholds change.
+Spatial selection keeps its fixed
 0.25° drift allowance and aberration/refraction/quantization margins. The final simulation region exclusively
 owns the unique constellation endpoints and is always requested, even with lines disabled. Endpoint dots still
 pass brightness and projection checks; faint endpoints can support lines without becoming drawable dots.
@@ -185,12 +189,20 @@ The requested epoch is not a claim that all region values were calculated then. 
 are assigned when owners are created, not per star or frame, and own no heap. No borrowed view is stored inside
 another owner. Mutation while a view is live is restricted by Rust's borrow checker.
 
-`ObservationCache` now owns only `eligible`, `corrections`, `relative`, `illumination`, `apparent`, `horizontal`
-and `refracted`, plus source provenance. `sky::observe_cached_sky` consumes prepared read-only views. It checks
-the supplied (possibly held) brightness, retains necessary correction rows, builds calculated output, subtracts the observer for
-bodies, computes Moon illumination, and applies aberration, horizon rotation and optional refraction. It cannot
-mutate model samples or perform selection. Snapshot hits restore the appropriate directions; refreshes keep
-freshly calculated directions. No corrected direction feeds back into intrinsic simulation.
+`ObservationCache.regions` retains independent brightness flags, correction membership and stellar aberration
+for each catalog region. Keys contain that region's upstream versions plus threshold or observer velocity where
+needed; none scans individual stars to decide reuse. Correction records retain catalog indices. Solar-system
+aberration has a separate small `body_apparent` cache. `eligible`, `corrections` and `apparent` remain current-frame
+combined results for existing consumers and diagnostics; horizon rotation and refraction still use whole-frame
+snapshots. Regional decisions and numerical calculations have separate timers.
+
+`sky::observe_cached_regions` performs observation and returns a `RegionalObservation` borrowing the sky and
+small region descriptors together. Each descriptor carries its current observed-row range and independent
+membership, stellar-sample and aberration versions. The token also carries owner identity, horizon matrix and
+effective refraction setting. Its borrows prevent caller edits while trusted projection consumes those versions.
+The original `observe_cached_sky` entry point performs the same corrections without returning that token.
+Refresh assembly publishes directions while capturing the combined snapshot; hits restore the snapshot.
+No corrected direction feeds back into intrinsic simulation.
 
 Cache generations still change only when values change. View controls invalidate selection and projection;
 resize only invalidates projection. Catalog identity changes reset selection, intrinsic samples and corrections,
@@ -219,13 +231,36 @@ view of the completed fields. That view does not build a reference vector or clo
 | Fields | Contents and use | Lifecycle |
 |---|---|---|
 | Immutable definition handle in constellation key | Read-only original definitions and their endpoint union | Shared; custom figures replace an immutable set through `set_figure_override` |
-| `star_candidate`, `stars` | Exact observed-position/flag key, then visible `(observed_index, Cell)` result | Candidate is cleared on hit, moved into cache on successful refresh |
+| `regional_stars` | One small dependency key and retained `(catalog_index, Cell)` vector per region | Refresh only requested regions whose dependencies changed |
+| `regional_orders` | Regional magnitude/ID sorted records with region-local observed-row offsets | Membership versions guard these offsets; camera and position-only changes do not invalidate order |
+| `regional_cells`, `regional_ranges`, `assembled_for` | Directly drawable cells, one start/end range per region, and small assembly dependency records | Reassemble only when requested regions, row ranges, cells or order versions change |
+| `region_cell_scratch` | Optional screen cells indexed within one observed region | Reused across regions and frames; empty after assembly, capacity bounded by the largest observed region encountered |
+| `star_candidate`, `stars` | Exact observed-position/flag key and visible output for the caller-editable headless fallback | Candidate is cleared on hit, moved into cache on successful refresh |
 | `order_candidate`, `order`, `draw_order_scratch` | Exact visible magnitude/ID inputs, draw-order permutation, temporary sort records | Same key lifecycle; sort scratch retains capacity between sorts |
 | `bodies` | Projected Sun/planet cells plus lunar geometry; hidden body records remain present | Refresh when the geometry key changes |
 | `constellations` | Nested clipped arcs and sampled cell/pixel vertices | Same; computed independently of drawing toggle |
 | `horizon` | View-dependent segments and orientation-label origins | Same |
 
-Candidate storage is separate from committed storage. A refresh transfers the candidate, and the old committed key
+The frame loop calls `project_cached_regions` with the immutable observation token. Projection keys depend on
+regional membership/apparent versions, horizon/refraction, camera and viewport. Regional sorting depends on
+membership and stellar versions. Each ordinary region is drawn dimmest-first, then the constellation region is
+drawn last. Cross-region pixel/cell overlaps follow that region order; no global merge, merged-order array or
+catalog-wide visibility lookup remains. Assembly resolves cells using reusable region-local scratch and emits
+directly drawable `(observed_index, Cell)` rows. Regional order offsets are valid only under their membership
+key; they never store shifting whole-frame row offsets.
+
+Labels independently select the global brightest five by comparing up to five eligible candidates from each
+region. Pixel candidates still pass the full-footprint check. The winners occupy a fixed stack array; regional
+ranges let selection skip the rest of the stars. The opacity floor still runs once after all star drawing. New region
+slots are initialized lazily on first use and reset on catalog/owner replacement. Unrequested results are retained;
+these new caches use exact dependency invalidation, not the stellar ten-day TTL.
+
+The existing `project_cached_sky` API retains exact input comparisons for arbitrary caller-edited skies. It shares
+body/figure/horizon geometry caches with the regional path, but has separate stellar backing. Switching paths
+selects the appropriate backing before `borrow_projected`. Metadata counters remain incremental; inventories
+and table reports aggregate regional allocations, including offscreen results, without thousands of output rows.
+
+For the exact fallback, candidate storage is separate from committed storage. A refresh transfers the candidate, and the old committed key
 drops normally. There is no cross-commit recycling. Equal-result refreshes do not advance the output generation.
 A view's immutable borrows must end before its observation or projection backing can be mutated again.
 

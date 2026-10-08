@@ -1,5 +1,5 @@
 //! Fixed four-pixel stars with straight RGB and independent opacity. No drawing-library blending is used here.
-use crate::constants::{DYNAMIC_NAME_COUNT, MAX_IMAGE_PIXELS, MIN_STAR_PIXEL_OPACITY,
+use crate::constants::{MAX_IMAGE_PIXELS, MIN_STAR_PIXEL_OPACITY,
     STAR_OPACITY_REFERENCE_MAGNITUDE, STAR_OPACITY_MAGNITUDE_SCALE, MIN_FOV_DEGREES,
     STAR_BRIGHTNESS_REFERENCE_FOV_DEGREES, STAR_BRIGHTNESS_ZOOM_POWER};
 use crate::model::{Cell, PixelStarKey, ProjectedSky, ProjectionViewport, RenderOptions, StarPixel};
@@ -10,21 +10,9 @@ pub(crate) fn pixel_star_fits((y, x): Cell, viewport: ProjectionViewport) -> boo
     x > 0 && y > 0 && (x as usize) < viewport.width && (y as usize) < viewport.height
 }
 
-/// Walk from the bright end until enough drawable stars are found, skipping omitted edge stars.
-/// A small stack array retains label overwrite order without a candidate allocation or full-list preparation pass.
+/// Keep global label selection independent of regional painting order; omit undrawable edge stars.
 pub(crate) fn select_pixel_star_labels(options: &RenderOptions, sky: &ProjectedSky<'_>) -> impl ExactSizeIterator<Item = usize> + DoubleEndedIterator {
-    let mut indices = [0; DYNAMIC_NAME_COUNT];
-    let mut count = 0;
-    if options.dynamic_names {
-        for (index, entry) in sky.stars.iter().enumerate().rev() {
-            if count == DYNAMIC_NAME_COUNT || entry.star.magnitude > options.magnitude_threshold { break; }
-            if entry.cell.is_some_and(|cell| pixel_star_fits(cell, sky.viewport)) {
-                indices[count] = index;
-                count += 1;
-            }
-        }
-    }
-    indices.into_iter().take(count).rev()
+    crate::scene::select_star_labels(options, sky, |cell| pixel_star_fits(cell, sky.viewport))
 }
 
 pub(in crate::scene) fn initialize_star_layer(layer: &mut Vec<StarPixel>, viewport: ProjectionViewport) -> Option<()> {

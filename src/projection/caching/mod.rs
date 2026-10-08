@@ -1,5 +1,7 @@
 //! Owned geometry caches; borrowed star views are assembled only for the current render call.
 mod memory;
+mod regions;
+pub(super) use regions::project_regional_stars;
 use memory::{record_key_build, record_cache_store, record_candidate_clear};
 use crate::state::ProjectionCache;
 use crate::timing::{Access, BufferId, BufferShape, IndexDomain, MemoryEvent, Operation};
@@ -142,7 +144,9 @@ pub fn borrow_projected<'a>(storage: &'a ProjectionCache, sky: &'a ObservedSky, 
         correction_stats: sky.corrections,
         catalog_singular_count: sky.catalog.singular_count,
         runtime_singular_count: sky.runtime_singular_count,
-        stars: crate::model::ProjectedStars::new(sky, storage.stars.value(), storage.order.value()),
+        stars: if storage.regional_active {
+            crate::model::ProjectedStars::from_regions(sky, &storage.regional_cells, &storage.regional_ranges)
+        } else { crate::model::ProjectedStars::new(sky, storage.stars.value(), storage.order.value()) },
         planets: &storage.bodies.value().0,
         moon: &storage.bodies.value().1,
         constellations: storage.constellations.value(),

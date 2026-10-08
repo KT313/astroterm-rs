@@ -1,4 +1,6 @@
 //! Objects, observed values and simulation sample records.
+mod regions;
+pub use regions::ObservedRegion;
 mod objects;
 mod observation;
 mod simulation;

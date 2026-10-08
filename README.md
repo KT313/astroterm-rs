@@ -140,6 +140,8 @@ been removed. Independent accuracy checks are documented in
 
 In pixel mode, stars use equal-size four-pixel dots; overlapping stars blend and zooming in boosts their brightness.
 Stars whose complete dot would cross the image boundary are omitted. The Sun, planets and Moon retain their sizes.
+The interactive renderer draws stars dimmest-first within each sky region, with constellation stars last;
+cross-region overlaps follow that region order. The five brightest star labels are still chosen across the whole view.
 
 <details>
 <summary>Credits, citations and data sources</summary>

@@ -1,4 +1,6 @@
 //! Drawing primitives, object appearance, and shared catalog palette access.
+mod labels;
+pub(crate) use labels::select_star_labels;
 pub(super) mod appearance;
 mod bodies;
 mod overlays;

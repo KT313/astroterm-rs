@@ -58,11 +58,11 @@ pub(super) fn run_render_loop(state: &mut ApplicationState, renderer: &mut Rende
         simulate_stars_frame(&mut state.cache.simulation.stars, state.cache.selection.stars(), time, &mut state.timings); // refresh requested regions and gather the selected stars' motion and brightness
 
         // 5. calculate how prepared objects appear to the viewer
-        observe_frame(&mut state.cache.observation, state.cache.simulation.stars.results(state.cache.selection.stars()), state.cache.observer.bodies(&observer), &observer, state.config.render.magnitude_threshold, state.config.simulation.refraction, &mut state.cache.sky, &mut state.timings);
+        let observed = observe_frame(&mut state.cache.observation, state.cache.simulation.stars.results(state.cache.selection.stars()), state.cache.observer.bodies(&observer), &observer, state.config.render.magnitude_threshold, state.config.simulation.refraction, &mut state.cache.sky, &mut state.timings);
 
         // 6. convert visible sky positions into positions on the screen
         let viewport = renderer.viewport(&state.cache.rendering); // use the current terminal size after any resize was handled
-        project_frame(&state.cache.sky, &state.current_view, viewport, time, &mut state.cache.projection, &mut state.timings);
+        project_frame(observed, &state.current_view, viewport, time, &mut state.cache.projection, &mut state.timings);
         log_pipeline_data_if_requested(state, "tmp/after-projection.md", "after-projection")?;
         let sky_processing_stats = state.cache.sky_processing_stats(); // summarize all sky-processing caches for the metadata
 

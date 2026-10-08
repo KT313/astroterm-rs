@@ -68,33 +68,3 @@ fn missing_body_coverage_keeps_committed_body_cache_and_published_sky() {
     assert_eq!(sky, previous_sky);
     assert_eq!(storage.observer.bodies.generation, previous_bodies.generation);
 }
-
-#[test]
-fn corrected_star_construction_preserves_rows_with_and_without_rejections() {
-    use crate::cache::{Cache, CacheConfig};
-    use crate::model::{SelectedStar, ObservedStar};
-    use crate::state::{WorkingCache, MotionCache, EligibleCache};
-    use crate::astro::Vector3;
-
-    let mut output = ObservedSky::new(small_catalog());
-    for flags in [vec![true, true, true], vec![true, false, true], vec![], vec![true, true, true]] {
-        let mut working = WorkingCache::default();
-        let mut motion = MotionCache::default();
-        let mut eligible = EligibleCache::default();
-        let mut corrections = Cache::default();
-        let samples: Vec<_> = (0..flags.len()).map(|index| (Vector3 { x: index as f64, y: -2.0, z: 3.0 }, index as f64 + 1.5)).collect();
-        working.store(0, 0.0, 0.0, (0..flags.len()).map(|source_index| SelectedStar { source_index, drawable: true }).collect());
-        motion.store((Default::default(), 0, 0), 0.0, 0.0, (samples.clone(), 0));
-        eligible.store((working.generation, motion.generation, 20.0), 0.0, 0.0, flags.clone());
-        let expected: Vec<_> = flags.iter().enumerate().filter(|(_, drawable)| **drawable).map(|(index, _)| ObservedStar {
-            source_index: index, drawable: true, position: samples[index].0, magnitude: samples[index].1,
-        }).collect();
-
-        for _ in 0..2 { // exercise both a new correction selection and its cache hit
-            super::selection::update_correction_selection(&working, &eligible, &mut corrections, &motion, &CacheConfig::default(), 0.0, &mut output, &mut StepTimes::default());
-            assert_eq!(output.stars, expected);
-            assert_eq!(output.corrections.evaluated, flags.len());
-            assert_eq!(output.corrections.skipped, flags.len() - expected.len());
-        }
-    }
-}

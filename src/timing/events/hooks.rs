@@ -42,6 +42,18 @@ impl StepTimes {
         self.record_unknown(buffer, Operation::Store { value_changed: outcome.value_changed });
     }
 
+    /// Aggregate region decisions without one diagnostic event per region; element counts mean regions.
+    #[inline(always)]
+    pub fn record_regional_counts(&mut self, buffer: BufferId, before: crate::cache::CacheStats, after: crate::cache::CacheStats) {
+        self.with_memory(|times| {
+            let step = times.last_memory_step();
+            let hits = after.hits - before.hits;
+            let refreshes = after.refreshes - before.refreshes;
+            if hits > 0 { times.record_memory(step, || MemoryEvent::operation(buffer, Operation::Reuse, None, None, Some(hits as usize), None)); }
+            if refreshes > 0 { times.record_memory(step, || MemoryEvent::operation(buffer, Operation::Build, None, None, Some(refreshes as usize), None)); }
+        });
+    }
+
     /// Attach to the supplied active or completed step; never compare cached values a second time.
     /// A missing refresh reason is reported as unknown, not invented or treated as a processing failure.
     #[inline(always)]

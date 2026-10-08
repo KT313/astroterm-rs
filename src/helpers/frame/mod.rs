@@ -74,20 +74,20 @@ pub(crate) fn simulate_stars_frame(stars: &mut astroterm::state::StellarSimulati
 
 /// Apply viewer-dependent corrections to the completed model results.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn observe_frame(
-    observation: &mut ObservationCache, stars: astroterm::state::StellarResults<'_>, bodies: astroterm::state::PreparedBodies<'_>,
-    observer: &astroterm::model::ObserverState, threshold: f64, refraction: bool, sky: &mut Sky, times: &mut StepTimes,
-) {
-    times.measure_steps("Observation", |times| astroterm::sky::observe_cached_sky(observation, stars, bodies, observer, threshold, refraction, sky, times));
+pub(crate) fn observe_frame<'a>(
+    observation: &'a mut ObservationCache, stars: astroterm::state::StellarResults<'_>, bodies: astroterm::state::PreparedBodies<'_>,
+    observer: &astroterm::model::ObserverState, threshold: f64, refraction: bool, sky: &'a mut Sky, times: &mut StepTimes,
+) -> astroterm::state::RegionalObservation<'a> {
+    times.measure_steps("Observation", |times| astroterm::sky::observe_cached_regions(observation, stars, bodies, observer, threshold, refraction, sky, times))
 }
 
 /// Project the observed sky for the current viewport within the existing Projection timer.
 pub(crate) fn project_frame(
-    sky: &Sky, view: &View, viewport: astroterm::model::ProjectionViewport, time: FrameTime,
+    sky: astroterm::state::RegionalObservation<'_>, view: &View, viewport: astroterm::model::ProjectionViewport, time: FrameTime,
     projection_cache: &mut ProjectionCache, step_times: &mut StepTimes,
 ) {
     step_times.measure_steps("Projection", |steps| {
-        astroterm::projection::project_cached_sky(projection_cache, sky, view, viewport, time.tt, steps);
+        astroterm::projection::project_cached_regions(projection_cache, sky, view, viewport, time.tt, steps);
     })
 }
 

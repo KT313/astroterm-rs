@@ -21,7 +21,7 @@ pub use simulation::{update_solar_system, evaluate_body, evaluate_orientation, p
 pub use observer::{prepare_observer_inputs, compose_observer_state, prepare_observer, prepare_light_time_samples, prepare_observation,
     prepare_cached_observer, prepare_cached_observer_with_times, prepare_cached_light_time, prepare_cached_bodies};
 pub use selection::select_cached_stars;
-pub use observation::observe_cached_sky;
+pub use observation::{observe_cached_sky, observe_cached_regions};
 pub use illumination::{compute_moon_illumination, name_moon_phase};
 pub use pipeline::{observe_sky, observe_sky_candidates};
 pub use positions::{refract_sky_positions, update_sky_positions};

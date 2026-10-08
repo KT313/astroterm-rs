@@ -12,7 +12,8 @@ pub use simulation::{SimulationState, SimulationCaches};
 pub use stellar::{StellarSimulationState, StellarResults};
 pub use observer::{ObserverPreparationCache, PreparedBodies};
 pub use selection::{StarSelectionCache, SelectedStars};
-pub use observation::ObservationCache;
+pub use observation::{ObservationCache, RegionalObservation};
+pub(crate) use observation::ObservationRegion;
 pub use projection::ProjectionCache;
 pub use scene::SceneCache;
 

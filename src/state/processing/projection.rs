@@ -1,12 +1,24 @@
-//! Visible cells address observed-star rows; draw order addresses visible cells. Geometry is viewport-relative.
-//! Keys retain exact comparisons and shared immutable definitions; scratch holds sort records.
+//! Regional geometry retains catalog indices; frame cells resolve them to observed rows before rendering.
+//! Exact whole-sky caches remain available for caller-editable headless input; all geometry is viewport-relative.
 use crate::cache::{Cache, CacheConfig};
 use crate::model::{
-    StarKey, ProjectionBodyKey as BodyKey, ConstellationKey, HorizonGeometry, Cell, DrawRecord, View,
+    RegionalProjectionKey, RegionalOrderKey, RegionalDrawRecord, StarKey, ProjectionBodyKey as BodyKey, ConstellationKey, HorizonGeometry, Cell, DrawRecord, View,
     ProjectionViewport as Viewport, ProjectedPlanet, ProjectedMoon, ProjectedConstellation,
 };
 #[derive(Default)]
 pub struct ProjectionCache {
+    /// Cells retain catalog indices; order offsets are local to a region and guarded by its membership version.
+    pub(crate) regional_stars: Vec<Cache<RegionalProjectionKey, Vec<(usize, Cell)>>>,
+    pub(crate) regional_orders: Vec<Cache<RegionalOrderKey, Vec<RegionalDrawRecord>>>,
+    pub(crate) regional_catalog: Option<std::sync::Arc<crate::model::SkyCatalog>>,
+    pub(crate) regional_owner: Option<u64>,
+    pub(crate) regional_active: bool,
+    pub(crate) regional_stats: crate::cache::CacheStats,
+    pub(crate) regional_cells: Vec<(usize, Cell)>,
+    pub(crate) regional_ranges: Vec<(usize, usize)>, // start/end of each region in directly drawable cells
+    pub(crate) region_cell_scratch: Vec<Option<Cell>>, // temporary cells indexed within one observed region
+    pub(crate) assembled_for: Vec<(usize, usize, usize, u64, u64)>, // region, current observed row range, cell version, order version
+    pub(crate) assembly_valid: bool,
     /// Reuse policy; read by processing stages and replaced only by explicit reconfiguration.
     pub(crate) config: CacheConfig,
     /// Exact candidate key in observed order; cleared on a hit, transferred on successful refresh.
@@ -45,6 +57,7 @@ impl ProjectionCache {
     }
     pub fn invalidate_view(&mut self) {
         self.stars.invalidate();
+        for cache in &mut self.regional_stars { cache.invalidate(); }
         self.bodies.invalidate();
         self.constellations.invalidate();
         self.horizon.invalidate();
@@ -52,6 +65,7 @@ impl ProjectionCache {
     pub fn stats(&self) -> crate::cache::CacheStats {
         let mut total = crate::cache::CacheStats::default();
         for s in [
+            self.regional_stats,
             self.stars.stats,
             self.order.stats,
             self.bodies.stats,
@@ -66,7 +80,30 @@ impl ProjectionCache {
     }
 }
 #[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(ProjectionCache { config, star_candidate, order_candidate, stars, order, draw_order_scratch, bodies, constellations, horizon });
+impl crate::cache::ReportBuffers for ProjectionCache {
+    fn report_buffers(&self, sink: &mut dyn crate::cache::BufferSink) {
+        use super::support::regions::{report_region_storage, cached_vector_bytes};
+        report_region_storage(sink, "regional_stars", &self.regional_stars, cached_vector_bytes);
+        report_region_storage(sink, "regional_orders", &self.regional_orders, cached_vector_bytes);
+        crate::cache::report_field(sink, "regional_catalog", &self.regional_catalog);
+        crate::cache::report_field(sink, "regional_owner", &self.regional_owner);
+        crate::cache::report_field(sink, "regional_active", &self.regional_active);
+        crate::cache::report_field(sink, "regional_cells", &self.regional_cells);
+        crate::cache::report_field(sink, "regional_ranges", &self.regional_ranges);
+        crate::cache::report_field(sink, "region_cell_scratch", &self.region_cell_scratch);
+        crate::cache::report_field(sink, "assembled_for", &self.assembled_for);
+        crate::cache::report_field(sink, "assembly_valid", &self.assembly_valid);
+        crate::cache::report_field(sink, "config", &self.config);
+        crate::cache::report_field(sink, "star_candidate", &self.star_candidate);
+        crate::cache::report_field(sink, "order_candidate", &self.order_candidate);
+        crate::cache::report_field(sink, "stars", &self.stars);
+        crate::cache::report_field(sink, "order", &self.order);
+        crate::cache::report_field(sink, "draw_order_scratch", &self.draw_order_scratch);
+        crate::cache::report_field(sink, "bodies", &self.bodies);
+        crate::cache::report_field(sink, "constellations", &self.constellations);
+        crate::cache::report_field(sink, "horizon", &self.horizon);
+    }
+}
 
 /// Projection may append cells and update its cache, but cannot access motion or rendering state.
 pub(crate) struct StarProjectionBuffers<'a> {

@@ -14,7 +14,7 @@ pub use catalog::{
 };
 pub(crate) use catalog::{SelectedRegion, StellarFields, build_caps, unsupported_star_data};
 pub use celestial::{
-    Star, SelectedStar, ObservedStar, ObservedStarView, PlanetKind, Planet, Moon, Constellation, create_planets, create_moon,
+    ObservedRegion, Star, SelectedStar, ObservedStar, ObservedStarView, PlanetKind, Planet, Moon, Constellation, create_planets, create_moon,
     CorrectionStats, ObservedSky, Sky, MoonIllumination, Anchor, ObserverState, FrameTime, ModelFamily, StateRequest,
     SimulationError, InterpolationLimits, PLANET_LIMITS, MOON_LIMITS, ORIENTATION_LIMITS, CachePolicy, RefreshCounts,
 };
@@ -29,7 +29,7 @@ pub use presentation::{
     MetadataField, StarColor,
 };
 pub(crate) use presentation::{
-    DrawRecord, StarKey, ProjectionBodyKey, ConstellationKey, HorizonGeometry,
+    RegionalProjectionKey, RegionalOrderKey, RegionalDrawRecord, DrawRecord, StarKey, ProjectionBodyKey, ConstellationKey, HorizonGeometry,
     SceneKey, StarPixel, PixelStarKey, CharacterStarKey, StarKeys, Glyph,
 };
 pub use configuration::{Config, SimulationSettings, TerminalSettings, RendererKind, GraphicsProtocol};

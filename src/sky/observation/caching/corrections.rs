@@ -59,45 +59,6 @@ pub(in crate::sky::observation) fn update_moon_illumination(illumination: &mut I
     record_cache(times, BufferId::MoonIllumination, memory_before, illumination);
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(in crate::sky::observation) fn update_aberration(
-    motion: &MotionCache, relative_cache: &RelativeCache, corrections: &Cache<(u64, u64), CorrectionSelection>,
-    apparent: &mut ApparentCache, config: &CacheConfig, epoch: f64, observer: &ObserverState,
-    output: &mut ObservedSky, times: &mut StepTimes,
-) {
-    times.measure_steps("Aberration", |times| {
-        let key = (
-            motion.generation,
-            relative_cache.generation,
-            corrections.generation,
-            observer.state.velocity,
-        );
-        let refresh = times.measure("Apparent cache decision", || {
-            apparent
-                .needs_refresh(&key, epoch, None, config.allows(Group::ApparentDirections))
-        });
-        times.record_memory(times.last_memory_step(), || MemoryEvent::unknown_operation(BufferId::ApparentDirections,
-            if refresh { Operation::Refresh(apparent.stats.last_reason.expect("refresh reason")) } else { Operation::Reuse }));
-        if refresh {
-            times.measure("Aberration calculation", || {
-                apply_sky_aberration(observer.state.velocity, output)
-            });
-            record_direction_pass(times, output);
-            let positions = times.measure("Direction capture", || capture_directions(output));
-            record_direction_capture(times, BufferId::ApparentDirections, &positions);
-            let outcome = times.measure("Direction cache store", || {
-                apparent.store(key, epoch, 0.0, positions)
-            });
-            times.record_store(BufferId::ApparentDirections, outcome);
-        } else {
-            times.measure("Direction restoration", || {
-                restore_directions(output, apparent.value())
-            });
-            record_direction_restoration(times, BufferId::ApparentDirections, output);
-        }
-    });
-}
-
 pub(in crate::sky::observation) fn update_horizon_rotation(
     apparent: &ApparentCache, horizontal: &mut HorizontalCache, config: &CacheConfig, epoch: f64,
     observer: &ObserverState, output: &mut ObservedSky, times: &mut StepTimes,
@@ -171,7 +132,7 @@ fn capture_directions(sky: &ObservedSky) -> Directions {
         sky.moon.position,
     )
 }
-fn restore_directions(sky: &mut ObservedSky, directions: &Directions) {
+pub(super) fn restore_directions(sky: &mut ObservedSky, directions: &Directions) {
     for (star, &p) in sky.stars.iter_mut().zip(&directions.0) {
         star.position = p;
     }

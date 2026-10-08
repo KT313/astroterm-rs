@@ -53,15 +53,21 @@ impl Tables for ObservedSky {
 
 list_tables!(SimulationState { leaves: [planets, moon, orientation], scalars: [], groups: [] });
 
-list_tables!(ObservationCache {
-    leaves: [
-        eligible @ StellarVisibility, corrections @ StellarVisibility,
-        relative @ SolarSystemGeometry,
-        apparent @ ApparentDirections, horizontal @ HorizontalSky, refracted @ Refraction,
-    ],
-    scalars: [illumination @ SolarSystemGeometry],
-    groups: [],
-});
+impl Tables for ObservationCache {
+    fn visit_tables(&self, prefix: &str, visit: &mut TableVisitor<'_>) {
+        let path = |name: &str| join(prefix, name);
+        visit(&path("regions"), &super::regions::ObservationRegionsTable(&self.regions), None);
+        visit(&path("regional_output"), &self.regional_output, Some(Group::Projection));
+        visit(&path("eligible"), &self.eligible, Some(Group::StellarVisibility));
+        visit(&path("corrections"), &self.corrections, Some(Group::StellarVisibility));
+        visit(&path("relative"), &self.relative, Some(Group::SolarSystemGeometry));
+        visit(&path("body_apparent"), &self.body_apparent, Some(Group::ApparentDirections));
+        visit(&path("apparent"), &self.apparent, Some(Group::ApparentDirections));
+        visit(&path("horizontal"), &self.horizontal, Some(Group::HorizontalSky));
+        visit(&path("refracted"), &self.refracted, Some(Group::Refraction));
+        visit(&path("illumination"), &super::ScalarCache(&self.illumination), Some(Group::SolarSystemGeometry));
+    }
+}
 
 // --- cache: projection ---------------------------------------------------------------------------------------------
 
@@ -69,6 +75,12 @@ list_tables!(ObservationCache {
 impl Tables for ProjectionCache {
     fn visit_tables(&self, prefix: &str, visit: &mut TableVisitor<'_>) {
         let path = |name: &str| join(prefix, name);
+        visit(&path("regional_stars"), &super::regions::RegionalTable { entries: &self.regional_stars, nested_bytes: super::TableBytes::vector }, Some(Group::Projection));
+        visit(&path("regional_orders"), &super::regions::RegionalTable { entries: &self.regional_orders, nested_bytes: super::TableBytes::vector }, Some(Group::DrawOrder));
+        visit(&path("regional_cells"), &self.regional_cells, None);
+        visit(&path("regional_ranges"), &self.regional_ranges, None);
+        visit(&path("region_cell_scratch"), &self.region_cell_scratch, None);
+        visit(&path("assembled_for"), &self.assembled_for, None);
         visit(&path("star_candidate"), &self.star_candidate, None);
         visit(&path("order_candidate"), &self.order_candidate, None);
         visit(&path("draw_order_scratch"), &self.draw_order_scratch, None);
@@ -168,7 +180,17 @@ impl super::Table for crate::model::CatalogPreparation {
 
 list_tables!(crate::state::ObserverPreparationCache { leaves: [bodies @ SolarSystemObservation], scalars: [observer @ ObserverState, light_time @ SolarSystemObservation], groups: [] });
 
-list_tables!(crate::state::StarSelectionCache { leaves: [region @ CandidateSelection, candidates @ CandidateSelection, selected @ WorkingSet, working @ WorkingSet], scalars: [], groups: [] });
+impl Tables for crate::state::StarSelectionCache {
+    fn visit_tables(&self, prefix: &str, visit: &mut TableVisitor<'_>) {
+        let path = |name: &str| join(prefix, name);
+        visit(&path("region_candidates"), &super::regions::RegionalTable { entries: &self.region_candidates, nested_bytes: super::regions::no_nested_bytes }, Some(Group::CandidateSelection));
+        visit(&path("region_selected"), &super::regions::RegionalTable { entries: &self.region_selected, nested_bytes: super::regions::no_nested_bytes }, Some(Group::WorkingSet));
+        visit(&path("region"), &self.region, Some(Group::CandidateSelection));
+        visit(&path("candidates"), &self.candidates, Some(Group::CandidateSelection));
+        visit(&path("selected"), &self.selected, Some(Group::WorkingSet));
+        visit(&path("working"), &self.working, Some(Group::WorkingSet));
+    }
+}
 
 list_tables!(crate::state::SimulationCaches { leaves: [], scalars: [], groups: [solar_system, stars] });
 list_tables!(crate::state::StellarSimulationState { leaves: [prepared_classes, stellar_scratch, refresh_regions, regions @ StellarState, motion @ StellarState], scalars: [], groups: [] });

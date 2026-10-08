@@ -1,6 +1,5 @@
 //! Drawing stars, constellation figures, planets and the Moon.
 
-use crate::constants::DYNAMIC_NAME_COUNT;
 
 use crate::canvas::{Canvas, draw_line_braille};
 use crate::model::{ProjectedArc, ProjectedPlanet, ProjectedSky};
@@ -11,7 +10,7 @@ use crate::model::RenderOptions;
 use super::draw_line;
 
 
-/// Draw stars dimmest first; optionally label only the brightest visible stars.
+/// Draw stars in prepared order; optionally label the global brightest visible stars.
 pub fn draw_stars(canvas: &mut Canvas, options: &RenderOptions, sky: &ProjectedSky<'_>) {
     let dynamically_named = select_dynamically_named_stars(options, sky);
 
@@ -35,14 +34,9 @@ pub fn draw_stars(canvas: &mut Canvas, options: &RenderOptions, sky: &ProjectedS
     }
 }
 
-/// Select the brightest end of the projected draw order without scanning the whole star list.
-/// Projection stores only visible cells in dim-to-bright order; names are available through catalog identifiers.
-pub(crate) fn select_dynamically_named_stars(options: &RenderOptions, sky: &ProjectedSky<'_>) -> std::ops::Range<usize> {
-    let end = sky.stars.len();
-    if !options.dynamic_names { return end..end; } // solar-system labels have their own independent rules
-    let count = sky.stars.iter().rev().take(DYNAMIC_NAME_COUNT)
-        .take_while(|entry| entry.star.magnitude <= options.magnitude_threshold).count();
-    end - count..end // retain dim-to-bright order when labels overlap
+/// Select global label winners from the brightest eligible stars in each drawing region.
+pub(crate) fn select_dynamically_named_stars(options: &RenderOptions, sky: &ProjectedSky<'_>) -> super::labels::StarLabels {
+    super::labels::select_star_labels(options, sky, |_| true)
 }
 
 /// Draw the stick figures of all constellations whose stars are all bright enough for the threshold.

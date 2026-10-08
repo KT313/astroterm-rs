@@ -258,26 +258,35 @@ impl ProjectionData {
     }
 }
 
-/// A read-only ordered view of visible cells. Every stored entry has a cell; order indices address the cell slice,
-/// and each cell entry addresses one observed-star row.
+/// Read-only drawing order: either a legacy permutation or directly ordered regional cells.
+/// Regional ranges identify independently brightness-sorted runs for bounded global label selection.
 #[derive(Clone, Copy, Debug)]
 pub struct ProjectedStars<'a> {
     observed: &'a crate::model::ObservedSky,
     cells: &'a [(usize, Cell)],
-    order: &'a [usize],
+    order: Option<&'a [usize]>,
+    regions: Option<&'a [(usize, usize)]>,
 }
 impl<'a> ProjectedStars<'a> {
     pub fn new(observed: &'a crate::model::ObservedSky, cells: &'a [(usize, Cell)], order: &'a [usize]) -> Self {
-        Self { observed, cells, order }
+        Self { observed, cells, order: Some(order), regions: None }
     }
-    pub fn len(&self) -> usize { self.order.len() }
-    pub fn is_empty(&self) -> bool { self.order.is_empty() }
+    pub(crate) fn from_regions(observed: &'a crate::model::ObservedSky, cells: &'a [(usize, Cell)], regions: &'a [(usize, usize)]) -> Self {
+        Self { observed, cells, order: None, regions: Some(regions) }
+    }
+    pub fn len(&self) -> usize { self.order.map_or(self.cells.len(), <[usize]>::len) }
+    pub fn is_empty(&self) -> bool { self.len() == 0 }
     pub fn get(&self, index: usize) -> ProjectedStar<'a> {
-        let (observed_index, cell) = self.cells[self.order[index]];
+        let (observed_index, cell) = self.cells[self.order.map_or(index, |order| order[index])];
         ProjectedStar { star: self.observed.star_view(observed_index), cell: Some(cell) }
     }
     pub fn iter(&self) -> impl DoubleEndedIterator<Item = ProjectedStar<'a>> + ExactSizeIterator + '_ {
         (0..self.len()).map(|index| self.get(index))
+    }
+    /// Each range is dimmest-to-brightest. The legacy path is one globally sorted range.
+    pub(crate) fn sorted_ranges(&self) -> impl Iterator<Item = std::ops::Range<usize>> + '_ {
+        self.regions.into_iter().flatten().map(|&(start, end)| start..end)
+            .chain(self.regions.is_none().then_some(0..self.len()))
     }
 }
 impl PartialEq for ProjectedStars<'_> {
@@ -302,3 +311,8 @@ pub(crate) type ConstellationKey = (
     ProjectionViewport,
 );
 pub(crate) type HorizonGeometry = (Vec<[Cell; 2]>, Vec<(Cell, &'static str)>);
+
+/// Regional dependencies contain only versions and shared camera settings, never copied star rows.
+pub(crate) type RegionalProjectionKey = ((u64, u64), crate::astro::Matrix3, bool, View, ProjectionViewport);
+pub(crate) type RegionalOrderKey = (u64, u64);
+pub(crate) type RegionalDrawRecord = (usize, f64, StarId); // membership-versioned row within this region, current magnitude, tie-breaking identifier

@@ -10,5 +10,6 @@ pub(in crate::sky::observation) fn prepare_inputs(storage: &mut ObservationCache
         *storage = ObservationCache::new(storage.config.clone());
         storage.catalog = Some(catalog.clone());
         storage.sources = Some(sources);
+        storage.regions.resize_with(crate::constants::SIMULATION_REGION_COUNT, Default::default);
     }
 }

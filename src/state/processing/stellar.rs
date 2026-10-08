@@ -82,7 +82,7 @@ impl StellarSimulationState {
         assert_eq!(self.motion.key(), Some(&key), "stellar results do not match selection");
         assert_eq!(self.requested_epoch, Some(selection.epoch), "stellar results do not match selection time");
         self.motion.value(); // reject an invalidated result before publishing a view
-        StellarResults { selection, motion: &self.motion, identity: self.identity }
+        StellarResults { selection, motion: &self.motion, regions: &self.regions, identity: self.identity }
     }
 }
 /// Outputs match this request, but their calculation epochs belong to independently held regions.
@@ -90,10 +90,20 @@ impl StellarSimulationState {
 pub struct StellarResults<'a> {
     pub(crate) selection: crate::state::SelectedStars<'a>,
     pub(crate) motion: &'a MotionCache,
+    pub(crate) regions: &'a StellarRegions,
     pub(crate) identity: super::StageId,
 }
 impl StellarResults<'_> {
     pub fn samples(&self) -> &[(Vector3, f64)] { &self.motion.value().0 }
+    /// Only requested regions have been checked for freshness for this frame.
+    pub fn region_samples(&self, region: usize) -> &[StellarSample] {
+        assert!(self.selection.regions.binary_search(&region).is_ok(), "region was not requested");
+        self.regions.entries[region].value()
+    }
+    pub fn region_generation(&self, region: usize) -> u64 {
+        self.region_samples(region); // check validity without visiting any individual sample
+        self.regions.entries[region].generation
+    }
 }
 #[cfg(feature = "memory-diagnostics")]
 impl crate::cache::ReportBuffers for StellarRegions {

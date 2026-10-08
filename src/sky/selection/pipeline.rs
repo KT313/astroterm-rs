@@ -10,12 +10,14 @@ pub fn select_cached_stars(storage: &mut StarSelectionCache, catalog: &Arc<SkyCa
     if storage.catalog.as_ref().is_none_or(|previous| !Arc::ptr_eq(previous, catalog)) {
         *storage = StarSelectionCache::new(storage.config.clone());
         storage.catalog = Some(catalog.clone());
+        storage.region_candidates = (0..crate::constants::SIMULATION_REGION_COUNT).map(|_| Default::default()).collect();
+        storage.region_selected = (0..crate::constants::SIMULATION_REGION_COUNT).map(|_| Default::default()).collect();
     }
     let previous = times.trace().map(|_| storage.reports());
     let epoch = observer.time.tt;
     update_region_filtering(&mut storage.region, &storage.config, epoch, refraction, region, observer, &catalog.grid, times);
-    update_brightness_bounds(&mut storage.candidates, &storage.region, &storage.config, epoch, threshold, catalog, times);
-    update_candidate_validation(&mut storage.selected, &storage.candidates, &storage.config, epoch, times);
+    update_brightness_bounds(&mut storage.candidates, &mut storage.region_candidates, &mut storage.candidate_region_stats, &storage.region, &storage.config, epoch, threshold, catalog, times);
+    update_candidate_validation(&mut storage.selected, &mut storage.region_selected, &mut storage.selected_region_stats, &storage.candidates, &storage.region_candidates, &storage.region, &storage.config, epoch, times);
     update_constellation_endpoints(&mut storage.working, &storage.selected, &storage.config, epoch, catalog.endpoint_indices(), times);
     storage.requested_epoch = Some(epoch);
     describe_selection(storage, catalog, threshold, times);
@@ -58,7 +60,7 @@ mod tests {
                         let refreshes = cache.stats().refreshes;
                         select_cached_stars(&mut cache, &catalog, &observer, threshold, false, region, &mut times);
                         assert_eq!((cache.region.generation, cache.candidates.generation, cache.selected.generation, cache.working.generation), generations);
-                        assert_eq!(cache.stats().refreshes - refreshes, if config.enabled { 0 } else { 4 });
+                        assert_eq!(cache.stats().refreshes - refreshes, if config.enabled { 0 } else { 4 + 2 * cache.stars().regions().len() as u64 });
                         assert_eq!(cache.working.value(), &expected);
                     }
                 }

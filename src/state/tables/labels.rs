@@ -24,7 +24,10 @@ pub(super) fn label_columns(path: &str, columns: &mut [Column]) {
 // working_row_index -> corrections.indices[row]; moon_illumination/moon_phase -> illumination tuple .0/.1.
 // projection star key (direction, passes_brightness_filter) -> tuple .0/.1.
 // projection order key (observed_star_index, current_magnitude, star_id) -> tuple .0/.1/.2.
-// projection stars (observed_star_index, screen_coordinates) -> tuple .0/.1; projected_star_index -> order[row].
+// projection stars/regional_cells (observed_star_index, screen_coordinates) -> tuple .0/.1; projected_star_index -> order[row] on the legacy path; regional_cells are already in drawing order.
+// regional_output: sky_region_index -> region; observed row start/end -> start/end; correction/stellar/aberration versions -> selection_generation/motion_generation/apparent_generation.
+// assembled_for -> region/start/end/cell-generation/order-generation tuple; regional_ranges marks each region's drawable start/end.
+// region_cell_scratch[row] is the optional cell for one row of the current region; cached regional_orders[row].0 is membership-versioned region-local row offset.
 // body key (body_kind, direction) -> tuple .0/.1; constellation key (catalog_row_index, direction, current_magnitude) -> .0/.1/.2.
 // screen_endpoint_pair -> horizon[row]; screen_coordinates/label_text -> labels[row].0/.1.
 // has_been_invalidated -> region entry's Cache.has_been_invalidated.
@@ -48,6 +51,11 @@ fn table_labels(path: &str) -> &'static [&'static str] {
         "cache.simulation.stars.stellar_scratch" => &["initial_magnitude", "trajectory_parameters", "motion_properties"],
         "cache.simulation.stars.refresh_regions" => &["simulation_region_id"],
         "cache.simulation.stars.motion" => &["direction_j2000", "current_magnitude"],
+        "cache.observation.regional_output" => &["sky_region_index", "observed_row_start", "observed_row_end_exclusive", "correction_membership_version", "stellar_sample_version", "aberration_version"],
+        "cache.projection.regional_cells" => &["observed_star_index", "screen_coordinates"],
+        "cache.projection.regional_ranges" => &["draw_row_start", "draw_row_end_exclusive"],
+        "cache.projection.region_cell_scratch" => &["optional_screen_coordinates"],
+        "cache.projection.assembled_for" => &["sky_region_index", "observed_row_start", "observed_row_end_exclusive", "projected_cell_version", "regional_order_version"],
         "cache.observation.eligible" => &["passes_brightness_filter"],
         "cache.observation.corrections" => &["working_row_index"],
         "cache.observer.bodies" => &["position_au", "velocity_au_per_day"],
