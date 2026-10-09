@@ -35,19 +35,19 @@ pub(crate) fn select_star_labels(options: &RenderOptions, sky: &ProjectedSky<'_>
     let mut labels = StarLabels { indices: [0; DYNAMIC_NAME_COUNT], start: 0, end: 0, examined: 0, regions: 0, eligible: 0 };
     if !options.dynamic_names || DYNAMIC_NAME_COUNT == 0 { return labels; }
     let mut candidates_by_rank = [(0.0, 0u32); DYNAMIC_NAME_COUNT];
+    let catalog = sky.stars.catalog();
     for range in sky.stars.sorted_ranges() {
         labels.regions += 1;
         let mut candidates = 0;
-        for index in range.rev() {
+        sky.stars.visit_range(range, true, |index, star| {                                 // bright end first, region columns resolved once
             labels.examined += 1;
-            let entry = sky.stars.get(index);
-            if entry.star.magnitude > options.magnitude_threshold { break; }                // the remaining stars in this region are dimmer
-            if !entry.cell.is_some_and(&eligible_cell) { continue; }
+            if star.magnitude > options.magnitude_threshold { return false; }              // the remaining stars in this region are dimmer
+            if !eligible_cell(star.cell) { return true; }
             labels.eligible += 1;
-            keep_brightest(&mut labels, &mut candidates_by_rank, index, (entry.star.magnitude, entry.star.id().0));
+            keep_brightest(&mut labels, &mut candidates_by_rank, index, (star.magnitude, catalog.id(star.source_index).0));
             candidates += 1;
-            if candidates == DYNAMIC_NAME_COUNT { break; }                                 // no sixth candidate from this region can enter the global top five
-        }
+            candidates < DYNAMIC_NAME_COUNT                                                // no sixth candidate from this region can enter the global top five
+        });
     }
     labels.indices[..labels.end].reverse();                                                // paint the selected labels dimmest-first
     labels

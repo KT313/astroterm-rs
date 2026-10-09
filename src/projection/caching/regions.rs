@@ -50,14 +50,15 @@ fn refresh_region_cells(storage: &mut ProjectionCache, observed: RegionalObserva
         times.record_candidate_decision(times.last_memory_step(), BufferId::RegionalProjectionKeys, BufferId::RegionalProjectedCells, refresh, cache.stats.last_reason);
         if !refresh { add_stats(&mut storage.regional_stats, before, cache.stats); reused += 1; continue; }
         let sky = observed.sky();
-        let stars = sky.stars.region(slot, region);
+        let stars = sky.stars.region(slot, region);                                          // resolve the region's columns once
         let cells = &mut storage.regional_cell_work;
         prepare_region_work(times, "Regional cell work preparation", BufferId::RegionalCellWork, cells, stars.len(), IndexDomain::Catalog);
         times.measure("Regional visible star calculation", || {
-            for star in stars.filter(|star| star.drawable) {
+            for row in 0..stars.len() {
+                if !stars.drawable(row) { continue; }
                 calculated += 1;
-                let Some(point) = crate::projection::project_camera(camera, star.position) else { continue; };
-                if point.is_visible() { cells.push((star.source_index, crate::projection::project_to_cell(viewport, point))); }
+                let Some(point) = crate::projection::project_camera(camera, stars.position(row)) else { continue; };
+                if point.is_visible() { cells.push((stars.source_index(row), crate::projection::project_to_cell(viewport, point))); }
             }
         });
         times.record_build(BufferId::RegionalCellWork, || BufferShape::vector(cells, IndexDomain::Catalog));
@@ -85,8 +86,8 @@ fn refresh_region_orders(storage: &mut ProjectionCache, observed: RegionalObserv
         let stars = sky.stars.region(slot, region);
         let order = &mut storage.regional_order_work;
         prepare_region_work(times, "Regional order work preparation", BufferId::RegionalOrderWork, order, stars.len(), IndexDomain::Observed);
-        times.measure("Regional sort record construction", || order.extend(stars.enumerate().filter(|(_, star)| star.drawable)
-            .map(|(row, star)| (row, star.magnitude, sky.catalog.stars.id(star.source_index)))));
+        times.measure("Regional sort record construction", || order.extend((0..stars.len()).filter(|&row| stars.drawable(row))
+            .map(|row| (row, stars.magnitude(row), sky.catalog.stars.id(stars.source_index(row))))));
         times.record_build(BufferId::RegionalOrderWork, || BufferShape::vector(order, IndexDomain::Observed));
         times.measure("Regional magnitude and ID sort", || order.sort_unstable_by(compare_records));
         let transition = times.inspect_memory(|| (BufferShape::vector(order, IndexDomain::Observed), cache.stored().map(|old| BufferShape::vector(old, IndexDomain::Observed))));
@@ -148,8 +149,8 @@ fn assemble_visible_cells(storage: &mut ProjectionCache, observed: RegionalObser
         storage.region_cell_scratch.resize(stars.len(), None);                              // reuse a small lookup for just this region
         let mut current = 0;
         for &(source, cell) in storage.regional_stars[region.region].value() {
-            while sky.stars.get_regional(slot, region.start + current).source_index < source { current += 1; }
-            assert_eq!(sky.stars.get_regional(slot, region.start + current).source_index, source, "regional projection membership must match its observation version");
+            while stars.source_index(current) < source { current += 1; }
+            assert_eq!(stars.source_index(current), source, "regional projection membership must match its observation version");
             storage.region_cell_scratch[current] = Some(cell);
         }
         let start = storage.regional_cells.len();
@@ -209,6 +210,18 @@ mod tests {
                 expected.stars.iter().filter(move |star| rows.iter().any(|row| row.source_index == star.star.source_index))
             }).collect();
         assert_eq!(actual.stars.iter().collect::<Vec<_>>(), expected_stars);
+        let mut visited = Vec::new();
+        actual.stars.visit_drawn(|index, star| visited.push((index, star.source_index, star.magnitude, star.cell)));
+        let through_views: Vec<_> = actual.stars.iter().enumerate().map(|(index, s)| (index, s.star.source_index, s.star.magnitude, s.cell.unwrap())).collect();
+        assert_eq!(visited, through_views);                                                 // region columns agree with the per-star views
+        for range in actual.stars.sorted_ranges() {
+            let mut reversed = Vec::new();
+            actual.stars.visit_range(range.clone(), true, |index, _| { reversed.push(index); true });
+            assert_eq!(reversed, range.clone().rev().collect::<Vec<_>>());
+            let mut stopped = 0;
+            actual.stars.visit_range(range.clone(), false, |_, _| { stopped += 1; false });
+            assert_eq!(stopped, usize::from(!range.is_empty()));
+        }
         expected.stars = actual.stars;                                                      // geometry and metadata still match the independent reference
         assert!(actual == expected, "projected geometry or metadata changed");
     }

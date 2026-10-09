@@ -256,6 +256,14 @@ region searching in projection/rendering and retains the previous address footpr
 order and constellation-last drawing remain unchanged. Render/projection views borrow original data; table logs
 and inventories report owners/work capacity and never reconstruct a star table for diagnostics.
 
+Hot loops do not read stars one view at a time. `ObservedStars::region(slot, descriptor)` and `slot_columns(slot)`
+resolve a region's three columns once and return `RegionData`: borrowed slices of the correction rows
+(`source_index`, `drawable`), the final directions and the stellar samples (`magnitude`, addressed by
+`source_index - offset`). Projection, draw-order records, view assembly and the raster/label scans
+(`ProjectedStars::visit_range` / `visit_drawn`) index those slices and read only the columns they need; the cache
+`expect` checks run once per region instead of once per star. `ObservedStarView` remains for single-star callers,
+the character path and tests.
+
 Cache generations still change only when values change. View controls invalidate selection and projection;
 resize only invalidates projection. Catalog identity changes reset selection, intrinsic samples and corrections,
 including equal-content distinct catalog allocations. Automatic stellar replacement classifies on demand until

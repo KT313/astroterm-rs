@@ -18,7 +18,7 @@ pub(in crate::scene) fn draw_prepared_pixels<'a>(storage: &'a mut SceneCache, pr
     times.measure("Raster drawing inputs", || {
         storage.pixel_inputs.clear();
         storage.pixel_inputs.reserve(sky.stars.len());
-        storage.pixel_inputs.extend(super::keys::prepare_pixel_star_inputs(sky, options));
+        super::keys::prepare_pixel_star_inputs(sky, options, &mut storage.pixel_inputs);
     });
     times.record_build(BufferId::PixelDrawingInputs, || BufferShape::vector(&storage.pixel_inputs, IndexDomain::DrawOrder));
     times.describe("Raster drawing inputs", || format!("input stars={}; accepted inputs={}; prepared once for redraw", sky.stars.len(), storage.pixel_inputs.len()));

@@ -43,10 +43,17 @@ fn frame(cache: &mut PipelineCache, simulation: &SimulationState, observer: &Obs
     let result = crate::sky::observe_cached_regions(&mut cache.observation, cache.stars.results(cache.selection.stars()), cache.observer.bodies(observer), observer, threshold, true, output, &mut times);
     assert_eq!(result.regions().len(), cache.selection.stars().regions().len());
     let mut cursor = 0;
-    for descriptor in result.regions() {
+    for (slot, descriptor) in result.regions().iter().enumerate() {
         assert_eq!(descriptor.start, cursor);
         cursor = descriptor.end;
         let rows: Vec<_> = (descriptor.start..descriptor.end).map(|index| result.sky().stars.get(index)).collect();
+        let (columns, base) = result.sky().stars.slot_columns(slot);
+        assert_eq!(base, descriptor.start);
+        assert_eq!(columns.len(), rows.len());
+        for (row, star) in rows.iter().enumerate() {
+            assert_eq!(columns.star(row), star.state.into_owned());                       // region columns agree with the per-star view
+            assert_eq!(result.sky().stars.region(slot, descriptor).star(row), star.state.into_owned());
+        }
         let offsets = &result.sky().catalog.grid.offsets;
         assert!(rows.iter().all(|row| row.source_index >= offsets[descriptor.region] && row.source_index < offsets[descriptor.region + 1]));
         assert!(rows.windows(2).all(|pair| pair[0].source_index < pair[1].source_index));

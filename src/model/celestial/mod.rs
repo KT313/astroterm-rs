@@ -3,7 +3,7 @@ mod regions;
 pub use regions::ObservedRegion;
 pub(crate) use regions::ObservationRegion;
 mod views;
-pub use views::{ObservedSkyView, ObservedPlanets, ObservedStars};
+pub use views::{ObservedSkyView, ObservedPlanets, ObservedStars, RegionData};
 mod objects;
 mod observation;
 mod simulation;

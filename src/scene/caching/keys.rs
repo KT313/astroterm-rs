@@ -3,7 +3,6 @@
 use crate::model::{ProjectedSky, RenderOptions};
 use crate::scene::{format_star_label, select_dynamically_named_stars};
 use crate::scene::raster::appearance::select_star_appearance;
-use crate::scene::star_rgb;
 
 use crate::model::{SceneKey, StarKeys, PixelStarKey, CharacterStarKey};
 pub(crate) fn capture_star_keys(
@@ -25,17 +24,18 @@ pub(crate) fn capture_star_keys(
         let StarKeys::Pixels(stars) = keys else { unreachable!() };
         stars.clear();
         stars.reserve(sky.stars.len());
-        stars.extend(prepare_pixel_star_inputs(sky, options));
+        prepare_pixel_star_inputs(sky, options, stars);
     }
 }
 
-/// Resolve only the star fields used by pixel drawing; callers may collect them or draw headlessly.
-pub(in crate::scene) fn prepare_pixel_star_inputs<'a>(sky: &'a ProjectedSky<'_>, options: &'a RenderOptions) -> impl Iterator<Item = PixelStarKey> + 'a {
-    sky.stars.iter().filter_map(move |entry| {
-        if entry.star.magnitude > options.magnitude_threshold { return None; }
-        entry.cell.filter(|&cell| crate::scene::pixel_star_fits(cell, sky.viewport))
-            .map(|cell| PixelStarKey { cell, magnitude: entry.star.magnitude, color: star_rgb(&entry.star) })
-    })
+/// Append the star fields pixel drawing needs, in paint order. Region columns are resolved once per region, so
+/// each star costs a few sequential reads plus one catalog colour lookup; no per-star view is built.
+pub(in crate::scene) fn prepare_pixel_star_inputs(sky: &ProjectedSky<'_>, options: &RenderOptions, inputs: &mut Vec<PixelStarKey>) {
+    let catalog = sky.stars.catalog();
+    sky.stars.visit_drawn(|_, star| {
+        if star.magnitude > options.magnitude_threshold || !crate::scene::pixel_star_fits(star.cell, sky.viewport) { return; }
+        inputs.push(PixelStarKey { cell: star.cell, magnitude: star.magnitude, color: catalog.display_color(star.source_index).rgb() });
+    });
 }
 
 fn capture_character_keys(

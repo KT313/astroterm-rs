@@ -1,7 +1,7 @@
 //! Local read-only combinations of original metadata, samples and final direction buffers; no row storage.
 use crate::model::ObservedStarState;
 use crate::{astro::{Vector3, models::stars::StellarSample}, cache::Cache,
-    model::{ObservedSky, ObservedStar, ObservedStarView, ObservedRegion, ObservationRegion, StarStorage, Directions, Planet, Moon}};
+    model::{ObservedSky, ObservedStar, ObservedStarView, ObservedRegion, ObservationRegion, SelectedStar, StarStorage, Directions, Planet, Moon}};
 
 #[derive(Clone, Copy, Debug)]
 pub struct ObservedStars<'a> {
@@ -44,8 +44,31 @@ impl<'a> ObservedStars<'a> {
         let last_region = match self.source { StarSource::Regional { descriptors, .. } => descriptors.len().saturating_sub(1), StarSource::Owned(_) => 0 };
         ObservedStarIter { stars: self, front: 0, back: self.len(), front_region: 0, back_region: last_region }
     }
-    pub(crate) fn region(self, slot: usize, region: &ObservedRegion) -> impl DoubleEndedIterator<Item = ObservedStarView<'a>> + ExactSizeIterator {
-        (region.start..region.end).map(move |index| self.get_regional(slot, index))
+    /// Resolve one requested region's columns once: the region in `slot` of the frame's descriptor list.
+    /// Returns the columns and the frame-wide index of the region's first row. Hot loops index the result
+    /// instead of rebuilding a star per row; the cache checks run once per region, not once per star.
+    pub(crate) fn slot_columns(self, slot: usize) -> (RegionData<'a>, usize) {
+        match self.source {
+            StarSource::Owned(rows) => (RegionData::Owned(rows), 0),
+            StarSource::Regional { descriptors, records, samples, offsets, directions } => {
+                let region = &descriptors[slot];
+                let rows = records[region.region].corrections.stored().expect("published correction records").0.as_slice();
+                let samples = samples[region.region].stored().expect("published stellar samples").as_slice();
+                let directions = &directions[region.start..region.end];
+                assert_eq!(rows.len(), directions.len(), "regional rows must match the frame's direction range");
+                (RegionData::Regional { rows, directions, samples, offset: offsets[region.region] }, region.start)
+            }
+        }
+    }
+    /// Columns of the region described by `descriptor`, which must be the frame's descriptor for `slot`.
+    pub(crate) fn region(self, slot: usize, descriptor: &ObservedRegion) -> RegionData<'a> {
+        match self.source {
+            StarSource::Owned(rows) => RegionData::Owned(&rows[descriptor.start..descriptor.end]),
+            StarSource::Regional { descriptors, .. } => {
+                debug_assert_eq!(descriptors[slot].region, descriptor.region, "descriptor must belong to its slot");
+                self.slot_columns(slot).0
+            }
+        }
     }
     pub(crate) fn find(self, source_index: usize) -> Option<ObservedStarView<'a>> {
         match self.source {
@@ -57,6 +80,46 @@ impl<'a> ObservedStars<'a> {
                 let local = records[region].corrections.stored()?.0.binary_search_by_key(&source_index, |row| row.source_index).ok()?;
                 Some(self.get_regional(slot, descriptors[slot].start + local))
             }
+        }
+    }
+}
+
+/// One region's borrowed columns, resolved once by `ObservedStars::region` or `slot_columns`. Each accessor is a
+/// plain slice index, so loops over a region read sequential memory and touch only the columns they ask for.
+/// `Owned` serves flat skies (headless callers and tests); `Regional` serves the cached production path, where
+/// `samples` covers every catalog star of the region and is addressed by `source_index - offset`.
+#[derive(Clone, Copy, Debug)]
+pub enum RegionData<'a> {
+    Owned(&'a [ObservedStar]),
+    Regional { rows: &'a [SelectedStar], directions: &'a [Vector3], samples: &'a [StellarSample], offset: usize },
+}
+impl RegionData<'_> {
+    pub fn len(&self) -> usize {
+        match self { Self::Owned(rows) => rows.len(), Self::Regional { rows, .. } => rows.len() }
+    }
+    pub fn is_empty(&self) -> bool { self.len() == 0 }
+    pub fn source_index(&self, row: usize) -> usize {
+        match self { Self::Owned(rows) => rows[row].source_index, Self::Regional { rows, .. } => rows[row].source_index }
+    }
+    pub fn drawable(&self, row: usize) -> bool {
+        match self { Self::Owned(rows) => rows[row].drawable, Self::Regional { rows, .. } => rows[row].drawable }
+    }
+    pub fn magnitude(&self, row: usize) -> f64 {
+        match self {
+            Self::Owned(rows) => rows[row].magnitude,
+            Self::Regional { rows, samples, offset, .. } => samples[rows[row].source_index - offset].magnitude,
+        }
+    }
+    pub fn position(&self, row: usize) -> Vector3 {
+        match self { Self::Owned(rows) => rows[row].position, Self::Regional { directions, .. } => directions[row] }
+    }
+    /// The complete record of one row, for callers that need every column.
+    pub fn star(&self, row: usize) -> ObservedStar {
+        match self {
+            Self::Owned(rows) => rows[row],
+            Self::Regional { .. } => ObservedStar {
+                source_index: self.source_index(row), drawable: self.drawable(row), magnitude: self.magnitude(row), position: self.position(row),
+            },
         }
     }
 }

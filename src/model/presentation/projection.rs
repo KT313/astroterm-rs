@@ -299,6 +299,47 @@ impl<'a> ProjectedStars<'a> {
         self.regions.into_iter().flatten().map(|&(start, end)| start..end)
             .chain(self.regions.is_none().then_some(0..self.len()))
     }
+    pub(crate) fn catalog(&self) -> &'a crate::model::StarStorage { self.observed.catalog() }
+    /// Visit the drawn stars of one sorted range in paint order, or from the bright end when `brightest_first`.
+    /// On the regional path the region's columns are resolved once for the whole range, so each star is a few
+    /// sequential slice reads. `visit` gets the paint index and returns false to stop the range early.
+    pub(crate) fn visit_range(&self, range: std::ops::Range<usize>, brightest_first: bool, mut visit: impl FnMut(usize, DrawnStar) -> bool) {
+        let Some(order) = self.order else {
+            let entries = &self.regional_cells[range.clone()];
+            let Some(first) = entries.first() else { return; };
+            let (columns, base) = self.observed.slot_columns(first.0.region_slot as usize);
+            let mut step = |index: usize, &(address, cell): &(RegionalStarIndex, Cell)| {
+                debug_assert_eq!(address.region_slot, first.0.region_slot, "one sorted range holds one region");
+                let row = address.observed_index as usize - base;
+                visit(index, DrawnStar { source_index: columns.source_index(row), magnitude: columns.magnitude(row), cell })
+            };
+            let indexed = range.zip(entries);
+            if brightest_first { for (index, entry) in indexed.rev() { if !step(index, entry) { return; } } }
+            else { for (index, entry) in indexed { if !step(index, entry) { return; } } }
+            return;
+        };
+        let mut step = |index: usize| {
+            let (row, cell) = self.cells[order[index]];
+            let star = self.observed.get(row);
+            visit(index, DrawnStar { source_index: star.source_index, magnitude: star.magnitude, cell })
+        };
+        if brightest_first { for index in range.rev() { if !step(index) { return; } } }
+        else { for index in range { if !step(index) { return; } } }
+    }
+    /// Visit every drawn star in paint order with the paint index; region columns are resolved once per region.
+    pub(crate) fn visit_drawn(&self, mut visit: impl FnMut(usize, DrawnStar)) {
+        for range in self.sorted_ranges() {
+            self.visit_range(range, false, |index, star| { visit(index, star); true });
+        }
+    }
+}
+
+/// The facts raster loops need about one drawn star; read from region columns, no catalog view is built.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct DrawnStar {
+    pub(crate) source_index: usize,
+    pub(crate) magnitude: f64,
+    pub(crate) cell: Cell,
 }
 impl PartialEq for ProjectedStars<'_> {
     fn eq(&self, other: &Self) -> bool { self.iter().eq(other.iter()) }
