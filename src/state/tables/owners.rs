@@ -142,6 +142,9 @@ impl Tables for PixelState {
         let path = |name: &str| join(prefix, name);
         visit(&path("frame_image"), &self.frame_image, None);
         visit(&path("rgb"), &self.rgb, None);
+        visit(&path("shared_memory"), &Single(&self.shared_memory), None);
+        visit(&path("shared_upload_bytes"), &Single(&self.shared_upload.as_ref().map(|object| object.bytes)), None);
+        visit(&path("shared_upload"), &Opaque { present: self.shared_upload.is_some(), what: "one pending POSIX RGB object; bytes held by the OS, no client mapping" }, None);
         visit(&path("rgb_version"), &Single(&self.rgb_version), None);
         visit(&path("frame_key"), &Single(&self.frame_key), None);
         visit(&path("encoding_key"), &Single(&self.encoding_key), None);

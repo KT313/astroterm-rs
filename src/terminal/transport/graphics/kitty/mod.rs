@@ -1,6 +1,8 @@
 //! Kitty RGB transport. Upload the back image outside synchronization, then atomically place it and delete
 //! the previous image. Two IDs bound terminal storage; no Unicode placeholder cells are required.
 mod compression;
+mod shared_memory;
+pub(crate) use shared_memory::{create_shared_image, encode_shared_upload, wait_for_shared_consumption};
 
 use std::{
     fmt::Write as _,

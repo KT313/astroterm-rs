@@ -26,3 +26,5 @@ pub(crate) use tables::observation_region_bytes;
 pub use memory::{
     InventoryCollector, KnownPayload, collect_inventory, capture_run_inventory, sum_known_payload, write_inventory,
 };
+
+pub(crate) use rendering::SharedMemoryImage;

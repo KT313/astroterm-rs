@@ -190,10 +190,11 @@ impl RenderOutcome {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct KittyDisplayKey {
+    pub shared_memory: bool,
     pub rgb_version: u64,
     pub dimensions: (u32, u32),
     pub screen: [u16; 4],
     pub compression: u8,
     pub tmux: bool,
 }
-row_columns!(KittyDisplayKey { rgb_version, dimensions, screen, compression, tmux });
+row_columns!(KittyDisplayKey { shared_memory, rgb_version, dimensions, screen, compression, tmux });

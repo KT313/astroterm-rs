@@ -1,4 +1,5 @@
 //! Individual pixel-frame stages and their existing diagnostic boundaries.
+mod shared_memory;
 mod presentation;
 pub(in crate::terminal) use presentation::present_kitty_image;
 mod composition;
@@ -156,9 +157,10 @@ pub(in crate::terminal) fn prepare_pixel_fields(state: &mut PixelState, sky: &Pr
                 value: format!("{:?} · {width}×{height}", state.protocol),
             });
             if state.protocol == ProtocolType::Kitty {
+                state.fields.push(MetadataField { label: "Transport".into(), value: if state.shared_memory { "Shared memory" } else { "Streaming" }.into() });
                 state.fields.push(MetadataField {
                     label: "Compression".into(),
-                    value: detection::describe_compression(state.compression).into(),
+                    value: if state.shared_memory { "Not used (shared memory)".into() } else { detection::describe_compression(state.compression).into() },
                 });
             }
         }
@@ -190,8 +192,7 @@ pub(in crate::terminal) fn prepare_pixel_fields(state: &mut PixelState, sky: &Pr
 }
 
 pub(in crate::terminal) fn layout_pixel_text(state: &mut PixelState, sky: &ProjectedSky<'_>, prepared: Option<&crate::model::RenderProjection<'_>>, times: &mut StepTimes) -> (u16, u16) {
-    let notice = (state.protocol == ProtocolType::Halfblocks)
-        .then_some("Pixel renderer: half-block output (no graphics protocol selected).");
+    let notice = detection::select_transport_notice(state.protocol, state.shared_memory);
     let (text_screen, text_area, text_cell) = if state.protocol == ProtocolType::Halfblocks {
         (state.screen, state.area, (state.font.width, state.font.height))
     } else {
@@ -362,6 +363,8 @@ mod lifetime_tests {
             reuse_assets: true,
             protocol,
             compression: CompressionSupport::Supported,
+            shared_memory: false,
+            shared_upload: None,
             kitty_image_id: kitty::IMAGE_IDS[0],
             font: ratatui_image::FontSize { width: 2, height: 2 },
             tmux: false,
@@ -412,6 +415,22 @@ mod lifetime_tests {
                     assert_eq!(actual, expected, "source={source_width}x{source_height}, target={target_width}x{target_height}, offset=({x}, {y})");
                 }
             }
+        }
+    }
+
+    #[test]
+    fn shared_memory_fallback_line_appears_without_metadata_and_clears_on_support() {
+        let mut state = pixels(ProtocolType::Kitty);
+        state.screen = Rect::new(0, 0, 100, 24); state.area = state.screen;
+        state.settings.metadata_panel = false;
+        let sky = crate::sky::create_sky_from_catalog(&crate::catalog::load_embedded_catalog().unwrap()).unwrap();
+        let data = crate::projection::project_sky(&sky, &crate::model::View::default(), state.viewport);
+        let projected = data.view(&sky);
+        for supported in [true, false, true] {
+            state.shared_memory = supported;
+            layout_pixel_text(&mut state, &projected, None, &mut StepTimes::default());
+            let text = state.text.content.iter().map(|cell| cell.symbol()).collect::<String>();
+            assert_eq!(text.contains("Shared memory unavailable; using streaming."), !supported);
         }
     }
 

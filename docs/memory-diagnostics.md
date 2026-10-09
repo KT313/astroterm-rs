@@ -352,3 +352,15 @@ owner-local revisions; generic Cache value-generation semantics are unchanged. N
 are opaque and reported as unknown coverage, not zero. `CompressionEngine` Build/Reuse events describe creation
 or reset of the working engine on an actual encoding pass; they do not mean a previous compressed result was
 reused. Each image remains an independent zlib stream. Encoding/display cache hits perform no engine operation.
+
+
+The Kitty shared-memory prototype keeps the original RGB buffer and copies into at most one temporary POSIX
+object. `shared_memory` reports selected transport; `shared_upload_bytes` exposes the pending object's logical
+extent. This OS storage is reported separately as an external extent, not owned Rust heap, RSS or a client mapping.
+Normal after-frame snapshots have no pending object. `SharedImage` Copy/Release events retain evidence of its
+transient bytes. `Shared memory preparation` includes creation/copy/name encoding; `Shared memory consumption`
+measures bounded waiting for the terminal's unlink. The small command-write time is not a display-latency claim.
+On timeout or unavailable shared storage, the session falls back to normal streaming; failed writes remain errors.
+
+Unavailable/unconfirmed Kitty shared memory also produces a yellow display notice, independent of `-m`.
+Runtime fallback adds it on the next frame; its presence participates in text-cache validity.

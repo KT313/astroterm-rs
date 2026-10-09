@@ -3,11 +3,16 @@ use std::io::{self, Write};
 use crate::{cache::Group, model::{KittyDisplayKey, RenderOutcome}, state::{PixelState, CompressionSupport},
     timing::{BufferId, BufferShape, IndexDomain, Operation, StepTimes}};
 use crate::terminal::transport::graphics::{kitty, present_frame};
-use super::{encode_kitty_upload, serialize_kitty_swap, describe_upload};
+use super::{encode_kitty_upload, serialize_kitty_swap};
+use super::shared_memory::{prepare_shared_upload, upload_kitty_pixels};
+
+#[cfg(all(test, unix))]
+#[path = "shared_tests.rs"]
+mod shared_tests;
 
 pub(in crate::terminal) fn present_kitty_image(state: &mut PixelState, out: &mut impl Write, times: &mut StepTimes) -> io::Result<RenderOutcome> {
     let Some(rgb_version) = state.rgb_version.current() else { return Err(io::Error::other("cannot present incomplete Kitty pixels")); };
-    let key = KittyDisplayKey { rgb_version, dimensions: state.rgb.dimensions(),
+    let mut key = KittyDisplayKey { shared_memory: state.shared_memory, rgb_version, dimensions: state.rgb.dimensions(),
         screen: [state.screen.x, state.screen.y, state.screen.width, state.screen.height], tmux: state.tmux,
         compression: match state.compression { CompressionSupport::Supported => 1, CompressionSupport::Unsupported => 2, CompressionSupport::Unknown => 0 } };
     let reuse = times.measure("Presentation decision", || state.display_valid && state.displayed_key == Some(key)
@@ -15,22 +20,23 @@ pub(in crate::terminal) fn present_kitty_image(state: &mut PixelState, out: &mut
     times.describe("Presentation decision", || format!("existing terminal image reused={reuse}; RGB revision={rgb_version}"));
     if reuse { return Ok(RenderOutcome::ReusedDisplayedFrame); }                      // no encoding, writes, flushes, swap or image-ID advance
 
-    encode_kitty_upload(state, times)?;
+    if !prepare_shared_upload(state, times) { encode_kitty_upload(state, times)?; }
     serialize_kitty_swap(state, times)?;
     state.display_valid = false;                                                     // even a partially failed write makes terminal contents uncertain
-    times.measure_steps("Present", |times| -> io::Result<()> {
-        times.measure("Image upload", || present_frame(out, state.upload.as_bytes()))?;
-        times.record_shape(BufferId::UploadBytes, Operation::Output, None, || describe_upload(state));
-        times.describe("Image upload", || format!("bytes written/flushed={}; upload outside synchronized output", state.upload.len()));
+    let result = times.measure_steps("Present", |times| -> io::Result<usize> {
+        let uploaded = upload_kitty_pixels(state, out, times)?;
         times.measure("Image swap", || present_frame(out, &state.serialized))?;
         times.record_shape(BufferId::SerializedBytes, Operation::Output, None, || BufferShape::vector(&state.serialized, IndexDomain::Bytes));
         times.describe("Image swap", || format!("bytes written/flushed={}; place completed image then delete prior image; frames=1", state.serialized.len()));
-        Ok(())
-    })?;
+        Ok(uploaded + state.serialized.len())
+    });
+    state.shared_upload = None; // cleanup also runs when an upload or swap write failed
+    let written = result?;
+    key.shared_memory = state.shared_memory; // consumption failure may have selected the streaming fallback
     state.displayed_key = Some(key);                                                 // commit only after both writes and flushes succeed
     state.display_valid = true;
     state.kitty_image_id = kitty::other_image_id(state.kitty_image_id);
-    times.describe("Present", || format!("Kitty total protocol bytes={}; frames=1", state.upload.len() + state.serialized.len()));
+    times.describe("Present", || format!("Kitty total protocol bytes={}; frames=1", written));
     Ok(RenderOutcome::Presented)
 }
 

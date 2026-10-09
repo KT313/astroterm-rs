@@ -536,3 +536,30 @@ working allocations. Compression writes directly into available compressed-buffe
 ZlibEncoder or intermediate writer buffer is constructed. Uncompressed output needs no engine initialization;
 encoding/display hits do not reset it. Bypass still recompresses each image but can reuse working allocations.
 The backend does not expose allocation sizes, so inventory/table diagnostics mark its working memory opaque.
+
+
+### Prototype Kitty shared-memory transport
+
+POSIX builds probe a private three-byte RGB shared-memory object at startup (`a=q,t=s`, ID 33), before crossterm
+starts reading keys. Only an explicit successful reply enables the path. Other platforms, inaccessible namespaces,
+rejection and silence retain normal streaming. `shared_memory` selects the transport; metadata displays Transport.
+
+PixelState retains its existing RGB Vec. A changed frame copies it into one fresh, exclusive, mode-0600 named
+object and sends only its name/dimensions/byte length. No client mapping, unsafe block or new catalog storage is
+introduced. `SharedMemoryImage` owns the name and File; its custom Drop is required to unlink unconsumed OS names
+on errors/unwinding. Normal terminal consumption unlinks the name; the client observes its original fd's zero link
+count before releasing it. Recreated names are not confused with the original inode. At most one image is pending.
+
+The upload stays outside synchronized output; only after consumption does the existing image swap run. Waiting
+is bounded by KITTY_SHARED_MEMORY_TIMEOUT_MS, sleeping between checks. Creation/write/check/consumption failure
+switches to streaming; after a consumption timeout, the same back image ID is replaced by a complete streamed
+image before placement. Terminal write failures remain errors and never advance the displayed key/image ID.
+The frame loop never reads protocol replies, so keyboard input has no competing reader. No current compressed
+result is reused after upload bytes were repurposed for a shared-memory name.
+
+Preparation and consumption waits have separate timers; a small Image upload time measures command writes only,
+not terminal display/GPU completion. Shared bytes appear as an external extent, not Rust heap or a client mapping;
+OS overhead/residency stays explicitly unknown. Objects normally disappear during each frame. SIGKILL or abort
+before consumption can leave one named object; unconditional cleanup after process death is not claimed.
+When unavailable, a yellow "Shared memory unavailable; using streaming." notice appears independently of the
+metadata panel. Runtime fallback status and its notice appear on the next frame, including while paused. Panel separation and tiled output are not implemented.

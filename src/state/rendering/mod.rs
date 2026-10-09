@@ -1,4 +1,7 @@
 //! Application-owned character/pixel rendering buffers. The terminal writer and cleanup guard live outside state.
+mod shared_memory;
+pub(crate) use shared_memory::SharedMemoryImage;
+
 use crate::astro::Observer;
 use crate::canvas::Canvas;
 use crate::model::{
@@ -46,6 +49,8 @@ pub struct PixelState {
     pub(crate) reuse_assets: bool,
     pub(crate) protocol: ProtocolType,
     pub(crate) compression: CompressionSupport,
+    pub(crate) shared_memory: bool, // enabled only after a successful local transfer probe
+    pub(crate) shared_upload: Option<SharedMemoryImage>, // at most one immutable RGB copy awaiting consumption
     pub(crate) kitty_image_id: u32,
     pub(crate) font: FontSize,
     pub(crate) tmux: bool,
@@ -166,6 +171,7 @@ impl crate::cache::ReportBuffers for PixelState {
         report_field(sink, "fields", &self.fields);
         report_field(sink, "upload", &self.upload);
         report_field(sink, "compressed", &self.compressed);
+        report_field(sink, "shared_upload", &self.shared_upload);
         if sink.enter("compressor", std::mem::size_of_val(&self.compressor)) {
             if self.compressor.is_some() { sink.unknown("retained zlib engine working memory; backend allocation sizes are opaque"); }
             sink.leave();

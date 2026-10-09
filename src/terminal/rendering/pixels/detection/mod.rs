@@ -18,20 +18,29 @@ pub(super) fn describe_compression(value: CompressionSupport) -> &'static str {
     }
 }
 
+pub(super) fn select_transport_notice(protocol: ProtocolType, shared_memory: bool) -> Option<&'static str> {
+    match protocol {
+        ProtocolType::Halfblocks => Some("Pixel renderer: half-block output (no graphics protocol selected)."),
+        ProtocolType::Kitty if !shared_memory => Some("Shared memory unavailable; using streaming."),
+        _ => None,
+    }
+}
+
 #[derive(Default)]
 struct Capabilities {
     protocol: Option<ProtocolType>,
     font: Option<FontSize>,
     compression: CompressionSupport,
+    shared_memory: bool,
 }
 
 pub(super) fn detect_protocol(
     forced: Option<ProtocolType>,
     tmux: bool,
     out: &mut impl io::Write,
-) -> io::Result<(ProtocolType, Option<FontSize>, CompressionSupport)> {
+) -> io::Result<(ProtocolType, Option<FontSize>, CompressionSupport, bool)> {
     if let Some(protocol) = forced.filter(|p| *p != ProtocolType::Kitty) {
-        return Ok((protocol, None, CompressionSupport::Unknown));
+        return Ok((protocol, None, CompressionSupport::Unknown, false));
     }
     let hint = std::env::var("TERM_PROGRAM").unwrap_or_default();
     let prefer_iterm = forced.is_none()
@@ -48,7 +57,7 @@ pub(super) fn detect_protocol(
             capabilities.protocol.unwrap_or(ProtocolType::Halfblocks)
         }
     });
-    Ok((protocol, capabilities.font, capabilities.compression))
+    Ok((protocol, capabilities.font, capabilities.compression, protocol == ProtocolType::Kitty && capabilities.shared_memory))
 }
 
 #[derive(Default)]
@@ -70,6 +79,10 @@ impl Replies {
                 } else {
                     CompressionSupport::Unsupported
                 };
+            }
+            if let Some(start) = self.tail.rfind("\x1b_Gi=33;") {
+                self.capabilities.shared_memory = &self.tail[start + "\x1b_Gi=33;".len()..self.tail.len() - 2] == "OK";
+                if self.capabilities.shared_memory { self.capabilities.protocol = Some(ProtocolType::Kitty); }
             }
             self.tail.clear();
         } else if self.tail.len() > 1024 {
@@ -117,7 +130,13 @@ fn build_query(tmux: bool, blacklist: bool) -> String {
 fn query_capabilities(tmux: bool, out: &mut impl io::Write, blacklist: bool) -> io::Result<Capabilities> {
     use rustix::event::{PollFd, PollFlags, Timespec, poll};
     use std::time::{Duration, Instant};
-    out.write_all(build_query(tmux, blacklist).as_bytes())?;
+    let probe = (!blacklist).then(|| crate::terminal::transport::graphics::kitty::create_shared_image(&[0, 0, 0]).ok()).flatten();
+    let mut query = String::new();
+    if let Some(probe) = &probe {
+        crate::terminal::transport::graphics::kitty::encode_shared_upload(probe, (1, 1), 33, true, tmux, &mut query);
+    }
+    query.push_str(&build_query(tmux, blacklist)); // status request remains last; all probing finishes before keyboard input starts
+    out.write_all(query.as_bytes())?;
     out.flush()?;
     let deadline = Instant::now() + Duration::from_millis(1500);
     let stdin = io::stdin();
@@ -148,6 +167,7 @@ fn query_capabilities(tmux: bool, out: &mut impl io::Write, blacklist: bool) -> 
             break;
         }
     }
+    replies.capabilities.shared_memory &= probe.is_some();
     Ok(replies.capabilities)
 }
 
@@ -159,6 +179,24 @@ fn query_capabilities(_tmux: bool, _out: &mut impl io::Write, _blacklist: bool) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shared_memory_notice_is_limited_to_unavailable_kitty_transfers() {
+        assert_eq!(select_transport_notice(ProtocolType::Kitty, false), Some("Shared memory unavailable; using streaming."));
+        assert!(select_transport_notice(ProtocolType::Kitty, true).is_none());
+        assert!(select_transport_notice(ProtocolType::Sixel, false).is_none());
+        assert!(select_transport_notice(ProtocolType::Iterm2, false).is_none());
+        assert!(select_transport_notice(ProtocolType::Halfblocks, false).unwrap().contains("half-block"));
+    }
+
+    #[test]
+    fn shared_memory_requires_an_explicit_successful_query_reply() {
+        for (reply, supported) in [("\x1b_Gi=33;OK\x1b\\", true), ("\x1b_Gi=33;ENOENT\x1b\\", false), ("", false)] {
+            let mut replies = Replies::default();
+            for byte in format!("{reply}\x1b[0n").bytes() { replies.push(byte); }
+            assert_eq!(replies.capabilities.shared_memory, supported);
+        }
+    }
 
     #[test]
     fn compression_query_and_replies_distinguish_support_rejection_and_silence() {

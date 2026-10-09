@@ -22,7 +22,7 @@ pub fn open_pixel_renderer(
     session.configure_graphics(false, false); // cleanup also covers a failed startup or capability query
     let picker = Picker::halfblocks();
     let tmux = picker.tmux_detected();
-    let (protocol, font, compression) = detection::detect_protocol(forced, tmux, session.output())?;
+    let (protocol, font, compression, shared_memory) = detection::detect_protocol(forced, tmux, session.output())?;
     let font = font.unwrap_or(picker.font_size());
     session.configure_graphics(protocol == ProtocolType::Kitty, tmux);
     let mut renderer = PixelState {
@@ -31,6 +31,8 @@ pub fn open_pixel_renderer(
         reuse_assets: true,
         protocol,
         compression,
+        shared_memory,
+        shared_upload: None,
         kitty_image_id: kitty::IMAGE_IDS[0],
         font,
         tmux,
