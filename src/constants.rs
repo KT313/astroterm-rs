@@ -9,6 +9,7 @@ use std::f64::consts::PI;
 // Cache lifetimes (simulated seconds; configuration may shorten these)
 // Other caches refresh when their inputs change, without a time limit.
 pub const STELLAR_REGION_TTL_SECONDS: f64 = 10.0 * 86_400.0;                              // reuse star positions and brightness for up to 10 simulated days
+pub const SOLAR_SYSTEM_GROUP_TTL_SECONDS: f64 = 0.0;                                   // reuse complete solar-system results only at the same simulated time
 pub const PLANETARY_SAMPLE_TTL_SECONDS: f64 = 30.0;                                       // reuse planetary samples within 30 simulated seconds of their time
 pub const LUNAR_SAMPLE_TTL_SECONDS: f64 = 12.0;                                           // reuse Moon samples within 12 simulated seconds of their time
 pub const ORIENTATION_SAMPLE_TTL_SECONDS: f64 = 60.0;                                     // reuse Earth-axis orientation samples within 60 simulated seconds

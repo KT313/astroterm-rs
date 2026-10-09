@@ -1,6 +1,10 @@
 //! Shared text layout in cells, painted into the final bitmap for graphics protocols or merged into half-block cells.
-use crate::model::{MetadataField, ProjectedSky, RenderOptions};
-use crate::scene::{format_star_label, select_pixel_star_labels, planet_rgb};
+mod cache;
+pub(super) use cache::refresh_text;
+use crate::model::{MetadataField, PixelLabel, ProjectedSky, RenderOptions};
+use crate::scene::planet_rgb;
+#[cfg(test)]
+use crate::scene::{format_star_label, select_pixel_star_labels};
 use crate::timing::{Access, BufferId, BufferShape, IndexDomain, Operation};
 use ratatui::{
     buffer::Buffer,
@@ -10,7 +14,9 @@ use ratatui::{
 };
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn compose_text(
+fn compose_text_into(
+    buffer: &mut Buffer,
+    labels: &[PixelLabel],
     sky: &ProjectedSky<'_>,
     options: &RenderOptions,
     screen: Rect,
@@ -18,10 +24,10 @@ pub(super) fn compose_text(
     fields: &[MetadataField],
     notice: Option<&str>,
     times: &mut crate::timing::StepTimes,
-) -> Buffer {
+) {
     // assemble every text layer in memory before either image encoding or terminal output
-    let mut buffer = times.measure("Text canvas", || Buffer::empty(screen));
-    times.record_shape(BufferId::TextCells, Operation::Build, None, || BufferShape::vector(&buffer.content, IndexDomain::Cells)); // new ratatui storage, symbol heap payload is not counted
+    times.measure("Text canvas", || { buffer.resize(screen); buffer.reset(); });
+    times.record_shape(BufferId::TextCells, Operation::Clear, None, || BufferShape::vector(&buffer.content, IndexDomain::Cells)); // retained ratatui cells; symbol heap payload is not counted
     times.describe("Text canvas", || {
         format!(
             "output text grid={}x{}; cells={}",
@@ -30,13 +36,9 @@ pub(super) fn compose_text(
             buffer.content.len()
         )
     });
-    let (eligible, submitted, visited) = times.measure("Star labels", || {
-        draw_star_labels(&mut buffer, sky, options, area)
-    });
-    times.record_borrow(BufferId::TextCells, Access::Writable, || BufferShape::vector(&buffer.content, IndexDomain::Cells));
-    times.describe("Star labels", || format!("input stars={}; label candidates={eligible}; skipped by label rules or missing cell={}; clipped label origins={}; submitted labels={submitted}; dynamic names={}", sky.stars.len(), sky.stars.len()-eligible, eligible-submitted, options.dynamic_names));
-    times.describe("Star labels", || format!("visited candidates={visited}; selected from the brightest end; solar-system labels are independent"));
-    times.measure("Body labels", || draw_body_labels(&mut buffer, sky, area));
+    let submitted = times.measure("Star label painting", || draw_cached_labels(buffer, labels, area));
+    times.describe("Star label painting", || format!("saved labels={}; painted labels={submitted}; clipped origins={}", labels.len(), labels.len() - submitted));
+    times.measure("Body labels", || draw_body_labels(buffer, sky, area));
     times.describe("Body labels", || {
         format!(
             "input Sun/planets={}; input Moon=1; visible label candidates={}; labels clipped to text area",
@@ -45,7 +47,7 @@ pub(super) fn compose_text(
         )
     });
     times.measure("Orientation labels", || {
-        draw_orientation_labels(&mut buffer, sky, options, area)
+        draw_orientation_labels(buffer, sky, options, area)
     });
     times.describe("Orientation labels", || {
         format!(
@@ -57,7 +59,7 @@ pub(super) fn compose_text(
             area.height
         )
     });
-    times.measure("Metadata panel", || draw_metadata(&mut buffer, screen, fields));
+    times.measure("Metadata panel", || draw_metadata(buffer, screen, fields));
     {
         times.record_borrow(BufferId::MetadataFields, Access::ReadOnly, || BufferShape::slice(fields, IndexDomain::Objects));
         times.record_borrow(BufferId::TextCells, Access::Writable, || BufferShape::vector(&buffer.content, IndexDomain::Cells));
@@ -70,7 +72,7 @@ pub(super) fn compose_text(
             fields.len().saturating_sub(usize::from(screen.height))
         )
     });
-    times.measure("Notices", || draw_notices(&mut buffer, sky, screen, notice));
+    times.measure("Notices", || draw_notices(buffer, sky, screen, notice));
     times.describe("Notices", || {
         format!(
             "fallback notice={}; accuracy warning={}; brightness-bound warning={}; final nonblank text cells={}",
@@ -80,9 +82,16 @@ pub(super) fn compose_text(
             buffer.content.iter().filter(|c| !c.symbol().trim().is_empty()).count()
         )
     });
-    buffer
 }
 
+fn draw_cached_labels(buffer: &mut Buffer, labels: &[PixelLabel], area: Rect) -> usize {
+    labels.iter().filter(|label| {
+        let [r, g, b] = label.rgb;
+        put_label(buffer, area, label.row, label.col, &label.text, Color::Rgb(r, g, b))
+    }).count()
+}
+
+#[cfg(test)]
 fn draw_star_labels(
     buffer: &mut Buffer,
     sky: &ProjectedSky<'_>,

@@ -12,11 +12,12 @@ use super::memory::record_sample_family;
 
 use crate::model::{ModelFamily, SimulationError, Sample};
 
-pub(super) fn refresh_planet_samples(state: &mut SimulationState, epochs: &[f64], before: crate::model::RefreshCounts, times: &mut StepTimes) -> Result<(), SimulationError> {
-    let memory_before = times.inspect_memory(|| BufferShape::vector(&state.planets, IndexDomain::ModelSamples));
+pub(super) fn refresh_planet_samples(state: &mut SimulationState, epochs: &[f64], before: crate::model::RefreshCounts, times: &mut StepTimes) -> Result<bool, SimulationError> {
+    let memory_before = times.inspect_memory(|| (BufferShape::vector(&state.planets, IndexDomain::ModelSamples), BufferShape::vector(&state.planet_work, IndexDomain::ModelSamples)));
     let result = times.measure("Planet samples", || {
         prepare_samples(
             &mut state.planets,
+            &mut state.planet_work,
             epochs,
             state.policy.planets_days,
             ModelFamily::Planets,
@@ -31,17 +32,18 @@ pub(super) fn refresh_planet_samples(state: &mut SimulationState, epochs: &[f64]
             },
         )
     });
-    record_sample_family(times, BufferId::PlanetSamples, memory_before, &state.planets, state.refresh_counts.planets - before.planets, result.is_ok());
-    result?;
+    record_sample_family(times, (BufferId::PlanetSamples, BufferId::PlanetSampleWork), memory_before, (&state.planets, &state.planet_work), state.refresh_counts.planets - before.planets, result.as_ref().ok().copied());
+    let rebuilt = result?;
     times.describe("Planet samples", || format!("requested epochs={}; new sample blocks={}; retained blocks={}; half-span={} days; each evaluation supplies all planetary states", epochs.len(), state.refresh_counts.planets - before.planets, state.planets.len(), state.policy.planets_days));
-    Ok(())
+    Ok(rebuilt)
 }
 
-pub(super) fn refresh_lunar_samples(state: &mut SimulationState, epochs: &[f64], before: crate::model::RefreshCounts, times: &mut StepTimes) -> Result<(), SimulationError> {
-    let memory_before = times.inspect_memory(|| BufferShape::vector(&state.moon, IndexDomain::ModelSamples));
+pub(super) fn refresh_lunar_samples(state: &mut SimulationState, epochs: &[f64], before: crate::model::RefreshCounts, times: &mut StepTimes) -> Result<bool, SimulationError> {
+    let memory_before = times.inspect_memory(|| (BufferShape::vector(&state.moon, IndexDomain::ModelSamples), BufferShape::vector(&state.moon_work, IndexDomain::ModelSamples)));
     let result = times.measure("Lunar samples", || {
         prepare_samples(
             &mut state.moon,
+            &mut state.moon_work,
             epochs,
             state.policy.moon_days,
             ModelFamily::Moon,
@@ -56,8 +58,8 @@ pub(super) fn refresh_lunar_samples(state: &mut SimulationState, epochs: &[f64],
             },
         )
     });
-    record_sample_family(times, BufferId::LunarSamples, memory_before, &state.moon, state.refresh_counts.moon - before.moon, result.is_ok());
-    result?;
+    record_sample_family(times, (BufferId::LunarSamples, BufferId::LunarSampleWork), memory_before, (&state.moon, &state.moon_work), state.refresh_counts.moon - before.moon, result.as_ref().ok().copied());
+    let rebuilt = result?;
     times.describe("Lunar samples", || {
         format!(
             "requested epochs={}; new sample blocks={}; retained blocks={}; half-span={} days",
@@ -67,14 +69,15 @@ pub(super) fn refresh_lunar_samples(state: &mut SimulationState, epochs: &[f64],
             state.policy.moon_days
         )
     });
-    Ok(())
+    Ok(rebuilt)
 }
 
-pub(super) fn refresh_orientation_samples(state: &mut SimulationState, tt: f64, before: crate::model::RefreshCounts, times: &mut StepTimes) -> Result<(), SimulationError> {
-    let memory_before = times.inspect_memory(|| BufferShape::vector(&state.orientation, IndexDomain::ModelSamples));
+pub(super) fn refresh_orientation_samples(state: &mut SimulationState, tt: f64, before: crate::model::RefreshCounts, times: &mut StepTimes) -> Result<bool, SimulationError> {
+    let memory_before = times.inspect_memory(|| (BufferShape::vector(&state.orientation, IndexDomain::ModelSamples), BufferShape::vector(&state.orientation_work, IndexDomain::ModelSamples)));
     let result = times.measure("Orientation samples", || {
         prepare_samples(
             &mut state.orientation,
+            &mut state.orientation_work,
             &[tt],
             state.policy.orientation_days,
             ModelFamily::Orientation,
@@ -89,10 +92,10 @@ pub(super) fn refresh_orientation_samples(state: &mut SimulationState, tt: f64, 
             },
         )
     });
-    record_sample_family(times, BufferId::OrientationSamples, memory_before, &state.orientation, state.refresh_counts.orientation - before.orientation, result.is_ok());
-    result?;
+    record_sample_family(times, (BufferId::OrientationSamples, BufferId::OrientationSampleWork), memory_before, (&state.orientation, &state.orientation_work), state.refresh_counts.orientation - before.orientation, result.as_ref().ok().copied());
+    let rebuilt = result?;
     times.describe("Orientation samples", || format!("requested epochs=1; new sample blocks={}; retained blocks={}; half-span={} days; output slow orientation matrices", state.refresh_counts.orientation - before.orientation, state.orientation.len(), state.policy.orientation_days));
-    Ok(())
+    Ok(rebuilt)
 }
 
 
@@ -112,19 +115,21 @@ fn is_finite_state(state: &BodyState) -> bool {
 /// Prepare required coverage first, then retain a bounded recent working set for subsequent emission requests.
 fn prepare_samples<T: Clone>(
     samples: &mut Vec<Sample<T>>,
+    prepared: &mut Vec<Sample<T>>,
     epochs: &[f64],
     half_span: f64,
     family: ModelFamily,
     counter: &mut u64,
     evaluate: impl Fn(f64) -> Result<T, SimulationError>,
-) -> Result<(), SimulationError> {
+) -> Result<bool, SimulationError> {
     let maximum_samples = match family {
         ModelFamily::Planets => BodyId::PLANETS.len() + 2, // reception, planetary emissions, and the lunar parent
         ModelFamily::Moon => 2,
         ModelFamily::Orientation => 1,
     };
-    let capacity = epochs.len().saturating_add(samples.len()).min(maximum_samples * 2); // allow requested samples plus bounded retained history
-    let mut prepared: Vec<Sample<T>> = Vec::with_capacity(capacity);
+    if sample_list_unchanged(samples, epochs, maximum_samples) { return Ok(false); }
+    prepared.clear();                                      // failed work from a previous attempt is never published
+    prepared.reserve(maximum_samples * 2);                 // retain enough capacity for requests and bounded history
     for &tt in epochs {
         if prepared.iter().any(|sample| sample.covers(tt)) {
             continue;
@@ -159,8 +164,21 @@ fn prepare_samples<T: Clone>(
             prepared.push(sample.clone());
         }
     }
-    *samples = prepared;
-    Ok(())
+    std::mem::swap(samples, prepared);                     // publish by ownership transfer, not by copying sample contents
+    prepared.clear();                                      // keep the old allocation for the next preparation
+    Ok(true)
+}
+
+
+/// Required samples already lead the retained list in exactly the order preparation would produce.
+fn sample_list_unchanged<T>(samples: &[Sample<T>], epochs: &[f64], maximum: usize) -> bool {
+    let mut required = 0;
+    for &tt in epochs {
+        if samples[..required].iter().any(|sample| sample.covers(tt)) { continue; }
+        if required == maximum || !samples.get(required).is_some_and(|sample| sample.covers(tt)) { return false; }
+        required += 1;
+    }
+    true
 }
 
 
@@ -211,10 +229,11 @@ mod tests {
     #[test]
     fn retention_is_bounded_and_reception_keeps_emission_coverage() {
         let mut samples = Vec::new();
+        let mut work = Vec::new();
         let mut count = 0;
         let epoch = J2000;
         prepare_samples(
-            &mut samples,
+            &mut samples, &mut work,
             &[epoch, epoch - 0.1],
             1e-4,
             ModelFamily::Planets,
@@ -225,7 +244,7 @@ mod tests {
         let original = count;
         for _ in 0..5 {
             prepare_samples(
-                &mut samples,
+                &mut samples, &mut work,
                 &[epoch],
                 1e-4,
                 ModelFamily::Planets,
@@ -234,7 +253,7 @@ mod tests {
             )
             .unwrap();
             prepare_samples(
-                &mut samples,
+                &mut samples, &mut work,
                 &[epoch, epoch - 0.1],
                 1e-4,
                 ModelFamily::Planets,
@@ -247,7 +266,7 @@ mod tests {
         for i in 1..200 {
             let tt = epoch + (i as f64 * 0.2) * if i % 2 == 0 { 1.0 } else { -1.0 };
             prepare_samples(
-                &mut samples,
+                &mut samples, &mut work,
                 &[tt, tt - 0.1],
                 1e-4,
                 ModelFamily::Planets,
@@ -264,11 +283,12 @@ mod tests {
     #[test]
     fn independent_synthetic_intervals_compose_at_the_requested_epoch() {
         let (mut parent, mut moon) = (Vec::new(), Vec::new());
+        let (mut parent_work, mut moon_work) = (Vec::new(), Vec::new());
         let (mut pc, mut mc) = (0, 0);
         for delta in [0.0, 0.125, 0.375, 0.625, 1.125] {
             let tt = J2000 + delta;
-            prepare_samples(&mut parent, &[tt], 1.0, ModelFamily::Planets, &mut pc, linear_parent).unwrap();
-            prepare_samples(&mut moon, &[tt], 0.25, ModelFamily::Moon, &mut mc, linear_moon).unwrap();
+            prepare_samples(&mut parent, &mut parent_work, &[tt], 1.0, ModelFamily::Planets, &mut pc, linear_parent).unwrap();
+            prepare_samples(&mut moon, &mut moon_work, &[tt], 0.25, ModelFamily::Moon, &mut mc, linear_moon).unwrap();
             let p = find_sample(&parent, tt, ModelFamily::Planets).unwrap();
             let m = find_sample(&moon, tt, ModelFamily::Moon).unwrap();
             let composed = m
@@ -279,6 +299,36 @@ mod tests {
             assert!((composed.position - direct.position).length() < 1e-14);
         }
         assert_eq!((pc, mc), (2, 3));
+    }
+
+    #[test]
+    fn work_capacity_is_reused_and_failure_keeps_previous_samples() {
+        let (mut samples, mut work) = (Vec::new(), Vec::new());
+        let mut count = 0;
+        for delta in [0.0, 1.0] {
+            prepare_samples(&mut samples, &mut work, &[J2000 + delta], 0.0, ModelFamily::Planets, &mut count, linear_parent).unwrap();
+        }
+        let mut allocations = [samples.as_ptr(), work.as_ptr()];
+        allocations.sort();
+        let capacities = (samples.capacity(), work.capacity());
+        for delta in 2..12 {
+            prepare_samples(&mut samples, &mut work, &[J2000 + f64::from(delta)], 0.0, ModelFamily::Planets, &mut count, linear_parent).unwrap();
+            let mut actual = [samples.as_ptr(), work.as_ptr()]; actual.sort();
+            assert_eq!(actual, allocations); // both allocations stay alive throughout; no freed-address inference
+            assert_eq!((samples.capacity(), work.capacity()), capacities);
+            assert!(work.is_empty());
+        }
+        let previous = samples.clone();
+        let pointer = samples.as_ptr();
+        let result = prepare_samples(&mut samples, &mut work, &[J2000 + 20.0, J2000 + 21.0], 0.0, ModelFamily::Planets, &mut count,
+            |tt| if tt == J2000 + 21.0 { Err(SimulationError::NonFiniteState(ModelFamily::Planets)) } else { linear_parent(tt) });
+        assert!(result.is_err());
+        assert_eq!(samples, previous);
+        assert_eq!(samples.as_ptr(), pointer);
+        assert_eq!(work.len(), 1); // partial work remains inspectable, never published
+        prepare_samples(&mut samples, &mut work, &[J2000 + 22.0], 0.0, ModelFamily::Planets, &mut count, linear_parent).unwrap();
+        assert_eq!(samples[0].epoch, J2000 + 22.0);
+        assert!(!samples.iter().any(|s| s.epoch == J2000 + 20.0));
     }
 
     fn lunar_a(_: f64) -> BodyState {

@@ -144,9 +144,9 @@ fn measure_matrix(sky: &mut Sky) {
                         .unwrap();
                     });
                     let projected_data = timing.measure("Projection", || {
-                        project_sky(sky, &view, Viewport { height: 41, width: 81 })
+                        project_sky(&*sky, &view, Viewport { height: 41, width: 81 })
                     });
-                    let projected = projected_data.view(sky);
+                    let projected = projected_data.view(&*sky);
                     timing.measure("Draw", || draw_sky_scene(&mut canvas, &options, &projected));
                     if frame >= 20 {
                         elapsed += start.elapsed().as_secs_f64();

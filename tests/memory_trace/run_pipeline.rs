@@ -50,10 +50,7 @@ fn run_frames(catalog: Arc<SkyCatalog>, config: &CacheConfig, diagnostics: bool)
         if diagnostics { times.begin_memory_frame(); }
         let time = FrameTime::from_utc(date);
         if diagnostics { times.set_memory_frame_time(time.utc, time.tt); }
-        simulation.begin_frame();
-        sky::update_solar_system(&mut simulation, time, &[], &mut times).unwrap();
-        let mut observer = cached::prepare_cached_observer(&mut observation, &simulation, time, Observer::default()).unwrap();
-        cached::prepare_cached_light_time(&mut observation, &mut simulation, &mut observer, &mut times).unwrap();
+        let observer = cached::prepare_frame(&mut observation, &mut simulation, time, Observer::default(), &mut times).unwrap();
         let view = View::default();
         cached::observe_cached_sky(&mut observation, &simulation, &observer, 8.0, true, select_view_region(&view), &mut sky, &mut times).unwrap();
         let viewport = ProjectionViewport { width: if index == 2 { 48 } else { 32 }, height: 32 };

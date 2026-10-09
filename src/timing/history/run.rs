@@ -42,6 +42,8 @@ pub struct MemoryRun {
     pub startup: Option<PipelineTrace>,
     pub latest: Option<MemoryFrame>,
     pub completed_frames: u64,
+    pub presented_frames: u64,
+    pub reused_display_frames: u64,
     pub current_time: Option<(f64, f64)>,
     pub frame_active: bool,
     pub aggregates: Vec<StepAggregate>,
@@ -67,7 +69,7 @@ impl StepTimes {
 
 impl MemoryRun {
     pub(super) fn new(cache_enabled: bool) -> Self {
-        Self { cache_enabled, startup: None, latest: None, completed_frames: 0, current_time: None, frame_active: false,
+        Self { cache_enabled, startup: None, latest: None, completed_frames: 0, presented_frames: 0, reused_display_frames: 0, current_time: None, frame_active: false,
             aggregates: Vec::new(), omitted_aggregate_steps: 0, completed_omitted_steps: 0, completed_omitted_events: 0,
             completed_omitted_details: 0, completed_omitted_inventories: 0, completed_truncated_text_bytes: 0 }
     }

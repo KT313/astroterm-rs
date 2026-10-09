@@ -6,11 +6,11 @@ use crate::model::{
     ProjectionKind, ArcPart, CartesianCamera, ScreenPoint, Polar, ProjectionViewport, ProjectedPlanet,
     ProjectedMoon, DrawRecord, PixelStarKey, CharacterStarKey, RenderOptions, TerminalViewport,
     TerminalSettings, RendererKind, GraphicsProtocol, FrameTime, ModelFamily, StateRequest, CachePolicy,
-    RefreshCounts, InterpolationLimits, Constellation, ObservedSky, BodySamples, CorrectionSelection, ProjectedArc,
+    RefreshCounts, InterpolationLimits, Constellation, ObservedSky, BodySamples, ProjectedArc,
     ProjectedConstellation, SceneKey, Glyph, Frame, StarKeys, Config,
 };
 
-report_flat!(crate::model::StarException, Star, ObservedStar, Planet, Moon, PlanetKind, CorrectionStats, ObserverState, Anchor, MoonIllumination,
+report_flat!(crate::model::SolarRequestKey, crate::model::StarException, Star, ObservedStar, Planet, Moon, PlanetKind, CorrectionStats, ObserverState, Anchor, MoonIllumination,
     crate::model::SkyRegion, crate::astro::MoonPhase, SelectedStar, StellarWork, View, ViewCenter, ProjectionKind, ArcPart, CartesianCamera,
     ScreenPoint, Polar, ProjectionViewport, ProjectedPlanet, ProjectedMoon, DrawRecord,
     crate::model::StarColor, crate::model::StarPixel, PixelStarKey, CharacterStarKey, RenderOptions, TerminalViewport, TerminalSettings,
@@ -24,10 +24,9 @@ report_fields!(Constellation { segments });
 report_fields!(crate::model::SkyCatalog { stars, star_exceptions, grid, names, figures });
 report_fields!(ObservedSky { catalog, stars, candidate_indices, planets, figure_override });
 report_fields!(BodySamples { planets });
-report_fields!(CorrectionSelection { indices });
 report_fields!(ProjectedArc { points });
 report_fields!(ProjectedConstellation { arcs });
-report_fields!(SceneKey { stars, planets, constellations, horizon, labels });
+report_fields!(SceneKey { production, stars, planets, constellations, horizon, labels });
 report_fields!(Glyph { coverage });
 report_fields!(Frame { sky, panel });
 
@@ -54,3 +53,8 @@ impl crate::cache::ReportBuffers for Config {
         }
     }
 }
+
+report_flat!(crate::model::PixelFrameKey, crate::model::KittyEncodingKey, crate::model::RenderResultVersion, crate::model::RasterRegion);
+report_fields!(crate::model::ProductionRasterKey { regions });
+
+report_flat!(crate::model::KittyDisplayKey);

@@ -21,7 +21,7 @@ pub struct Star {
 
 /// Per-frame output for drawable candidates and required constellation endpoints, in catalog-index order.
 /// `drawable` uses the current magnitude; immutable model inputs stay in SkyCatalog.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ObservedStar {
     pub source_index: usize,
     pub drawable: bool,
@@ -47,18 +47,29 @@ impl ObservedStar {
     }
 }
 
+/// A row borrowed from owned output, or a small calculated value resolved from separate cached columns.
+#[derive(Clone, Copy, Debug)]
+pub enum ObservedStarState<'a> { Borrowed(&'a ObservedStar), Owned(ObservedStar) }
+impl std::ops::Deref for ObservedStarState<'_> {
+    type Target = ObservedStar;
+    fn deref(&self) -> &ObservedStar { match self { Self::Borrowed(row) => row, Self::Owned(row) => row } }
+}
+impl AsRef<ObservedStar> for ObservedStarState<'_> { fn as_ref(&self) -> &ObservedStar { self } }
+impl PartialEq for ObservedStarState<'_> { fn eq(&self, other: &Self) -> bool { **self == **other } }
+impl ObservedStarState<'_> { pub fn into_owned(self) -> ObservedStar { *self } }
+
 /// Borrowed read-only metadata with a separate calculated state. No catalog fields are expanded or copied
 /// when this view is created. The owning sky keeps the immutable catalog alive.
 #[derive(Clone, Copy)]
 pub struct ObservedStarView<'a> {
-    pub state: &'a ObservedStar,
+    pub state: ObservedStarState<'a>,
     pub catalog: &'a crate::model::StarStorage,
 }
 impl std::fmt::Debug for ObservedStarView<'_> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("ObservedStarView")
-            .field("state", self.state)
+            .field("state", &self.state)
             .field("id", &self.id())
             .field("name", &self.name())
             .field("display_color", &self.display_color())
@@ -68,7 +79,7 @@ impl std::fmt::Debug for ObservedStarView<'_> {
 impl std::ops::Deref for ObservedStarView<'_> {
     type Target = ObservedStar;
     fn deref(&self) -> &ObservedStar {
-        self.state
+        &self.state
     }
 }
 impl PartialEq for ObservedStarView<'_> {
@@ -130,7 +141,7 @@ impl PlanetKind {
 }
 
 /// The Sun or a planet.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Planet {
     pub kind: PlanetKind,
     /// Unit horizontal direction: East, North, Up; observer corrections have already been applied.
@@ -139,7 +150,7 @@ pub struct Planet {
 row_columns!(Planet { kind, position });
 
 /// The Moon.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Moon {
     pub phase: MoonPhase,
     pub illumination: crate::model::MoonIllumination,

@@ -5,6 +5,8 @@ use std::io::{self, Write};
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PipelineTrace {
+    pub presented_frames: u64,
+    pub reused_display_frames: u64,
     pub steps: Vec<TraceStep>,
     #[cfg(feature = "memory-diagnostics")]
     pub memory_snapshots: Vec<crate::cache::InventorySnapshot>,
@@ -42,6 +44,13 @@ pub struct TraceStep {
 row_columns!(TraceStep { name, depth, seconds, details, direct_diagnostic_seconds, parent, .. });
 
 impl StepTimes {
+    /// Record only completed rendering; failed writes never call this hook.
+    pub fn record_frame_presentation(&mut self, presented: bool) {
+        let Some(trace) = &mut self.trace else { return; };
+        if presented { trace.presented_frames = trace.presented_frames.saturating_add(1); }
+        else { trace.reused_display_frames = trace.reused_display_frames.saturating_add(1); }
+    }
+
     /// Keep one inventory per bounded segment (two for legacy single-frame traces); omitted callbacks stay lazy.
     #[cfg(feature = "memory-diagnostics")]
     pub fn capture_memory(&mut self, capture: impl FnOnce(&Self) -> crate::cache::InventorySnapshot) {
@@ -223,7 +232,7 @@ impl PipelineTrace {
             writeln!(
                 output,
                 "Presented frames: {}. Invocation/start order; repeated calls are separate except explicitly aggregated batch passes.",
-                self.steps.iter().filter(|s| s.name == "Present").count()
+                self.presented_frames
             )?;
         } else {
             writeln!(output, "Execution trace in invocation/start order; repeated calls are separate except explicitly aggregated batch passes.")?;

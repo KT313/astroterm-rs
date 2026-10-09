@@ -36,7 +36,7 @@ reference from one root field into another. Headless callers can instead own `Pr
 
 `tables/` lists every data table the root holds in one flat form, for memory debugging in any build. `Table` is one
 original container (the complete star table, a Vec, a cache's stored value, an image, a canvas); `Tables` is an owner that visits its tables
-with dotted paths such as `cache.simulation.stars.motion`. Each owner has one listing in `tables/owners.rs`: a
+with dotted paths such as `cache.simulation.stars.regions`. Each owner has one listing in `tables/owners.rs`: a
 `list_tables!` line naming its fields and their cache `Group`, or a short hand-written `visit_tables` when a field
 needs an adapter that borrows its complete owner. Add a field there when you add one to an owner; leaf impls for container types are in
 `tables/leaves.rs`. A type implements `Table` or `Tables`, never both.
@@ -79,7 +79,7 @@ settings under `model/configuration/`. The algorithms remain outside these two o
 These are different positions in different arrays; they are not interchangeable:
 
 1. A **catalog index** selects a prepared `StarStorage` row. It is not a CSV row, HR number or stable `StarId`.
-2. A **working index** selects a `SelectedStar` and the matching motion/eligibility entries. Its `source_index`
+2. A **working index** selects a `SelectedStar` and the matching eligibility entries. Its `source_index`
    selects the catalog row. The working set includes required constellation endpoints.
 3. **Correction selection** stores working indices retained for drawing or constellation geometry; its order
    determines the observed output list.
@@ -140,7 +140,8 @@ The main loop passes direct field references; none of these algorithms receives 
 solar-system samples under `cache.simulation.solar_system`. `sky::update_solar_system` prepares reception and
 requested emission coverage. Planetary states are barycentric J2000 AU/AU-day; Moon samples are Earth-relative
 and composed with Earth at the requested epoch. Slow orientation uses TT, while observer preparation applies
-current UT1 spin. Zero-span families clear once per frame, not between light-time iterations. Sample selection
+current UT1 spin. Managed requests refresh on time/location changes; zero-duration policies permit same-time
+reuse, while explicitly disabled families bypass it. Sample selection
 remains first-covering, history remains bounded, and earlier families can remain updated if a later family fails.
 
 `ObserverPreparationCache` owns reception geometry, light-time results and final emission-time `BodySamples`.
@@ -150,8 +151,9 @@ reception observer remains unchanged while emission requests refresh the indepen
 Getters never invoke an ephemeris. Synthetic callers may still prepare a custom observer and sample its supplied
 emission epochs without rebuilding its geometry.
 
-`StarSelectionCache` owns spatial selection, regional brightness/validation slots, and the combined `candidates`,
-`selected` and `working` arrays. Regional slots keep only a qualifying catalog prefix `(start, end)`: brightness
+`StarSelectionCache` owns spatial selection, regional brightness/validation slots, scalar selection statistics
+and the endpoint-aware `working` records. There are no combined candidate or validated index vectors.
+Regional slots keep only a qualifying catalog prefix `(start, end)`: brightness
 keys depend on threshold and interval status, validation keys on that region's prefix generation. Only requested
 regions are checked; offscreen entries remain retained. Equal prefixes preserve versions even if thresholds change.
 Spatial selection keeps its fixed
@@ -160,10 +162,18 @@ owns the unique constellation endpoints and is always requested, even with lines
 pass brightness and projection checks; faint endpoints can support lines without becoming drawable dots.
 Outside the interval all regions are requested. Fast non-endpoint stars still use fixed catalog regions and can
 be missed after large drift. `SelectedStars` borrows both the requested region IDs (before brightness filtering)
-and the working rows, along with catalog identity, requested epoch and source generation.
+and the working rows, along with catalog identity, requested epoch and source generation. Its `ranges()`
+iterator yields `(region_id, start, end_exclusive, validated_generation)` directly from the saved slots.
+The working-set builder expands these ranges as an iterator while merging endpoints, without collecting indices.
+
+`requested_sources` retains one `(region_id, validated_generation)` tuple per requested region. Its allocation
+is reused; `selection_revision` changes only when this ordered metadata changes. `request_revision()` exposes
+that request identity separately from the value-based working-row generation. Adding an empty region can
+change the former without changing any star rows. Stellar results check both preparation provenance and
+this requested-selection revision so unprepared regions cannot enter an already-published result view.
 
 `StellarSimulationState` owns `regions`, `refresh_regions`, `prepared_classes`, bounded `stellar_scratch`, regional
-statistics/generation and the selected-order `motion` output. `prepare_stellar_catalog` takes start TT explicitly
+statistics/revision, one reusable `region_output_work` vector and scalar publication metadata. `prepare_stellar_catalog` takes start TT explicitly
 and initializes every slot empty/invalid before the loop. Lazy headless setup uses the first requested TT.
 Each requested region checks one timestamp/invalidation flag, then refreshes its complete catalog range when
 needed. The constellation region follows precisely the same numerical/cache path. No per-star cache map remains.
@@ -172,37 +182,79 @@ Numerical passes borrow trajectory/magnitude columns, evaluate in f64, and appen
 The default/max stellar TTL is 864000 simulated seconds in `constants.rs`; existing config overrides may
 shorten it. Values are held, not interpolated or accuracy-qualified. Both direction and magnitude can remain at a
 region's calculation epoch even after simulation time changes. Age is absolute in TT, including reverse playback;
-the exact boundary is reusable, and hits never slide timestamps. `--disable-cache`, disabled groups and zero TTL
-recalculate all requested regions. Model formulas and solar-system policies are unchanged.
+the exact boundary is reusable, and hits never slide timestamps. `--disable-cache` and disabled groups
+recalculate all requested regions. Zero TTL permits reuse at exactly the same time. Model formulas are unchanged.
 
-Regional freshness is checked before the assembled `motion` result can be reused. That output is keyed by selection
-identity/generation and the generation of regional values, with dependency-only lifetime. It never restarts the
-regions' TTLs. Sorted rows and offsets give a linear gather with no per-star cache decisions. Each dot/line endpoint
-uses one sample from its sole owning region. Regions are retained until catalog replacement; no eviction/pooling.
-The table logger reports the original regional owner and nested allocation sizes with bounded previews; the
-feature-gated inventory aggregates sample payloads without emitting thousands of per-region rows.
+Regional freshness is checked before publishing `last_request`: selection owner/working generation, requested-region
+revision, requested TT and regional-results revision. Failed preparation clears readiness. There is no combined
+selected-motion cache or slice. `StellarResults::selected_samples()` walks the ordered working rows and regions,
+yielding `(catalog_index, &StellarSample)` from the original allocations with one validity check per region.
+`selected_count()` and `fallback_count()` expose scalar counts; fallback counting runs only when its selected
+rows or regional sample inputs change. Every dot/line endpoint reads its sole owning region.
 
-`StellarResults` borrows the intrinsic results and their matching selection. Owner identity plus local cache
-generation prevents equal generations in different selection owners from being mistaken for the same data.
-Constructors also check catalog/request-epoch matching; observation checks the current observer epoch.
-The requested epoch is not a claim that all region values were calculated then. The small identity tokens
-are assigned when owners are created, not per star or frame, and own no heap. No borrowed view is stored inside
-another owner. Mutation while a view is live is restricted by Rust's borrow checker.
+Refreshes calculate complete samples in `region_output_work`. `Cache::store_reusing` compares old and completed
+values once, swaps allocations, then clears the displaced vector without shrinking it. Initial population and
+capacity growth still allocate; the extra work buffer keeps capacity between frames. Allocation identity may move
+between region owners. Empty regions use allocation-free empty vectors so they cannot retain a useful work buffer.
+The original payload stays intact but invalid if calculation fails before commit. Generations change only when
+values differ. Regions stay until catalog replacement; there is no eviction or generic allocation pool.
+
+`StellarResults` borrows intrinsic results and their matching selection. Constructors check catalog identity,
+selection identity/revision and requested TT; observation also checks the observer's epoch. The requested epoch
+is not a claim that every region was calculated then. Borrowing the view prevents mutation of its owners.
+The table logger/inventory report original regional owners, retained work capacity and bounded previews without
+reconstructing a flattened sample array.
 
 `ObservationCache.regions` retains independent brightness flags, correction membership and stellar aberration
 for each catalog region. Keys contain that region's upstream versions plus threshold or observer velocity where
 needed; none scans individual stars to decide reuse. Correction records retain catalog indices. Solar-system
-aberration has a separate small `body_apparent` cache. `eligible`, `corrections` and `apparent` remain current-frame
-combined results for existing consumers and diagnostics; horizon rotation and refraction still use whole-frame
-snapshots. Regional decisions and numerical calculations have separate timers.
+aberration has a separate small `body_apparent` cache. There are no combined eligibility flags or correction-index
+lists. `layout_sources` retains ordered region/correction/sample versions. Only changes rebuild the small
+`regional_output` spans and summed `layout_stats`; unchanged frames never scan individual retained stars here.
+Catalog indices stay in original regional records; spans address final direction buffers, including empty regions.
 
-`sky::observe_cached_regions` performs observation and returns a `RegionalObservation` borrowing the sky and
-small region descriptors together. Each descriptor carries its current observed-row range and independent
-membership, stellar-sample and aberration versions. The token also carries owner identity, horizon matrix and
-effective refraction setting. Its borrows prevent caller edits while trusted projection consumes those versions.
-The original `observe_cached_sky` entry point performs the same corrections without returning that token.
-Refresh assembly publishes directions while capturing the combined snapshot; hits restore the snapshot.
-No corrected direction feeds back into intrinsic simulation.
+`ApparentDirections` is a local read-only view over requested region descriptors, original regional direction
+slices and the original body-apparent cache. It is created after successful regional/body aberration; no view is
+stored inside state. Region iteration verifies membership/result versions and direction counts before supplying
+one slice to its star loop. Horizon rotation receives this view beside separate writable horizontal metadata,
+cache and reusable work. It writes transformed directions directly; it never uses the summary's old positions
+as apparent inputs. Stars and Moon retain the direct path's vector lengths; planets use the same normalization.
+
+There is no combined apparent snapshot, apparent assembly or apparent restoration into observed output.
+The Stage-4 correction-membership bridge is also gone. `horizontal_sources.regions` stores ordered
+`(region_id, start, end, selection_generation, apparent_generation)` tuples, plus a separate body generation.
+Its reused-capacity snapshot advances `revision` only when these dependencies change. `(revision, rotation)`
+keys the horizontal cache, whose result generation still depends on exact direction equality. Owner/catalog
+replacement resets the metadata with observation storage. It is region-sized metadata, not a direction buffer.
+
+Regional/body apparent inputs stay unchanged. Horizontal and refraction misses fill `horizontal_work` or
+`refraction_work`, then `Cache::store_reusing_pair` compares once and swaps complete result allocations into the
+cache. Displaced vectors clear without shrinking. Hits return the original cache result without capture, restore,
+or a per-star loop. Initial population/growth still allocate; retained spare capacity can increase memory.
+
+`sky::observe_cached_regions` returns a local `RegionalObservation` containing `ObservedSkyView`. Its star
+accessors combine original regional correction records (catalog index/draw flag), stellar samples (magnitude),
+and selected horizontal/refracted directions. It owns no star array. `ObservedStarView.state` either borrows an
+owned row or holds a small resolved value on the stack; neither variant owns heap memory. Plain regional cache
+record definitions live in model so this view never imports state; ObservationCache still owns their allocations.
+
+Production `cache.sky` contains scalar metadata and small body/illumination scratch; `cache.sky.stars` stays empty.
+Its body-position fields are intermediate values, not the final sky: read final body positions through the view.
+`published` validates stellar owner, selection/region request, result revision, epoch and catalog identity before
+`observed_view` can expose cached directions. `use_refraction` selects the completed result. Invalidation or a
+new unfinished observation clears publication; immutable views prevent their owners from changing underneath.
+The loop reborrows this view after projection's mutable stage before rendering; no sibling references live in state.
+
+The explicitly owned `observe_cached_sky` API and `ObservedSkyView::materialize()` still produce normal owned
+snapshots for compatibility/export. That operation is linear and labeled `Observed output materialization`;
+the production loop never calls it. Direct/caller-editable projection remains supported. Generic projection
+entry points accept either a borrowed sky view or `&ObservedSky`; use `&*sky` to reborrow a mutable reference.
+
+Regional projected cells retain a compact `(region_slot, observed_index)` address, not a cached observed-star
+record. The slot indexes current region descriptors; the row indexes final directions. This avoids per-star
+region searching in projection/rendering and retains the previous address footprint on 64-bit targets. Region
+order and constellation-last drawing remain unchanged. Render/projection views borrow original data; table logs
+and inventories report owners/work capacity and never reconstruct a star table for diagnostics.
 
 Cache generations still change only when values change. View controls invalidate selection and projection;
 resize only invalidates projection. Catalog identity changes reset selection, intrinsic samples and corrections,
@@ -234,6 +286,7 @@ view of the completed fields. That view does not build a reference vector or clo
 | `regional_stars` | One small dependency key and retained `(catalog_index, Cell)` vector per region | Refresh only requested regions whose dependencies changed |
 | `regional_orders` | Regional magnitude/ID sorted records with region-local observed-row offsets | Membership versions guard these offsets; camera and position-only changes do not invalidate order |
 | `regional_cells`, `regional_ranges`, `assembled_for` | Directly drawable cells, one start/end range per region, and small assembly dependency records | Reassemble only when requested regions, row ranges, cells or order versions change |
+| `regional_cell_work`, `regional_order_work` | Replacement cells and sort records shared sequentially across regions | Clear/reserve, calculate, compare once, then swap with completed result; retain displaced capacity, including across owner/catalog resets |
 | `region_cell_scratch` | Optional screen cells indexed within one observed region | Reused across regions and frames; empty after assembly, capacity bounded by the largest observed region encountered |
 | `star_candidate`, `stars` | Exact observed-position/flag key and visible output for the caller-editable headless fallback | Candidate is cleared on hit, moved into cache on successful refresh |
 | `order_candidate`, `order`, `draw_order_scratch` | Exact visible magnitude/ID inputs, draw-order permutation, temporary sort records | Same key lifecycle; sort scratch retains capacity between sorts |
@@ -246,8 +299,13 @@ regional membership/apparent versions, horizon/refraction, camera and viewport. 
 membership and stellar versions. Each ordinary region is drawn dimmest-first, then the constellation region is
 drawn last. Cross-region pixel/cell overlaps follow that region order; no global merge, merged-order array or
 catalog-wide visibility lookup remains. Assembly resolves cells using reusable region-local scratch and emits
-directly drawable `(observed_index, Cell)` rows. Regional order offsets are valid only under their membership
+directly drawable `(RegionalStarIndex, Cell)` rows. Regional order offsets are valid only under their membership
 key; they never store shifting whole-frame row offsets.
+
+Regional refreshes leave the previous result intact but invalid until replacement calculation and sorting finish.
+One work vector per result type exchanges allocations with each refreshed cache; initial population and capacity
+growth still allocate. Hits do not fill or sort work. Spare capacity can raise retained memory; this is allocation
+reuse, not a memory-reduction claim. Interrupted work is cleared on retry and never exposed as a completed result.
 
 Labels independently select the global brightest five by comparing up to five eligible candidates from each
 region. Pixel candidates still pass the full-footprint check. The winners occupy a fixed stack array; regional
@@ -270,8 +328,23 @@ A view's immutable borrows must end before its observation or projection backing
 and invalidates the appropriate scene data. `state/rendering/mod.rs` lists the fields; `terminal` and `scene` contain
 all rendering algorithms.
 
-Pixel rasterization borrows the candidate key's filtered star inputs directly. Star labels use a local range over
-at most `DYNAMIC_NAME_COUNT` entries at the bright end of the projected order; no label-candidate buffer is retained.
+Production pixel rasterization receives a sealed `RenderProjection` from `borrow_render_projection`. The handoff
+validates the completed view, source owner/catalog, region membership/motion and projection keys before borrowing
+geometry. Its public sky accessor is read-only; editable `ProjectedSky` callers still use exact `draw_pixels` keys.
+Raster keys contain the projection owner/source-replacement revision, body/constellation/horizon generations,
+per-region descriptors (including motion/magnitude versions), cell/order generations and rendering settings.
+Thus a paused hit builds/compares only small region metadata, never star records or copied geometry. Source
+replacement increments a checked revision; a new projection owner has a distinct identity. Failed projection
+cannot publish this handoff. The key is dependency-only; time alone neither forces nor proves a redraw.
+
+On a trusted miss, `SceneCache.pixel_inputs` prepares filtered drawing records once, and rasterization borrows
+those records. It clears them after success, retaining capacity; a failed draw is reset on retry. Production and
+exact keys share one image cache but cannot match each other. Pixel result generations still advance only when
+actual stored pixels change; `pixel_generation()` exposes this for downstream reuse. Raster bypass and explicit
+invalidation still force drawing. Text, image conversion and upload are unchanged by this stage.
+
+Star labels select globally from at most `DYNAMIC_NAME_COUNT` eligible candidates at the bright end of EACH
+region; no label-candidate buffer is retained.
 Sun, planet and Moon labels are independent of that limit.
 Projected views carry their FOV so pixel-star brightness can increase when zoomed in. The pixel scene key includes
 this value even when projected cells are unchanged; character scene keys do not depend on this display adjustment.
@@ -281,15 +354,30 @@ stars are found. This needs no heap allocation; a view with many edge stars may 
 | Owner/fields | Producer → consumer; units | Retention/reset |
 |---|---|---|
 | `SceneCache.star_layer` | Prepared pixel-star inputs → custom RGB/opacity blend → opacity floor → opaque sky composition; row-major `StarPixel` values | 16 bytes per pixel (f32 RGB + opacity); reset and reused on refresh, unchanged on hit; capacity retained across resize |
-| Scene candidates and committed keys | Raster input capture → exact comparison; display values plus copied body/arc/horizon geometry | Hits clear flat vectors while retaining capacity; nested strings/arcs drop; refresh transfers candidate; failed pixel draws retain it for reset/retry |
-| Scene pixel/character results | Raster passes → composition; RGBA pixels or canvas cells | Intentional image clone per output; character clone on refresh and restore on hit |
+| Scene candidates and committed keys | Trusted region/version metadata OR exact input capture; only exact callers copy per-star and body/arc/horizon geometry | Hits clear flat vectors while retaining capacity; nested strings/arcs drop; refresh transfers candidate; failed pixel draws retain it for reset/retry |
+| `SceneCache.pixel_inputs` | Trusted raster miss → drawing; accepted screen coordinates, magnitude and RGB | Empty after success, capacity retained; no per-star writes on hits |
+| Scene pixel/character results | Raster passes → composition; RGBA pixels or canvas cells | Pixel image borrowed; character clone on refresh and restore on hit |
 | Character `frame`, `presenter` | Sky/panel drawing → full-screen composition → diff writer | Resize replaces canvases and discards previous-frame snapshot; successful presentation updates previous |
-| Pixel `frame_image`, `rgb` | Borrowed cached sky → sky/text composition → RGB conversion/encoding | Full frame consumed by conversion; RGB freed after upload encoding |
-| Pixel `text`, `composed`, `encoded` | Text/image composition → serialization; ratatui cells or protocol handle | Text freed after painting/composition; composed/encoded results rebuilt per frame; encoded internals are opaque |
+| Pixel `frame_image`, `rgb` | Borrowed cached sky → sky/text composition → RGB conversion/encoding | Kitty retains reusable RGBA work and completed RGB; other graphics protocols consume RGBA during encoding |
+| Pixel `text`, `composed`, `encoded` | Text/image composition → serialization; ratatui cells or protocol handle | Text retained with dependencies; composed/encoded results rebuilt for non-Kitty output; encoded internals are opaque |
 | Metadata `fields`, character `step_fields`, cache strings/notices | Metadata/timing formatting → panel/text | Field vectors refill in place; strings are rebuilt; notices retained as needed |
 | `TextRasterizer` font/glyph map | Lazy glyph rasterization → text painting; glyph-keyed coverage bytes | Cell-size change, bypass or 512-glyph policy clears masks; font internals remain opaque |
 | `upload`, `compressed`, `serialized`, `serialization_blank` | Kitty/image encoding → writer; bytes or terminal cells | Refilled only after previous writes/flushes complete; flat capacities retained |
 | Timezone handle | Observer metadata lookup → formatting | Refreshed for changed observer; library internals are partial |
+
+Kitty composition checks `frame_key` before initializing or touching pixel buffers. Its owner-local sky/text
+versions, dimensions, screen/sky placement, physical font size, text-cell size and background cover every image
+input. `rgb_version` is ready only after complete conversion; failed preparation invalidates it. The conversion
+copies RGB channels without multiplying alpha, because drawing already blends into an opaque background.
+`encoding_key` combines that RGB revision with dimensions, compression capability, tmux and target image ID.
+Encoding reuse borrows the existing upload/compression buffers; alternating image IDs correctly require new
+commands. Both result paths require Raster and RasterAssets reuse. Retained RGBA/RGB capacity can increase
+steady memory; no peak-memory reduction is claimed.
+
+Text and sky are prepared before full-image composition. Consequently the live timing panel shows the current
+raster timings and the previously measured composition/conversion timings; those later steps have not executed
+when this frame's metadata is collected. They still update on every executed pass.
+
 
 Retention is not a promise of allocation reuse. In particular, image and ratatui buffers currently rebuild each
 frame. Retaining old capacity/data for inspection can raise steady or peak memory. Inventory snapshots do not prove
@@ -326,8 +414,8 @@ Stellar samples retain direction, magnitude and the singular-fallback flag; dist
 calculation. Its removal can change a per-star diagnostic generation comparison, but these generations do not
 control downstream processing. TTLs and exact-time reuse are unchanged.
 
-Pixel text layout is freed after glyph painting (graphics) or cell composition (halfblocks). Glyph masks and
-transport capacities remain reusable. The cached sky image is read-only; metadata paints only into the distinct
+Pixel text layout remains available after glyph painting (graphics) or cell composition (halfblocks). Its
+dependency checks skip unchanged layout work; glyph masks and transport capacities remain reusable. The cached sky image is read-only; metadata paints only into the distinct
 full-frame image. `scene::draw_pixels` returns a borrowed image, and `SceneCache::pixel_image` exposes that same
 allocation after preparation. Headless callers needing an independent snapshot must explicitly clone it.
 Halfblock encoding retains one scoped image copy because the installed library constructor consumes its image.
@@ -388,3 +476,55 @@ Physical constants, formula coefficients, protocol/file-format definitions and v
 remain next to their algorithms. Solar-system cache configuration and default sample windows share the same
 seconds constants. Prepared-catalog fingerprints include the storage-affecting settings by value, so changing
 an unrelated display limit or TTL alone does not force a catalog rebuild.
+
+### Solar-system request and sample work buffers
+
+`cache.simulation.solar_system` is an always-requested group, separate from the stellar region grid.
+`group` records the request/completion keys, calculation time, invalidation flag and request token. The token
+tracks preparation provenance, not numerical equality. Time, observer location, observer-cache identity,
+model versions and sample policy determine reuse; camera changes do not. The default group TTL is zero:
+unchanged paused frames reuse completed results, while any advancing/reversed time refreshes the group.
+Explicitly disabled caching still refreshes paused frames.
+
+Reception and emission requests share that active preparation. Completion is published only after both
+light-time iterations and final body sampling succeed. Per-family interpolation spans retain their existing
+meaning within the request. Standalone `update_solar_system` remains a lower-level sampler; full frame callers
+use `begin_solar_system_frame` followed by `prepare_observer_inputs`.
+
+`planet_work`, `moon_work` and `orientation_work` hold replacement sample lists during preparation. On success,
+each swaps with its corresponding saved sample list and is cleared without shrinking. Failures preserve the
+previous saved list from that family call. Both allocations retain capacity; inventory/table reports include
+the scratch storage. Unchanged lists and completed paused requests avoid rebuilding and copying.
+
+### Retained pixel labels and text
+
+`PixelState.text_cache` owns at most `DYNAMIC_NAME_COUNT` label descriptions (text, color and cell origin),
+regional label dependencies, and the last displayed text inputs. `text` owns the single completed cell grid;
+`text_version` marks it ready only after layout finishes. No views or catalog strings are retained by reference.
+
+Protected projection owner/catalog identity, regional membership/magnitude/cell/order generations, threshold,
+dynamic-name setting and text mapping govern label reuse. Direct editable projections refresh conservatively.
+Text reuse compares the label revision, body/orientation positions, layout, actual visible metadata rows and
+notices. Metadata outside terminal rows is ignored; different text within a visible row can conservatively
+refresh even if its changed suffix is clipped. Timing metadata remains live. The `RasterAssets` policy controls
+both caches; bypass refreshes them. Resize invalidates readiness.
+
+A miss resets and refills retained text cells in the original paint order. A hit skips candidate selection,
+name formatting and cell writes. Pixel/halfblock consumers borrow the finished text without releasing it.
+Retained capacity raises steady memory relative to the old temporary grid; no lower-memory claim is made.
+
+
+### Completed rendering versus displayed output
+
+`RenderResultVersion` distinguishes missing/invalid output from a completed owner-local revision. PixelState
+owns the label descriptions/dependencies, retained text grid, RGBA work, completed RGB, frame/encoding keys and
+`displayed_key` / `display_valid`. The displayed key is the last successfully submitted RGB revision plus screen,
+dimensions and transport settings. `display_valid` becomes false before writes and on resize/clearing/configure;
+failed writes preserve the old key and image ID. It becomes true with the new key only after upload and swap
+writes/flushes succeed. An unchanged valid display skips encoding, upload, swap and ID advancement.
+
+`Renderer::render_prepared_frame` returns `RenderOutcome` for pipeline completion diagnostics. The editable
+`render_frame` API keeps its unit result; internally it still records successful submissions. Timing records count
+actual successful presentation calls and display reuse separately, instead of inferring success from entering
+an I/O timer. Non-Kitty renderers retain their normal presentation behavior. Known invalidations are handled;
+out-of-band terminal image loss is not detected. Live timing metadata still updates and can require new output.

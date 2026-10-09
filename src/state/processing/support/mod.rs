@@ -21,3 +21,5 @@ impl Default for StageId {
 
 #[cfg(feature = "memory-diagnostics")]
 crate::cache::report_flat!(StageId);
+
+crate::rows::debug_preview!(StageId);

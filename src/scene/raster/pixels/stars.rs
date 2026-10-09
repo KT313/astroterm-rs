@@ -11,7 +11,7 @@ pub(crate) fn pixel_star_fits((y, x): Cell, viewport: ProjectionViewport) -> boo
 }
 
 /// Keep global label selection independent of regional painting order; omit undrawable edge stars.
-pub(crate) fn select_pixel_star_labels(options: &RenderOptions, sky: &ProjectedSky<'_>) -> impl ExactSizeIterator<Item = usize> + DoubleEndedIterator {
+pub(crate) fn select_pixel_star_labels(options: &RenderOptions, sky: &ProjectedSky<'_>) -> crate::scene::StarLabels {
     crate::scene::select_star_labels(options, sky, |cell| pixel_star_fits(cell, sky.viewport))
 }
 

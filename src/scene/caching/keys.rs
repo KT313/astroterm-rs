@@ -102,6 +102,7 @@ pub(crate) fn describe_star_keys(keys: &StarKeys, input: usize) -> String {
 /// Release live candidate entries after a hit while keeping only straightforward flat-vector capacity.
 /// Clearing figures and labels drops their nested allocations; no committed key is modified here.
 pub(crate) fn clear_scene_candidate(key: &mut SceneKey) {
+    if let Some(production) = &mut key.production { production.regions.clear(); }
     match &mut key.stars {
         StarKeys::Pixels(stars) => stars.clear(),
         StarKeys::Characters { glyphs, labels } => { glyphs.clear(); labels.clear(); }

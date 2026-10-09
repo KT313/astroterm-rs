@@ -148,6 +148,7 @@ mod tests {
         let text = dump(&empty_state(), Some("empty"));
         assert!(text.starts_with("\n## empty\n"));
         let listed = paths(&text);
+        assert!(!listed.iter().any(|p| p == "cache.observation.apparent" || p == "cache.observation.correction_sources" || p == "cache.observation.correction_revision" || p == "cache.observation.eligible" || p == "cache.observation.corrections" || p == "cache.simulation.stars.motion" || p == "cache.selection.candidates" || p == "cache.selection.selected"));
         for expected in [
             "persistent.catalog.stars", "persistent.catalog.star_exceptions", "persistent.catalog.names.boundaries", "persistent.catalog.names.ascii_alternatives",
             "persistent.catalog.stars.precise_motions", "persistent.catalog.grid.offsets",
@@ -156,12 +157,15 @@ mod tests {
             "persistent.catalog.constellations",
             "cache.sky.stars", "cache.sky.planets", "cache.sky.moon", "cache.sky.candidate_indices",
             "cache.simulation.solar_system.planets", "cache.simulation.solar_system.moon", "cache.simulation.solar_system.orientation",
+            "cache.simulation.solar_system.planet_work", "cache.simulation.solar_system.moon_work", "cache.simulation.solar_system.orientation_work", "cache.simulation.solar_system.group",
             "cache.simulation.stars.prepared_classes", "cache.simulation.stars.stellar_scratch", "cache.selection.region",
-            "cache.selection.candidates", "cache.selection.selected", "cache.selection.working",
-            "cache.simulation.stars.regions", "cache.simulation.stars.motion", "cache.observation.eligible",
-            "cache.observation.corrections", "cache.observer.bodies", "cache.observation.relative",
-            "cache.observation.apparent", "cache.observation.horizontal", "cache.observation.refracted",
+            "cache.selection.requested_sources", "cache.selection.statistics", "cache.selection.selection_revision", "cache.selection.working",
+            "cache.simulation.stars.regions", "cache.simulation.stars.region_output_work", "cache.observation.horizontal_sources.regions",
+            "cache.observation.horizontal_sources.revision", "cache.observation.horizontal_sources.body_generation", "cache.observer.bodies", "cache.observation.relative",
+            "cache.observation.layout_sources", "cache.observation.horizontal_work", "cache.observation.refraction_work", "cache.observation.published", "cache.observation.use_refraction",
+            "cache.observation.body_apparent", "cache.observation.horizontal", "cache.observation.refracted",
             "cache.observer.observer", "cache.observer.light_time", "cache.observation.illumination",
+            "cache.projection.regional_cell_work", "cache.projection.regional_order_work",
             "cache.projection.star_candidate", "cache.projection.order_candidate", "cache.projection.draw_order_scratch",
             "cache.projection.stars", "cache.projection.stars.key", "cache.projection.order", "cache.projection.order.key",
             "cache.projection.bodies", "cache.projection.bodies.key", "cache.projection.constellations",
@@ -178,8 +182,8 @@ mod tests {
         assert!(text.contains("ttl=") && text.contains("invalid=true"));
         assert!(section(&text, "cache.sky.moon").contains("**Shape:** `[1]`"));
         assert!(text.contains("| Row | phase: MoonPhase | illumination: MoonIllumination | direction: Vector3 |"));
-        let motion = section(&text, "cache.simulation.stars.motion");
-        assert!(motion.contains("*No rows to preview.*") && !motion.contains("| Row |"));
+        let work = section(&text, "cache.simulation.stars.region_output_work");
+        assert!(work.contains("*No rows to preview.*") && work.contains(&markdown_text("direction_j2000")) && work.contains("**Shape:** `[0]`"));
 
     }
 

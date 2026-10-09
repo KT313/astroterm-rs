@@ -9,6 +9,7 @@ pub(crate) fn describe_canvas(canvas: &Canvas) -> BufferShape {
 }
 
 pub(crate) fn describe_candidate(key: &SceneKey) -> BufferShape {
+    if let Some(production) = &key.production { return BufferShape::vector(&production.regions, IndexDomain::Objects); }
     match &key.stars {
         StarKeys::Pixels(values) => BufferShape::vector(values, IndexDomain::DrawOrder),
         StarKeys::Characters { glyphs: values, .. } => BufferShape::vector(values, IndexDomain::DrawOrder),

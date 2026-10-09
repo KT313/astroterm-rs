@@ -8,6 +8,13 @@ use super::samples::{refresh_planet_samples, refresh_lunar_samples, refresh_orie
 /// Ensure reception and explicitly requested emission epochs are covered, refreshing only missing families.
 /// Observation preparation supplies observer-dependent light-time requests; all sample mutation stays here.
 pub fn update_solar_system(state: &mut SimulationState, time: FrameTime, requests: &[StateRequest], times: &mut StepTimes) -> Result<(), SimulationError> {
+    let result = prepare_requested_samples(state, time, requests, times);
+    if result.is_err() { state.abort_request(); }
+    else if result == Ok(true) { state.invalidate(); } // changed sample coverage/order requires preparing the complete body result again
+    result.map(|_| ())
+}
+
+fn prepare_requested_samples(state: &mut SimulationState, time: FrameTime, requests: &[StateRequest], times: &mut StepTimes) -> Result<bool, SimulationError> {
     validate_sample_times(time, requests)?;                                 // reject non-finite simulation or requested times
     let reception = [time.tt];                                            // reception-only frames need no allocated time lists
     let requested_epochs;
@@ -19,10 +26,10 @@ pub fn update_solar_system(state: &mut SimulationState, time: FrameTime, request
     };
     let before = state.refresh_counts;
 
-    refresh_planet_samples(state, planet_epochs, before, times)?;            // prepare Sun and planet positions wherever coverage is missing
-    refresh_lunar_samples(state, moon_epochs, before, times)?;               // prepare the Moon's position relative to Earth
-    refresh_orientation_samples(state, time.tt, before, times)?;             // prepare Earth's slowly changing axis direction
-    Ok(())
+    let planets = refresh_planet_samples(state, planet_epochs, before, times)?; // prepare Sun and planet positions wherever coverage is missing
+    let moon = refresh_lunar_samples(state, moon_epochs, before, times)?;       // prepare the Moon's position relative to Earth
+    let orientation = refresh_orientation_samples(state, time.tt, before, times)?; // prepare Earth's slowly changing axis direction
+    Ok(planets || moon || orientation)
 }
 
 fn validate_sample_times(time: FrameTime, requests: &[StateRequest]) -> Result<(), SimulationError> {

@@ -1,11 +1,14 @@
 //! Objects, observed values and simulation sample records.
 mod regions;
 pub use regions::ObservedRegion;
+pub(crate) use regions::ObservationRegion;
+mod views;
+pub use views::{ObservedSkyView, ObservedPlanets, ObservedStars};
 mod objects;
 mod observation;
 mod simulation;
 pub use objects::{
-    Star, ObservedStar, ObservedStarView, PlanetKind, Planet, Moon, Constellation, create_planets, create_moon,
+    Star, ObservedStar, ObservedStarState, ObservedStarView, PlanetKind, Planet, Moon, Constellation, create_planets, create_moon,
 };
 pub use observation::{CorrectionStats, ObservedSky, Sky, MoonIllumination, Anchor, ObserverState};
 pub use simulation::{
@@ -13,7 +16,7 @@ pub use simulation::{
     ORIENTATION_LIMITS, CachePolicy, RefreshCounts,
 };
 pub(crate) use observation::{
-    BodySamples, CorrectionSelection, Directions, ObserverKey,
+    BodySamples, Directions, ObserverKey,
     BodyKey as ObservationBodyKey,
 };
-pub(crate) use simulation::{Sample, StellarWork};
+pub(crate) use simulation::{Sample, SolarRequestKey, StellarWork};

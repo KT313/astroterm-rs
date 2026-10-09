@@ -11,7 +11,6 @@ use astroterm::model::{
 };
 use astroterm::projection::project_sky;
 use astroterm::scene::{draw_sky_scene, draw_pixel_sky};
-use astroterm::sky::update_solar_system;
 use astroterm::timing::StepTimes;
 use std::sync::Arc;
 
@@ -39,11 +38,7 @@ impl Pipeline {
     fn frame(&mut self, tt: f64, view: View, threshold: f64, refract: bool, site: Observer) {
         let time = FrameTime { tt, ut1: tt, utc: tt };
         self.times.begin_frame();
-        self.simulation.begin_frame();
-        update_solar_system(&mut self.simulation, time, &[], &mut self.times).unwrap();
-        let mut observer = cached::prepare_cached_observer(&mut self.observation, &self.simulation, time, site).unwrap();
-        cached::prepare_cached_light_time(&mut self.observation, &mut self.simulation, &mut observer, &mut self.times)
-            .unwrap();
+        let observer = cached::prepare_frame(&mut self.observation, &mut self.simulation, time, site, &mut self.times).unwrap();
         cached::observe_cached_sky(&mut self.observation, &self.simulation,
                 &observer,
                 threshold,
@@ -88,7 +83,7 @@ fn paused_frames_reuse_emission_samples_and_never_double_correct() {
     p.simulation.set_model_version(ModelFamily::Moon, 1);
     p.frame(J2000, view, 6.0, true, Observer::default());
     assert!(p.simulation.refresh_counts.moon > counts.moon);
-    assert_eq!(p.simulation.refresh_counts.planets, counts.planets);
+    assert!(p.simulation.refresh_counts.planets > counts.planets); // a model change invalidates the complete solar group
 }
 
 #[test]

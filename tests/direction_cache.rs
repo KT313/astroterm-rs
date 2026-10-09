@@ -6,7 +6,7 @@ use astroterm::astro::{J2000, Observer};
 use astroterm::cache::CacheConfig;
 use astroterm::catalog::load_embedded_catalog;
 use astroterm::model::{ObservedSky, SkyCatalog, View, FrameTime};
-use astroterm::sky::{observe_sky, update_solar_system};
+use astroterm::sky::{observe_sky};
 use astroterm::timing::StepTimes;
 use std::sync::Arc;
 
@@ -31,11 +31,7 @@ impl Pipeline {
         let time = FrameTime::from_utc(J2000);
         let mut times = StepTimes::with_trace(true);
         times.begin_frame();
-        self.simulation.begin_frame();
-        update_solar_system(&mut self.simulation, time, &[], &mut times).unwrap();
-        let mut observer = cached::prepare_cached_observer(&mut self.observation, &self.simulation, time, site).unwrap();
-        cached::prepare_cached_light_time(&mut self.observation, &mut self.simulation, &mut observer, &mut times)
-            .unwrap();
+        let observer = cached::prepare_frame(&mut self.observation, &mut self.simulation, time, site, &mut times).unwrap();
         cached::observe_cached_sky(&mut self.observation, &self.simulation,
                 &observer,
                 5.0,
@@ -61,6 +57,14 @@ impl Pipeline {
     }
 }
 
+fn assert_aberration_steps(times: &StepTimes, refresh: bool) {
+    let steps = &times.trace().unwrap().steps;
+    let index = steps.iter().position(|step| step.name == "Aberration").unwrap();
+    let children: Vec<_> = steps[index + 1..].iter().take_while(|step| step.depth > steps[index].depth).map(|step| step.name).collect();
+    assert_eq!(children.contains(&"Aberration calculation"), refresh);
+    assert!(children.iter().all(|name| !["Direction capture", "Direction restoration", "Direction cache store", "Apparent cache decision"].contains(name)));
+}
+
 fn assert_direction_steps(times: &StepTimes, stage: &str, calculation: &str, refresh: bool) {
     let steps = &times.trace().unwrap().steps;
     let index = steps.iter().position(|step| step.name == stage).unwrap();
@@ -70,16 +74,8 @@ fn assert_direction_steps(times: &StepTimes, stage: &str, calculation: &str, ref
         .map(|step| step.name)
         .collect::<Vec<_>>();
     assert_eq!(children.contains(&calculation), refresh, "{stage}: {children:?}");
-    assert_eq!(
-        children.contains(&"Direction capture"),
-        refresh,
-        "{stage}: {children:?}"
-    );
-    assert_eq!(
-        children.contains(&"Direction restoration"),
-        !refresh,
-        "{stage}: {children:?}"
-    );
+    assert!(!children.contains(&"Direction capture"), "{stage}: {children:?}");
+    assert!(!children.contains(&"Direction restoration"), "{stage}: {children:?}");
 }
 
 fn assert_matching_sky(actual: &ObservedSky, expected: &ObservedSky) {
@@ -107,8 +103,8 @@ fn direction_refreshes_skip_restoration_and_paused_hits_restore_exact_results() 
     for site in [first_site, next_site] {
         for refresh in [true, false] {
             let times = cached.frame(site, true);
+            assert_aberration_steps(&times, refresh);
             for (stage, calculation) in [
-                ("Aberration", "Aberration calculation"),
                 ("Horizon rotation", "Horizon rotation calculation"),
                 ("Refraction", "Refraction calculation"),
             ] {
@@ -121,7 +117,7 @@ fn direction_refreshes_skip_restoration_and_paused_hits_restore_exact_results() 
     for refraction in [false, true, false] {
         cached.frame(next_site, refraction); // changing refraction can also change candidate membership
         let times = cached.frame(next_site, refraction);
-        assert_direction_steps(&times, "Aberration", "Aberration calculation", false);
+        assert_aberration_steps(&times, false);
         assert_direction_steps(&times, "Horizon rotation", "Horizon rotation calculation", false);
         if refraction {
             assert_direction_steps(&times, "Refraction", "Refraction calculation", false);
@@ -145,13 +141,13 @@ fn bypass_always_calculates_without_restoring_even_when_paused() {
     let mut expected = None;
     for _ in 0..3 {
         let times = bypassed.frame(Observer::default(), true);
+        assert_aberration_steps(&times, true);
         if let Some(expected) = &expected {
             assert_matching_sky(&bypassed.sky, expected);
         } else {
             expected = Some(bypassed.sky.clone());
         }
         for (stage, calculation) in [
-            ("Aberration", "Aberration calculation"),
             ("Horizon rotation", "Horizon rotation calculation"),
             ("Refraction", "Refraction calculation"),
         ] {

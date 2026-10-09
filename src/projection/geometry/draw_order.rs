@@ -121,7 +121,7 @@ mod tests {
                 .enumerate()
                 .map(|(index, star)| ProjectedStar {
                     star: crate::model::ObservedStarView {
-                        state: star,
+                        state: crate::model::ObservedStarState::Borrowed(star),
                         catalog: &sky.catalog.stars,
                     },
                     cell: Some((index as i32, 1)),

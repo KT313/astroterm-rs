@@ -3,7 +3,7 @@ mod caching;
 mod geometry;
 mod pipeline;
 
-pub use caching::{borrow_projected};
+pub use caching::{borrow_projected, borrow_render_projection};
 pub use pipeline::{project_cached_sky, project_cached_regions};
 pub use geometry::{
     find_visible_arc_parts, find_visible_arc_parts_vectors, pan_view, polar_to_cell, prepare_camera,

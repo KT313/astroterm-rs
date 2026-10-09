@@ -9,17 +9,17 @@ use std::mem::size_of;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BufferId {
     CatalogStars, CatalogTrajectories, CatalogClassifications, CatalogGrid, CatalogNames, CatalogFigures, CatalogEndpoints,
-    PlanetSamples, LunarSamples, OrientationSamples, ObserverGeometry, EmissionTimes,
+    PlanetSamples, LunarSamples, OrientationSamples, PlanetSampleWork, LunarSampleWork, OrientationSampleWork, ObserverGeometry, EmissionTimes,
     RegionalBrightness, RegionalValidation, RegionalVisibility, RegionalCorrections, RegionalApparent,
-    RegionalProjectionKeys, RegionalProjectedCells, RegionalOrderKeys, RegionalDrawOrder,
-    RegionSelection, BrightnessCandidates, ValidatedCandidates, WorkingStars, StellarSamples, StellarScratch, StellarRefreshRegions,
-    MotionSamples, VisibilityFlags, CorrectionSelection, ObservedStars, ObservedBodies, BodySamples, RelativeBodies,
-    MoonIllumination, ApparentDirections, HorizontalDirections, RefractedDirections,
+    RegionalProjectionKeys, RegionalProjectedCells, RegionalOrderKeys, RegionalDrawOrder, RegionalCellWork, RegionalOrderWork,
+    RegionSelection, SelectionRequest, ValidatedCandidates, WorkingStars, StellarSamples, StellarScratch, StellarRefreshRegions,
+    StellarOutputWork, HorizontalRequest, ObservedLayout, HorizontalWork, RefractionWork, ObservedStars, ObservedBodies, BodySamples, RelativeBodies,
+    MoonIllumination, BodyApparentDirections, HorizontalDirections, RefractedDirections,
     ProjectedCells, ProjectionCandidate, ProjectionBodyCandidate, ProjectionFigureCandidate, ProjectionHorizonCandidate, DrawOrderCandidate, DrawOrderScratch,
     DrawOrder, ProjectedBodies, ProjectedFigures, ProjectedHorizon, ProjectedView,
-    PixelCandidate, CharacterCandidate, StarLayer, PixelScene, CharacterScene,
+    PixelCandidate, PixelDrawingInputs, CharacterCandidate, StarLayer, PixelScene, CharacterScene,
     CharacterFrame, PanelCanvas, PresenterScreen, PreviousFrame, FrameImage, HalfblockTransfer, RgbImage, MetadataFields,
-    StepFields, TextCells, ComposedCells, GlyphMasks, Font, EncodedImage, UploadBytes, CompressedBytes, SerializedBytes,
+    StepFields, PixelLabels, TextCells, ComposedCells, GlyphMasks, Font, EncodedImage, UploadBytes, CompressedBytes, SerializedBytes,
     SerializationBlank,
 }
 

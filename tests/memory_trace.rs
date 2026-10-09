@@ -57,8 +57,8 @@ fn batch_memory_events_are_bounded_aggregates_with_unknown_counts_preserved() {
     times.measure_batches("Batches", |batch| {
         for n in 1..=1000 {
             batch.measure("Pass", || ());
-            batch.record_memory(batch.last_memory_step(), || MemoryEvent::operation(BufferId::MotionSamples, Operation::Append, None, None, Some(n), Some(n * 8)));
-            batch.record_memory(batch.last_memory_step(), || MemoryEvent::unknown_operation(BufferId::MotionSamples, Operation::Compare));
+            batch.record_memory(batch.last_memory_step(), || MemoryEvent::operation(BufferId::StellarSamples, Operation::Append, None, None, Some(n), Some(n * 8)));
+            batch.record_memory(batch.last_memory_step(), || MemoryEvent::unknown_operation(BufferId::StellarSamples, Operation::Compare));
         }
     });
     let trace = times.trace().unwrap();

@@ -25,3 +25,13 @@ pub(super) fn record_cache_store(times: &mut StepTimes, candidate: BufferId, out
 pub(super) fn record_candidate_clear<T>(times: &mut StepTimes, buffer: BufferId, before: Option<BufferShape>, values: &Vec<T>, domain: IndexDomain) {
     times.record_memory(times.last_memory_step(), || MemoryEvent::operation(buffer, Operation::Clear, before, Some(BufferShape::vector(values, domain)), before.and_then(|shape| shape.len), None));
 }
+
+#[allow(clippy::ptr_arg)] // retained work capacity is part of the swap report
+pub(super) fn record_region_store<T>(times: &mut StepTimes, work_id: BufferId, result_id: BufferId, transition: Option<(BufferShape, Option<BufferShape>)>, work: &Vec<T>, domain: IndexDomain, outcome: crate::cache::StoreOutcome) {
+    let completed = transition.map(|(new, _)| new);
+    let displaced = transition.and_then(|(_, old)| old);
+    times.record_store(result_id, outcome);                                                // use the store's comparison result without scanning again
+    times.record_memory(times.last_memory_step(), || MemoryEvent::operation(result_id, Operation::Move, None, completed,
+        completed.and_then(|shape| shape.len), completed.and_then(|shape| shape.logical_bytes())));
+    times.record_shape(work_id, Operation::Clear, displaced, || BufferShape::vector(work, domain)); // displaced result allocation is now empty scratch
+}

@@ -134,3 +134,14 @@ pub(crate) struct StellarWork {
     pub(crate) class: crate::astro::models::stars::StellarClass,
 }
 row_columns!(StellarWork { magnitude, motion, class });
+
+/// Provenance for one solar-system preparation; camera changes do not affect these inputs.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct SolarRequestKey {
+    pub time: FrameTime,
+    pub site: crate::astro::Observer,
+    pub versions: [u64; 3],
+    pub policy: CachePolicy,
+    pub observer_owner: u64,
+}
+crate::rows::debug_preview!(SolarRequestKey);

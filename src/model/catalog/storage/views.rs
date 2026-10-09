@@ -107,10 +107,10 @@ mod tests {
                 let observed = fields.create_observed_star(index, true);
                 assert_eq!(observed, ObservedStar::from_star(&full, index, Vector3::default()));
                 let view = crate::model::ObservedStarView {
-                    state: &observed,
+                    state: crate::model::ObservedStarState::Borrowed(&observed),
                     catalog: &catalog.stars,
                 };
-                assert!(std::ptr::eq(view.state, &observed));
+                assert!(std::ptr::eq(view.state.as_ref(), &observed));
                 assert!(std::ptr::eq(view.catalog, &catalog.stars));
                 assert_eq!(view.id(), full.id);
                 assert_eq!(view.name(), full.name);

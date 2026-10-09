@@ -51,18 +51,31 @@ impl Tables for ObservedSky {
     }
 }
 
-list_tables!(SimulationState { leaves: [planets, moon, orientation], scalars: [], groups: [] });
+impl Tables for SimulationState {
+    fn visit_tables(&self, prefix: &str, visit: &mut TableVisitor<'_>) {
+        visit(&join(prefix, "planets"), &self.planets, None);
+        visit(&join(prefix, "moon"), &self.moon, None);
+        visit(&join(prefix, "orientation"), &self.orientation, None);
+        visit(&join(prefix, "planet_work"), &self.planet_work, None);
+        visit(&join(prefix, "moon_work"), &self.moon_work, None);
+        visit(&join(prefix, "orientation_work"), &self.orientation_work, None);
+        visit(&join(prefix, "group"), &Single(&self.group), None);
+    }
+}
 
 impl Tables for ObservationCache {
     fn visit_tables(&self, prefix: &str, visit: &mut TableVisitor<'_>) {
         let path = |name: &str| join(prefix, name);
         visit(&path("regions"), &super::regions::ObservationRegionsTable(&self.regions), None);
         visit(&path("regional_output"), &self.regional_output, Some(Group::Projection));
-        visit(&path("eligible"), &self.eligible, Some(Group::StellarVisibility));
-        visit(&path("corrections"), &self.corrections, Some(Group::StellarVisibility));
+        self.horizontal_sources.visit_tables(&path("horizontal_sources"), visit);
+        visit(&path("layout_sources"), &self.layout_sources, None);
+        visit(&path("published"), &Single(&self.published), None);
+        visit(&path("use_refraction"), &Single(&self.use_refraction), None);
+        visit(&path("horizontal_work"), &self.horizontal_work, None);
+        visit(&path("refraction_work"), &self.refraction_work, None);
         visit(&path("relative"), &self.relative, Some(Group::SolarSystemGeometry));
         visit(&path("body_apparent"), &self.body_apparent, Some(Group::ApparentDirections));
-        visit(&path("apparent"), &self.apparent, Some(Group::ApparentDirections));
         visit(&path("horizontal"), &self.horizontal, Some(Group::HorizontalSky));
         visit(&path("refracted"), &self.refracted, Some(Group::Refraction));
         visit(&path("illumination"), &super::ScalarCache(&self.illumination), Some(Group::SolarSystemGeometry));
@@ -77,10 +90,14 @@ impl Tables for ProjectionCache {
         let path = |name: &str| join(prefix, name);
         visit(&path("regional_stars"), &super::regions::RegionalTable { entries: &self.regional_stars, nested_bytes: super::TableBytes::vector }, Some(Group::Projection));
         visit(&path("regional_orders"), &super::regions::RegionalTable { entries: &self.regional_orders, nested_bytes: super::TableBytes::vector }, Some(Group::DrawOrder));
+        visit(&path("regional_cell_work"), &self.regional_cell_work, None);
+        visit(&path("regional_order_work"), &self.regional_order_work, None);
         visit(&path("regional_cells"), &self.regional_cells, None);
         visit(&path("regional_ranges"), &self.regional_ranges, None);
         visit(&path("region_cell_scratch"), &self.region_cell_scratch, None);
         visit(&path("assembled_for"), &self.assembled_for, None);
+        visit(&path("source_revision"), &Single(&self.source_revision), None);
+        visit(&path("render_context"), &Single(&self.render_context), None);
         visit(&path("star_candidate"), &self.star_candidate, None);
         visit(&path("order_candidate"), &self.order_candidate, None);
         visit(&path("draw_order_scratch"), &self.draw_order_scratch, None);
@@ -125,7 +142,20 @@ impl Tables for PixelState {
         let path = |name: &str| join(prefix, name);
         visit(&path("frame_image"), &self.frame_image, None);
         visit(&path("rgb"), &self.rgb, None);
+        visit(&path("rgb_version"), &Single(&self.rgb_version), None);
+        visit(&path("frame_key"), &Single(&self.frame_key), None);
+        visit(&path("encoding_key"), &Single(&self.encoding_key), None);
+        visit(&path("displayed_key"), &Single(&self.displayed_key), None);
+        visit(&path("display_valid"), &Single(&self.display_valid), None);
         visit(&path("text"), &self.text, None);
+        visit(&path("text_version"), &Single(&self.text_version), Some(Group::RasterAssets));
+        visit(&path("text_cache.labels"), &self.text_cache.labels, Some(Group::RasterAssets));
+        if let Some(key) = &self.text_cache.labels_key { visit(&path("text_cache.label_regions"), &key.projection.regions, Some(Group::RasterAssets)); }
+        if let Some(key) = &self.text_cache.text_key {
+            visit(&path("text_cache.fields"), &key.fields, Some(Group::RasterAssets));
+            visit(&path("text_cache.planets"), &key.planets, Some(Group::RasterAssets));
+            visit(&path("text_cache.horizon"), &key.horizon, Some(Group::RasterAssets));
+        }
         visit(&path("composed"), &self.composed, None);
         visit(&path("serialization_blank"), &self.serialization_blank, None);
         visit(&path("serialized"), &Bytes::binary(&self.serialized), None);
@@ -141,6 +171,7 @@ impl Tables for SceneCache {
     fn visit_tables(&self, prefix: &str, visit: &mut TableVisitor<'_>) {
         let path = |name: &str| join(prefix, name);
         visit(&path("star_layer"), &self.star_layer, None);
+        visit(&path("pixel_inputs"), &self.pixel_inputs, None);
         if let Some(key) = &self.pixel_candidate { key.visit_tables(&path("pixel_candidate"), visit); }
         if let Some(key) = &self.character_candidate { key.visit_tables(&path("character_candidate"), visit); }
         visit(&path("pixels"), &self.pixels, Some(Group::Raster));
@@ -152,6 +183,7 @@ impl Tables for SceneCache {
 /// The vectors inside a raster key; its scalar members (viewport, options, flags) are not tables.
 impl Tables for SceneKey {
     fn visit_tables(&self, prefix: &str, visit: &mut TableVisitor<'_>) {
+        if let Some(key) = &self.production { visit(&join(prefix, "production.regions"), &key.regions, None); }
         visit(&join(prefix, "stars"), &self.stars, None);
         visit(&join(prefix, "planets"), &self.planets, None);
         visit(&join(prefix, "constellations"), &self.constellations, None);
@@ -186,11 +218,31 @@ impl Tables for crate::state::StarSelectionCache {
         visit(&path("region_candidates"), &super::regions::RegionalTable { entries: &self.region_candidates, nested_bytes: super::regions::no_nested_bytes }, Some(Group::CandidateSelection));
         visit(&path("region_selected"), &super::regions::RegionalTable { entries: &self.region_selected, nested_bytes: super::regions::no_nested_bytes }, Some(Group::WorkingSet));
         visit(&path("region"), &self.region, Some(Group::CandidateSelection));
-        visit(&path("candidates"), &self.candidates, Some(Group::CandidateSelection));
-        visit(&path("selected"), &self.selected, Some(Group::WorkingSet));
+        visit(&path("requested_sources"), &self.requested_sources, None);
+        visit(&path("statistics"), &Single(&self.statistics), None);
+        visit(&path("selection_revision"), &Single(&self.selection_revision), None);
         visit(&path("working"), &self.working, Some(Group::WorkingSet));
     }
 }
 
 list_tables!(crate::state::SimulationCaches { leaves: [], scalars: [], groups: [solar_system, stars] });
-list_tables!(crate::state::StellarSimulationState { leaves: [prepared_classes, stellar_scratch, refresh_regions, regions @ StellarState, motion @ StellarState], scalars: [], groups: [] });
+impl Tables for crate::state::StellarSimulationState {
+    fn visit_tables(&self, prefix: &str, visit: &mut TableVisitor<'_>) {
+        let path = |name: &str| join(prefix, name);
+        visit(&path("prepared_classes"), &self.prepared_classes, None);
+        visit(&path("stellar_scratch"), &self.stellar_scratch, None);
+        visit(&path("refresh_regions"), &self.refresh_regions, None);
+        visit(&path("regions"), &self.regions, Some(Group::StellarState));
+        visit(&path("region_output_work"), &self.region_output_work, None);
+        visit(&path("last_request"), &Single(&self.last_request), None);
+        visit(&path("selected_fallback_count"), &Single(&self.selected_fallback_count), None);
+    }
+}
+
+impl Tables for crate::state::HorizontalSources {
+    fn visit_tables(&self, prefix: &str, visit: &mut TableVisitor<'_>) {
+        visit(&join(prefix, "regions"), &self.regions, None);
+        visit(&join(prefix, "body_generation"), &Single(&self.body_generation), None);
+        visit(&join(prefix, "revision"), &Single(&self.revision), None);
+    }
+}

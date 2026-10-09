@@ -48,6 +48,7 @@ pub struct Frame {
 
 #[derive(Clone, PartialEq)]
 pub(crate) struct SceneKey {
+    pub(crate) production: Option<ProductionRasterKey>, // trusted regional dependencies; exact callers leave this empty
     pub(crate) viewport: Viewport, // compare small settings before the potentially large drawing inputs
     pub(crate) pixel_fov_degrees: Option<f64>,
     pub(crate) facing: bool,
@@ -110,3 +111,89 @@ pub(crate) struct Glyph {
     pub(crate) metrics: fontdue::Metrics,
     pub(crate) coverage: Vec<u8>,
 }
+
+/// A sealed projection handoff: callers can read its sky but cannot replace data under its versions.
+pub struct RenderProjection<'a> {
+    pub(crate) sky: crate::model::ProjectedSky<'a>,
+    pub(crate) source: (u64, u64), // projection owner and catalog/observation replacement revision
+    pub(crate) regions: &'a [crate::model::ObservedRegion],
+    pub(crate) assembled: &'a [(usize, usize, usize, u64, u64)],
+    pub(crate) geometry: [u64; 3], // bodies, constellation lines, horizon
+}
+impl<'a> RenderProjection<'a> {
+    pub fn sky(&self) -> &crate::model::ProjectedSky<'a> { &self.sky }
+}
+
+#[derive(Clone, PartialEq)]
+pub(crate) struct ProductionRasterKey {
+    pub source: (u64, u64),
+    pub geometry: [u64; 3],
+    pub regions: Vec<RasterRegion>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RasterRegion {
+    pub observed: crate::model::ObservedRegion, // includes membership, magnitudes, corrections and current row spans
+    pub cells: u64,
+    pub order: u64,
+}
+row_columns!(RasterRegion { observed, cells, order });
+
+/// Publication marker for retained rendering results; revisions belong to their owning PixelState.
+/// An input-triggered rebuild may conservatively advance this; it is not Cache's exact value generation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct RenderResultVersion {
+    revision: u64,
+    ready: bool,
+}
+impl RenderResultVersion {
+    pub fn current(self) -> Option<u64> { self.ready.then_some(self.revision) }
+    pub fn invalidate(&mut self) { self.ready = false; }
+    pub fn publish(&mut self, changed: bool) {
+        if changed || self.revision == 0 { self.revision = self.revision.checked_add(1).expect("render result revision exhausted"); }
+        self.ready = true;
+    }
+}
+row_columns!(RenderResultVersion { revision, ready });
+
+/// Complete inputs to one retained RGB frame. Versions are local to the same PixelState owner.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PixelFrameKey {
+    pub sky_version: u64,
+    pub text_version: u64,
+    pub dimensions: (u32, u32),
+    pub screen: [u16; 4],
+    pub sky_area: [u16; 4],
+    pub font: (u16, u16),
+    pub text_cell: (u16, u16),
+    pub background: [u8; 4],
+}
+row_columns!(PixelFrameKey { sky_version, text_version, dimensions, screen, sky_area, font, text_cell, background });
+
+/// Exact Kitty upload parameters; image IDs cannot share already encoded command bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct KittyEncodingKey {
+    pub rgb_version: u64,
+    pub dimensions: (u32, u32),
+    pub compression: u8, // 0 unknown, 1 supported, 2 unsupported; preserves capability changes as well as byte format
+    pub tmux: bool,
+    pub image_id: u32,
+}
+row_columns!(KittyEncodingKey { rgb_version, dimensions, compression, tmux, image_id });
+
+/// A completed render can either submit output or leave an already displayed Kitty frame untouched.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RenderOutcome { Presented, ReusedDisplayedFrame }
+impl RenderOutcome {
+    pub fn was_presented(self) -> bool { self == Self::Presented }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct KittyDisplayKey {
+    pub rgb_version: u64,
+    pub dimensions: (u32, u32),
+    pub screen: [u16; 4],
+    pub compression: u8,
+    pub tmux: bool,
+}
+row_columns!(KittyDisplayKey { rgb_version, dimensions, screen, compression, tmux });

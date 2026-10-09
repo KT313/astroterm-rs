@@ -28,15 +28,17 @@ fn select_cells(storage: &mut StarSelectionCache, catalog: &SkyCatalog, cells: &
     let mut times = StepTimes::default();
     let observer = crate::sky::compose_observer_state(crate::model::FrameTime { utc: epoch, ut1: epoch, tt: epoch }, Default::default(), Default::default(), crate::astro::Matrix3::IDENTITY, Default::default(), false);
     storage.region.store((SkyRegion::All, observer, false), epoch, 0.0, SelectedRegion { cells: cells.to_vec(), brute_force });
-    update_brightness_bounds(&mut storage.candidates, &mut storage.region_candidates, &mut storage.candidate_region_stats, &storage.region, &storage.config, epoch, threshold, catalog, &mut times);
-    update_candidate_validation(&mut storage.selected, &mut storage.region_selected, &mut storage.selected_region_stats, &storage.candidates, &storage.region_candidates, &storage.region, &storage.config, epoch, &mut times);
-    update_constellation_endpoints(&mut storage.working, &storage.selected, &storage.config, epoch, catalog.endpoint_indices(), &mut times);
+    storage.statistics = update_brightness_bounds(&mut storage.region_candidates, &mut storage.candidate_region_stats, &storage.region, &storage.config, epoch, threshold, catalog, &mut times);
+    update_candidate_validation(&mut storage.region_selected, &mut storage.selected_region_stats, &storage.region_candidates, &storage.region, &storage.config, epoch, &mut times);
+    update_selection_request(&storage.region.value().cells, &storage.region_selected, &mut storage.requested_sources, &mut storage.selection_revision, &mut times);
+    update_constellation_endpoints(&mut storage.working, storage.selection_revision, &storage.region.value().cells, &storage.region_selected, storage.statistics.candidates, &storage.config, epoch, catalog.endpoint_indices(), &mut times);
     storage.requested_epoch = Some(epoch);
 
     let mut expected = Vec::new();
     crate::sky::select_brightness(&catalog.grid, &catalog.stars, storage.region.value(), threshold, &mut expected);
-    assert_eq!(&storage.candidates.value().0, &expected);
-    assert_eq!(storage.selected.value(), &expected);
+    let actual: Vec<_> = storage.stars().ranges().flat_map(|(_, start, end, _)| start..end).collect(); // test-only materialization for reference comparison
+    assert_eq!(actual, expected);
+    assert_eq!(storage.statistics.candidates, expected.len());
     let expected_working = crate::sky::merge_constellation_endpoints(expected, catalog.endpoint_indices(), &mut times);
     assert_eq!(storage.working.value(), &expected_working);
 }
@@ -85,7 +87,7 @@ fn threshold_changes_and_explicit_invalidation_preserve_equal_output_versions() 
     assert_eq!(storage.brightness_region_report(b).unwrap().stats.refreshes, b_report.stats.refreshes);
     select_cells(&mut storage, &catalog, &cells, -20.0, J2000 + 4.0, false);
     assert_ne!(storage.stars().region_generation(a), generation);
-    assert!(storage.selected.value().is_empty());
+    assert!(storage.statistics.candidates == 0);
     assert_eq!(storage.working.value().len(), catalog.endpoint_indices().len());
 }
 
@@ -114,11 +116,11 @@ fn interval_exit_selects_all_stars_and_return_restores_bounded_membership() {
     let mut storage = storage(&catalog, CacheConfig::default());
     let cells: Vec<_> = (0..crate::constants::SIMULATION_REGION_COUNT).collect();
     select_cells(&mut storage, &catalog, &cells, -20.0, J2000, false);
-    assert!(storage.selected.value().is_empty());
+    assert!(storage.statistics.candidates == 0);
     select_cells(&mut storage, &catalog, &cells, -20.0, crate::astro::COMPUTATIONAL_INTERVAL.end_tt + 1.0, true);
-    assert_eq!(storage.selected.value().len(), catalog.stars.len());
+    assert_eq!(storage.statistics.candidates, catalog.stars.len());
     select_cells(&mut storage, &catalog, &cells, -20.0, J2000, false);
-    assert!(storage.selected.value().is_empty());
+    assert!(storage.statistics.candidates == 0);
 }
 
 #[test]
@@ -133,9 +135,66 @@ fn replacing_catalog_resets_region_values_versions_and_source_identity() {
     crate::sky::select_cached_stars(&mut storage, &second, &observer, -20.0, false, SkyRegion::All, &mut times);
     assert_ne!(storage.identity, first_identity);
     assert!(Arc::ptr_eq(storage.stars().catalog, &second));
-    assert!(storage.selected.value().is_empty());
+    assert!(storage.statistics.candidates == 0);
     for &region in storage.stars().regions() {
         assert_eq!(storage.validation_region_report(region).unwrap().stats.refreshes, 1);
         assert_eq!(storage.stars().region_generation(region), 1);
     }
+}
+
+#[test]
+fn paused_slow_and_fast_requests_reuse_ranges_and_request_metadata() {
+    let catalog = catalog();
+    let [a, b] = populated_regions(&catalog);
+    let cells = [a, b, CONSTELLATION_REGION];
+    let mut cache = storage(&catalog, CacheConfig::default());
+    select_cells(&mut cache, &catalog, &cells, 20.0, J2000, false);
+    let revisions = (cache.selection_revision, cache.working.generation);
+    let allocation = (cache.requested_sources.as_ptr(), cache.requested_sources.capacity());
+    for epoch in [J2000, J2000.next_up(), J2000 + 5000.0, J2000 - 5000.0] {
+        let before = (cache.candidate_region_stats.refreshes, cache.selected_region_stats.refreshes, cache.working.stats.refreshes);
+        select_cells(&mut cache, &catalog, &cells, 20.0, epoch, false);
+        assert_eq!((cache.selection_revision, cache.working.generation), revisions);
+        assert_eq!((cache.requested_sources.as_ptr(), cache.requested_sources.capacity()), allocation);
+        assert_eq!((cache.candidate_region_stats.refreshes, cache.selected_region_stats.refreshes, cache.working.stats.refreshes), before);
+        assert_eq!(cache.stars().ranges().len(), cells.len());
+    }
+}
+
+#[test]
+fn empty_region_changes_request_identity_without_changing_working_rows() {
+    let catalog = catalog();
+    let empty = (0..CONSTELLATION_REGION).find(|&r| catalog.grid.offsets[r] == catalog.grid.offsets[r + 1]).unwrap();
+    let mut cache = storage(&catalog, CacheConfig::default());
+    let mut stellar = crate::state::StellarSimulationState::default();
+    select_cells(&mut cache, &catalog, &[CONSTELLATION_REGION], -20.0, J2000, false);
+    crate::sky::simulate_stars(&mut stellar, cache.stars(), J2000, &mut StepTimes::default());
+    let revision = cache.stars().request_revision();
+    let working_generation = cache.working.generation;
+    let endpoint_generation = stellar.region_report(CONSTELLATION_REGION).unwrap().generation;
+    select_cells(&mut cache, &catalog, &[empty, CONSTELLATION_REGION], -20.0, J2000, false);
+    assert_ne!(cache.stars().request_revision(), revision);
+    assert_eq!(cache.working.generation, working_generation);
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| stellar.results(cache.stars()))).is_err());
+    crate::sky::simulate_stars(&mut stellar, cache.stars(), J2000, &mut StepTimes::default());
+    assert_eq!(stellar.results(cache.stars()).selected_count(), catalog.endpoint_indices().len());
+    assert_eq!(stellar.region_report(CONSTELLATION_REGION).unwrap().generation, endpoint_generation);
+    assert_eq!(stellar.region_report(empty).unwrap().stats.refreshes, 1);
+}
+
+#[test]
+fn offscreen_threshold_changes_refresh_retained_ranges_on_return() {
+    let catalog = catalog();
+    let [a, b] = populated_regions(&catalog);
+    let mut cache = storage(&catalog, CacheConfig::default());
+    select_cells(&mut cache, &catalog, &[a, CONSTELLATION_REGION], 20.0, J2000, false);
+    let before = cache.brightness_region_report(a).unwrap();
+    select_cells(&mut cache, &catalog, &[b, CONSTELLATION_REGION], -20.0, J2000 + 1.0, false);
+    assert_eq!(cache.brightness_region_report(a).unwrap(), before);
+    select_cells(&mut cache, &catalog, &[a, CONSTELLATION_REGION], -20.0, J2000 + 2.0, false);
+    assert_eq!(cache.statistics.candidates, 0);
+    assert_eq!(cache.brightness_region_report(a).unwrap().stats.refreshes, before.stats.refreshes + 1);
+    assert!(cache.stars().rows().iter().all(|row| !row.drawable));
+    cache.invalidate_view();
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| cache.stars())).is_err());
 }

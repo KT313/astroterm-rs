@@ -24,7 +24,7 @@ impl PipelineCache {
         total
     }
     pub fn reports(&self) -> Vec<CacheReport> {
-        self.observer.reports().into_iter().chain(self.selection.reports()).chain(self.stars.reports()).chain(self.observation.reports()).collect()
+        self.observer.reports().into_iter().chain(self.selection.reports()).chain(self.observation.reports()).collect()
     }
 }
 pub fn prepare_stellar_catalog(storage: &mut PipelineCache, catalog: Arc<SkyCatalog>, times: &mut StepTimes) {
@@ -44,4 +44,9 @@ pub fn observe_cached_sky(storage: &mut PipelineCache, simulation: &SimulationSt
     times.measure_steps("Stellar simulation", |times| astroterm::sky::simulate_stars(&mut storage.stars, storage.selection.stars(), observer.time.tt, times));
     times.measure_steps("Observation", |times| astroterm::sky::observe_cached_sky(&mut storage.observation, storage.stars.results(storage.selection.stars()), storage.observer.bodies(observer), observer, threshold, refraction, output, times));
     Ok(())
+}
+
+pub fn prepare_frame(storage: &mut PipelineCache, simulation: &mut SimulationState, time: FrameTime, site: Observer, times: &mut StepTimes) -> Result<ObserverState, SimulationError> {
+    astroterm::sky::begin_solar_system_frame(simulation, &mut storage.observer, time, site, times)?;
+    astroterm::sky::prepare_observer_inputs(&mut storage.observer, simulation, time, site, times)
 }

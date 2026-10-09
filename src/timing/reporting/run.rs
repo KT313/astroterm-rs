@@ -6,6 +6,7 @@ use std::io::{self, Write};
 pub(super) fn write_run_header(output: &mut impl Write, run: &MemoryRun, registry_omitted: u64) -> io::Result<()> {
     writeln!(output, "astroterm --debug-memory: run report")?;
     writeln!(output, "Build feature=memory-diagnostics; runtime=enabled; completed frames={}; cache enabled={}", run.completed_frames, run.cache_enabled)?;
+    writeln!(output, "Completed-frame output: presented={}; reused display={}", run.presented_frames, run.reused_display_frames)?;
     writeln!(output, "Retained: startup + latest completed frame + current incomplete frame. Sums/counts below cover bounded step evidence from completed frames only; parent sums include children. No partial frame is counted as presented.")?;
     writeln!(output, "Limits per segment: steps={MAX_TRACE_STEPS}; depth={MAX_TRACE_DEPTH}; events={MAX_TRACE_EVENTS} (per step={}); detail strings={MAX_TRACE_DETAILS}; detail bytes={MAX_TRACE_TEXT_BYTES}; single detail bytes={MAX_DETAIL_BYTES}; inventories={MAX_TRACE_INVENTORIES}; timing paths={MAX_TIMING_PATHS}; aggregate paths={MAX_AGGREGATE_PATHS}", crate::constants::MAX_MEMORY_EVENTS_PER_STEP)?;
     writeln!(output, "Omissions across completed frames: steps={}; event observations={}; details={}; inventories={}; discarded detail bytes={}; aggregate step rows={}; timing registrations across run={}", run.completed_omitted_steps, run.completed_omitted_events, run.completed_omitted_details, run.completed_omitted_inventories, run.completed_truncated_text_bytes, run.omitted_aggregate_steps, registry_omitted)?;
@@ -25,6 +26,7 @@ pub(super) fn write_retained_segments(output: &mut impl Write, run: &MemoryRun, 
     if let Some(startup) = &run.startup { writeln!(output, "Startup:")?; startup.write_segment(output)?; }
     if let Some(frame) = &run.latest {
         writeln!(output, "Latest completed frame: UTC={:?}; TT={:?}; elapsed={:.3} ms", frame.utc, frame.tt, frame.elapsed_seconds * 1000.0)?;
+        writeln!(output, "Frame output: presented={}; reused display={}", frame.trace.presented_frames, frame.trace.reused_display_frames)?;
         frame.trace.write_segment(output)?;
     }
     if run.frame_active {

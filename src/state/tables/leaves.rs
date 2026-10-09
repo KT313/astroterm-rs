@@ -6,7 +6,7 @@ use crate::astro::Vector3;
 use crate::cache::Cache;
 use crate::canvas::Canvas;
 use crate::catalog::{StarNames, cache::CatalogArray};
-use crate::model::{BodySamples, CharacterStarKey, CorrectionSelection, Glyph, Moon, PixelStarKey, ProjectedMoon,
+use crate::model::{BodySamples, CharacterStarKey, Glyph, Moon, PixelStarKey, ProjectedMoon,
     ProjectionViewport, SelectedRegion, SelectionStats, StarKeys, StarStorage, StarRow, StarRowVec, View};
 use crate::timing::StepTimes;
 use bytemuck::Pod;
@@ -274,7 +274,7 @@ macro_rules! vector_with_record {
         }
     )+ };
 }
-vector_with_record!(CorrectionSelection { indices, stats }, BodySamples { planets, moon }, SelectedRegion { cells, brute_force });
+vector_with_record!(BodySamples { planets, moon }, SelectedRegion { cells, brute_force });
 
 impl Table for StarKeys {
     fn shape(&self) -> Vec<usize> { vec![self.rows()] }

@@ -36,7 +36,7 @@ fn cache_cells<K: Preview, V: Preview>(cache: &Cache<K, V>) -> Vec<String> {
 }
 pub(super) fn no_nested_bytes<T>(_: &T) -> TableBytes { TableBytes::known(0, 0) }
 
-pub(super) struct ObservationRegionsTable<'a>(pub &'a Vec<crate::state::ObservationRegion>);
+pub(super) struct ObservationRegionsTable<'a>(pub &'a Vec<crate::model::ObservationRegion>);
 impl Table for ObservationRegionsTable<'_> {
     fn shape(&self) -> Vec<usize> { vec![self.0.len()] }
     fn rows(&self) -> usize { self.0.len() }
@@ -60,7 +60,7 @@ impl Table for ObservationRegionsTable<'_> {
     }
     fn note(&self) -> Option<String> { Some("Original regional correction owner; cache slots counted once, including all retained result allocations.".into()) }
 }
-pub(crate) fn observation_nested_bytes(region: &crate::state::ObservationRegion) -> TableBytes {
+pub(crate) fn observation_nested_bytes(region: &crate::model::ObservationRegion) -> TableBytes {
     let mut sizes = [TableBytes::known(0, 0); 3];
     if let Some(value) = region.eligible.stored() { sizes[0] = TableBytes::vector(value); }
     if let Some(value) = region.corrections.stored() { sizes[1] = TableBytes::vector(&value.0); }

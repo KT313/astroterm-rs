@@ -36,8 +36,7 @@ impl Run {
     fn frame(&mut self, epoch: f64, region_ra: Option<f64>, threshold: f64, refract: bool, view: View, viewport: ProjectionViewport) -> Vec<ObservedRegion> {
         let mut times = StepTimes::default();
         let time = FrameTime { utc: epoch, ut1: epoch, tt: epoch };
-        self.solar.begin_frame();
-        sky::update_solar_system(&mut self.solar, time, &[], &mut times).unwrap();
+        sky::begin_solar_system_frame(&mut self.solar, &mut self.observer, time, Observer::default(), &mut times).unwrap();
         let observer = sky::prepare_observer_inputs(&mut self.observer, &mut self.solar, time, Observer::default(), &mut times).unwrap();
         let region = region_ra.map_or(SkyRegion::All, |ra| SkyRegion::Cone {
             center: observer.inertial_to_horizon.apply(Vector3 { x: ra.cos(), y: ra.sin(), z: 0.0 }), radius: 0.04,
@@ -47,20 +46,22 @@ impl Run {
         let observed = sky::observe_cached_regions(&mut self.observation, self.stellar.results(self.selection.stars()),
             self.observer.bodies(&observer), &observer, threshold, refract, &mut self.sky, &mut times);
         let regions = observed.regions().to_vec();
+        let completed = observed.sky().materialize(); // explicit reference snapshot; production keeps the borrowed view
         assert_eq!(regions.first().map_or(0, |r| r.start), 0);
         assert_eq!(regions.last().map_or(0, |r| r.end), observed.sky().stars.len());
         for pair in regions.windows(2) { assert_eq!(pair[0].end, pair[1].start); }
         projection::project_cached_regions(&mut self.projection, observed, &view, viewport, epoch, &mut times);
-        let reference = projection::project_sky(&self.sky, &view, viewport);
-        let mut expected = reference.view(&self.sky);
-        let actual = projection::borrow_projected(&self.projection, &self.sky, &view, viewport);
+        let reference = projection::project_sky(&completed, &view, viewport);
+        let mut expected = reference.view(&completed);
+        let actual = projection::borrow_projected(&self.projection, observed.sky(), &view, viewport);
         let expected_stars: Vec<_> = regions.iter().filter(|r| r.start != r.end).flat_map(|region| {
-            let rows = &self.sky.stars[region.start..region.end];
+            let rows = &completed.stars[region.start..region.end];
             expected.stars.iter().filter(move |star| rows.iter().any(|row| row.source_index == star.star.source_index))
         }).collect();
         assert_eq!(actual.stars.iter().collect::<Vec<_>>(), expected_stars);
         expected.stars = actual.stars;
         assert!(actual == expected, "projected geometry or metadata changed");
+        self.sky = completed;
         regions
     }
 }

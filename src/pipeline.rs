@@ -41,12 +41,11 @@ pub(super) fn run_render_loop(state: &mut ApplicationState, renderer: &mut Rende
         let input = poll_frame_input(state.config.terminal.quit_on_any_key)?; // read key presses and terminal size changes
         if stop_on_quit(&input, &mut state.timings) { return Ok(()); } // stop on quit without processing other keys
         apply_frame_controls(&input, &state.config.view, &mut state.current_view, &mut clock, renderer, &mut state.cache.rendering, &mut state.cache.selection, &mut state.cache.projection)?; // apply controls and mark affected results for recalculation
-        state.cache.simulation.solar_system.begin_frame(); // discard saved calculations where reuse is disabled
         let time = resolve_frame_time(state.config.debug_singleframe, state.config.simulation.start_julian_date, &clock); // choose the simulated date and time to display
         state.timings.set_memory_frame_time(time.utc, time.tt); // retain the chosen time even if a later stage fails
 
         // 1. simulate solar system bodies
-        simulate_solar_system_frame(&mut state.cache.simulation.solar_system, time, &mut state.timings)?;
+        simulate_solar_system_frame(&mut state.cache.simulation.solar_system, &mut state.cache.observer, state.config.simulation.observer, time, &mut state.timings)?;
 
         // 2. calculate observation-details
         let observer = prepare_observer_frame(state.config.simulation.observer, &mut state.cache.simulation.solar_system, &mut state.cache.observer, time, &mut state.timings)?;
@@ -55,7 +54,7 @@ pub(super) fn run_render_loop(state: &mut ApplicationState, renderer: &mut Rende
         select_stars_frame(&mut state.cache.selection, &state.persistent.catalog, &observer, &state.current_view, state.config.render.magnitude_threshold, state.config.simulation.refraction, &mut state.timings);
 
         // 4. simulate stars
-        simulate_stars_frame(&mut state.cache.simulation.stars, state.cache.selection.stars(), time, &mut state.timings); // refresh requested regions and gather the selected stars' motion and brightness
+        simulate_stars_frame(&mut state.cache.simulation.stars, state.cache.selection.stars(), time, &mut state.timings); // refresh requested regions' motion and brightness
 
         // 5. calculate how prepared objects appear to the viewer
         let observed = observe_frame(&mut state.cache.observation, state.cache.simulation.stars.results(state.cache.selection.stars()), state.cache.observer.bodies(&observer), &observer, state.config.render.magnitude_threshold, state.config.simulation.refraction, &mut state.cache.sky, &mut state.timings);
@@ -67,10 +66,11 @@ pub(super) fn run_render_loop(state: &mut ApplicationState, renderer: &mut Rende
         let sky_processing_stats = state.cache.sky_processing_stats(); // summarize all sky-processing caches for the metadata
 
         // 7. render screen positions to RGB frame
-        render_projected_frame(renderer, &mut state.cache.rendering, &state.cache.sky, &state.current_view, viewport, &state.cache.projection, sky_processing_stats, time.utc, &clock, &state.config.simulation.observer, &mut state.timings)?; // draw and present the projected sky and text
+        let observed = state.cache.observation.regional_view(state.cache.simulation.stars.results(state.cache.selection.stars()), &state.cache.sky); // borrow final cached values for rendering
+        let outcome = render_projected_frame(renderer, &mut state.cache.rendering, observed, &state.current_view, viewport, &state.cache.projection, sky_processing_stats, time.utc, &clock, &state.config.simulation.observer, &mut state.timings)?; // draw and present the projected sky and text
         log_pipeline_data_if_requested(state, "tmp/after-rendering.md", "after-rendering")?;
 
-        finish_frame_diagnostics(&state.config, &state.persistent.catalog, &state.cache, state.preparation.as_ref(), renderer, frame_start, time, &mut state.timings); // save frame timings and requested memory diagnostics
+        finish_frame_diagnostics(&state.config, &state.persistent.catalog, &state.cache, state.preparation.as_ref(), renderer, frame_start, time, outcome, &mut state.timings); // save frame timings and requested memory diagnostics
 
         if state.config.debug_singleframe { return Ok(()); } // stop once the requested single-frame diagnostics are captured
         thread::sleep(frame_duration.saturating_sub(frame_start.elapsed())); // wait until the next frame is due, unless already running late

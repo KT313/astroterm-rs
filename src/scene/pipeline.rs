@@ -86,3 +86,8 @@ pub(super) fn draw_pixel_sky_from_inputs(layer: &mut Vec<crate::model::StarPixel
     super::diagnostics::describe_pixel_scene(sky, options, layer.len(), submitted, zoom_boost, times);
     image
 }
+
+/// Draw from completed, immutable production projection; hits inspect region versions instead of star rows.
+pub fn draw_prepared_pixels<'a>(storage: &'a mut crate::state::SceneCache, projected: &crate::model::RenderProjection<'_>, options: &RenderOptions, epoch: f64, times: &mut StepTimes) -> Option<&'a image::RgbaImage> {
+    super::caching::draw_prepared_pixels(storage, projected, options, epoch, times)
+}

@@ -14,23 +14,23 @@ pub use catalog::{
 };
 pub(crate) use catalog::{SelectedRegion, StellarFields, build_caps, unsupported_star_data};
 pub use celestial::{
-    ObservedRegion, Star, SelectedStar, ObservedStar, ObservedStarView, PlanetKind, Planet, Moon, Constellation, create_planets, create_moon,
+    ObservedSkyView, ObservedPlanets, ObservedStars, ObservedRegion, Star, SelectedStar, ObservedStar, ObservedStarState, ObservedStarView, PlanetKind, Planet, Moon, Constellation, create_planets, create_moon,
     CorrectionStats, ObservedSky, Sky, MoonIllumination, Anchor, ObserverState, FrameTime, ModelFamily, StateRequest,
     SimulationError, InterpolationLimits, PLANET_LIMITS, MOON_LIMITS, ORIENTATION_LIMITS, CachePolicy, RefreshCounts,
 };
 pub(crate) use celestial::{
-    BodySamples, CorrectionSelection, StellarWork, Directions, ObserverKey,
-    ObservationBodyKey, Sample,
+    ObservationRegion, BodySamples, StellarWork, Directions, ObserverKey,
+    ObservationBodyKey, Sample, SolarRequestKey,
 };
 pub use presentation::{
     ViewCenter, ProjectionKind, ArcPart, View, ScreenPoint, CartesianCamera, Polar, Cell, ProjectionViewport,
     ProjectedStar, ProjectedPlanet, ProjectedMoon, ProjectedArc, ProjectedConstellation, ProjectedSky,
     ProjectionData, ProjectedStars, RenderOptions, TerminalViewport, Frame, Appearance, ObserverTimeZone,
-    MetadataField, StarColor,
+    MetadataField, StarColor, RenderProjection, RenderOutcome,
 };
 pub(crate) use presentation::{
-    RegionalProjectionKey, RegionalOrderKey, RegionalDrawRecord, DrawRecord, StarKey, ProjectionBodyKey, ConstellationKey, HorizonGeometry,
-    SceneKey, StarPixel, PixelStarKey, CharacterStarKey, StarKeys, Glyph,
+    RegionalStarIndex, RegionalProjectionKey, RegionalOrderKey, RegionalDrawRecord, DrawRecord, StarKey, ProjectionBodyKey, ConstellationKey, HorizonGeometry,
+    PixelLabel, PixelLabelKey, PixelTextKey, PixelTextCache, KittyDisplayKey, RenderResultVersion, PixelFrameKey, KittyEncodingKey, ProductionRasterKey, RasterRegion, SceneKey, StarPixel, PixelStarKey, CharacterStarKey, StarKeys, Glyph,
 };
 pub use configuration::{Config, SimulationSettings, TerminalSettings, RendererKind, GraphicsProtocol};
 
@@ -41,4 +41,7 @@ pub(crate) use catalog::{interleave, direction};
 pub(crate) use catalog::CellCap;
 
 // Fixed-size leaf records used by bounded table previews.
-crate::rows::debug_preview!(Anchor, FrameTime, MoonIllumination, PlanetKind, ProjectionViewport, View, SelectionStats, ProjectedMoon, CorrectionStats);
+crate::rows::debug_preview!(Anchor, FrameTime, MoonIllumination, PlanetKind, ProjectionViewport, View, ProjectedMoon, CorrectionStats);
+
+// Scalar selection totals are reported without reconstructing candidate index lists.
+crate::rows::row_columns!(SelectionStats { cells, candidates, brute_force });

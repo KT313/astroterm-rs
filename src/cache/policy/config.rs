@@ -100,7 +100,7 @@ impl CacheConfig {
             && self
                 .groups
                 .get(&group)
-                .is_none_or(|p| p.enabled && p.max_age_seconds != Some(0.0))
+                .is_none_or(|p| p.enabled)
     }
     pub fn age_seconds(&self, group: Group) -> f64 {
         if !self.allows(group) {
@@ -177,13 +177,14 @@ mod tests {
         }
     }
     #[test]
-    fn shipped_example_covers_all_groups_and_zero_disables_reuse() {
+    fn shipped_example_covers_all_groups_and_zero_allows_same_time_reuse() {
         let example = CacheConfig::parse(include_str!("../../../examples/cache.toml")).unwrap();
         for group in Group::ALL {
             assert!(example.groups.contains_key(&group));
         }
         let zero = CacheConfig::parse("[groups.stellar_state]\nmax_age_seconds=0").unwrap();
-        assert!(!zero.allows(Group::StellarState));
+        assert!(zero.allows(Group::StellarState));
+        assert_eq!(zero.age_seconds(Group::StellarState), 0.0);
     }
 
     #[test]

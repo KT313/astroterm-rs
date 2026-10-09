@@ -26,7 +26,7 @@ fn main() {
 
     let Caches { sky, projection, simulation, .. } = &mut run;
     project_cached_sky(projection, sky, &view, viewport, 2451545.0, &mut times); // source is read while output is written
-    let projected = borrow_projected(projection, sky, &view, viewport);
+    let projected = borrow_projected(projection, &*sky, &view, viewport);
     simulation.solar_system.begin_frame(); // changing a disjoint state owner does not invalidate the borrowed projection
     draw_characters(&mut scene, &mut frame.sky, &projected, &options, 2451545.0);
 
@@ -46,5 +46,5 @@ fn simulate_disjoint_fields(run: &mut Caches, time: f64, times: &mut StepTimes) 
     astroterm::sky::simulate_stars(&mut run.simulation.stars, selected, time, times);
     let result = run.simulation.stars.results(selected);
     run.simulation.solar_system.begin_frame(); // solar storage is independent from intrinsic star results
-    assert_eq!(selected.rows().len(), result.samples().len());
+    assert_eq!(selected.rows().len(), result.selected_count());
 }

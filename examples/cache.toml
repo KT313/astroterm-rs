@@ -5,7 +5,10 @@ version = 1
 enabled = true
 
 # Absolute simulated seconds on either side of an evaluation epoch, never wall-clock TTLs.
-# These are the current upper limits. Shorter values are accepted; zero disables cross-frame reuse.
+# These are the current upper limits. Shorter values are accepted; zero reuses only exactly matching simulation times.
+# Set enabled=false (or use --disable-cache) to disable reuse, including paused frames.
+# The complete solar-system group refreshes whenever simulation time or observer location changes.
+# Its sample spans below apply within one reception/emission preparation request.
 # Stellar regions hold direction and magnitude for up to 10 simulated days. This is a fixed
 # approximation, not an accuracy-qualified interval; use a shorter age or --disable-cache for fresh values.
 [groups.stellar_state]

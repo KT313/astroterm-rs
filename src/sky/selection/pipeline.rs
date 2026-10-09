@@ -13,13 +13,15 @@ pub fn select_cached_stars(storage: &mut StarSelectionCache, catalog: &Arc<SkyCa
         storage.region_candidates = (0..crate::constants::SIMULATION_REGION_COUNT).map(|_| Default::default()).collect();
         storage.region_selected = (0..crate::constants::SIMULATION_REGION_COUNT).map(|_| Default::default()).collect();
     }
+    storage.requested_epoch = None; // do not publish partially prepared selections
     let previous = times.trace().map(|_| storage.reports());
     let epoch = observer.time.tt;
     update_region_filtering(&mut storage.region, &storage.config, epoch, refraction, region, observer, &catalog.grid, times);
-    update_brightness_bounds(&mut storage.candidates, &mut storage.region_candidates, &mut storage.candidate_region_stats, &storage.region, &storage.config, epoch, threshold, catalog, times);
-    update_candidate_validation(&mut storage.selected, &mut storage.region_selected, &mut storage.selected_region_stats, &storage.candidates, &storage.region_candidates, &storage.region, &storage.config, epoch, times);
-    update_constellation_endpoints(&mut storage.working, &storage.selected, &storage.config, epoch, catalog.endpoint_indices(), times);
-    storage.requested_epoch = Some(epoch);
+    storage.statistics = update_brightness_bounds(&mut storage.region_candidates, &mut storage.candidate_region_stats, &storage.region, &storage.config, epoch, threshold, catalog, times);
+    update_candidate_validation(&mut storage.region_selected, &mut storage.selected_region_stats, &storage.region_candidates, &storage.region, &storage.config, epoch, times);
+    update_selection_request(&storage.region.value().cells, &storage.region_selected, &mut storage.requested_sources, &mut storage.selection_revision, times); // notice region changes even when they select the same stars
+    update_constellation_endpoints(&mut storage.working, storage.selection_revision, &storage.region.value().cells, &storage.region_selected, storage.statistics.candidates, &storage.config, epoch, catalog.endpoint_indices(), times);
+    storage.requested_epoch = Some(epoch); // publish only the completed selection
     describe_selection(storage, catalog, threshold, times);
     crate::sky::describe_cache_reports(previous, || storage.reports(), times);
 }
@@ -50,17 +52,20 @@ mod tests {
                     for threshold in [-20.0, 3.0, 5.0, 20.0] {
                         let mut times = StepTimes::with_trace(true);
                         select_cached_stars(&mut cache, &catalog, &observer, threshold, false, region, &mut times);
-                        let selected = super::super::processing::filter_brightness_candidates(&catalog, epoch, threshold, Some(&cache.candidates.value().0));
+                        let actual: Vec<_> = cache.stars().ranges().flat_map(|(_, start, end, _)| start..end).collect();
+                        let mut candidates = Vec::new();
+                        crate::sky::select_brightness(&catalog.grid, &catalog.stars, cache.region.value(), threshold, &mut candidates);
+                        let selected = super::super::processing::filter_brightness_candidates(&catalog, epoch, threshold, Some(&candidates));
                         let expected = super::super::processing::merge_constellation_endpoints(selected.clone(), catalog.endpoint_indices(), &mut Default::default());
-                        assert_eq!(cache.selected.value(), &selected);
+                        assert_eq!(actual, selected);
                         assert_eq!(cache.working.value(), &expected);
                         assert!(selected.windows(2).all(|pair| pair[0] < pair[1]));
                         assert!(!times.trace().unwrap().steps.iter().any(|step| ["Selected index copy", "Candidate index sort and dedup"].contains(&step.name)));
-                        let generations = (cache.region.generation, cache.candidates.generation, cache.selected.generation, cache.working.generation);
+                        let generations = (cache.region.generation, cache.selection_revision, cache.working.generation);
                         let refreshes = cache.stats().refreshes;
                         select_cached_stars(&mut cache, &catalog, &observer, threshold, false, region, &mut times);
-                        assert_eq!((cache.region.generation, cache.candidates.generation, cache.selected.generation, cache.working.generation), generations);
-                        assert_eq!(cache.stats().refreshes - refreshes, if config.enabled { 0 } else { 4 + 2 * cache.stars().regions().len() as u64 });
+                        assert_eq!((cache.region.generation, cache.selection_revision, cache.working.generation), generations);
+                        assert_eq!(cache.stats().refreshes - refreshes, if config.enabled { 0 } else { 2 + 2 * cache.stars().regions().len() as u64 });
                         assert_eq!(cache.working.value(), &expected);
                     }
                 }

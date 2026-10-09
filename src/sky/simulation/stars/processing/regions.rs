@@ -54,9 +54,12 @@ pub(super) fn refresh_regions(storage: &mut StellarMotionBuffers<'_>, catalog: S
     times.measure_batches("Stellar batches", |times| {
         for &region in storage.refresh_regions.iter() {
             let (start, end) = (storage.offsets[region], storage.offsets[region + 1]);
-            let mut samples = times.measure("Region output allocation", || Vec::with_capacity(end - start));
-            times.record_memory(times.last_memory_step(), || MemoryEvent::operation(BufferId::StellarSamples, Operation::Reserve, None,
-                Some(BufferShape::vector(&samples, IndexDomain::Catalog)), Some(end - start), None));
+            let before = times.inspect_memory(|| BufferShape::vector(storage.output_work, IndexDomain::Catalog));
+            times.measure("Region output preparation", || {
+                storage.output_work.clear();
+                storage.output_work.reserve(end - start); // allocate only when the returned work buffer is too small
+            });
+            times.record_shape(BufferId::StellarOutputWork, Operation::Reserve, before, || BufferShape::vector(storage.output_work, IndexDomain::Catalog));
             for batch_start in (start..end).step_by(STELLAR_BATCH_SIZE) {
                 let batch_end = (batch_start + STELLAR_BATCH_SIZE).min(end);
                 times.measure("Trajectory reads", || {
@@ -71,21 +74,26 @@ pub(super) fn refresh_regions(storage: &mut StellarMotionBuffers<'_>, catalog: S
                 times.record_build(BufferId::StellarScratch, || BufferShape::vector(storage.scratch, IndexDomain::Catalog));
                 times.measure("Motion and magnitude calculation", || {
                     for item in storage.scratch.iter() {
-                        samples.push(item.motion.evaluate_classified(years, item.magnitude, item.class));
+                        storage.output_work.push(item.motion.evaluate_classified(years, item.magnitude, item.class));
                     }
                 });
                 times.record_borrow(BufferId::StellarScratch, Access::ReadOnly, || BufferShape::vector(storage.scratch, IndexDomain::Catalog));
-                times.record_memory(times.last_memory_step(), || MemoryEvent::operation(BufferId::StellarSamples, Operation::Append, None, None,
+                times.record_memory(times.last_memory_step(), || MemoryEvent::operation(BufferId::StellarOutputWork, Operation::Append, None, None,
                     Some(batch_end - batch_start), (batch_end - batch_start).checked_mul(std::mem::size_of::<crate::astro::models::stars::StellarSample>())));
             }
-            simulated += samples.len();
+            simulated += storage.output_work.len();
             let outcome = times.measure("Stellar region stores", || {
-                let outcome = storage.regions.entries[region].store((), epoch, ttl, samples);
+                let entry = &mut storage.regions.entries[region];
+                let outcome = if start == end { entry.store((), epoch, ttl, Vec::new()) } // empty regions must not take a useful scratch allocation
+                    else { entry.store_reusing((), epoch, ttl, storage.output_work) };
                 if outcome.value_changed { *storage.generation = storage.generation.wrapping_add(1); }
                 storage.stats.refreshes += 1;
                 outcome
             });
             times.record_store(BufferId::StellarSamples, outcome);
+            times.record_memory(times.last_memory_step(), || MemoryEvent::operation(BufferId::StellarSamples, Operation::Move, None, None,
+                Some(end - start), (end - start).checked_mul(std::mem::size_of::<crate::astro::models::stars::StellarSample>())));
+            times.record_shape(BufferId::StellarOutputWork, Operation::Clear, None, || BufferShape::vector(storage.output_work, IndexDomain::Catalog));
         }
     });
     times.describe("Stellar batches", || format!("refreshed regions={}; newly simulated stars={simulated}; complete region ranges, including faint stars; batch limit={STELLAR_BATCH_SIZE}; fixed TTL={ttl} simulated seconds; no per-star validity qualification", storage.refresh_regions.len()));

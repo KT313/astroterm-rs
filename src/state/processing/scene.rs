@@ -9,10 +9,12 @@ pub struct SceneCache {
     /// Straight-alpha star pixels in row order. Refilled on redraw; capacity survives frames and resize.
     /// Kept separate from tiny-skia's premultiplied scene; 16 bytes per pixel, reported in memory diagnostics.
     pub(crate) star_layer: Vec<crate::model::StarPixel>,
-    /// Exact raster inputs in draw order. Hits clear live entries but retain flat capacities;
+    /// Regional dependency records for production, exact drawing inputs for editable callers.
+    /// Hits clear live entries but retain flat capacities;
     /// successful refreshes transfer the candidate into the matching cache. Failed pixel draws retain it.
     /// Nested label strings and constellation arc payloads are dropped when the candidate is cleared.
     pub(crate) pixel_candidate: Option<SceneKey>,
+    pub(crate) pixel_inputs: Vec<crate::model::PixelStarKey>, // filled only for a trusted production redraw
     pub(crate) character_candidate: Option<SceneKey>,
     /// Completed sky pixels before metadata; the renderer borrows this allocation.
     pub(crate) pixels: Cache<SceneKey, image::RgbaImage>,
@@ -20,6 +22,14 @@ pub struct SceneCache {
     pub(crate) characters: Cache<SceneKey, Canvas>,
 }
 impl SceneCache {
+    /// Advances only when completed pixels differ, including switches between exact and trusted inputs.
+    pub fn pixel_generation(&self) -> u64 { self.pixels.generation }
+
+    /// Incomplete or invalidated pixels cannot serve as a completed image dependency.
+    pub(crate) fn ready_pixel_generation(&self) -> Option<u64> {
+        (!self.pixels.has_been_invalidated && self.pixels.stored().is_some()).then_some(self.pixels.generation)
+    }
+
     /// Read the completed sky; callers must prepare it before borrowing and cannot paint into it.
     pub fn pixel_image(&self) -> &image::RgbaImage { self.pixels.value() }
 
@@ -43,4 +53,4 @@ impl SceneCache {
     }
 }
 #[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(SceneCache { config, star_layer, pixel_candidate, character_candidate, pixels, characters });
+crate::cache::report_fields!(SceneCache { config, star_layer, pixel_inputs, pixel_candidate, character_candidate, pixels, characters });

@@ -58,7 +58,7 @@ fn ordinary_trace_keeps_processing_but_never_enables_memory_work() {
         times.with_memory(|_| panic!("ordinary tracing must not enable the diagnostic group"));
         let before = times.inspect_memory(|| panic!("ordinary tracing must not inspect memory"));
         times.measure("Actual work", || values.push(5));
-        times.record_shape(BufferId::MotionSamples, Operation::Append, before, || panic!("inactive shape"));
+        times.record_shape(BufferId::StellarSamples, Operation::Append, before, || panic!("inactive shape"));
         values.iter().sum::<u64>()
     });
     assert_eq!(result, 10);
@@ -78,7 +78,7 @@ fn recorded_shapes_remain_values_after_the_source_is_cleared_and_dropped() {
         values.extend([4, 5, 6]);
         original_capacity = values.capacity();
         times.measure("Use source", || ());
-        times.record_borrow(BufferId::MotionSamples, Access::ReadOnly, || BufferShape::vector(&values, IndexDomain::Working));
+        times.record_borrow(BufferId::StellarSamples, Access::ReadOnly, || BufferShape::vector(&values, IndexDomain::Working));
         values.clear();
         values.shrink_to_fit();
     }
@@ -98,7 +98,7 @@ fn aggregate_overflow_reports_unknown_instead_of_wrapping_or_losing_other_counts
         for count in [usize::MAX, 1] {
             batch.measure("Pass", || ());
             batch.record_memory(batch.last_memory_step(), || MemoryEvent::operation(
-                BufferId::MotionSamples, Operation::Copy, None, None, Some(count), Some(count)));
+                BufferId::StellarSamples, Operation::Copy, None, None, Some(count), Some(count)));
             batch.record_memory(batch.last_memory_step(), || MemoryEvent::operation(
                 BufferId::StellarScratch, Operation::Write, None, None, Some(1), None));
         }
@@ -262,4 +262,41 @@ fn candidate_decisions_attach_to_explicit_steps_and_tolerate_unknown_reasons() {
     let mut report = Vec::new();
     times.trace().unwrap().write_report(&mut report).unwrap();
     assert!(String::from_utf8(report).unwrap().contains("refresh required (reason unknown)"));
+}
+
+#[test]
+fn presentation_counts_require_success_not_just_an_io_timer() {
+    let mut times = StepTimes::with_trace(true);
+    let failure: Result<(), ()> = times.measure("Present", || Err(()));
+    assert!(failure.is_err());
+    assert_eq!(times.trace().unwrap().presented_frames, 0);
+    times.record_frame_presentation(true);
+    times.record_frame_presentation(false);
+    assert_eq!(times.trace().unwrap().presented_frames, 1);
+    assert_eq!(times.trace().unwrap().reused_display_frames, 1);
+    let mut output = Vec::new(); times.trace().unwrap().write_report(&mut output).unwrap();
+    assert!(String::from_utf8(output).unwrap().contains("Presented frames: 1."));
+}
+
+#[cfg(feature = "memory-diagnostics")]
+#[test]
+fn completed_loops_distinguish_submissions_from_display_reuse() {
+    let mut times = StepTimes::default(); times.enable_memory_run(true);
+    for presented in [true, false, false] {
+        times.begin_memory_frame(); times.set_memory_frame_time(1.0, 2.0);
+        times.record_frame_presentation(presented);
+        times.complete_memory_frame(0.01);
+    }
+    times.begin_memory_frame();
+    let failure: Result<(), ()> = times.measure("Present", || Err(()));
+    assert!(failure.is_err());
+    let run = times.memory_run().unwrap();
+    assert_eq!((run.completed_frames, run.presented_frames, run.reused_display_frames), (3, 1, 2));
+    assert_eq!(run.latest.as_ref().unwrap().trace.reused_display_frames, 1);
+    let mut output = Vec::new(); times.write_memory_run_report(&mut output).unwrap();
+    let output = String::from_utf8(output).unwrap();
+    assert!(output.contains("Completed-frame output: presented=1; reused display=2"));
+    assert!(output.contains("Incomplete frame"));
+    times.cancel_memory_frame();
+    assert_eq!(times.memory_run().unwrap().completed_frames, 3);
 }

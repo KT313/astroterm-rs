@@ -138,7 +138,7 @@ impl StepTimes {
         if let Some(run) = &mut self.memory_run { run.current_time = Some((utc, tt)); }
     }
 
-    /// Commit only after successful presentation and the final inventory capture.
+    /// Commit after successful rendering (submission or display reuse) and the final inventory capture.
     pub fn complete_memory_frame(&mut self, elapsed_seconds: f64) {
         let Some(run) = &mut self.memory_run else { return; };
         assert!(run.frame_active, "begin the diagnostic frame first");
@@ -147,6 +147,8 @@ impl StepTimes {
         let start = std::time::Instant::now();
         accumulate_completed(run, &trace); // add successful frame counts and durations to run totals
         trace.unscoped_diagnostic_seconds += start.elapsed().as_secs_f64();
+        run.presented_frames = run.presented_frames.saturating_add(trace.presented_frames);
+        run.reused_display_frames = run.reused_display_frames.saturating_add(trace.reused_display_frames);
         run.latest = Some(MemoryFrame { utc: time.map(|t| t.0), tt: time.map(|t| t.1), elapsed_seconds, trace });
         run.completed_frames = run.completed_frames.saturating_add(1); // failed or cancelled frames never reach here
         run.frame_active = false;

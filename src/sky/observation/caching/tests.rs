@@ -34,7 +34,6 @@ fn catalog_replacement_retains_geometry_and_resets_catalog_state() {
     assert!(storage.stars.prepared_classes.is_some()); // automatic replacement prepares the new region layout too
     assert_eq!(storage.observer.observer, saved_observer);
     assert_eq!(storage.observer.light_time, saved_light_time);
-    assert_eq!(storage.stars.motion.stats.refreshes, 1);
     assert_eq!(storage.stars.region_stats.refreshes, crate::constants::SIMULATION_REGION_COUNT as u64);
     assert_eq!(sky.stars, expected.stars);
     assert_eq!(sky.planets, expected.planets);

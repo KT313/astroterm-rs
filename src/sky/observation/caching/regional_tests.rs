@@ -3,7 +3,9 @@ use crate::{astro::{J2000, Matrix3, Vector3}, cache::{CacheConfig, Group, GroupP
     state::SimulationState, test_pipeline::PipelineCache, timing::StepTimes};
 use std::sync::Arc;
 
-fn catalog() -> Arc<SkyCatalog> {
+fn catalog() -> Arc<SkyCatalog> { build_catalog(false) }
+
+fn build_catalog(same_region: bool) -> Arc<SkyCatalog> {
     let mut source = crate::catalog::load_embedded_catalog().unwrap();
     source.stars.retain(|star| star.has_data);
     source.stars.truncate(5);
@@ -11,7 +13,7 @@ fn catalog() -> Arc<SkyCatalog> {
         abbreviation: "Test", segments: vec![[source.stars[3].hr.unwrap(), source.stars[4].hr.unwrap()]],
     }];
     for (index, star) in source.stars.iter_mut().enumerate() {
-        star.right_ascension = index as f64 * std::f64::consts::FRAC_PI_2;
+        star.right_ascension = if same_region { 0.0 } else { index as f64 * std::f64::consts::FRAC_PI_2 };
         star.declination = 0.0;
         star.ra_motion = 0.0;
         star.ra_motion_cos_dec = 0.0;
@@ -44,12 +46,13 @@ fn frame(cache: &mut PipelineCache, simulation: &SimulationState, observer: &Obs
     for descriptor in result.regions() {
         assert_eq!(descriptor.start, cursor);
         cursor = descriptor.end;
-        let rows = &result.sky().stars[descriptor.start..descriptor.end];
+        let rows: Vec<_> = (descriptor.start..descriptor.end).map(|index| result.sky().stars.get(index)).collect();
         let offsets = &result.sky().catalog.grid.offsets;
         assert!(rows.iter().all(|row| row.source_index >= offsets[descriptor.region] && row.source_index < offsets[descriptor.region + 1]));
         assert!(rows.windows(2).all(|pair| pair[0].source_index < pair[1].source_index));
     }
     assert_eq!(cursor, result.sky().stars.len());
+    *output = result.sky().materialize(); // explicit test snapshot; the production path does not materialize
     for descriptor in &cache.observation.regional_output {
         let reports = cache.observation.region_reports(descriptor.region).unwrap();
         assert_eq!(descriptor.selection_generation, reports[1].generation);
@@ -135,4 +138,101 @@ fn each_regional_group_honors_bypass_without_changing_results() {
         assert_eq!(reports[2].stats.bypasses, if group != Some(Group::StellarVisibility) { 2 } else { 0 });
         assert!(cache.observation.regions.iter().any(|region| region.eligible.stored().is_none()));
     }
+}
+
+#[test]
+fn regional_records_handle_noncontiguous_brightness_and_faint_endpoints() {
+    let catalog = build_catalog(true);
+    let (simulation, observer) = prepare();
+    let mut cache = PipelineCache::default();
+    let mut output = ObservedSky::new(catalog.clone());
+    frame(&mut cache, &simulation, &observer, 10.0, SkyRegion::All, &mut output);
+    let normal = cache.observation.regional_output.iter().find(|r| r.end - r.start == 3).unwrap().region;
+    let endpoint = crate::constants::CONSTELLATION_REGION;
+    for (region, magnitudes) in [(normal, &[3.0, 12.0, 4.0][..]), (endpoint, &[12.0, 4.0][..])] {
+        let entry = &mut cache.stars.regions.entries[region];
+        let mut samples = entry.value().clone();
+        for (sample, &magnitude) in samples.iter_mut().zip(magnitudes) { sample.magnitude = magnitude; }
+        assert!(entry.store((), observer.time.tt, crate::constants::STELLAR_REGION_TTL_SECONDS, samples).value_changed);
+        cache.stars.region_results_generation += 1; // inject changing magnitudes independently of conservative catalog order
+    }
+    frame(&mut cache, &simulation, &observer, 10.0, SkyRegion::All, &mut output);
+    assert_eq!(cache.observation.regions[normal].eligible.value(), &[true, false, true]);
+    assert_eq!(cache.observation.regions[endpoint].eligible.value(), &[false, true]);
+    assert_eq!(output.corrections, crate::model::CorrectionStats { evaluated: 5, skipped: 1, endpoint_only: 1 });
+    let start = catalog.grid.offsets[normal];
+    let endpoint_start = catalog.grid.offsets[endpoint];
+    let actual: Vec<_> = output.stars.iter().map(|star| (star.source_index, star.drawable, star.magnitude)).collect();
+    assert_eq!(actual, [(start, true, 3.0), (start + 2, true, 4.0), (endpoint_start, false, 12.0), (endpoint_start + 1, true, 4.0)]);
+
+    let stars = cache.stars.results(cache.selection.stars());
+    let motion: Vec<_> = stars.selected_samples().map(|(_, sample)| (sample.direction, sample.magnitude)).collect(); // test-only input to the independent direct reference
+    let mut expected = ObservedSky::new(catalog);
+    crate::sky::apply_direct_observation(cache.selection.stars().rows(), &motion, stars.fallback_count(),
+        cache.observer.bodies.value().clone(), &observer, 10.0, true, &mut expected, &mut StepTimes::default());
+    assert_eq!(output.stars, expected.stars);
+    assert_eq!(output.corrections, expected.corrections);
+    let old = output.clone();
+    frame(&mut cache, &simulation, &observer, 10.0, SkyRegion::All, &mut output);
+    assert_eq!(output, old);
+}
+
+#[test]
+fn horizontal_request_reuses_capacity_and_equal_refresh_preserves_revision() {
+    let catalog = catalog();
+    let (simulation, observer) = prepare();
+    let mut cache = PipelineCache::default();
+    let mut output = ObservedSky::new(catalog);
+    frame(&mut cache, &simulation, &observer, 20.0, SkyRegion::All, &mut output);
+    let revision = cache.observation.horizontal_sources.revision;
+    let allocation = (cache.observation.horizontal_sources.regions.as_ptr(), cache.observation.horizontal_sources.regions.capacity());
+    let expected = output.clone();
+    for invalidate in [false, true] {
+        if invalidate { cache.observation.invalidate_region(crate::constants::CONSTELLATION_REGION); }
+        frame(&mut cache, &simulation, &observer, 20.0, SkyRegion::All, &mut output);
+        assert_eq!(output, expected);
+        assert_eq!(cache.observation.horizontal_sources.revision, revision);
+        assert_eq!((cache.observation.horizontal_sources.regions.as_ptr(), cache.observation.horizontal_sources.regions.capacity()), allocation);
+    }
+    frame(&mut cache, &simulation, &observer, -20.0, SkyRegion::All, &mut output);
+    assert!(cache.observation.horizontal_sources.revision > revision);
+    assert_eq!((cache.observation.horizontal_sources.regions.as_ptr(), cache.observation.horizontal_sources.regions.capacity()), allocation);
+    let changed_revision = cache.observation.horizontal_sources.revision;
+    frame(&mut cache, &simulation, &observer, -21.0, SkyRegion::All, &mut output);
+    assert_eq!(cache.observation.horizontal_sources.revision, changed_revision); // new threshold, identical retained regional records
+}
+
+#[test]
+fn requested_empty_regions_change_membership_token_but_not_direction_generations() {
+    let catalog = catalog();
+    let (simulation, observer) = prepare();
+    let mut cache = PipelineCache::default();
+    let mut output = ObservedSky::new(catalog);
+    frame(&mut cache, &simulation, &observer, -20.0, cone(1.0, 0.0), &mut output);
+    let original = output.stars.clone(); // only the always-requested constellation endpoints remain
+    let revision = cache.observation.horizontal_sources.revision;
+    let endpoint_generation = cache.observation.region_reports(crate::constants::CONSTELLATION_REGION).unwrap()[2].generation;
+    let horizontal = cache.observation.horizontal.generation;
+    frame(&mut cache, &simulation, &observer, -20.0, SkyRegion::All, &mut output);
+    assert!(cache.observation.horizontal_sources.revision > revision);
+    assert_eq!(output.stars, original);
+    assert_eq!(cache.observation.region_reports(crate::constants::CONSTELLATION_REGION).unwrap()[2].generation, endpoint_generation);
+    assert_eq!(cache.observation.horizontal.generation, horizontal);
+    assert_eq!(cache.observation.horizontal_sources.regions.len(), crate::constants::SIMULATION_REGION_COUNT);
+}
+
+#[cfg(feature = "memory-diagnostics")]
+#[test]
+fn inventory_keeps_original_regions_and_counts_request_capacity_without_combined_lists() {
+    let (simulation, observer) = prepare();
+    let mut cache = PipelineCache::default();
+    let mut output = ObservedSky::new(catalog());
+    frame(&mut cache, &simulation, &observer, 20.0, SkyRegion::All, &mut output);
+    let snapshot = crate::state::collect_inventory("observation", &cache.observation);
+    assert_eq!(snapshot.omitted_nodes, 0);
+    let metadata = snapshot.rows.iter().find(|row| row.kind == crate::cache::Kind::Heap && row.path.ends_with(".horizontal_sources.regions")).unwrap();
+    assert_eq!(metadata.used, Some(cache.observation.horizontal_sources.regions.len() * std::mem::size_of::<(usize, usize, usize, u64, u64)>()));
+    assert_eq!(metadata.reserved, Some(cache.observation.horizontal_sources.regions.capacity() * std::mem::size_of::<(usize, usize, usize, u64, u64)>()));
+    assert!(!snapshot.rows.iter().any(|row| row.path == "observation.eligible" || row.path == "observation.corrections"));
+    assert!(snapshot.rows.iter().any(|row| row.kind == crate::cache::Kind::Heap && row.path.ends_with(".regions.results")));
 }

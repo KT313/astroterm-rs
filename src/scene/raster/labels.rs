@@ -8,6 +8,9 @@ pub(crate) struct StarLabels {
     indices: [usize; DYNAMIC_NAME_COUNT],
     start: usize,
     end: usize,
+    pub(crate) examined: usize,
+    pub(crate) regions: usize,
+    pub(crate) eligible: usize,
 }
 impl StarLabels {
     pub(crate) fn contains(&self, index: &usize) -> bool { self.indices[self.start..self.end].contains(index) }
@@ -29,15 +32,19 @@ impl DoubleEndedIterator for StarLabels {
 impl ExactSizeIterator for StarLabels {}
 
 pub(crate) fn select_star_labels(options: &RenderOptions, sky: &ProjectedSky<'_>, eligible_cell: impl Fn(Cell) -> bool) -> StarLabels {
-    let mut labels = StarLabels { indices: [0; DYNAMIC_NAME_COUNT], start: 0, end: 0 };
+    let mut labels = StarLabels { indices: [0; DYNAMIC_NAME_COUNT], start: 0, end: 0, examined: 0, regions: 0, eligible: 0 };
     if !options.dynamic_names || DYNAMIC_NAME_COUNT == 0 { return labels; }
+    let mut candidates_by_rank = [(0.0, 0u32); DYNAMIC_NAME_COUNT];
     for range in sky.stars.sorted_ranges() {
+        labels.regions += 1;
         let mut candidates = 0;
         for index in range.rev() {
+            labels.examined += 1;
             let entry = sky.stars.get(index);
             if entry.star.magnitude > options.magnitude_threshold { break; }                // the remaining stars in this region are dimmer
             if !entry.cell.is_some_and(&eligible_cell) { continue; }
-            keep_brightest(&mut labels, index, sky);
+            labels.eligible += 1;
+            keep_brightest(&mut labels, &mut candidates_by_rank, index, (entry.star.magnitude, entry.star.id().0));
             candidates += 1;
             if candidates == DYNAMIC_NAME_COUNT { break; }                                 // no sixth candidate from this region can enter the global top five
         }
@@ -46,23 +53,30 @@ pub(crate) fn select_star_labels(options: &RenderOptions, sky: &ProjectedSky<'_>
     labels
 }
 
-fn keep_brightest(labels: &mut StarLabels, index: usize, sky: &ProjectedSky<'_>) {
+fn keep_brightest(labels: &mut StarLabels, ranks: &mut [(f64, u32); DYNAMIC_NAME_COUNT], index: usize, rank: (f64, u32)) {
     let mut position = labels.end;
     if position == DYNAMIC_NAME_COUNT {
         position -= 1;
-        if compare_brightest(sky, index, labels.indices[position]) != Ordering::Less { return; }
+        if compare_rank(rank, ranks[position]) != Ordering::Less { return; }
     } else { labels.end += 1; }
     labels.indices[position] = index;
-    while position > 0 && compare_brightest(sky, index, labels.indices[position - 1]) == Ordering::Less {
+    ranks[position] = rank;
+    while position > 0 && compare_rank(rank, ranks[position - 1]) == Ordering::Less {
         labels.indices.swap(position, position - 1);
+        ranks.swap(position, position - 1);
         position -= 1;
     }
 }
 
+fn compare_rank(a: (f64, u32), b: (f64, u32)) -> Ordering {
+    if a.0 == b.0 { b.1.cmp(&a.1) } else { a.0.total_cmp(&b.0) } // signed zero keeps the existing magnitude tie rule
+}
+
+#[cfg(test)]
 fn compare_brightest(sky: &ProjectedSky<'_>, a: usize, b: usize) -> Ordering {
     let a = sky.stars.get(a).star;
     let b = sky.stars.get(b).star;
-    if a.magnitude == b.magnitude { b.id().cmp(&a.id()) } else { a.magnitude.total_cmp(&b.magnitude) } // reverse of the existing dim-first/ascending-ID drawing comparator
+    compare_rank((a.magnitude, a.id().0), (b.magnitude, b.id().0))
 }
 
 #[cfg(test)]
@@ -80,8 +94,9 @@ mod tests {
         cells[17].1 = (0, 3);                                                              // the brightest star cannot paint its full pixel footprint
         let ranges = [(0, 6), (6, 12), (12, 18), (18, 18)];
         let data = crate::projection::project_sky(&sky, &View::default(), ProjectionViewport { width: 40, height: 40 });
+        let cells: Vec<_> = cells.iter().map(|&(row, cell)| (crate::model::RegionalStarIndex { region_slot: 0, observed_index: row as u32 }, cell)).collect();
         let mut projected = data.view(&sky);
-        projected.stars = ProjectedStars::from_regions(&sky, &cells, &ranges);
+        projected.stars = ProjectedStars::from_regions(crate::model::ObservedStars::owned(&sky.stars, &sky.catalog.stars), &cells, &ranges);
         let options = RenderOptions { magnitude_threshold: 20., dynamic_names: true, unicode: true, braille: false, color: true, constellations: true, grid: false };
         for pixels in [false, true] {
             let accepts = |cell| !pixels || crate::scene::pixel_star_fits(cell, projected.viewport);
@@ -106,15 +121,16 @@ mod tests {
         for region in cells.chunks_mut(3) { region.sort_unstable_by_key(|&(row, _)| sky.star_view(row).id()); }
         let ranges = [(0, 3), (3, 6), (6, 9)];
         let data = crate::projection::project_sky(&sky, &View::default(), ProjectionViewport { width: 40, height: 40 });
+        let cells: Vec<_> = cells.iter().map(|&(row, cell)| (crate::model::RegionalStarIndex { region_slot: 0, observed_index: row as u32 }, cell)).collect();
         let mut projected = data.view(&sky);
-        projected.stars = ProjectedStars::from_regions(&sky, &cells, &ranges);
+        projected.stars = ProjectedStars::from_regions(crate::model::ObservedStars::owned(&sky.stars, &sky.catalog.stars), &cells, &ranges);
         let options = RenderOptions { magnitude_threshold: 20., dynamic_names: true, unicode: true, braille: false, color: true, constellations: false, grid: false };
         let selected = select_star_labels(&options, &projected, |_| true).map(|i| projected.stars.get(i).star.id()).collect::<Vec<_>>();
         let mut expected = sky.star_views().map(|star| star.id()).collect::<Vec<_>>();
         expected.sort_unstable();
         let expected = &expected[expected.len().saturating_sub(DYNAMIC_NAME_COUNT)..];
         assert_eq!(selected, expected);
-        projected.stars = ProjectedStars::from_regions(&sky, &[], &[(0, 0)]);
+        projected.stars = ProjectedStars::from_regions(crate::model::ObservedStars::owned(&sky.stars, &sky.catalog.stars), &[], &[(0, 0)]);
         assert_eq!(select_star_labels(&options, &projected, |_| true).len(), 0);
     }
 

@@ -8,8 +8,8 @@ use super::pipeline::{render_character_frame, render_pixel_frame};
 pub(super) use characters::{prepare_character_timezone, prepare_character_timing_fields, rasterize_character_sky, draw_character_notice, draw_character_panel, present_character_frame};
 pub(super) use pixels::{prepare_pixel_timezone, initialize_pixel_canvas, rasterize_pixel_sky, compose_pixel_sky,
     prepare_pixel_fields, layout_pixel_text, prepare_pixel_glyphs, paint_pixel_text, encode_pixel_cells,
-    serialize_pixel_cells, present_pixel_cells, convert_kitty_pixels, encode_kitty_upload, serialize_kitty_swap,
-    upload_and_swap_kitty_image};
+    serialize_pixel_cells, present_pixel_cells, prepare_kitty_pixels,
+    present_kitty_image};
 pub use characters::open_terminal_renderer;
 use crate::astro::{Observer, SimulationClock};
 use crate::model::{ProjectedSky, ProjectionViewport as Viewport, View, RenderOptions};
@@ -37,7 +37,11 @@ impl Renderer {
         match state {
             RenderingState::Chars(r) => r.scene_cache.configure(config),
             RenderingState::Pixels(r) => {
+                r.display_valid = false;
                 r.scene_cache.configure(config);
+                r.rgb_version.invalidate();
+                r.frame_key = None;
+                r.encoding_key = None;
                 r.reuse_assets = config.allows(crate::cache::Group::RasterAssets);
             }
             RenderingState::Pending => panic!("rendering state is not initialized"),
@@ -80,12 +84,24 @@ impl Renderer {
         }
     }
     #[allow(clippy::too_many_arguments)]
-    pub fn render_frame(&mut self, state: &mut RenderingState, sky: &ProjectedSky<'_>, view: &View, date: f64, clock: &SimulationClock, observer: &Observer, times: &mut StepTimes) -> io::Result<()> {
-        match state {
-            RenderingState::Chars(state) => render_character_frame(state, &mut self.session, sky, view, date, clock, observer, times),
-            RenderingState::Pixels(state) => render_pixel_frame(state, &mut self.session, sky, view, date, clock, observer, times),
-            RenderingState::Pending => panic!("rendering state is not initialized"),
+    pub fn render_prepared_frame(&mut self, state: &mut RenderingState, projected: &crate::model::RenderProjection<'_>, view: &View, date: f64, clock: &SimulationClock, observer: &Observer, times: &mut StepTimes) -> io::Result<crate::model::RenderOutcome> {
+        if let RenderingState::Pixels(state) = state {
+            let outcome = render_pixel_frame(state, &mut self.session, projected.sky(), Some(projected), view, date, clock, observer, times)?;
+            times.record_frame_presentation(outcome.was_presented());
+            return Ok(outcome);
         }
+        self.render_frame(state, projected.sky(), view, date, clock, observer, times)?;
+        Ok(crate::model::RenderOutcome::Presented)
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_frame(&mut self, state: &mut RenderingState, sky: &ProjectedSky<'_>, view: &View, date: f64, clock: &SimulationClock, observer: &Observer, times: &mut StepTimes) -> io::Result<()> {
+        let outcome = match state {
+            RenderingState::Chars(state) => { render_character_frame(state, &mut self.session, sky, view, date, clock, observer, times)?; crate::model::RenderOutcome::Presented }
+            RenderingState::Pixels(state) => render_pixel_frame(state, &mut self.session, sky, None, view, date, clock, observer, times)?,
+            RenderingState::Pending => panic!("rendering state is not initialized"),
+        };
+        times.record_frame_presentation(outcome.was_presented());
+        Ok(())
     }
 }
 

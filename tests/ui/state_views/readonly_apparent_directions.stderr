@@ -1,0 +1,11 @@
+error[E0594]: cannot assign to data in a `&` reference
+ --> tests/ui/state_views/readonly_apparent_directions.rs:3:5
+  |
+3 |     apparent.regions().next().unwrap().1[0].x = 0.0;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ cannot assign
+
+error[E0594]: cannot assign to data in a `&` reference
+ --> tests/ui/state_views/readonly_apparent_directions.rs:6:5
+  |
+6 |     apparent.bodies().0[0].x = 0.0;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ cannot assign

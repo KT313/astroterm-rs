@@ -43,7 +43,14 @@ pub fn open_pixel_renderer(
         text_scale,
         frame_image: None,
         rgb: image::RgbImage::new(0, 0),
+        rgb_version: Default::default(),
+        frame_key: None,
+        encoding_key: None,
+        displayed_key: None,
+        display_valid: false,
         fields: Vec::new(),
+        text_cache: Default::default(),
+        text_version: Default::default(),
         text: ratatui::buffer::Buffer::empty(Rect::default()),
         composed: ratatui::buffer::Buffer::empty(Rect::default()),
         upload: String::new(),
@@ -70,7 +77,13 @@ pub fn pixel_viewport(state: &PixelState) -> Viewport {
 }
 
 pub fn fit_pixel_terminal(state: &mut PixelState, session: &mut TerminalSession) -> io::Result<()> {
+    state.display_valid = false;
     state.scene_cache.invalidate();
+    state.rgb_version.invalidate();
+    state.frame_key = None;
+    state.encoding_key = None;
+    state.text_version.invalidate();
+    state.text_cache.labels_version.invalidate();
     state.kitty_image_id = kitty::IMAGE_IDS[0];
     let (columns, rows) = crossterm::terminal::size()?;
     if columns == 0 || rows == 0 {

@@ -1,5 +1,5 @@
 use astroterm::state::StellarResults;
 fn modify_stellar_results(results: StellarResults<'_>) {
-    results.samples()[0].1 = 0.0;
+    results.selected_samples().next().unwrap().1.magnitude = 0.0;
 }
 fn main() {}

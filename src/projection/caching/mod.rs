@@ -1,6 +1,8 @@
 //! Owned geometry caches; borrowed star views are assembled only for the current render call.
 mod memory;
 mod regions;
+mod rendering;
+pub use rendering::borrow_render_projection;
 pub(super) use regions::project_regional_stars;
 use memory::{record_key_build, record_cache_store, record_candidate_clear};
 use crate::state::ProjectionCache;
@@ -43,12 +45,12 @@ pub(super) fn project_cached_draw_order(storage: &mut ProjectionCache, sky: &Obs
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn project_cached_bodies(storage: &mut ProjectionCache, sky: &ObservedSky, view: &View, viewport: Viewport, epoch: f64, camera: CartesianCamera, times: &mut StepTimes) {
+pub(super) fn project_cached_bodies(storage: &mut ProjectionCache, sky: crate::model::ObservedSkyView<'_>, view: &View, viewport: Viewport, epoch: f64, camera: CartesianCamera, times: &mut StepTimes) {
     times.measure_with_memory("Body projection", |times| {
-        let key = (sky.planets.iter().map(|p| (p.kind, p.position)).collect(), sky.moon.clone(), *view, viewport);
+        let key = (sky.planets.iter().map(|p| (p.kind, p.position)).collect(), sky.moon, *view, viewport);
         {
             let step = times.active_memory_step();
-            times.record_memory(step, || MemoryEvent::borrow(BufferId::ObservedBodies, Access::ReadOnly, BufferShape::slice(&sky.planets, IndexDomain::Objects)));
+            times.record_memory(step, || MemoryEvent::borrow(BufferId::ObservedBodies, Access::ReadOnly, BufferShape::unknown(IndexDomain::Objects)));
             times.record_memory(step, || MemoryEvent::borrow(BufferId::ProjectedBodies, Access::Writable, BufferShape::unknown(IndexDomain::Objects)));
         }
         update_geometry_cache(&mut storage.bodies, key, epoch, storage.config.allows(Group::Projection), || project_bodies(sky, view, &camera, viewport), times,
@@ -58,37 +60,27 @@ pub(super) fn project_cached_bodies(storage: &mut ProjectionCache, sky: &Observe
 
 }
 
-pub(super) fn project_cached_constellations(storage: &mut ProjectionCache, sky: &ObservedSky, view: &View, viewport: Viewport, epoch: f64, times: &mut StepTimes) {
+pub(super) fn project_cached_constellations(storage: &mut ProjectionCache, sky: crate::model::ObservedSkyView<'_>, view: &View, viewport: Viewport, epoch: f64, times: &mut StepTimes) {
     times.measure_with_memory("Constellation projection", |times| {
         // Only endpoint geometry affects arcs, not the other stars in the selected region.
         let figures = sky.figures();
         let required = figures.endpoints();
-        let endpoints = required
-            .iter()
-            .filter_map(|index| {
-                sky.stars
-                    .binary_search_by_key(index, |star| star.source_index)
-                    .ok()
-                    .map(|i| {
-                        let star = &sky.stars[i];
-                        (star.source_index, star.position, star.magnitude)
-                    })
-            })
-            .collect();
+        let endpoints = required.iter().filter_map(|&index| sky.stars.find(index))
+            .map(|star| (star.source_index, star.position, star.magnitude)).collect();
         let key = (endpoints, sky.figures().clone(), sky.magnitude_threshold, *view, viewport);
         {
             let step = times.active_memory_step();
-            times.record_memory(step, || MemoryEvent::borrow(BufferId::ObservedStars, Access::ReadOnly, BufferShape::slice(&sky.stars, IndexDomain::Observed)));
+            times.record_memory(step, || MemoryEvent::borrow(BufferId::ObservedStars, Access::ReadOnly, BufferShape::unknown(IndexDomain::Observed)));
             times.record_memory(step, || MemoryEvent::borrow(BufferId::CatalogEndpoints, Access::ReadOnly, BufferShape::slice(required, IndexDomain::Catalog)));
             times.record_memory(step, || MemoryEvent::borrow(BufferId::ProjectedFigures, Access::Writable, BufferShape::unknown(IndexDomain::Objects)));
             times.record_memory(step, || MemoryEvent::borrow(BufferId::CatalogFigures, Access::ReadOnly, BufferShape::slice(figures.figures(), IndexDomain::Objects)));
         }
-        update_geometry_cache(&mut storage.constellations, key, epoch, storage.config.allows(Group::Projection), || project_constellations(sky.constellations(), &sky.stars, sky.magnitude_threshold, view, viewport), times,
+        update_geometry_cache(&mut storage.constellations, key, epoch, storage.config.allows(Group::Projection), || project_constellations(sky.constellations(), sky.stars, sky.magnitude_threshold, view, viewport), times,
             (BufferId::ProjectionFigureCandidate, BufferId::ProjectedFigures));
     });
     times.describe("Constellation projection", || format!("input figures={}; source segments={}; output figures={}; clipped arcs={}; sampled vertices={}; computed regardless of draw toggle; cache={:?}", sky.constellations().len(), sky.constellations().iter().map(|c| c.segments.len()).sum::<usize>(), storage.constellations.value().len(), storage.constellations.value().iter().map(|c| c.arcs.len()).sum::<usize>(), storage.constellations.value().iter().flat_map(|c| &c.arcs).map(|a| a.points.len()).sum::<usize>(), storage.constellations.stats));
     times.describe("Constellation projection", || {
-        let missing = sky.constellations().iter().filter(|figure| figure.segments.iter().flatten().any(|index| sky.stars.binary_search_by_key(index, |s| s.source_index).is_err())).count();
+        let missing = sky.constellations().iter().filter(|figure| figure.segments.iter().flatten().any(|index| sky.stars.find(*index).is_none())).count();
         format!("rejected missing endpoints={missing}; then rejected figure magnitude > {}={}; retained figures with no visible arcs={}", sky.magnitude_threshold, sky.constellations().len()-missing-storage.constellations.value().len(), storage.constellations.value().iter().filter(|c| c.arcs.is_empty()).count())
     });
 
@@ -136,7 +128,9 @@ fn update_geometry_cache<K: PartialEq, V: PartialEq>(cache: &mut crate::cache::C
 }
 
 /// Borrow completed geometry; callers must finish consuming it before modifying its backing state.
-pub fn borrow_projected<'a>(storage: &'a ProjectionCache, sky: &'a ObservedSky, view: &View, viewport: Viewport) -> ProjectedSky<'a> {
+pub fn borrow_projected<'a>(storage: &'a ProjectionCache, sky: impl Into<crate::model::ObservedSkyView<'a>>, view: &View, viewport: Viewport) -> ProjectedSky<'a> {
+    let sky = sky.into();
+    let summary = sky.summary();
     ProjectedSky {
         outside_accuracy_range: sky.outside_accuracy_range,
         selection: sky.selection,
@@ -145,12 +139,12 @@ pub fn borrow_projected<'a>(storage: &'a ProjectionCache, sky: &'a ObservedSky, 
         catalog_singular_count: sky.catalog.singular_count,
         runtime_singular_count: sky.runtime_singular_count,
         stars: if storage.regional_active {
-            crate::model::ProjectedStars::from_regions(sky, &storage.regional_cells, &storage.regional_ranges)
-        } else { crate::model::ProjectedStars::new(sky, storage.stars.value(), storage.order.value()) },
+            crate::model::ProjectedStars::from_regions(sky.stars, &storage.regional_cells, &storage.regional_ranges)
+        } else { crate::model::ProjectedStars::with_order(sky.stars, storage.stars.value(), storage.order.value()) },
         planets: &storage.bodies.value().0,
         moon: &storage.bodies.value().1,
         constellations: storage.constellations.value(),
-        names: &sky.catalog.names,
+        names: &summary.catalog.names,
         facing: view.is_facing(),
         fov_degrees: view.fov_degrees,
         viewport,
@@ -604,7 +598,7 @@ mod ownership_tests {
             assert_eq!(projected.horizon.as_ptr(), storage.horizon.value().0.as_ptr());
             for (index, entry) in projected.stars.iter().enumerate() {
                 let observed = storage.stars.value()[storage.order.value()[index]].0;
-                assert!(std::ptr::eq(entry.star.state, &sky.stars[observed]));
+                assert!(std::ptr::eq(entry.star.state.as_ref(), &sky.stars[observed]));
             }
             let reference = crate::projection::project_sky(&sky, &view, viewport);
             assert_eq!(projected, reference.view(&sky));

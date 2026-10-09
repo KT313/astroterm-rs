@@ -1,17 +1,16 @@
-//! Region-local corrections retain catalog indices; frame assembly alone uses transient working-row indices.
+//! Regional flags and correction records feed observed output directly; no combined selection lists.
 use super::*;
 use crate::state::StellarResults;
 use crate::model::{CorrectionStats, ObservedRegion, SelectedStar};
 
-/// Cache one brightness decision for each requested region, then expose the existing working-order flags.
+/// Cache drawing eligibility within each requested region, aligned with its selected rows.
 pub(in crate::sky::observation) fn update_regional_brightness(storage: &mut ObservationCache, stars: StellarResults<'_>, threshold: f64, output: &mut ObservedSky, times: &mut StepTimes) {
     let regional_before = storage.region_stats[0];
-    let before = times.inspect_memory(|| snapshot_cache(&storage.eligible));
     times.measure_steps("Current brightness", |times| {
         times.measure("Brightness region decisions", || {
             for &region in stars.selection.regions() {
                 let key = (stars.selection.region_generation(region), stars.region_generation(region), threshold);
-                let entry: &mut crate::state::EligibleCache = &mut storage.regions[region].eligible;
+                let entry = &mut storage.regions[region].eligible;
                 let before = entry.stats;
                 entry.needs_refresh(&key, stars.selection.epoch, None, storage.config.allows(Group::StellarVisibility));
                 add_region_stats(&mut storage.region_stats[0], before, entry.stats);
@@ -31,15 +30,8 @@ pub(in crate::sky::observation) fn update_regional_brightness(storage: &mut Obse
                 add_region_stats(&mut storage.region_stats[0], before, entry.stats);
             }
         });
-        times.measure("Brightness output assembly", || {
-            let motion: &crate::state::MotionCache = stars.motion;
-            storage.eligible.get_or_update((stars.selection.working.generation, motion.generation, threshold), stars.selection.epoch,
-                storage.config.allows(Group::StellarVisibility), || stars.selection.regions().iter()
-                    .flat_map(|&region| storage.regions[region].eligible.value().iter().copied()).collect()); // rebuild flags only when the combined working set changes
-        });
         output.magnitude_threshold = threshold;
     });
-    record_cache(times, BufferId::VisibilityFlags, before, &storage.eligible);
     times.record_regional_counts(BufferId::RegionalVisibility, regional_before, storage.region_stats[0]);
 }
 
@@ -78,21 +70,14 @@ pub(in crate::sky::observation) fn update_regional_corrections(storage: &mut Obs
                 add_region_stats(&mut storage.region_stats[1], before, entry.corrections.stats);
             }
         });
-        let key = (stars.selection.working.generation, storage.eligible.generation);
-        if storage.corrections.needs_refresh(&key, stars.selection.epoch, None, storage.config.allows(Group::StellarVisibility)) {
-            let selected = times.measure("Correction index selection", || assemble_correction_indices(storage, stars));
-            let outcome = times.measure("Correction cache store", || storage.corrections.store(key, stars.selection.epoch, 0.0, selected));
-            times.record_store(BufferId::CorrectionSelection, outcome);
-        }
-        times.measure("Corrected-star buffer construction", || assemble_observed_regions(storage, stars, output));
-        times.record_build(BufferId::ObservedStars, || BufferShape::vector(&output.stars, IndexDomain::Observed));
-        times.describe("Corrected-star buffer construction", || format!("output records={}; stable regional catalog indices; requested regions={}", output.stars.len(), storage.regional_output.len()));
+        prepare_observed_layout(storage, stars, times);
+        output.corrections = storage.layout_stats;
     });
     times.record_regional_counts(BufferId::RegionalCorrections, regional_before, storage.region_stats[1]);
 }
 
 /// Reuse stellar aberration independently per region; solar-system vectors keep their own small cache.
-pub(in crate::sky::observation) fn update_regional_aberration(storage: &mut ObservationCache, stars: StellarResults<'_>, observer: &ObserverState, output: &mut ObservedSky, times: &mut StepTimes) {
+pub(in crate::sky::observation) fn update_regional_aberration(storage: &mut ObservationCache, stars: StellarResults<'_>, observer: &ObserverState, times: &mut StepTimes) {
     let regional_before = storage.region_stats[2];
     times.measure_steps("Aberration", |times| {
         let epoch = observer.time.tt;
@@ -125,6 +110,7 @@ pub(in crate::sky::observation) fn update_regional_aberration(storage: &mut Obse
             }
         }); }
         for descriptor in &mut storage.regional_output { descriptor.apparent_generation = storage.regions[descriptor.region].apparent.generation; }
+        let body_before = times.inspect_memory(|| snapshot_cache(&storage.body_apparent));
         times.measure("Body aberration", || {
             let body_key = (storage.relative.generation, velocity);
             storage.body_apparent.get_or_update(body_key, epoch, storage.config.allows(Group::ApparentDirections), || {
@@ -133,36 +119,9 @@ pub(in crate::sky::observation) fn update_regional_aberration(storage: &mut Obse
                     super::super::apply_aberration(relative.1, velocity))
             });
         });
-        let key = (stars.motion.generation, storage.relative.generation, storage.corrections.generation, velocity);
-        let refresh = times.measure("Apparent cache decision", || storage.apparent.needs_refresh(&key, epoch, None, storage.config.allows(Group::ApparentDirections)));
-        if refresh {
-            let positions = times.measure("Direction capture", || assemble_apparent_directions(storage, output));
-            record_direction_pass(times, output); // assembly publishes directions while capturing the current-frame snapshot
-            times.describe("Direction capture", || "assemble regional directions into the frame and its snapshot in one pass".into());
-            record_direction_capture(times, BufferId::ApparentDirections, &positions);
-            let outcome = times.measure("Direction cache store", || storage.apparent.store(key, epoch, 0.0, positions));
-            times.record_store(BufferId::ApparentDirections, outcome);
-        } else {
-            times.measure("Direction restoration", || super::corrections::restore_directions(output, storage.apparent.value()));
-            record_direction_restoration(times, BufferId::ApparentDirections, output);
-        }
+        record_cache(times, BufferId::BodyApparentDirections, body_before, &storage.body_apparent);
     });
     times.record_regional_counts(BufferId::RegionalApparent, regional_before, storage.region_stats[2]);
-}
-
-fn assemble_apparent_directions(storage: &ObservationCache, output: &mut ObservedSky) -> crate::model::Directions {
-    let mut positions = Vec::with_capacity(output.stars.len());
-    for region in &storage.regional_output {
-        let directions = storage.regions[region.region].apparent.value();
-        for (star, &direction) in output.stars[region.start..region.end].iter_mut().zip(directions) {
-            star.position = direction;
-            positions.push(direction);
-        }
-    }
-    let bodies = storage.body_apparent.value();
-    for (planet, &direction) in output.planets.iter_mut().zip(&bodies.0) { planet.position = direction; }
-    output.moon.position = bodies.1;
-    (positions, bodies.0.clone(), bodies.1)
 }
 
 fn borrow_region_rows(stars: StellarResults<'_>, region: usize) -> &[SelectedStar] {
@@ -173,42 +132,28 @@ fn borrow_region_rows(stars: StellarResults<'_>, region: usize) -> &[SelectedSta
     &rows[start..end]
 }
 
-fn assemble_correction_indices(storage: &ObservationCache, stars: StellarResults<'_>) -> CorrectionSelection {
-    let working = stars.selection.rows();
-    let mut cursor = 0;
-    let mut indices = Vec::with_capacity(working.len());
-    let mut stats = CorrectionStats::default();
-    for &region in stars.selection.regions() {
-        let (records, region_stats) = storage.regions[region].corrections.value();
-        stats.evaluated += region_stats.evaluated;
-        stats.skipped += region_stats.skipped;
-        stats.endpoint_only += region_stats.endpoint_only;
-        for row in records {
-            while working[cursor].source_index < row.source_index { cursor += 1; }
-            indices.push(cursor);
-            cursor += 1;
+fn prepare_observed_layout(storage: &mut ObservationCache, stars: StellarResults<'_>, times: &mut StepTimes) {
+    let before = times.inspect_memory(|| BufferShape::vector(&storage.layout_sources, IndexDomain::Regions));
+    let changed = times.measure("Observed region layout", || {
+        let sources = || stars.selection.regions().iter().map(|&region| (region, storage.regions[region].corrections.generation, stars.region_generation(region)));
+        if sources().eq(storage.layout_sources.iter().copied()) { return false; }
+        storage.layout_sources.clear();
+        storage.layout_sources.extend(sources());
+        storage.regional_output.clear();
+        storage.layout_stats = CorrectionStats::default();
+        let mut start = 0;
+        for &(region, selection_generation, motion_generation) in &storage.layout_sources {
+            let (rows, stats) = storage.regions[region].corrections.value();
+            let end = start + rows.len();
+            storage.layout_stats.evaluated += stats.evaluated;
+            storage.layout_stats.skipped += stats.skipped;
+            storage.layout_stats.endpoint_only += stats.endpoint_only;
+            storage.regional_output.push(ObservedRegion { region, start, end, selection_generation, motion_generation, apparent_generation: 0 });
+            start = end;
         }
-    }
-    CorrectionSelection { indices, stats }
-}
-
-fn assemble_observed_regions(storage: &mut ObservationCache, stars: StellarResults<'_>, output: &mut ObservedSky) {
-    output.stars.clear();
-    output.stars.reserve(storage.corrections.value().indices.len());
-    output.corrections = storage.corrections.value().stats;
-    storage.regional_output.clear();
-    for &region in stars.selection.regions() {
-        let start = output.stars.len();
-        let samples = stars.region_samples(region);
-        let offset = stars.selection.catalog.grid.offsets[region];
-        let selection = &storage.regions[region].corrections;
-        output.stars.extend(selection.value().0.iter().map(|row| {
-            let sample = samples[row.source_index - offset];
-            ObservedStar { source_index: row.source_index, drawable: row.drawable, position: sample.direction, magnitude: sample.magnitude }
-        }));
-        storage.regional_output.push(ObservedRegion { region, start, end: output.stars.len(), selection_generation: selection.generation,
-            motion_generation: stars.region_generation(region), apparent_generation: 0 }); // filled when stellar aberration completes
-    }
+        true
+    }); // compare regional versions on hits; no selected-star scan or combined record construction
+    times.record_shape(BufferId::ObservedLayout, if changed { Operation::Build } else { Operation::Reuse }, before, || BufferShape::vector(&storage.layout_sources, IndexDomain::Regions));
 }
 
 fn add_region_stats(total: &mut crate::cache::CacheStats, before: crate::cache::CacheStats, after: crate::cache::CacheStats) {

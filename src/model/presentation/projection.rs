@@ -213,7 +213,7 @@ pub struct ProjectedSky<'a> {
 
 impl ProjectedSky<'_> {
     pub fn magnitude_clipping(&self) -> crate::catalog::MagnitudeClipping {
-        self.stars.observed.catalog.stars.magnitude_clipping()
+        self.stars.observed.catalog().magnitude_clipping()
     }
 }
 
@@ -240,7 +240,9 @@ pub struct ProjectionData {
 
 impl ProjectionData {
     /// Borrow geometry and resolve observed indices only when a consumer asks for a star.
-    pub fn view<'a>(&'a self, observed: &'a crate::model::ObservedSky) -> ProjectedSky<'a> {
+    pub fn view<'a>(&'a self, observed: impl Into<crate::model::ObservedSkyView<'a>>) -> ProjectedSky<'a> {
+        let observed = observed.into();
+        let summary = observed.summary();
         ProjectedSky {
             outside_accuracy_range: self.outside_accuracy_range,
             selection: self.selection,
@@ -251,9 +253,9 @@ impl ProjectionData {
             facing: self.facing,
             fov_degrees: self.fov_degrees,
             viewport: self.viewport,
-            stars: ProjectedStars::new(observed, &self.stars, &self.order),
+            stars: ProjectedStars::with_order(observed.stars, &self.stars, &self.order),
             planets: &self.planets, moon: &self.moon, constellations: &self.constellations,
-            names: &observed.catalog.names, horizon: &self.horizon, horizon_labels: &self.horizon_labels,
+            names: &summary.catalog.names, horizon: &self.horizon, horizon_labels: &self.horizon_labels,
         }
     }
 }
@@ -262,23 +264,32 @@ impl ProjectionData {
 /// Regional ranges identify independently brightness-sorted runs for bounded global label selection.
 #[derive(Clone, Copy, Debug)]
 pub struct ProjectedStars<'a> {
-    observed: &'a crate::model::ObservedSky,
+    observed: crate::model::ObservedStars<'a>,
     cells: &'a [(usize, Cell)],
+    regional_cells: &'a [(RegionalStarIndex, Cell)],
     order: Option<&'a [usize]>,
     regions: Option<&'a [(usize, usize)]>,
 }
 impl<'a> ProjectedStars<'a> {
     pub fn new(observed: &'a crate::model::ObservedSky, cells: &'a [(usize, Cell)], order: &'a [usize]) -> Self {
-        Self { observed, cells, order: Some(order), regions: None }
+        Self { observed: crate::model::ObservedStars::owned(&observed.stars, &observed.catalog.stars), cells, regional_cells: &[], order: Some(order), regions: None }
     }
-    pub(crate) fn from_regions(observed: &'a crate::model::ObservedSky, cells: &'a [(usize, Cell)], regions: &'a [(usize, usize)]) -> Self {
-        Self { observed, cells, order: None, regions: Some(regions) }
+    pub(crate) fn with_order(observed: crate::model::ObservedStars<'a>, cells: &'a [(usize, Cell)], order: &'a [usize]) -> Self {
+        Self { observed, cells, regional_cells: &[], order: Some(order), regions: None }
     }
-    pub fn len(&self) -> usize { self.order.map_or(self.cells.len(), <[usize]>::len) }
+    pub(crate) fn from_regions(observed: crate::model::ObservedStars<'a>, cells: &'a [(RegionalStarIndex, Cell)], regions: &'a [(usize, usize)]) -> Self {
+        Self { observed, cells: &[], regional_cells: cells, order: None, regions: Some(regions) }
+    }
+    pub fn len(&self) -> usize { self.order.map_or(self.regional_cells.len(), <[usize]>::len) }
     pub fn is_empty(&self) -> bool { self.len() == 0 }
     pub fn get(&self, index: usize) -> ProjectedStar<'a> {
-        let (observed_index, cell) = self.cells[self.order.map_or(index, |order| order[index])];
-        ProjectedStar { star: self.observed.star_view(observed_index), cell: Some(cell) }
+        if let Some(order) = self.order {
+            let (row, cell) = self.cells[order[index]];
+            ProjectedStar { star: self.observed.get(row), cell: Some(cell) }
+        } else {
+            let (row, cell) = self.regional_cells[index];
+            ProjectedStar { star: self.observed.get_regional(row.region_slot as usize, row.observed_index as usize), cell: Some(cell) }
+        }
     }
     pub fn iter(&self) -> impl DoubleEndedIterator<Item = ProjectedStar<'a>> + ExactSizeIterator + '_ {
         (0..self.len()).map(|index| self.get(index))
@@ -316,3 +327,11 @@ pub(crate) type HorizonGeometry = (Vec<[Cell; 2]>, Vec<(Cell, &'static str)>);
 pub(crate) type RegionalProjectionKey = ((u64, u64), crate::astro::Matrix3, bool, View, ProjectionViewport);
 pub(crate) type RegionalOrderKey = (u64, u64);
 pub(crate) type RegionalDrawRecord = (usize, f64, StarId); // membership-versioned row within this region, current magnitude, tie-breaking identifier
+
+/// Frame-local address: region_slot selects an observation descriptor, observed_index selects a final direction.
+/// Packed to the previous usize footprint on 64-bit targets; neither value is a stable catalog index.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RegionalStarIndex { pub region_slot: u32, pub observed_index: u32 }
+row_columns!(RegionalStarIndex { region_slot, observed_index });
+#[cfg(feature = "memory-diagnostics")]
+crate::cache::report_flat!(RegionalStarIndex);

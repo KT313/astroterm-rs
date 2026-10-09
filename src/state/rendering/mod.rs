@@ -37,11 +37,9 @@ pub struct CharacterState {
     pub(crate) step_fields: Vec<MetadataField>,
 }
 
-/// Pixel backend storage. Geometry is measured in terminal cells (screen/area) and physical pixels (viewport).
-/// Scene pixels are borrowed from the cache. frame_image combines sky and text and is consumed by conversion.
-/// RGB pixels and text cells are freed after their last consumer; their working slots are empty between frames.
-/// Other image and ratatui buffers currently rebuild each frame. Metadata Vec
-/// capacity is reused, but its strings are rebuilt. Resizing invalidates scene data and resets the Kitty ID.
+/// Pixel storage in terminal cells and physical pixels. Completed text and Kitty RGB remain available for reuse.
+/// Kitty retains RGBA composition work; other graphics protocols consume RGBA during encoding. Metadata vectors
+/// retain capacity, but strings rebuild as needed. Resize invalidates results and resets the Kitty image ID.
 pub struct PixelState {
     pub(crate) scene_cache: crate::state::SceneCache,
     pub(crate) cache_diagnostics: [String; 2],
@@ -62,8 +60,15 @@ pub struct PixelState {
     // Full-frame sky/text bitmap and the temporary opaque RGB conversion result.
     pub(crate) frame_image: Option<image::RgbaImage>,
     pub(crate) rgb: image::RgbImage,
+    pub(crate) rgb_version: crate::model::RenderResultVersion,
+    pub(crate) frame_key: Option<crate::model::PixelFrameKey>,
+    pub(crate) encoding_key: Option<crate::model::KittyEncodingKey>,
+    pub(crate) displayed_key: Option<crate::model::KittyDisplayKey>, // last successful submission; preserved on errors
+    pub(crate) display_valid: bool, // resize, clearing or a failed write makes the terminal image unknown
     pub(crate) fields: Vec<MetadataField>,
     pub(crate) text: ratatui::buffer::Buffer,
+    pub(crate) text_cache: crate::model::PixelTextCache, // bounded labels and dependencies for the retained text grid
+    pub(crate) text_version: crate::model::RenderResultVersion, // valid only while the completed text grid is retained
     pub(crate) composed: ratatui::buffer::Buffer,
     // Refilled only after prior writes/flushes finish. Flat buffers retain capacity; no protocol/key recycling.
     pub(crate) upload: String,
@@ -152,12 +157,18 @@ impl crate::cache::ReportBuffers for PixelState {
         report_field(sink, "raster_text", &self.raster_text);
         report_field(sink, "frame_image", &self.frame_image);
         report_field(sink, "rgb_pixels", self.rgb.as_raw());
+        report_field(sink, "rgb_version", &self.rgb_version);
+        report_field(sink, "frame_key", &self.frame_key);
+        report_field(sink, "encoding_key", &self.encoding_key);
+        report_field(sink, "displayed_key", &self.displayed_key);
+        report_field(sink, "display_valid", &self.display_valid);
         report_field(sink, "fields", &self.fields);
         report_field(sink, "upload", &self.upload);
         report_field(sink, "compressed", &self.compressed);
         if self.encoded.is_some() { sink.unknown("ratatui-image encoded protocol internals are opaque"); }
         report_cell_buffer(sink, "serialization_blank", &self.serialization_blank);
         report_field(sink, "serialized", &self.serialized);
+        report_field(sink, "text_cache", &self.text_cache);
         report_cell_buffer(sink, "text", &self.text);
         report_cell_buffer(sink, "composed", &self.composed);
         if self.time_zone.is_some() { sink.unknown("timezone rules and process-global boundary finder are opaque"); }

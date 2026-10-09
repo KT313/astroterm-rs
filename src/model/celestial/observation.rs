@@ -17,7 +17,9 @@ pub struct CorrectionStats {
     pub endpoint_only: usize,
 }
 
-/// Read-only output of observation, independent of camera projection. It may cover only the requested SkyRegion;
+/// Owned observation snapshot for direct/compatibility callers. The production cached path uses this as
+/// metadata/body scratch with an empty stars vector, then publishes final values through ObservedSkyView.
+/// It may cover only the requested SkyRegion;
 /// request All when reusing one observation for arbitrary cameras. Catalog data is shared across sites and frames.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ObservedSky {
@@ -73,14 +75,14 @@ impl ObservedSky {
     /// Borrow one calculated record and its catalog metadata; `index` addresses this observed subset.
     pub fn star_view(&self, index: usize) -> ObservedStarView<'_> {
         ObservedStarView {
-            state: &self.stars[index],
+            state: crate::model::ObservedStarState::Borrowed(&self.stars[index]),
             catalog: &self.catalog.stars,
         }
     }
     /// Iterate the observed subset without allocating or copying metadata.
     pub fn star_views(&self) -> impl DoubleEndedIterator<Item = ObservedStarView<'_>> + ExactSizeIterator {
         self.stars.iter().map(|state| ObservedStarView {
-            state,
+            state: crate::model::ObservedStarState::Borrowed(state),
             catalog: &self.catalog.stars,
         })
     }
@@ -130,12 +132,6 @@ row_columns!(ObserverState { anchor, site, height_m, time, state, inertial_to_fi
 pub(crate) struct BodySamples {
     pub(crate) planets: Vec<crate::astro::models::BodyState>,
     pub(crate) moon: crate::astro::models::BodyState,
-}
-
-#[derive(Clone, PartialEq)]
-pub(crate) struct CorrectionSelection {
-    pub(crate) indices: Vec<usize>,
-    pub(crate) stats: crate::model::CorrectionStats,
 }
 
 pub(crate) type Directions = (Vec<Vector3>, Vec<Vector3>, Vector3);

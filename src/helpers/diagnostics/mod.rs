@@ -95,21 +95,21 @@ pub(crate) fn begin_frame_diagnostics(times: &mut StepTimes) -> Instant {
     frame_start
 }
 
-/// Finish diagnostics for a successfully presented frame. Measure first so the final memory inspection stays
+/// Finish diagnostics for a successful frame, including reuse of an already displayed image. Measure first so the final memory inspection stays
 /// outside the reported frame duration; keep the existing per-operation opt-in checks.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn finish_frame_diagnostics(config: &Config, catalog: &Arc<astroterm::model::SkyCatalog>, caches: &astroterm::state::Caches,
-    preparation: Option<&astroterm::model::CatalogPreparation>, renderer: &Renderer, frame_start: Instant, time: FrameTime, times: &mut StepTimes) {
-    let elapsed = record_frame_duration(config, frame_start, time, times); // record duration before inspecting memory
-    capture_memory(config, catalog, caches, preparation, renderer, times, "After presented frame", Some(time.tt));
+    preparation: Option<&astroterm::model::CatalogPreparation>, renderer: &Renderer, frame_start: Instant, time: FrameTime, outcome: astroterm::model::RenderOutcome, times: &mut StepTimes) {
+    let elapsed = record_frame_duration(config, frame_start, time, outcome, times); // record duration before inspecting memory
+    capture_memory(config, catalog, caches, preparation, renderer, times, if outcome.was_presented() { "After presented frame" } else { "After reused display" }, Some(time.tt));
     times.complete_memory_frame(elapsed);                                // retain diagnostics for this completed frame
 }
 
 /// Sample duration through presentation before inspecting memory; ordinary single-frame output stays compatible.
-fn record_frame_duration(config: &Config, frame_start: Instant, time: FrameTime, step_times: &mut StepTimes) -> f64 {
+fn record_frame_duration(config: &Config, frame_start: Instant, time: FrameTime, outcome: astroterm::model::RenderOutcome, step_times: &mut StepTimes) -> f64 {
     if !(config.debug_singleframe || (cfg!(feature = "memory-diagnostics") && config.debug_memory)) { return 0.0; }
     let elapsed = frame_start.elapsed().as_secs_f64();
-    step_times.describe("Present", || format!(
+    step_times.describe(if outcome.was_presented() { "Present" } else { "Presentation decision" }, || format!(
         "frame elapsed through presentation={:.3} ms; UTC JD={:.9}; includes in-frame diagnostics; final memory capture and sleep excluded",
         elapsed * 1000.0, time.utc
     ));

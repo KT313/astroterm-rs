@@ -3,7 +3,6 @@
 use crate::model::{CartesianCamera, Polar, ScreenPoint, View, ViewCenter};
 use super::draw_order::prepare_draw_order;
 use crate::astro::{Horizontal, Vector3, offset_vector_towards};
-use crate::model::ObservedSky;
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 const EDGE_TOLERANCE: f64 = 1e-6;
@@ -35,17 +34,18 @@ pub fn polar_to_cell(viewport: ProjectionViewport, polar: Polar) -> Cell {
 }
 
 /// Project without retaining timing diagnostics (reference fixtures and library callers).
-pub fn project_sky(sky: &ObservedSky, view: &View, viewport: Viewport) -> crate::model::ProjectionData {
+pub fn project_sky<'a>(sky: impl Into<crate::model::ObservedSkyView<'a>>, view: &View, viewport: Viewport) -> crate::model::ProjectionData {
     project_sky_with_times(sky, view, viewport, &mut crate::timing::StepTimes::default())
 }
 
 /// Camera-stage coordinator. Exact visibility and draw order stay separate from observation's conservative filters.
-pub fn project_sky_with_times(
-    sky: &ObservedSky,
+pub fn project_sky_with_times<'a>(
+    sky: impl Into<crate::model::ObservedSkyView<'a>>,
     view: &View,
     viewport: Viewport,
     times: &mut crate::timing::StepTimes,
 ) -> crate::model::ProjectionData {
+    let sky = sky.into();
     let camera = crate::projection::prepare_camera(view);
     let stars = times.measure("Star projection", || project_visible_stars(sky, &camera, viewport));
     let order = times.measure("Star draw order", || {
@@ -58,7 +58,7 @@ pub fn project_sky_with_times(
     });
     let (planets, moon) = times.measure("Body projection", || project_bodies(sky, view, &camera, viewport));
     let constellations = times.measure("Constellation projection", || {
-        project_constellations(sky.constellations(), &sky.stars, sky.magnitude_threshold, view, viewport)
+        project_constellations(sky.constellations(), sky.stars, sky.magnitude_threshold, view, viewport)
     });
     let (horizon, horizon_labels) = times.measure("Horizon projection", || {
         (
@@ -92,16 +92,16 @@ pub(super) fn project_visible_cell(camera: &CartesianCamera, viewport: Viewport,
         .map(|p| crate::projection::project_to_cell(viewport, p))
 }
 
-fn project_visible_stars(sky: &ObservedSky, camera: &CartesianCamera, viewport: Viewport) -> Vec<(usize, Cell)> {
+fn project_visible_stars(sky: crate::model::ObservedSkyView<'_>, camera: &CartesianCamera, viewport: Viewport) -> Vec<(usize, Cell)> {
     let mut cells = Vec::with_capacity(sky.stars.len()); // reserve the maximum before filtering to avoid growth copies
-    cells.extend(sky.star_views().enumerate().filter(|(_, star)| star.drawable).filter_map(|(index, star)| {
+    cells.extend(sky.stars.iter().enumerate().filter(|(_, star)| star.drawable).filter_map(|(index, star)| {
         project_visible_cell(camera, viewport, star.position).map(|cell| (index, cell))
     }));
     cells
 }
 
 pub(in crate::projection) fn project_bodies(
-    sky: &ObservedSky,
+    sky: crate::model::ObservedSkyView<'_>,
     view: &View,
     camera: &CartesianCamera,
     viewport: Viewport,
@@ -126,18 +126,13 @@ pub(in crate::projection) fn project_bodies(
 
 pub(in crate::projection) fn project_constellations(
     figures: &[crate::model::Constellation],
-    stars: &[crate::model::ObservedStar],
+    stars: crate::model::ObservedStars<'_>,
     magnitude_threshold: f64,
     view: &View,
     viewport: Viewport,
 ) -> Vec<ProjectedConstellation> {
     let camera = crate::projection::prepare_camera(view); // all segments share the same viewing direction and scale
-    let find_star = |index| {
-        stars
-            .binary_search_by_key(&index, |star| star.source_index)
-            .ok()
-            .map(|i| &stars[i])
-    };
+    let find_star = |index| stars.find(index);
     figures
         .iter()
         .filter_map(|figure| {

@@ -7,14 +7,19 @@ use crate::model::{
 };
 #[derive(Default)]
 pub struct ProjectionCache {
+    pub(crate) identity: super::StageId,
+    pub(crate) source_revision: u64,
+    pub(crate) render_context: Option<(View, Viewport)>, // only published after every projection stage succeeds
     /// Cells retain catalog indices; order offsets are local to a region and guarded by its membership version.
     pub(crate) regional_stars: Vec<Cache<RegionalProjectionKey, Vec<(usize, Cell)>>>,
     pub(crate) regional_orders: Vec<Cache<RegionalOrderKey, Vec<RegionalDrawRecord>>>,
+    pub(crate) regional_cell_work: Vec<(usize, Cell)>, // replacement cells; swap with one completed region at a time
+    pub(crate) regional_order_work: Vec<RegionalDrawRecord>, // replacement sorting records; keep capacity after each swap
     pub(crate) regional_catalog: Option<std::sync::Arc<crate::model::SkyCatalog>>,
     pub(crate) regional_owner: Option<u64>,
     pub(crate) regional_active: bool,
     pub(crate) regional_stats: crate::cache::CacheStats,
-    pub(crate) regional_cells: Vec<(usize, Cell)>,
+    pub(crate) regional_cells: Vec<(crate::model::RegionalStarIndex, Cell)>,
     pub(crate) regional_ranges: Vec<(usize, usize)>, // start/end of each region in directly drawable cells
     pub(crate) region_cell_scratch: Vec<Option<Cell>>, // temporary cells indexed within one observed region
     pub(crate) assembled_for: Vec<(usize, usize, usize, u64, u64)>, // region, current observed row range, cell version, order version
@@ -39,6 +44,8 @@ pub struct ProjectionCache {
     pub(crate) horizon: Cache<(View, Viewport), HorizonGeometry>,
 }
 impl ProjectionCache {
+    pub(crate) fn render_source_id(&self) -> u64 { self.identity.value() }
+
     /// Borrow only the candidate and committed visible-cell cache for star projection.
     pub(crate) fn star_buffers(&mut self) -> StarProjectionBuffers<'_> {
         StarProjectionBuffers { candidate: &mut self.star_candidate, cells: &mut self.stars }
@@ -56,6 +63,7 @@ impl ProjectionCache {
         }
     }
     pub fn invalidate_view(&mut self) {
+        self.render_context = None;
         self.stars.invalidate();
         for cache in &mut self.regional_stars { cache.invalidate(); }
         self.bodies.invalidate();
@@ -85,6 +93,8 @@ impl crate::cache::ReportBuffers for ProjectionCache {
         use super::support::regions::{report_region_storage, cached_vector_bytes};
         report_region_storage(sink, "regional_stars", &self.regional_stars, cached_vector_bytes);
         report_region_storage(sink, "regional_orders", &self.regional_orders, cached_vector_bytes);
+        crate::cache::report_field(sink, "regional_cell_work", &self.regional_cell_work);
+        crate::cache::report_field(sink, "regional_order_work", &self.regional_order_work);
         crate::cache::report_field(sink, "regional_catalog", &self.regional_catalog);
         crate::cache::report_field(sink, "regional_owner", &self.regional_owner);
         crate::cache::report_field(sink, "regional_active", &self.regional_active);

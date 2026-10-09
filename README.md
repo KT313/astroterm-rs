@@ -125,6 +125,9 @@ source <(./target/release/astroterm --bash-completions)
 
 ## Differences from the C version
 
+Solar-system results refresh when simulated time or observer location changes; paused frames reuse completed results.
+A cache TTL of `0` permits same-time reuse; `--disable-cache` disables it.
+
 Catalog brightness is stored in steps of 0.001 magnitude; values very close to a display threshold may round across it.
 Stars are filtered by their catalog-epoch sky regions with a fixed motion allowance. At distant dates, fast-moving
 stars may be missing from a view; special handling for them is currently deferred.

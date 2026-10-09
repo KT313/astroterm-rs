@@ -1,5 +1,7 @@
 //! State-owned whole-sky caches. Metadata and terminal presentation are assembled after these immutable results.
 mod keys;
+mod production;
+pub(super) use production::draw_prepared_pixels;
 pub(in crate::scene) use keys::prepare_pixel_star_inputs;
 use crate::timing::{BufferId, Operation};
 use super::diagnostics::memory::{describe_candidate, describe_canvas, record_scene_candidate, record_scene_commit};
@@ -28,12 +30,14 @@ fn capture_scene_key(
     canvas_size: Option<(usize, usize)>,
 ) {
     let key = candidate.get_or_insert_with(|| SceneKey {
+        production: None,
         stars: StarKeys::Pixels(Vec::new()),
         planets: Vec::new(), moon: None, constellations: Vec::new(), horizon: Vec::new(), labels: Vec::new(),
         pixel_fov_degrees: canvas_size.is_none().then_some(sky.fov_degrees),
         viewport: sky.viewport, facing: sky.facing, warning: sky.outside_accuracy_range, brightness_warning: sky.magnitude_clipping().any(), options, canvas_size,
     });
     clear_scene_candidate(key); // also resets a candidate left behind by a failed image allocation
+    key.production = None; // editable inputs always use exact structural comparison
     capture_star_keys(&mut key.stars, sky, &options, canvas_size.is_some());
     key.planets.extend_from_slice(sky.planets);
     key.moon = sky.moon.cell.map(|_| (*sky.moon).clone());

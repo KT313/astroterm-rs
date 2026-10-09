@@ -1,0 +1,5 @@
+error[E0594]: cannot assign to data in a `&` reference
+ --> tests/ui/state_views/readonly_render_projection.rs:3:5
+  |
+3 |     projected.sky().fov_degrees = 20.0;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ cannot assign

@@ -1,5 +1,6 @@
-//! Cached body sampling and separate apparent, horizontal and refracted directions.
+//! Cached body geometry; regional apparent inputs feed the retained horizontal/refraction snapshots.
 use super::*;
+use super::super::memory::{direction_shape, record_direction_commit};
 
 
 
@@ -59,86 +60,83 @@ pub(in crate::sky::observation) fn update_moon_illumination(illumination: &mut I
     record_cache(times, BufferId::MoonIllumination, memory_before, illumination);
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(in crate::sky::observation) fn update_horizon_rotation(
-    apparent: &ApparentCache, horizontal: &mut HorizontalCache, config: &CacheConfig, epoch: f64,
-    observer: &ObserverState, output: &mut ObservedSky, times: &mut StepTimes,
+    apparent: crate::state::ApparentDirections<'_>, sources: &mut crate::state::HorizontalSources, horizontal: &mut HorizontalCache,
+    work: &mut Directions, config: &CacheConfig, epoch: f64, rotation: crate::astro::Matrix3, times: &mut StepTimes,
 ) {
     times.measure_steps("Horizon rotation", |times| {
-        let key = (apparent.generation, observer.inertial_to_horizon);
-        let refresh = times.measure("Horizontal cache decision", || {
-            horizontal
-                .needs_refresh(&key, epoch, None, config.allows(Group::HorizontalSky))
+        update_horizontal_sources(apparent, sources, times);
+        let key = (sources.revision, rotation);
+        let refresh = times.measure("Horizontal cache decision", || horizontal.needs_refresh(&key, epoch, None, config.allows(Group::HorizontalSky)));
+        times.record_candidate_decision(times.last_memory_step(), BufferId::HorizontalDirections, BufferId::HorizontalDirections, refresh, horizontal.stats.last_reason);
+        if !refresh { return; } // the completed directions are already the output; no restoration pass
+        prepare_direction_work(work, apparent.star_count(), apparent.bodies().0.len(), BufferId::HorizontalWork, times);
+        times.measure("Horizon rotation calculation", || {
+            for (region, directions) in apparent.regions() {
+                assert_eq!(region.start, work.0.len(), "apparent regions must cover output in order");
+                work.0.extend(directions.iter().map(|&direction| rotation.apply(direction)));
+            }
+            let (planets, moon) = apparent.bodies();
+            work.1.extend(planets.iter().map(|&direction| rotation.apply(direction).normalized()));
+            work.2 = rotation.apply(moon); // preserve the Moon vector length
         });
-        times.record_memory(times.last_memory_step(), || MemoryEvent::unknown_operation(BufferId::HorizontalDirections,
-            if refresh { Operation::Refresh(horizontal.stats.last_reason.expect("refresh reason")) } else { Operation::Reuse }));
-        if refresh {
-            times.measure("Horizon rotation calculation", || {
-                rotate_sky_to_horizon(observer.inertial_to_horizon, output)
-            });
-            record_direction_pass(times, output);
-            let positions = times.measure("Direction capture", || capture_directions(output));
-            record_direction_capture(times, BufferId::HorizontalDirections, &positions);
-            let outcome = times.measure("Direction cache store", || {
-                horizontal.store(key, epoch, 0.0, positions)
-            });
-            times.record_store(BufferId::HorizontalDirections, outcome);
-        } else {
-            times.measure("Direction restoration", || {
-                restore_directions(output, horizontal.value())
-            });
-            record_direction_restoration(times, BufferId::HorizontalDirections, output);
-        }
+        times.record_borrow(BufferId::RegionalApparent, Access::ReadOnly, || BufferShape::unknown(IndexDomain::Observed));
+        times.record_borrow(BufferId::BodyApparentDirections, Access::ReadOnly, || BufferShape::unknown(IndexDomain::Objects));
+        times.record_shape(BufferId::HorizontalWork, Operation::Build, None, || direction_shape(work));
+        let completed = times.inspect_memory(|| direction_shape(work));
+        let displaced = times.inspect_memory(|| horizontal.stored().map(direction_shape)).flatten();
+        let outcome = times.measure("Direction cache store", || horizontal.store_reusing_pair(key, epoch, 0.0, work));
+        record_direction_commit(times, BufferId::HorizontalDirections, BufferId::HorizontalWork, completed, displaced, work, outcome);
     });
 }
 
-pub(in crate::sky::observation) fn update_refraction(
-    horizontal: &HorizontalCache, refracted: &mut Cache<(u64, bool), Directions>, config: &CacheConfig, epoch: f64,
-    enabled: bool, output: &mut ObservedSky, times: &mut StepTimes,
+#[allow(clippy::too_many_arguments)]
+pub(in crate::sky::observation) fn update_refraction(horizontal: &HorizontalCache, refracted: &mut Cache<(u64, bool), Directions>, work: &mut Directions,
+    config: &CacheConfig, epoch: f64, enabled: bool, times: &mut StepTimes,
 ) {
-    output.refracted = false;
-    if enabled {
-        times.measure_steps("Refraction", |times| {
-            let key = (horizontal.generation, true);
-            let refresh = times.measure("Refraction cache decision", || {
-                refracted
-                    .needs_refresh(&key, epoch, None, config.allows(Group::Refraction))
-            });
-            times.record_memory(times.last_memory_step(), || MemoryEvent::unknown_operation(BufferId::RefractedDirections,
-                if refresh { Operation::Refresh(refracted.stats.last_reason.expect("refresh reason")) } else { Operation::Reuse }));
-            if refresh {
-                times.measure("Refraction calculation", || refract_sky_positions(output));
-                record_direction_pass(times, output);
-                let positions = times.measure("Direction capture", || capture_directions(output));
-                record_direction_capture(times, BufferId::RefractedDirections, &positions);
-                let outcome = times.measure("Direction cache store", || {
-                    refracted.store(key, epoch, 0.0, positions)
-                });
-                times.record_store(BufferId::RefractedDirections, outcome);
-            } else {
-                times.measure("Direction restoration", || {
-                    restore_directions(output, refracted.value())
-                });
-                record_direction_restoration(times, BufferId::RefractedDirections, output);
-            }
-            output.refracted = true;
+    if !enabled { return; }
+    times.measure_steps("Refraction", |times| {
+        let key = (horizontal.generation, true);
+        let refresh = times.measure("Refraction cache decision", || refracted.needs_refresh(&key, epoch, None, config.allows(Group::Refraction)));
+        times.record_candidate_decision(times.last_memory_step(), BufferId::RefractedDirections, BufferId::RefractedDirections, refresh, refracted.stats.last_reason);
+        if !refresh { return; }
+        let input = horizontal.value();
+        prepare_direction_work(work, input.0.len(), input.1.len(), BufferId::RefractionWork, times);
+        times.measure("Refraction calculation", || {
+            work.0.extend(input.0.iter().copied().map(crate::astro::refract_direction));
+            work.1.extend(input.1.iter().copied().map(crate::astro::refract_direction));
+            work.2 = crate::astro::refract_direction(input.2);
         });
-    }
+        times.record_borrow(BufferId::HorizontalDirections, Access::ReadOnly, || direction_shape(input));
+        times.record_shape(BufferId::RefractionWork, Operation::Build, None, || direction_shape(work));
+        let completed = times.inspect_memory(|| direction_shape(work));
+        let displaced = times.inspect_memory(|| refracted.stored().map(direction_shape)).flatten();
+        let outcome = times.measure("Direction cache store", || refracted.store_reusing_pair(key, epoch, 0.0, work));
+        record_direction_commit(times, BufferId::RefractedDirections, BufferId::RefractionWork, completed, displaced, work, outcome);
+    });
 }
 
-fn capture_directions(sky: &ObservedSky) -> Directions {
-    (
-        sky.stars.iter().map(|s| s.position).collect(),
-        sky.planets.iter().map(|p| p.position).collect(),
-        sky.moon.position,
-    )
-}
-pub(super) fn restore_directions(sky: &mut ObservedSky, directions: &Directions) {
-    for (star, &p) in sky.stars.iter_mut().zip(&directions.0) {
-        star.position = p;
-    }
-    for (planet, &p) in sky.planets.iter_mut().zip(&directions.1) {
-        planet.position = p;
-    }
-    sky.moon.position = directions.2;
+fn prepare_direction_work(work: &mut Directions, stars: usize, planets: usize, buffer: BufferId, times: &mut StepTimes) {
+    let before = times.inspect_memory(|| direction_shape(work));
+    times.measure("Direction work preparation", || {
+        work.0.clear(); work.1.clear();
+        work.0.reserve(stars); work.1.reserve(planets);
+    }); // allocations persist after commit; interrupted work is discarded before retry
+    times.record_shape(buffer, Operation::Reserve, before, || direction_shape(work));
 }
 
+fn update_horizontal_sources(apparent: crate::state::ApparentDirections<'_>, sources: &mut crate::state::HorizontalSources, times: &mut StepTimes) {
+    let before = times.inspect_memory(|| BufferShape::vector(&sources.regions, IndexDomain::Regions));
+    let changed = times.measure("Horizontal request preparation", || {
+        let body_generation = Some(apparent.body_generation());
+        if sources.body_generation == body_generation && apparent.dependencies().eq(sources.regions.iter().copied()) { return false; }
+        sources.regions.clear();
+        sources.regions.extend(apparent.dependencies()); // retain only ordered spans and versions, with reusable capacity
+        sources.body_generation = body_generation;
+        sources.revision = sources.revision.checked_add(1).expect("horizontal request revision exhausted");
+        true
+    });
+    times.record_shape(BufferId::HorizontalRequest, if changed { Operation::Build } else { Operation::Reuse }, before,
+        || BufferShape::vector(&sources.regions, IndexDomain::Regions));
+}

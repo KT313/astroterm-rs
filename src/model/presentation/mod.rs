@@ -9,10 +9,13 @@ pub use projection::{
     ProjectedStar, ProjectedPlanet, ProjectedMoon, ProjectedArc, ProjectedConstellation, ProjectedSky,
     ProjectionData, ProjectedStars,
 };
-pub use rendering::{RenderOptions, TerminalViewport, Frame, Appearance};
+pub use rendering::{RenderOutcome, RenderProjection, RenderOptions, TerminalViewport, Frame, Appearance};
 pub use metadata::{ObserverTimeZone, MetadataField};
 pub(crate) use projection::{
-    RegionalProjectionKey, RegionalOrderKey, RegionalDrawRecord, DrawRecord, StarKey, BodyKey as ProjectionBodyKey, ConstellationKey,
+    RegionalStarIndex, RegionalProjectionKey, RegionalOrderKey, RegionalDrawRecord, DrawRecord, StarKey, BodyKey as ProjectionBodyKey, ConstellationKey,
     HorizonGeometry,
 };
-pub(crate) use rendering::{SceneKey, StarPixel, PixelStarKey, CharacterStarKey, StarKeys, Glyph};
+pub(crate) use rendering::{KittyDisplayKey, RenderResultVersion, PixelFrameKey, KittyEncodingKey, ProductionRasterKey, RasterRegion, SceneKey, StarPixel, PixelStarKey, CharacterStarKey, StarKeys, Glyph};
+
+mod text;
+pub(crate) use text::{PixelLabel, PixelLabelKey, PixelTextKey, PixelTextCache};

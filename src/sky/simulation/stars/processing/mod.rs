@@ -1,13 +1,11 @@
 //! Regional validity checks followed by bounded numerical passes. Catalog inputs are read-only.
 mod regions;
-mod assembly;
 #[cfg(test)] mod tests;
 use crate::{state::StellarMotionBuffers, model::StellarFields, timing::{StepTimes, BufferId, BufferShape, IndexDomain, Operation}};
 
-pub(crate) fn update_stellar_motion(mut storage: StellarMotionBuffers<'_>, catalog: StellarFields<'_>, epoch: f64, times: &mut StepTimes) -> usize {
+pub(crate) fn update_stellar_motion(mut storage: StellarMotionBuffers<'_>, catalog: StellarFields<'_>, epoch: f64, times: &mut StepTimes) {
     regions::check_requested_regions(&mut storage, epoch, times); // inspect one timestamp/flag per requested region
     regions::refresh_regions(&mut storage, catalog, epoch, times); // calculate every row of expired regions
-    assembly::assemble_selected_output(&mut storage, epoch, times); // gather only rows needed by observation
 
     let before = times.inspect_memory(|| BufferShape::vector(storage.scratch, IndexDomain::Catalog));
     times.measure("Stellar scratch clear", || storage.scratch.clear());
@@ -15,5 +13,4 @@ pub(crate) fn update_stellar_motion(mut storage: StellarMotionBuffers<'_>, catal
     let before = times.inspect_memory(|| BufferShape::vector(storage.refresh_regions, IndexDomain::Regions));
     times.measure("Stellar refresh list clear", || storage.refresh_regions.clear());
     times.record_shape(BufferId::StellarRefreshRegions, Operation::Clear, before, || BufferShape::vector(storage.refresh_regions, IndexDomain::Regions));
-    storage.motion.value().1
 }

@@ -23,10 +23,7 @@ fn times(enabled: bool) -> StepTimes {
 fn frame(simulation: &mut SimulationState, cache: &mut PipelineCache, sky: &mut ObservedSky, threshold: f64, enabled: bool) -> StepTimes {
     let time = FrameTime::from_utc(J2000);
     let mut times = times(enabled);
-    simulation.begin_frame();
-    sky::update_solar_system(simulation, time, &[], &mut times).unwrap();
-    let mut observer = cached::prepare_cached_observer(cache, simulation, time, Observer::default()).unwrap();
-    times.measure_steps("Light-time sampling", |times| cached::prepare_cached_light_time(cache, simulation, &mut observer, times)).unwrap();
+    let observer = cached::prepare_frame(cache, simulation, time, Observer::default(), &mut times).unwrap();
     cached::observe_cached_sky(cache, simulation, &observer, threshold, true, SkyRegion::All, sky, &mut times).unwrap();
     times
 }
@@ -44,7 +41,9 @@ fn observation_hits_equal_refresh_and_bypass_report_executed_work_only() {
     let mut cache = PipelineCache::default();
     let mut sky = ObservedSky::new(catalog.clone());
     let first = frame(&mut simulation, &mut cache, &mut sky, 20.0, true);
-    assert!(operations(&first, BufferId::BrightnessCandidates).contains(&Operation::Store { value_changed: true }));
+    assert!(operations(&first, BufferId::RegionalBrightness).contains(&Operation::Build));
+    assert!(operations(&first, BufferId::HorizontalRequest).contains(&Operation::Build));
+    assert!(!first.trace().unwrap().steps.iter().any(|step| ["Brightness output assembly", "Correction index selection", "Correction cache store"].contains(&step.name)));
     let subtraction = first.trace().unwrap().steps.iter().find(|step| step.name == "Observer subtraction").unwrap();
     assert!(subtraction.memory_events.iter().any(|event| matches!(event.event,
         MemoryEvent::Borrow { buffer: BufferId::BodySamples, access: astroterm::timing::Access::ReadOnly, shape }
@@ -52,20 +51,36 @@ fn observation_hits_equal_refresh_and_bypass_report_executed_work_only() {
     assert!(!subtraction.memory_events.iter().any(|event| matches!(event.event,
         MemoryEvent::Operation { buffer: BufferId::BodySamples, operation: Operation::Copy, .. })));
 
+    let steps = &first.trace().unwrap().steps;
+    let aberration = steps.iter().position(|step| step.name == "Aberration").unwrap();
+    let children: Vec<_> = steps[aberration + 1..].iter().take_while(|step| step.depth > steps[aberration].depth).collect();
+    assert!(children.iter().all(|step| !["Direction capture", "Direction restoration", "Direction cache store", "Apparent cache decision"].contains(&step.name)));
+    assert!(!children.iter().flat_map(|step| &step.memory_events).any(|record| matches!(record.event,
+        MemoryEvent::Operation { buffer: BufferId::ObservedStars, operation: Operation::Write | Operation::Copy, .. })));
+    let rotation = steps.iter().find(|step| step.name == "Horizon rotation calculation").unwrap();
+    assert!(rotation.memory_events.iter().any(|record| matches!(record.event,
+        MemoryEvent::Borrow { buffer: BufferId::RegionalApparent, access: astroterm::timing::Access::ReadOnly, .. })));
+    assert!(rotation.memory_events.iter().any(|record| matches!(record.event,
+        MemoryEvent::Borrow { buffer: BufferId::BodyApparentDirections, access: astroterm::timing::Access::ReadOnly, .. })));
+
     let expected = sky.clone();
     let second = frame(&mut simulation, &mut cache, &mut sky, 20.0, true);
     assert_eq!(sky, expected);
-    assert_eq!(operations(&second, BufferId::BrightnessCandidates), [Operation::Reuse]);
-    assert!(operations(&second, BufferId::MotionSamples).contains(&Operation::Reuse));
+    assert_eq!(operations(&second, BufferId::HorizontalRequest), [Operation::Reuse]);
+    assert_eq!(operations(&second, BufferId::RegionalBrightness), [Operation::Reuse]);
+    assert!(operations(&second, BufferId::StellarSamples).contains(&Operation::Reuse));
     assert!(!second.trace().unwrap().steps.iter().any(|s| s.name == "Stellar batches"));
     assert!(!second.trace().unwrap().steps.iter().any(|s| s.name == "Direction capture"));
     let restoration: Vec<_> = second.trace().unwrap().steps.iter().filter(|s| s.name == "Direction restoration").collect();
-    assert_eq!(restoration.len(), 3);
-    for (step, buffer) in restoration.iter().zip([BufferId::ApparentDirections, BufferId::HorizontalDirections, BufferId::RefractedDirections]) {
-        assert!(step.memory_events.iter().all(|event| matches!(event.event, MemoryEvent::Operation { buffer: id, .. } if id == buffer)));
+    assert!(restoration.is_empty());
+    for buffer in [BufferId::HorizontalDirections, BufferId::RefractedDirections] {
+        assert!(operations(&first, buffer).contains(&Operation::Move));
+        assert!(!operations(&first, buffer).contains(&Operation::Copy));
+        assert!(operations(&second, buffer).contains(&Operation::Reuse));
+        assert!(!operations(&second, buffer).contains(&Operation::Copy));
     }
     let changed_key = frame(&mut simulation, &mut cache, &mut sky, 21.0, true);
-    assert!(operations(&changed_key, BufferId::BrightnessCandidates).contains(&Operation::Store { value_changed: false }));
+    assert!(operations(&changed_key, BufferId::RegionalBrightness).contains(&Operation::Build));
     cache.invalidate_view();
     let invalidated = frame(&mut simulation, &mut cache, &mut sky, 21.0, true);
     assert!(operations(&invalidated, BufferId::RegionSelection).contains(&Operation::Refresh(RefreshReason::Invalidated)));
@@ -73,7 +88,10 @@ fn observation_hits_equal_refresh_and_bypass_report_executed_work_only() {
 
     let mut bypass = PipelineCache::new(CacheConfig::disabled());
     let bypassed = frame(&mut simulation, &mut bypass, &mut ObservedSky::new(catalog), 20.0, true);
-    assert!(operations(&bypassed, BufferId::BrightnessCandidates).contains(&Operation::Refresh(RefreshReason::Bypassed)));
+    assert!(operations(&bypassed, BufferId::RegionalBrightness).contains(&Operation::Build));
+    assert!(bypass.selection.stats().bypasses > 0);
+    assert!(!bypassed.trace().unwrap().steps.iter().flat_map(|s| &s.memory_events).any(|record| matches!(record.event,
+        MemoryEvent::Operation { buffer: BufferId::ValidatedCandidates, .. }))); // generic candidate buffers are not used in cached selection
 }
 
 #[test]
@@ -85,15 +103,13 @@ fn stellar_batch_trace_is_bounded_and_counts_all_appended_samples() {
     let traced = frame(&mut simulation, &mut cache, &mut sky, 99.0, true);
     assert_eq!(sky.stars.len(), count);
     let trace = traced.trace().unwrap();
-    let output = trace.steps.iter().find(|s| s.name == "Motion output assembly").unwrap();
-    assert_eq!(output.memory_events.len(), 1);
-    assert!(matches!(output.memory_events[0].event, MemoryEvent::Operation { elements: Some(n), .. } if n == count));
+    assert!(!trace.steps.iter().any(|s| s.name == "Motion output assembly" || s.name == "Motion cache store"));
     let lookup = trace.steps.iter().find(|s| s.name == "Stellar region decisions").unwrap();
     assert!(lookup.memory_events.len() <= 8);
     let calculated = trace.steps.iter().find(|s| s.name == "Motion and magnitude calculation").unwrap();
     assert!(calculated.memory_aggregated);
     let appended = calculated.memory_events.iter().find(|record| matches!(record.event,
-        MemoryEvent::Operation { buffer: BufferId::StellarSamples, operation: Operation::Append, .. })).unwrap();
+        MemoryEvent::Operation { buffer: BufferId::StellarOutputWork, operation: Operation::Append, .. })).unwrap();
     assert_eq!(appended.total_elements, Some(count));
     assert!(!trace.steps.iter().any(|s| s.name == "Region sample assembly"));
     assert!(!operations(&traced, BufferId::StellarScratch).contains(&Operation::Write));
@@ -136,7 +152,7 @@ fn failed_body_refresh_records_request_but_no_commit_or_downstream_operations() 
     assert!(cached::observe_cached_sky(&mut cache, &simulation, &observer, 20.0, true, SkyRegion::All, &mut sky, &mut traced).is_err());
     assert_eq!(sky, expected);
     assert_eq!(operations(&traced, BufferId::BodySamples), [Operation::Refresh(RefreshReason::Dependencies)]);
-    assert!(operations(&traced, BufferId::MotionSamples).is_empty());
+    assert!(!operations(&traced, BufferId::StellarOutputWork).contains(&Operation::Append));
 }
 
 #[test]
@@ -153,15 +169,16 @@ fn preparation_and_model_reuse_keep_their_actual_buffer_identities() {
     let time = FrameTime::from_utc(J2000);
     sky::update_solar_system(&mut simulation, time, &[], &mut traced).unwrap();
     sky::update_solar_system(&mut simulation, time, &[], &mut traced).unwrap();
-    for (name, buffer) in [("Planet samples", BufferId::PlanetSamples), ("Lunar samples", BufferId::LunarSamples), ("Orientation samples", BufferId::OrientationSamples)] {
+    for (name, buffer, work) in [("Planet samples", BufferId::PlanetSamples, BufferId::PlanetSampleWork), ("Lunar samples", BufferId::LunarSamples, BufferId::LunarSampleWork), ("Orientation samples", BufferId::OrientationSamples, BufferId::OrientationSampleWork)] {
         let steps: Vec<_> = traced.trace().unwrap().steps.iter().filter(|s| s.name == name).collect();
         assert_eq!(steps.len(), 2);
         assert!(steps[0].memory_events.iter().any(|event| matches!(event.event,
-            MemoryEvent::Operation { buffer: id, operation: Operation::Build, elements: Some(1), .. } if id == buffer)));
+            MemoryEvent::Operation { buffer: id, operation: Operation::Build, elements: Some(1), .. } if id == work)));
         assert!(steps[1].memory_events.iter().any(|event| matches!(event.event,
-            MemoryEvent::Operation { buffer: id, operation: Operation::Build, elements: Some(0), .. } if id == buffer)));
-        assert!(steps[1].memory_events.iter().any(|event| matches!(event.event,
-            MemoryEvent::Operation { buffer: id, operation: Operation::Copy, elements: Some(1), .. } if id == buffer)));
+            MemoryEvent::Operation { buffer: id, operation: Operation::Reuse, elements: Some(1), .. } if id == buffer)));
+        assert!(!steps[1].memory_events.iter().any(|event| matches!(event.event,
+            MemoryEvent::Operation { operation: Operation::Copy | Operation::Build | Operation::Move, .. })));
+
     }
 }
 

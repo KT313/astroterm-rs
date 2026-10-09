@@ -1,4 +1,4 @@
-//! Complete regional intrinsic samples, then selected-row output for observation.
+//! Complete regional intrinsic samples, borrowed directly by observation.
 mod pipeline;
 mod processing;
 #[path = "processing/diagnostics.rs"] mod diagnostics;

@@ -4,7 +4,6 @@ use astroterm::astro::{Observer, SimulationClock};
 use astroterm::cache::CacheStats;
 use astroterm::controls::apply_control;
 use astroterm::model::{View, Sky, FrameTime, ProjectionViewport};
-use astroterm::sky::update_solar_system;
 use astroterm::state::{ObserverPreparationCache, ObservationCache, ProjectionCache, SimulationState, RenderingState};
 use astroterm::terminal::{FrameInput, Renderer};
 use astroterm::timing::StepTimes;
@@ -42,10 +41,10 @@ pub(crate) fn resolve_frame_time(single_frame: bool, start_julian_date: f64, clo
 }
 
 /// Prepare reception-time solar-system samples; catalog stars have a separate stage.
-pub(crate) fn simulate_solar_system_frame(simulation_state: &mut SimulationState, time: FrameTime, step_times: &mut StepTimes) -> io::Result<()> {
+pub(crate) fn simulate_solar_system_frame(simulation_state: &mut SimulationState, observer_cache: &mut ObserverPreparationCache, site: Observer, time: FrameTime, step_times: &mut StepTimes) -> io::Result<()> {
     step_times
         .measure_steps("Solar-system simulation", |steps| {
-            update_solar_system(simulation_state, time, &[], steps)
+            astroterm::sky::begin_solar_system_frame(simulation_state, observer_cache, time, site, steps)
         })
         .map_err(io::Error::other)
 }
@@ -75,7 +74,7 @@ pub(crate) fn simulate_stars_frame(stars: &mut astroterm::state::StellarSimulati
 /// Apply viewer-dependent corrections to the completed model results.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn observe_frame<'a>(
-    observation: &'a mut ObservationCache, stars: astroterm::state::StellarResults<'_>, bodies: astroterm::state::PreparedBodies<'_>,
+    observation: &'a mut ObservationCache, stars: astroterm::state::StellarResults<'a>, bodies: astroterm::state::PreparedBodies<'_>,
     observer: &astroterm::model::ObserverState, threshold: f64, refraction: bool, sky: &'a mut Sky, times: &mut StepTimes,
 ) -> astroterm::state::RegionalObservation<'a> {
     times.measure_steps("Observation", |times| astroterm::sky::observe_cached_regions(observation, stars, bodies, observer, threshold, refraction, sky, times))
@@ -94,20 +93,20 @@ pub(crate) fn project_frame(
 /// Publish cache statistics, borrow the completed geometry and render it without copying the projected data.
 /// Existing assembly/raster/presentation timers stay inside their original operations.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn render_projected_frame(renderer: &mut Renderer, rendering: &mut RenderingState, sky: &Sky, view: &View,
+pub(crate) fn render_projected_frame(renderer: &mut Renderer, rendering: &mut RenderingState, sky: astroterm::state::RegionalObservation<'_>, view: &View,
     viewport: ProjectionViewport, projection: &ProjectionCache, observation_stats: CacheStats, utc: f64,
-    clock: &SimulationClock, observer: &Observer, times: &mut StepTimes) -> io::Result<()> {
+    clock: &SimulationClock, observer: &Observer, times: &mut StepTimes) -> io::Result<astroterm::model::RenderOutcome> {
     renderer.set_cache_diagnostics(rendering, observation_stats, projection.stats()); // update the debug display's reuse counts
     let projected = borrow_frame_projection(sky, view, viewport, projection, times); // read completed geometry without copying it
-    renderer.render_frame(rendering, &projected, view, utc, clock, observer, times)   // assemble the image and text, then present them
+    renderer.render_prepared_frame(rendering, &projected, view, utc, clock, observer, times)   // assemble the image and text, then present them
 }
 
 /// Borrow the completed projection once, then describe that same view outside the assembly timer.
-fn borrow_frame_projection<'a>(sky: &'a Sky, view: &View, viewport: astroterm::model::ProjectionViewport,
-    projection_cache: &'a ProjectionCache, times: &mut StepTimes) -> astroterm::model::ProjectedSky<'a> {
-    let projected = times.measure("Projected view assembly", || astroterm::projection::borrow_projected(projection_cache, sky, view, viewport));
-    record_projected_memory(times, &projected);
-    times.describe("Projected view assembly", || format!("ordered stars={}; projected-reference records allocated=0; geometry borrowed", projected.stars.len()));
+fn borrow_frame_projection<'a>(sky: astroterm::state::RegionalObservation<'a>, view: &View, viewport: astroterm::model::ProjectionViewport,
+    projection_cache: &'a ProjectionCache, times: &mut StepTimes) -> astroterm::model::RenderProjection<'a> {
+    let projected = times.measure("Projected view assembly", || astroterm::projection::borrow_render_projection(projection_cache, sky, view, viewport));
+    record_projected_memory(times, projected.sky());
+    times.describe("Projected view assembly", || format!("ordered stars={}; projected-reference records allocated=0; geometry borrowed", projected.sky().stars.len()));
     projected
 }
 

@@ -3,6 +3,7 @@ use crate::cache::{Cache, CacheConfig};
 use crate::model::{ObserverKey, ObserverState, ObservationBodyKey, BodySamples};
 #[derive(Default)]
 pub struct ObserverPreparationCache {
+    pub(crate) solar_request: Option<((super::StageId, u64), [u64; 3])>,
     pub(crate) identity: super::StageId,
     pub(crate) config: CacheConfig,
     pub(crate) observer: Cache<ObserverKey, ObserverState>,
@@ -27,6 +28,27 @@ impl ObserverPreparationCache {
     }
     pub(crate) fn borrow_light_time(&mut self) -> LightTimeBuffers<'_> {
         LightTimeBuffers { config: &self.config, light_time: &mut self.light_time }
+    }
+    pub(crate) fn source_id(&self) -> u64 { self.identity.value() }
+    pub(crate) fn permits_solar_reuse(&self) -> bool {
+        use crate::cache::Group;
+        [Group::ObserverState, Group::SolarSystemObservation].into_iter().all(|group| self.config.allows(group))
+    }
+    pub(crate) fn invalidate_solar_request(&mut self) {
+        self.solar_request = None;
+        self.observer.invalidate();
+        self.light_time.invalidate();
+        self.bodies.invalidate();
+    }
+    fn result_versions(&self) -> [u64; 3] { [self.observer.generation, self.light_time.generation, self.bodies.generation] }
+    pub(crate) fn complete_solar_request(&mut self, token: (super::StageId, u64)) {
+        self.solar_request = Some((token, self.result_versions())); // bind completion to the actual companion results, not just this owner
+    }
+    pub(crate) fn completed_observer(&self, token: (super::StageId, u64)) -> Option<ObserverState> {
+        if self.solar_request != Some((token, self.result_versions())) || self.observer.has_been_invalidated || self.light_time.has_been_invalidated || self.bodies.has_been_invalidated { return None; }
+        let observer = *self.light_time.stored()?;
+        if self.bodies.key()?.0 != observer || self.bodies.stored().is_none() { return None; }
+        Some(observer)
     }
     pub fn observer_report(&self) -> crate::cache::CacheReport { self.observer.report("Observer geometry") }
     pub fn light_time_report(&self) -> crate::cache::CacheReport { self.light_time.report("Light-time sampling") }
