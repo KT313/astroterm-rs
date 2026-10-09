@@ -51,12 +51,14 @@ pub fn prepare_camera(view: &View) -> CartesianCamera {
 }
 
 /// Project a unit horizontal vector directly, preserving singular and antipodal handling.
+/// Inlined into the per-star loops; the guards avoid `hypot` (a library call) because |x|, |y| <= 1 cannot overflow.
+#[inline]
 pub fn project_camera(camera: CartesianCamera, direction: Vector3) -> Option<ScreenPoint> {
     let c = camera.forward.dot(direction).clamp(-1.0, 1.0);
     let (x, y) = (camera.right.dot(direction), camera.up.dot(direction));
     match camera.kind {
         ProjectionKind::Stereographic => {
-            if 1.0 + c <= 0.0 || (c < 0.0 && x.hypot(y) < 1e-12) {
+            if 1.0 + c <= 0.0 || (c < 0.0 && x * x + y * y < 1e-24) {
                 return None;
             }
             let scale = camera.scale / (1.0 + c);
@@ -66,7 +68,7 @@ pub fn project_camera(camera: CartesianCamera, direction: Vector3) -> Option<Scr
             })
         }
         ProjectionKind::Equidistant => {
-            let sine = x.hypot(y);
+            let sine = (x * x + y * y).sqrt();
             if sine < 1e-12 && c < 0.0 {
                 return Some(ScreenPoint {
                     x: 0.0,

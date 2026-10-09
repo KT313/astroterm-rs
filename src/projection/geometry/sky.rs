@@ -12,13 +12,21 @@ use crate::model::{
 };
 
 /// Map Cartesian projection coordinates to signed row/column cells.
+/// Inlined into the per-star loops; `round_half_away` replaces `f64::round`, a library call on baseline x86-64.
+#[inline]
 pub fn project_to_cell(viewport: ProjectionViewport, point: ScreenPoint) -> Cell {
     let snap = |v: f64| if v.abs() < 1e-12 { 0.0 } else { v };
     let (ry, rx) = ((viewport.height as f64 - 1.0) / 2.0, (viewport.width as f64 - 1.0) / 2.0);
     (
-        (-snap(point.y) * ry + ry).round() as i32,
-        (snap(point.x) * rx + rx).round() as i32,
+        round_half_away(-snap(point.y) * ry + ry),
+        round_half_away(snap(point.x) * rx + rx),
     )
+}
+
+/// `v.round() as i32` without the library call: add a half toward the sign, then truncate toward zero.
+#[inline]
+fn round_half_away(v: f64) -> i32 {
+    (v + 0.5_f64.copysign(v)) as i32
 }
 
 /// Map polar projection coordinates to signed row/column cells.
@@ -386,5 +394,26 @@ mod geometry_tests {
         let direction = project_light_direction(&View::default(), moon, sun).unwrap();
         assert!(direction.x > 0.0);
         assert!((direction.x.hypot(direction.y) - 1.0).abs() < 1e-12);
+    }
+}
+
+#[cfg(test)]
+mod rounding_tests {
+    use super::*;
+
+    #[test]
+    fn round_half_away_matches_f64_round_for_cell_coordinates() {
+        let mut values = vec![0.0, -0.0, 0.3, -0.3, 0.5, -0.5, 1.5, -1.5, 2.5, -2.5, 119.49, 119.5, -1e-13, 1e-13, 4095.5, -4095.5];
+        values.extend((-2000..2000).map(|i| f64::from(i) * 0.37 + 0.001));
+        for v in values {
+            assert_eq!(round_half_away(v), v.round() as i32, "{v}");
+        }
+        let viewport = ProjectionViewport { width: 240, height: 120 };
+        for (x, y) in [(0.0, 0.0), (1.0, -1.0), (-1.0, 1.0), (0.37, -0.91), (1.6, -2.2), (-1.6, 2.2)] {
+            let point = ScreenPoint { x, y };
+            let (ry, rx) = ((viewport.height as f64 - 1.0) / 2.0, (viewport.width as f64 - 1.0) / 2.0);
+            let reference = ((-y * ry + ry).round() as i32, (x * rx + rx).round() as i32);
+            assert_eq!(project_to_cell(viewport, point), reference);                   // also points beyond the visible disc
+        }
     }
 }
