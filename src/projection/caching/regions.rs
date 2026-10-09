@@ -1,49 +1,49 @@
-//! Cache decisions use region versions. Cells retain catalog indices; orders address membership-versioned region rows.
+//! Cache decisions use region versions. Each region's cells are its drawn stars in draw order (dimmest first), so
+//! the frame's drawing order is the regions' own records behind a span list; orders address membership-versioned rows.
 use std::cmp::Ordering;
 use std::sync::Arc;
 use crate::cache::{Cache, Group};
 use crate::astro::Vector3;
-use crate::model::{CartesianCamera, Cell, ObservedRegion, ProjectionViewport, RegionData, RegionalDrawRecord, View};
+use crate::model::{CartesianCamera, DrawnSpan, DrawnStar, ObservedRegion, ProjectionViewport, RegionalDrawRecord, StarStorage, View};
 use crate::state::{ProjectionCache, RegionalObservation};
 use crate::timing::{StepTimes, BufferId};
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::projection) fn project_regional_stars(storage: &mut ProjectionCache, observed: RegionalObservation<'_>, view: &View, viewport: ProjectionViewport, epoch: f64, camera: CartesianCamera, times: &mut StepTimes) {
     times.measure("Regional projection initialization", || prepare_region_storage(storage, observed));                                                // keep unrelated regions until their owner or catalog changes
+    let (sorted, reused_order) = times.measure_batches("Star draw order", |times| refresh_region_orders(storage, observed, epoch, times));   // the order first: each region is projected in it
     let (refreshed, reused, calculated) = times.measure_batches("Star projection", |times| refresh_region_cells(storage, observed, view, viewport, epoch, camera, times));
-    let (sorted, reused_order) = times.measure_batches("Star draw order", |times| refresh_region_orders(storage, observed, epoch, times));
-    assemble_regional_view(storage, observed, times);                                        // resolve current rows in region order only when regional output changes
+    times.measure("Regional span assembly", || assemble_spans(storage, observed));                                                          // one small record per region: where its cells sit in the paint order
     storage.regional_active = true;
-    times.describe("Star projection", || format!("regions refreshed={refreshed}; reused={reused}; drawable stars calculated={calculated}; requested regions={}; output visible stars={}; retained regions={}; dependency-only regional keys; catalog indices retained", observed.regions().len(), storage.regional_cells.len(), storage.regional_stars.iter().filter(|region| region.stored().is_some()).count()));
-    times.describe("Star draw order", || format!("regions sorted={sorted}; reused={reused_order}; output stars={}; regional magnitude/ID order; ordinary regions drawn independently, constellation region last; dimmest first within each region", storage.regional_cells.len()));
+    let drawn = drawn_stars(&storage.regional_spans);
+    times.describe("Star draw order", || format!("regions sorted={sorted}; reused={reused_order}; output stars={drawn}; regional magnitude/ID order; ordinary regions drawn independently, constellation region last; dimmest first within each region"));
+    times.describe("Star projection", || format!("regions refreshed={refreshed}; reused={reused}; drawable stars calculated={calculated}; requested regions={}; output visible stars={drawn}; retained regions={}; dependency-only regional keys; cells in draw order with catalog indices and colours", observed.regions().len(), storage.regional_stars.iter().filter(|region| region.stored().is_some()).count()));
 }
 
 fn prepare_region_storage(storage: &mut ProjectionCache, observed: RegionalObservation<'_>) {
     let catalog = observed.sky().catalog;
     let changed = storage.regional_owner != Some(observed.source_id()) || !storage.regional_catalog.as_ref().is_some_and(|old| Arc::ptr_eq(old, catalog));
     if !changed { return; }
+    assert!(u32::try_from(catalog.stars.len()).is_ok(), "drawn records hold catalog indices as u32");   // guaranteed by catalog loading, checked once per catalog
     storage.source_revision = storage.source_revision.checked_add(1).expect("projection source revision exhausted");
     storage.regional_stars = (0..catalog.grid.offsets.len() - 1).map(|_| Cache::default()).collect(); // ordinary cells plus the exclusive constellation region
     storage.regional_orders = (0..catalog.grid.offsets.len() - 1).map(|_| Cache::default()).collect();
     storage.regional_catalog = Some(catalog.clone());
     storage.regional_owner = Some(observed.source_id());
     storage.regional_stats = Default::default();
-    storage.assembled_for.clear();
-    storage.assembly_valid = false;
-    storage.region_cell_scratch.clear();
+    storage.regional_spans.clear();
     storage.stale_slots.clear();
     storage.regional_cell_work.clear();
     storage.regional_direction_work.clear();
     storage.regional_order_work.clear();
-    storage.regional_ranges.clear();
 }
 
 #[allow(clippy::too_many_arguments)]
 fn refresh_region_cells(storage: &mut ProjectionCache, observed: RegionalObservation<'_>, view: &View, viewport: ProjectionViewport, epoch: f64, camera: CartesianCamera, times: &mut StepTimes) -> (usize, usize, usize) {
     let reuse = storage.config.allows(Group::Projection);
-    let ProjectionCache { regional_stars, regional_cell_work: work, regional_direction_work: directions, regional_stats, stale_slots, .. } = storage;
+    let ProjectionCache { regional_stars, regional_orders, regional_cell_work: work, regional_direction_work: directions, regional_stats, stale_slots, .. } = storage;
     let stats_before = *regional_stats;
-    let region_key = |region: &ObservedRegion| ((region.selection_generation, region.apparent_generation), observed.horizon_rotation(), observed.refraction_enabled(), *view, viewport);
+    let region_key = |region: &ObservedRegion| ((region.selection_generation, region.apparent_generation, regional_orders[region.region].generation), observed.horizon_rotation(), observed.refraction_enabled(), *view, viewport);
     stale_slots.clear();
     times.measure("Regional projection decision", || {                                     // one timer per pass, not one per region
         for (slot, region) in observed.regions().iter().enumerate() {
@@ -55,19 +55,23 @@ fn refresh_region_cells(storage: &mut ProjectionCache, observed: RegionalObserva
     });
     let mut calculated = 0;
     times.measure("Regional visible star calculation", || {
+        let sky = observed.sky();
+        let catalog = &sky.catalog.stars;
         for &slot in stale_slots.iter() {
             let region = &observed.regions()[slot];
-            let stars = observed.sky().stars.region(slot, region);                          // resolve the region's columns once
+            let stars = sky.stars.region(slot, region);                                     // resolve the region's columns once
+            let order = regional_orders[region.region].value();                             // the region's drawable rows, dimmest first
             work.clear();                                                                   // one shared scratch; grows only when a region needs more room
-            calculated += match (stars.apparent_frame(), stars.apparent_directions()) {
-                (Some(frame), Some(apparent)) if !frame.refraction => project_region_rows(&stars, crate::projection::rotate_camera_into(camera, frame.horizon), viewport, work, |row| apparent[row]), // rotate three camera axes once instead of every star
+            match (stars.apparent_frame(), stars.apparent_directions()) {
+                (Some(frame), Some(apparent)) if !frame.refraction => project_region_rows(catalog, order, crate::projection::rotate_camera_into(camera, frame.horizon), viewport, work, |row| apparent[row]), // rotate three camera axes once instead of every star
                 (Some(frame), Some(apparent)) => {                                            // refraction bends each star after its rotation: rotate and refract the region into a small scratch, then project it (a fused per-star chain measured a third slower)
                     directions.clear();
                     directions.extend(apparent.iter().map(|&direction| frame.to_horizontal(direction)));
-                    project_region_rows(&stars, camera, viewport, work, |row| directions[row])
+                    project_region_rows(catalog, order, camera, viewport, work, |row| directions[row])
                 }
-                _ => project_region_rows(&stars, camera, viewport, work, |row| stars.position(row)), // owned rows are horizontal already
-            };
+                _ => project_region_rows(catalog, order, camera, viewport, work, |row| stars.position(row)), // owned rows are horizontal already
+            }
+            calculated += order.len();
             let cache = &mut regional_stars[region.region];
             let before = cache.stats;
             cache.store_in_place(region_key(region), epoch, 0.0, |cells| crate::cache::adopt_work(cells, work)); // compare once, copy into the region's own allocation
@@ -79,18 +83,17 @@ fn refresh_region_cells(storage: &mut ProjectionCache, observed: RegionalObserva
     (stale_slots.len(), observed.regions().len() - stale_slots.len(), calculated)
 }
 
-/// Project the drawable rows of one region into `work` with the camera matching the frame `direction` reads in.
-/// Returns how many rows were projected; only the visible ones are kept.
+/// Project one region's drawable rows in their draw order into `work`, with the camera matching the frame
+/// `direction` reads in. Only the visible stars are kept, each with its catalog index, colour and magnitude, so
+/// the records are what the raster and label passes read. A region's directions fit the cache, so reading them
+/// in draw order costs nothing extra; the pass is bound by the sequential record traffic.
 #[inline]
-fn project_region_rows(stars: &RegionData<'_>, camera: CartesianCamera, viewport: ProjectionViewport, work: &mut Vec<(usize, Cell)>, direction: impl Fn(usize) -> Vector3) -> usize {
-    let mut calculated = 0;
-    for row in 0..stars.len() {
-        if !stars.drawable(row) { continue; }
-        calculated += 1;
-        let Some(point) = crate::projection::project_camera(camera, direction(row)) else { continue; };
-        if point.is_visible() { work.push((stars.source_index(row), crate::projection::project_to_cell(viewport, point))); }
+fn project_region_rows(catalog: &StarStorage, order: &[RegionalDrawRecord], camera: CartesianCamera, viewport: ProjectionViewport, work: &mut Vec<DrawnStar>, direction: impl Fn(usize) -> Vector3) {
+    for record in order {
+        let Some(point) = crate::projection::project_camera(camera, direction(record.row as usize)) else { continue; };
+        if !point.is_visible() { continue; }
+        work.push(DrawnStar { source_index: record.source_index, color: catalog.display_color(record.source_index as usize).rgb(), cell: crate::projection::project_to_cell(viewport, point), magnitude: record.magnitude });
     }
-    calculated
 }
 
 fn refresh_region_orders(storage: &mut ProjectionCache, observed: RegionalObservation<'_>, epoch: f64, times: &mut StepTimes) -> (usize, usize) {
@@ -113,8 +116,8 @@ fn refresh_region_orders(storage: &mut ProjectionCache, observed: RegionalObserv
             let sky = observed.sky();
             let stars = sky.stars.region(slot, region);
             work.clear();                                                                   // one shared scratch; grows only when a region needs more room
-            work.extend((0..stars.len()).filter(|&row| stars.drawable(row)).map(|row| (row, stars.magnitude(row), sky.catalog.stars.id(stars.source_index(row)))));
-            work.sort_unstable_by(compare_records);
+            work.extend((0..stars.len()).filter(|&row| stars.drawable(row)).map(|row| RegionalDrawRecord { row: row as u32, source_index: stars.source_index(row) as u32, magnitude: stars.magnitude(row) }));
+            work.sort_unstable_by(|a, b| compare_records(&sky.catalog.stars, a, b));
             let cache = &mut regional_orders[region.region];
             let before = cache.stats;
             cache.store_in_place(region_key(region), epoch, 0.0, |order| crate::cache::adopt_work(order, work)); // compare once, copy the sorted records into the region's own allocation
@@ -133,50 +136,30 @@ fn add_stats(total: &mut crate::cache::CacheStats, before: crate::cache::CacheSt
     total.last_reason = after.last_reason;
 }
 
-fn compare_records(a: &RegionalDrawRecord, b: &RegionalDrawRecord) -> Ordering {
-    if a.1 == b.1 { a.2.cmp(&b.2) } else { b.1.total_cmp(&a.1) }                              // +0 and -0 share the same brightness, matching the exact fallback
+/// Dimmest first; equal magnitudes (+0 and -0 are equal, matching the exact fallback) are ordered by ascending
+/// catalog id, read only for such ties.
+fn compare_records(catalog: &StarStorage, a: &RegionalDrawRecord, b: &RegionalDrawRecord) -> Ordering {
+    if a.magnitude == b.magnitude { catalog.id(a.source_index as usize).cmp(&catalog.id(b.source_index as usize)) } else { b.magnitude.total_cmp(&a.magnitude) }
 }
 
-fn assembled_region_key(storage: &ProjectionCache, region: &ObservedRegion) -> (usize, usize, usize, u64, u64) {
-    (region.region, region.start, region.end, storage.regional_stars[region.region].generation, storage.regional_orders[region.region].generation)
-}
-
-fn assemble_regional_view(storage: &mut ProjectionCache, observed: RegionalObservation<'_>, times: &mut StepTimes) {
-    let reuse = times.measure("Regional assembly decision", || storage.assembly_valid
-        && storage.config.allows(Group::Projection) && storage.config.allows(Group::DrawOrder)
-        && observed.regions().iter().map(|region| assembled_region_key(storage, region)).eq(storage.assembled_for.iter().copied()));
-    if reuse { return; }                                                                    // compare only small metadata before reusing the drawable cells
-    times.measure("Regional projected view assembly", || assemble_visible_cells(storage, observed));
-    storage.assembled_for.clear();
-    for region in observed.regions() { storage.assembled_for.push(assembled_region_key(storage, region)); }
-    storage.assembly_valid = true;
-}
-
-fn assemble_visible_cells(storage: &mut ProjectionCache, observed: RegionalObservation<'_>) {
-    storage.regional_cells.clear();
-    storage.regional_ranges.clear();
+/// The paint order is the ordinary regions in request order, then the sky-wide constellation group on top. Each
+/// region's cells are already in draw order, so one span per region is all the frame's drawing order needs.
+fn assemble_spans(storage: &mut ProjectionCache, observed: RegionalObservation<'_>) {
+    let ProjectionCache { regional_spans: spans, regional_stars, .. } = storage;
+    spans.clear();
     let constellation = crate::constants::CONSTELLATION_REGION;
     let regions = observed.regions().iter().enumerate().filter(|(_, region)| region.region != constellation)
-        .chain(observed.regions().iter().enumerate().filter(|(_, region)| region.region == constellation)); // the sky-wide constellation group is always painted last
+        .chain(observed.regions().iter().enumerate().filter(|(_, region)| region.region == constellation));
+    let mut start = 0;
     for (slot, region) in regions {
-        let sky = observed.sky();
-        let stars = sky.stars.region(slot, region);
-        storage.region_cell_scratch.clear();
-        storage.region_cell_scratch.resize(stars.len(), None);                              // reuse a small lookup for just this region
-        let mut current = 0;
-        for &(source, cell) in storage.regional_stars[region.region].value() {
-            while stars.source_index(current) < source { current += 1; }
-            assert_eq!(stars.source_index(current), source, "regional projection membership must match its observation version");
-            storage.region_cell_scratch[current] = Some(cell);
-        }
-        let start = storage.regional_cells.len();
-        for &(row, _, _) in storage.regional_orders[region.region].value() {
-            if let Some(cell) = storage.region_cell_scratch[row] { storage.regional_cells.push((crate::model::RegionalStarIndex { region_slot: slot.try_into().expect("region slot fits u32"), observed_index: (region.start + row).try_into().expect("catalog row count fits u32") }, cell)); }
-        }
-        storage.regional_ranges.push((start, storage.regional_cells.len()));
+        let cells = &regional_stars[region.region];
+        let end = start + cells.value().len();
+        spans.push(DrawnSpan { slot, region: region.region, start, end, generation: cells.generation });
+        start = end;
     }
-    storage.region_cell_scratch.clear();                                                   // keep capacity without retaining stale cells
 }
+
+fn drawn_stars(spans: &[DrawnSpan]) -> usize { spans.last().map_or(0, |span| span.end) }
 
 #[cfg(test)]
 mod tests {
@@ -226,17 +209,17 @@ mod tests {
                 expected.stars.iter().filter(move |star| rows.iter().any(|row| row.source_index == star.star.source_index))
             }).collect();
         assert_eq!(actual.stars.iter().collect::<Vec<_>>(), expected_stars);
-        let mut visited = Vec::new();
-        actual.stars.visit_drawn(|index, star| visited.push((index, star.source_index, star.magnitude, star.cell)));
-        let through_views: Vec<_> = actual.stars.iter().enumerate().map(|(index, s)| (index, s.star.source_index, s.star.magnitude, s.cell.unwrap())).collect();
-        assert_eq!(visited, through_views);                                                 // region columns agree with the per-star views
+        let drawn: Vec<_> = actual.stars.drawn().enumerate().map(|(index, star)| (index, star.source_index as usize, star.magnitude, star.cell, star.color)).collect();
+        let through_views: Vec<_> = actual.stars.iter().enumerate().map(|(index, s)| (index, s.star.source_index, s.star.magnitude, s.cell.unwrap(), s.star.display_color().rgb())).collect();
+        assert_eq!(drawn, through_views);                                                   // the stored records agree with the per-star views
+        assert_eq!(actual.stars.iter().rev().map(|s| s.star.source_index).collect::<Vec<_>>(), through_views.iter().rev().map(|s| s.1).collect::<Vec<_>>());
         for range in actual.stars.sorted_ranges() {
             let mut reversed = Vec::new();
-            actual.stars.visit_range(range.clone(), true, |index, _| { reversed.push(index); true });
-            assert_eq!(reversed, range.clone().rev().collect::<Vec<_>>());
+            actual.stars.visit_range(&range, true, |index, _| { reversed.push(index); true });
+            assert_eq!(reversed, range.indices.clone().rev().collect::<Vec<_>>());
             let mut stopped = 0;
-            actual.stars.visit_range(range.clone(), false, |_, _| { stopped += 1; false });
-            assert_eq!(stopped, usize::from(!range.is_empty()));
+            actual.stars.visit_range(&range, false, |_, _| { stopped += 1; false });
+            assert_eq!(stopped, usize::from(!range.indices.is_empty()));
         }
         expected.stars = actual.stars;                                                      // geometry and metadata still match the independent reference
         assert!(actual == expected, "projected geometry or metadata changed");
@@ -303,12 +286,13 @@ mod tests {
         regions[1].motion_generation += 1;
         check(&mut storage, RegionalObservation { owner, ..token(&sky, &regions) }, &view, viewport);
         assert_eq!(storage.regional_orders[1].stats.refreshes, 2);
-        assert_eq!(storage.regional_stars[1].stats.refreshes, 1);                             // changing brightness alone does not move a star
+        assert_eq!(storage.regional_stars[1].stats.refreshes, 2);                             // the drawn records carry magnitudes and follow the new order
+        assert_eq!(storage.regional_stars[0].stats.refreshes, 3);                             // the other region's order is unchanged, so its cells are reused
         sky.stars[4].drawable = false;
         regions[1].selection_generation += 1;
         check(&mut storage, RegionalObservation { owner, ..token(&sky, &regions) }, &view, viewport);
         assert_eq!(storage.regional_orders[1].stats.refreshes, 3);
-        assert_eq!(storage.regional_stars[1].stats.refreshes, 2);
+        assert_eq!(storage.regional_stars[1].stats.refreshes, 3);
         sky.stars.remove(4);
         regions[1].end -= 1;
         regions[1].selection_generation += 1;
@@ -348,25 +332,21 @@ mod tests {
     }
 
     #[test]
-    fn unchanged_assembly_reuses_buffers_but_bypass_rebuilds_cells() {
+    fn spans_keep_their_allocation_and_place_every_region_in_paint_order() {
         let sky = fixture();
         let regions = descriptors();
         let observed = token(&sky, &regions);
         let view = View::default();
         let viewport = ProjectionViewport { width: 80, height: 40 };
+        assert_eq!(std::mem::size_of::<DrawnStar>(), 24);
+        assert_eq!(std::mem::size_of::<RegionalDrawRecord>(), 16);
         for config in [CacheConfig::default(), CacheConfig::disabled()] {
-            let reuse = config.enabled;
             let mut storage = ProjectionCache::new(config);
             check(&mut storage, observed, &view, viewport);
-            let cells = storage.regional_cells.as_ptr();
-            let ranges = storage.regional_ranges.as_ptr();
-            let mut times = StepTimes::with_trace(true);
-            project_cached_regions(&mut storage, observed, &view, viewport, 1.0, &mut times);
-            assert!(!times.trace().unwrap().steps.iter().any(|step| step.name == "Regional drawing order merge"));
-            let assembled = times.trace().unwrap().steps.iter().any(|step| step.name == "Regional projected view assembly");
-            assert_eq!(assembled, !reuse);
-            assert_eq!(storage.regional_cells.as_ptr(), cells);
-            assert_eq!(storage.regional_ranges.as_ptr(), ranges);
+            let spans = storage.regional_spans.as_ptr();
+            project_cached_regions(&mut storage, observed, &view, viewport, 1.0, &mut StepTimes::default());
+            assert_eq!(storage.regional_spans.as_ptr(), spans);
+            assert_eq!(storage.regional_spans.iter().map(|span| (span.slot, span.region, span.start, span.end, span.generation)).collect::<Vec<_>>(), [(0, 0, 0, 4, 1), (1, 1, 4, 8, 1), (2, 2, 8, 8, 1)]);
             assert_regional_result(&storage, observed, &view, viewport);
         }
     }
@@ -498,12 +478,13 @@ mod tests {
         storage.regional_order_work.push(storage.regional_orders[0].value()[0]);
         storage.regional_direction_work.reserve(32);
         storage.regional_direction_work.push(Vector3::default());
+        assert!(!storage.regional_spans.is_empty());
         let work = (storage.stale_slots.as_ptr(), storage.stale_slots.capacity(), storage.regional_cell_work.as_ptr(), storage.regional_cell_work.capacity(),
             storage.regional_order_work.as_ptr(), storage.regional_order_work.capacity(), storage.regional_direction_work.as_ptr(), storage.regional_direction_work.capacity());
         prepare_region_storage(&mut storage, token(&sky, &regions));                       // new observation owner with matching numerical data
         assert!(storage.regional_stars.iter().all(|entry| entry.stored().is_none()));
         assert!(storage.regional_orders.iter().all(|entry| entry.stored().is_none()));
-        assert!(!storage.assembly_valid);
+        assert!(storage.regional_spans.is_empty());
         assert!(storage.stale_slots.is_empty() && storage.regional_cell_work.is_empty() && storage.regional_order_work.is_empty() && storage.regional_direction_work.is_empty());
         assert_eq!((storage.stale_slots.as_ptr(), storage.stale_slots.capacity(), storage.regional_cell_work.as_ptr(), storage.regional_cell_work.capacity(),
             storage.regional_order_work.as_ptr(), storage.regional_order_work.capacity(), storage.regional_direction_work.as_ptr(), storage.regional_direction_work.capacity()), work);
@@ -519,18 +500,20 @@ mod tests {
         let saved = storage.regional_orders[0].value().clone();
         let saved_pointer = storage.regional_orders[0].value().as_ptr();
         let source = sky.stars[1].source_index;
-        sky.stars[1].source_index = usize::MAX;                                             // fail after the first replacement record has been written
+        sky.stars[1].source_index = u32::MAX as usize;                                      // fail while sorting: the tie with star 0 reads this out-of-range id
+        sky.stars[1].magnitude = sky.stars[0].magnitude;
         regions[0].selection_generation += 1;
         let interrupted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             refresh_region_orders(&mut storage, RegionalObservation { owner, ..token(&sky, &regions) }, 1.0, &mut times);
         }));
         assert!(interrupted.is_err());
-        assert_eq!(storage.regional_order_work.len(), 1);
+        assert_eq!(storage.regional_order_work.len(), 4);                                   // every replacement record was written before the sort failed
         assert!(storage.regional_orders[0].has_been_invalidated);
         assert_eq!(storage.regional_orders[0].stored().unwrap(), &saved);
         assert_eq!(storage.regional_orders[0].stored().unwrap().as_ptr(), saved_pointer);
         assert!(std::panic::catch_unwind(|| storage.regional_orders[0].value()).is_err());
         sky.stars[1].source_index = source;
+        sky.stars[1].magnitude = 1.0;
         refresh_region_orders(&mut storage, RegionalObservation { owner, ..token(&sky, &regions) }, 1.0, &mut times);
         assert_eq!(storage.regional_orders[0].value(), &saved);
         assert_eq!(storage.regional_orders[0].generation, 1);
@@ -562,7 +545,7 @@ mod tests {
         let row = inventory.rows.iter().find(|row| row.path.ends_with("regional_order_work") && row.kind == crate::cache::Kind::Heap).unwrap();
         assert_eq!(row.used, Some(0)); assert_eq!(row.reserved, Some(storage.regional_order_work.capacity() * std::mem::size_of::<RegionalDrawRecord>()));
         let row = inventory.rows.iter().find(|row| row.path.ends_with("regional_cell_work") && row.kind == crate::cache::Kind::Heap).unwrap();
-        assert_eq!(row.used, Some(0)); assert_eq!(row.reserved, Some(storage.regional_cell_work.capacity() * std::mem::size_of::<(usize, crate::model::Cell)>()));
+        assert_eq!(row.used, Some(0)); assert_eq!(row.reserved, Some(storage.regional_cell_work.capacity() * std::mem::size_of::<DrawnStar>()));
         let row = inventory.rows.iter().find(|row| row.path.ends_with("stale_slots") && row.kind == crate::cache::Kind::Heap).unwrap();
         assert_eq!(row.reserved, Some(storage.stale_slots.capacity() * std::mem::size_of::<usize>()));
     }

@@ -260,10 +260,12 @@ and inventories report owners/work capacity and never reconstruct a star table f
 Hot loops do not read stars one view at a time. `ObservedStars::region(slot, descriptor)` and `slot_columns(slot)`
 resolve a region's three columns once and return `RegionData`: borrowed slices of the correction rows
 (`source_index`, `drawable`), the final directions and the stellar samples (`magnitude`, addressed by
-`source_index - offset`). Projection, draw-order records, view assembly and the raster/label scans
-(`ProjectedStars::visit_range` / `visit_drawn`) index those slices and read only the columns they need; the cache
-`expect` checks run once per region instead of once per star. `ObservedStarView` remains for single-star callers,
-the character path and tests.
+`source_index - offset`). Draw-order records and projection index those slices and read only the columns they
+need; the cache `expect` checks run once per region instead of once per star. Projection writes each region's
+drawn stars (`DrawnStar`: catalog index, colour, cell, magnitude) in the region's draw order, so the raster
+(`ProjectedStars::drawn`) and label (`visit_range`) scans read those records sequentially and touch no other
+column. `ObservedStarView` remains for single-star callers, the character path and tests; on the regional path a
+view is found from a drawn record by one binary search over its region's rows.
 
 Cache generations still change only when values change. View controls invalidate selection and projection;
 resize only invalidates projection. Catalog identity changes reset selection, intrinsic samples and corrections,
@@ -292,25 +294,25 @@ view of the completed fields. That view does not build a reference vector or clo
 | Fields | Contents and use | Lifecycle |
 |---|---|---|
 | Immutable definition handle in constellation key | Read-only original definitions and their endpoint union | Shared; custom figures replace an immutable set through `set_figure_override` |
-| `regional_stars` | One small dependency key and retained `(catalog_index, Cell)` vector per region | Refresh only requested regions whose dependencies changed |
-| `regional_orders` | Regional magnitude/ID sorted records with region-local observed-row offsets | Membership versions guard these offsets; camera and position-only changes do not invalidate order |
-| `regional_cells`, `regional_ranges`, `assembled_for` | Directly drawable cells, one start/end range per region, and small assembly dependency records | Reassemble only when requested regions, row ranges, cells or order versions change |
+| `regional_stars` | One small dependency key and a retained `DrawnStar` vector per region: the region's visible stars in its draw order with catalog index, colour, cell and magnitude | Refresh only requested regions whose membership, apparent, draw-order, rotation, refraction, view or viewport dependency changed |
+| `regional_orders` | Regional dimmest-first records (region-local row, catalog index, magnitude), ties by ascending ID | Membership versions guard these offsets; camera and position-only changes do not invalidate order; the cell key carries the order's generation |
+| `regional_spans` | One record per requested region in paint order (ordinary regions, then the constellation group): descriptor slot, region, paint index range, cell generation | Rebuilt every frame from region metadata (no star reads); the view maps paint indices through it and raster/label keys take their per-region versions from it |
 | `stale_slots`, `regional_cell_work`, `regional_order_work` | Slots of the regions to recalculate this frame; cell and sort scratch shared sequentially across regions | Build into the scratch, compare once, copy into the region's own allocation (`Cache::store_in_place` + `adopt_work`), so no region ever inherits another region's capacity; scratch buffers retain capacity across frames and owner/catalog resets |
 | `regional_direction_work` | One region's rotated and refracted directions while that region is projected with refraction on | Region-sized scratch, empty between frames; without refraction the camera is rotated instead and no direction is written |
-| `region_cell_scratch` | Optional screen cells indexed within one observed region | Reused across regions and frames; empty after assembly, capacity bounded by the largest observed region encountered |
 | `star_candidate`, `stars` | Exact observed-position/flag key and visible output for the caller-editable headless fallback | Candidate is cleared on hit, moved into cache on successful refresh |
 | `order_candidate`, `order`, `draw_order_scratch` | Exact visible magnitude/ID inputs, draw-order permutation, temporary sort records | Same key lifecycle; sort scratch retains capacity between sorts |
 | `bodies` | Projected Sun/planet cells plus lunar geometry; hidden body records remain present | Refresh when the geometry key changes |
 | `constellations` | Nested clipped arcs and sampled cell/pixel vertices | Same; computed independently of drawing toggle |
 | `horizon` | View-dependent segments and orientation-label origins | Same |
 
-The frame loop calls `project_cached_regions` with the immutable observation token. Projection keys depend on
-regional membership/apparent versions, horizon/refraction, camera and viewport. Regional sorting depends on
-membership and stellar versions. Each ordinary region is drawn dimmest-first, then the constellation region is
-drawn last. Cross-region pixel/cell overlaps follow that region order; no global merge, merged-order array or
-catalog-wide visibility lookup remains. Assembly resolves cells using reusable region-local scratch and emits
-directly drawable `(RegionalStarIndex, Cell)` rows. Regional order offsets are valid only under their membership
-key; they never store shifting whole-frame row offsets.
+The frame loop calls `project_cached_regions` with the immutable observation token. Regional sorting depends on
+membership and stellar versions and runs first. Projection keys depend on regional membership/apparent versions,
+the region's draw-order generation, horizon/refraction, camera and viewport; each region is projected in its
+draw order, so its stored cells are directly drawable `DrawnStar` rows. Each ordinary region is drawn
+dimmest-first, then the constellation region is drawn last; `regional_spans` records that paint order and the
+paint index range of each region. Cross-region pixel/cell overlaps follow that region order; no global merge,
+merged-order array, assembly pass or catalog-wide visibility lookup remains. Regional order offsets are valid
+only under their membership key; they never store shifting whole-frame row offsets.
 
 Regional refreshes leave the previous result intact but invalid until replacement calculation and sorting finish.
 One work vector per result type exchanges allocations with each refreshed cache; initial population and capacity
@@ -347,9 +349,9 @@ Thus a paused hit builds/compares only small region metadata, never star records
 replacement increments a checked revision; a new projection owner has a distinct identity. Failed projection
 cannot publish this handoff. The key is dependency-only; time alone neither forces nor proves a redraw.
 
-On a trusted miss, `SceneCache.pixel_inputs` prepares filtered drawing records once, and rasterization borrows
-those records. It clears them after success, retaining capacity; a failed draw is reset on retry. Production and
-exact keys share one image cache but cannot match each other. Pixel result generations still advance only when
+On a trusted miss, rasterization reads the regions' drawn records directly in paint order, filtering by
+brightness and footprint as it goes; nothing per star is prepared or retained. Production and exact keys share
+one image cache but cannot match each other. Pixel result generations still advance only when
 actual stored pixels change; `pixel_generation()` exposes this for downstream reuse. Raster bypass and explicit
 invalidation still force drawing. Text, image conversion and upload are unchanged by this stage.
 
@@ -366,7 +368,6 @@ stars are found. This needs no heap allocation; a view with many edge stars may 
 | `SceneCache.star_layer` | Prepared pixel-star inputs → premultiplied source-over blend → opaque sky composition with the opacity floor; row-major `StarPixel` values | 16 bytes per pixel (f32 premultiplied RGB + opacity); reset and reused on refresh, unchanged on hit; capacity retained across resize |
 | `SceneCache.star_opacities` | Field of view → zoom boost → one opacity per catalog magnitude code (65,536 `f32`); stars look their opacity up instead of evaluating the power curve | 256 KiB; built on the first pixel redraw, refilled in place only when the boost changes |
 | Scene candidates and committed keys | Trusted region/version metadata OR exact input capture; only exact callers copy per-star and body/arc/horizon geometry | Hits clear flat vectors while retaining capacity; nested strings/arcs drop; refresh transfers candidate; failed pixel draws retain it for reset/retry |
-| `SceneCache.pixel_inputs` | Trusted raster miss → drawing; accepted screen coordinates, magnitude and RGB | Empty after success, capacity retained; no per-star writes on hits |
 | `SceneCache.image_scratch` | Bytes of the sky image displaced by the last pixel store; the next redraw draws into them | Taken on redraw, refilled by `store_displacing`; the displaced key becomes the next cleared candidate |
 | Scene pixel/character results | Raster passes → composition; RGBA pixels or canvas cells | Pixel image borrowed; character clone on refresh and restore on hit |
 | Character `frame`, `presenter` | Sky/panel drawing → full-screen composition → diff writer | Resize replaces canvases and discards previous-frame snapshot; successful presentation updates previous |

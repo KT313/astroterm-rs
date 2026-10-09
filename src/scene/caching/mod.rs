@@ -2,7 +2,7 @@
 mod keys;
 mod production;
 pub(super) use production::draw_prepared_pixels;
-pub(in crate::scene) use keys::prepare_pixel_star_inputs;
+pub(in crate::scene) use keys::pixel_star_inputs;
 use crate::timing::{BufferId, Operation};
 use super::diagnostics::memory::{describe_candidate, describe_canvas, record_scene_candidate, record_scene_commit};
 

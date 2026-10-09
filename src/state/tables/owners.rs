@@ -93,10 +93,7 @@ impl Tables for ProjectionCache {
         visit(&path("regional_cell_work"), &self.regional_cell_work, None);
         visit(&path("regional_direction_work"), &self.regional_direction_work, None);
         visit(&path("regional_order_work"), &self.regional_order_work, None);
-        visit(&path("regional_cells"), &self.regional_cells, None);
-        visit(&path("regional_ranges"), &self.regional_ranges, None);
-        visit(&path("region_cell_scratch"), &self.region_cell_scratch, None);
-        visit(&path("assembled_for"), &self.assembled_for, None);
+        visit(&path("regional_spans"), &self.regional_spans, None);
         visit(&path("source_revision"), &Single(&self.source_revision), None);
         visit(&path("render_context"), &Single(&self.render_context), None);
         visit(&path("star_candidate"), &self.star_candidate, None);
@@ -178,7 +175,6 @@ impl Tables for SceneCache {
         visit(&path("star_layer"), &self.star_layer, None);
         visit(&path("star_opacities"), &self.star_opacities.opacities, None);
         visit(&path("star_opacities.zoom_boost"), &Single(&self.star_opacities.zoom_boost), None);
-        visit(&path("pixel_inputs"), &self.pixel_inputs, None);
         visit(&path("image_scratch"), &Bytes::binary(&self.image_scratch), None);
         if let Some(key) = &self.pixel_candidate { key.visit_tables(&path("pixel_candidate"), visit); }
         if let Some(key) = &self.character_candidate { key.visit_tables(&path("character_candidate"), visit); }

@@ -29,9 +29,11 @@ pub use presentation::{
     MetadataField, StarColor, RenderProjection, RenderOutcome,
 };
 pub(crate) use presentation::{
-    RegionalStarIndex, RegionalProjectionKey, RegionalOrderKey, RegionalDrawRecord, DrawRecord, StarKey, ProjectionBodyKey, ConstellationKey, HorizonGeometry,
-    PixelLabel, PixelLabelKey, PixelTextKey, PixelTextCache, KittyDisplayKey, RenderResultVersion, PixelFrameKey, KittyEncodingKey, ProductionRasterKey, RasterRegion, SceneKey, StarPixel, StarOpacityTable, PixelStarKey, CharacterStarKey, StarKeys, Glyph,
+    DrawnStar, DrawnSpan, RegionalProjectionKey, RegionalOrderKey, RegionalDrawRecord, DrawRecord, StarKey, ProjectionBodyKey, ConstellationKey, HorizonGeometry,
+    PixelLabel, PixelLabelKey, PixelTextKey, PixelTextCache, KittyDisplayKey, RenderResultVersion, PixelFrameKey, KittyEncodingKey, ProductionRasterKey, SceneKey, StarPixel, StarOpacityTable, PixelStarKey, CharacterStarKey, StarKeys, Glyph,
 };
+#[cfg(feature = "memory-diagnostics")]
+pub(crate) use presentation::RasterRegion;
 pub use configuration::{Config, SimulationSettings, TerminalSettings, RendererKind, GraphicsProtocol};
 
 #[cfg(test)]

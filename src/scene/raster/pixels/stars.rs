@@ -17,7 +17,8 @@ const UNIT_LEVELS: [f32; 256] = {
     levels
 };
 
-/// Validate the whole footprint once during preparation; drawing uses only accepted coordinates.
+/// Whether the star's four pixels (its cell and the three above and to the left) lie inside the viewport.
+#[inline]
 pub(crate) fn pixel_star_fits((y, x): Cell, viewport: ProjectionViewport) -> bool {
     x > 0 && y > 0 && (x as usize) < viewport.width && (y as usize) < viewport.height
 }

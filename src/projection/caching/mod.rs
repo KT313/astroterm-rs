@@ -143,7 +143,7 @@ pub fn borrow_projected<'a>(storage: &'a ProjectionCache, sky: impl Into<crate::
         catalog_singular_count: sky.catalog.singular_count,
         runtime_singular_count: sky.runtime_singular_count,
         stars: if storage.regional_active {
-            crate::model::ProjectedStars::from_regions(sky.stars, &storage.regional_cells, &storage.regional_ranges)
+            crate::model::ProjectedStars::from_regions(sky.stars, &storage.regional_stars, &storage.regional_spans)
         } else { crate::model::ProjectedStars::with_order(sky.stars, storage.stars.value(), storage.order.value()) },
         planets: &storage.bodies.value().0,
         moon: &storage.bodies.value().1,

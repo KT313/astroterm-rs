@@ -26,14 +26,12 @@ pub(super) fn label_columns(path: &str, columns: &mut [Column]) {
 // moon_illumination/moon_phase -> illumination tuple .0/.1.
 // projection star key (direction, passes_brightness_filter) -> tuple .0/.1.
 // projection order key (observed_star_index, current_magnitude, star_id) -> tuple .0/.1/.2.
-// projection stars (observed_star_index, screen_coordinates) -> tuple .0/.1; regional_cells uses (region_slot + observed_index, cell).
-// region_slot selects regional_output, observed_index selects the frame-wide observed row (its region's apparent direction); projected_star_index -> legacy order[row].
+// projection stars (observed_star_index, screen_coordinates) -> tuple .0/.1; regional_stars rows are DrawnStar records in draw order.
+// projected_star_index -> legacy order[row]; regional_spans rows are DrawnSpan records (slot, region, paint index range, cell version).
 // requested_sources: sky_region_index -> tuple.0; validated_range_version -> tuple.1.
 // layout_sources: region ID / correction-result version / stellar-sample version; directions remain in their original caches.
 // regional_output: sky_region_index -> region; observed row start/end -> start/end; correction/stellar/aberration versions -> selection_generation/motion_generation/apparent_generation.
-// assembled_for -> region/start/end/cell-generation/order-generation tuple; regional_ranges marks each region's drawable start/end.
-// regional_cell_work (catalog_star_index, screen_coordinates) -> tuple .0/.1; regional_order_work (region_star_index, current_magnitude, star_id) -> tuple .0/.1/.2.
-// region_cell_scratch[row] is the optional cell for one row of the current region; cached regional_orders[row].0 is membership-versioned region-local row offset.
+// regional_orders/regional_order_work rows are RegionalDrawRecord records: membership-versioned region-local row, catalog index, current magnitude.
 // body key (body_kind, direction) -> tuple .0/.1; constellation key (catalog_row_index, direction, current_magnitude) -> .0/.1/.2.
 // screen_endpoint_pair -> horizon[row]; screen_coordinates/label_text -> labels[row].0/.1.
 // has_been_invalidated -> region entry's Cache.has_been_invalidated.
@@ -61,12 +59,6 @@ fn table_labels(path: &str) -> &'static [&'static str] {
         "cache.simulation.stars.refresh_regions" => &["simulation_region_id"],
         "cache.observation.layout_sources" => &["sky_region_index", "correction_membership_version", "stellar_sample_version"],
         "cache.observation.regional_output" => &["sky_region_index", "observed_row_start", "observed_row_end_exclusive", "correction_membership_version", "stellar_sample_version", "aberration_version"],
-        "cache.projection.regional_cell_work" => &["catalog_star_index", "screen_coordinates"],
-        "cache.projection.regional_order_work" => &["region_star_index", "current_magnitude", "star_id"],
-        "cache.projection.regional_cells" => &["region_and_observed_row", "screen_coordinates"],
-        "cache.projection.regional_ranges" => &["draw_row_start", "draw_row_end_exclusive"],
-        "cache.projection.region_cell_scratch" => &["optional_screen_coordinates"],
-        "cache.projection.assembled_for" => &["sky_region_index", "observed_row_start", "observed_row_end_exclusive", "projected_cell_version", "regional_order_version"],
         "cache.observer.bodies" => &["position_au", "velocity_au_per_day"],
         "cache.observation.illumination" => &["moon_illumination", "moon_phase"],
         "cache.observer.observer" | "cache.observer.light_time" => &["observer_body", "surface_coordinates", "height_above_surface_m", "frame_time", "observer_position_and_velocity", "reference_to_body_rotation", "reference_to_horizon_rotation", "has_atmosphere", "body_emission_times_tt_jd"],
@@ -81,7 +73,6 @@ fn table_labels(path: &str) -> &'static [&'static str] {
         "timings.steps" => &["step_name", "nesting_depth", "average_seconds"],
         "timings.trace.steps" => &["step_name", "nesting_depth", "elapsed_seconds", "details", "own_diagnostic_seconds", "parent_step_index"],
         _ if path.ends_with(".production.regions") => &["Trusted raster dependencies, one record per requested region; not a copied star table. observed includes row spans plus selection, motion/magnitude and apparent generations. cells/order are completed projection generations. Empty candidates retain capacity after a hit."],
-        _ if path.ends_with(".pixel_inputs") => &["Accepted star drawing inputs prepared only on a production raster miss; empty after success with retained capacity. Failed draws can retain unpublished inputs until the next refresh. Editable/headless callers keep their exact key instead."],
         _ if path.ends_with(".star_layer") => &["premultiplied_rgb", "opacity"],
         _ if path.ends_with(".star_opacities") => &["opacity"],
         _ if path.ends_with(".star_opacities.zoom_boost") => &["star_opacity_multiplier"],
@@ -169,7 +160,6 @@ pub(super) fn column_notes(path: &str) -> &'static [&'static str] {
             "Nested ProjectedArc fields: start/end = screen coordinates; points = sampled path coordinates; includes_start/includes_end mean the section reaches the original star endpoints rather than a clipping boundary.",
         ],
         _ if path.ends_with(".production.regions") => &["Trusted raster dependencies, one record per requested region; not a copied star table. observed includes row spans plus selection, motion/magnitude and apparent generations. cells/order are completed projection generations. Empty candidates retain capacity after a hit."],
-        _ if path.ends_with(".pixel_inputs") => &["Accepted star drawing inputs prepared only on a production raster miss; empty after success with retained capacity. Failed draws can retain unpublished inputs until the next refresh. Editable/headless callers keep their exact key instead."],
         _ if path.ends_with(".star_layer") => &["Row-major star pixels; RGB is premultiplied by the opacity, both f32 in 0..1. The opacity floor is applied during composition, not stored here. Capacity is reused; on a cache hit the last drawn layer remains. premultiplied_rgb -> StarPixel.rgb; opacity -> StarPixel.opacity."],
         _ if path.ends_with(".star_opacities") => &["One opacity per catalog magnitude code (row index = thousandths of a magnitude above -10.000) for the current star opacity multiplier. Rebuilt only when a field-of-view change alters the multiplier; empty until the first pixel redraw."],
         _ if path.ends_with(".raster_text.glyphs") => &["Coverage mask bytes describe how much each glyph pixel is filled. Metrics contain glyph size, placement offsets and advance spacing."],

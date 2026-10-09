@@ -318,15 +318,16 @@ records and magnitudes remain in their original regional caches. Views do not ap
 no Corrected-star buffer construction, direction calculation, or owned materialization runs.
 Other pipeline work, including raster keys, composition and presentation, is outside this unchanged-input shortcut.
 
-Regional projected-cell addresses contain a descriptor slot and logical observed row, both checked u32 values.
+Regional projected cells are `DrawnStar` records (catalog index as a checked u32, colour, cell, magnitude) stored in
+each region's draw order; `regional_spans` holds one small record per requested region in paint order.
 
 
-Production raster hits now inspect region/version metadata instead of rebuilding the star-sized key.
-`scene_cache.pixel_inputs` is retained scratch, filled only for a redraw and cleared after success. Its reserved
-bytes remain visible. `pixels.key.production.regions` lists the committed dependency records; candidate records
-clear on a hit. Editable/headless callers retain exact star/geometry keys. Both modes share one cached sky image.
-`Raster drawing inputs` reports actual per-star preparation on misses; `Raster dependencies` reports region
-checks on every production call. Hits have no drawing-input build events. Separate text/RGB/encoding/display caches now cover later stages;
+Production raster hits now inspect region/version metadata instead of rebuilding the star-sized key. A redraw
+reads the regions' drawn records directly; no per-star drawing inputs exist. `pixels.key.production.regions`
+lists the committed dependency records (one per span: the observed region and its cell version); candidate
+records clear on a hit. Editable/headless callers retain exact star/geometry keys. Both modes share one cached
+sky image. `Raster dependencies` reports region checks on every production call. Hits have no star-layer build
+events. Separate text/RGB/encoding/display caches now cover later stages;
 live timing/counter metadata can still change while simulation time is paused.
 
 

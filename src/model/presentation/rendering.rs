@@ -124,11 +124,15 @@ pub struct RenderProjection<'a> {
     pub(crate) sky: crate::model::ProjectedSky<'a>,
     pub(crate) source: (u64, u64), // projection owner and catalog/observation replacement revision
     pub(crate) regions: &'a [crate::model::ObservedRegion],
-    pub(crate) assembled: &'a [(usize, usize, usize, u64, u64)],
+    pub(crate) spans: &'a [crate::model::DrawnSpan], // the painted regions in paint order with their cell versions
     pub(crate) geometry: [u64; 3], // bodies, constellation lines, horizon
 }
 impl<'a> RenderProjection<'a> {
     pub fn sky(&self) -> &crate::model::ProjectedSky<'a> { &self.sky }
+    /// The per-region dependency records of a raster or label key, in paint order.
+    pub(crate) fn raster_regions(&self) -> impl Iterator<Item = RasterRegion> + '_ {
+        self.spans.iter().map(|span| RasterRegion { observed: self.regions[span.slot], cells: span.generation })
+    }
 }
 
 #[derive(Clone, PartialEq)]
@@ -141,10 +145,9 @@ pub(crate) struct ProductionRasterKey {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct RasterRegion {
     pub observed: crate::model::ObservedRegion, // includes membership, magnitudes, corrections and current row spans
-    pub cells: u64,
-    pub order: u64,
+    pub cells: u64,                             // the region's drawn records carry its draw order and magnitudes, so one version covers both
 }
-row_columns!(RasterRegion { observed, cells, order });
+row_columns!(RasterRegion { observed, cells });
 
 /// Publication marker for retained rendering results; revisions belong to their owning PixelState.
 /// An input-triggered rebuild may conservatively advance this; it is not Cache's exact value generation.

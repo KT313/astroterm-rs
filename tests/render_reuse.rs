@@ -48,7 +48,6 @@ fn check(cache: &mut SceneCache, projected: &RenderProjection<'_>, options: &Ren
     let reference = scene::draw_pixel_sky(projected.sky(), options, &mut StepTimes::default()).unwrap();
     let mut times = StepTimes::with_trace(true);
     assert_eq!(scene::draw_prepared_pixels(cache, projected, options, J2000, &mut times).unwrap(), &reference);
-    assert_eq!(did(&times, "Raster drawing inputs"), redraw);
     assert_eq!(did(&times, "Raster stars"), redraw);
     assert!(!did(&times, "Raster cache key"));
 }
@@ -140,16 +139,16 @@ fn hit_diagnostics_do_not_report_star_input_work_or_geometry_copies() {
     let mut first = StepTimes::with_trace(true); first.enable_memory_events(true);
     scene::draw_prepared_pixels(&mut cache, &projected, &options(), J2000, &mut first).unwrap();
     assert!(first.trace().unwrap().steps.iter().flat_map(|s| &s.memory_events).any(|e| matches!(e.event,
-        MemoryEvent::Operation { buffer: BufferId::PixelDrawingInputs, operation: Operation::Build, .. })));
+        MemoryEvent::Operation { buffer: BufferId::StarLayer, operation: Operation::Build, .. })));
     let mut hit = StepTimes::with_trace(true); hit.enable_memory_events(true);
     scene::draw_prepared_pixels(&mut cache, &projected, &options(), J2000, &mut hit).unwrap();
     for event in hit.trace().unwrap().steps.iter().flat_map(|s| &s.memory_events) {
         if let MemoryEvent::Operation { buffer, operation, .. } = event.event {
-            assert_ne!(buffer, BufferId::PixelDrawingInputs);
+            assert_ne!(buffer, BufferId::StarLayer);
             assert_ne!(operation, Operation::Copy);
         }
     }
-    assert!(!did(&hit, "Raster drawing inputs"));
+    assert!(!did(&hit, "Raster stars"));
 }
 
 #[test]

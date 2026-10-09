@@ -1,8 +1,9 @@
-//! Regional geometry retains catalog indices; frame cells resolve them to observed rows before rendering.
+//! Regional geometry holds each region's drawn stars in its paint order, so a frame's drawing order is the
+//! regions' own records behind a small span list; nothing is merged per frame.
 //! Exact whole-sky caches remain available for caller-editable headless input; all geometry is viewport-relative.
 use crate::cache::{Cache, CacheConfig};
 use crate::model::{
-    RegionalProjectionKey, RegionalOrderKey, RegionalDrawRecord, StarKey, ProjectionBodyKey as BodyKey, ConstellationKey, HorizonGeometry, Cell, DrawRecord, View,
+    DrawnSpan, DrawnStar, RegionalProjectionKey, RegionalOrderKey, RegionalDrawRecord, StarKey, ProjectionBodyKey as BodyKey, ConstellationKey, HorizonGeometry, Cell, DrawRecord, View,
     ProjectionViewport as Viewport, ProjectedPlanet, ProjectedMoon, ProjectedConstellation,
 };
 #[derive(Default)]
@@ -10,22 +11,19 @@ pub struct ProjectionCache {
     pub(crate) identity: super::StageId,
     pub(crate) source_revision: u64,
     pub(crate) render_context: Option<(View, Viewport)>, // only published after every projection stage succeeds
-    /// Cells retain catalog indices; order offsets are local to a region and guarded by its membership version.
-    pub(crate) regional_stars: Vec<Cache<RegionalProjectionKey, Vec<(usize, Cell)>>>,
+    /// Drawn records (catalog index, colour, cell, magnitude) in draw order, keyed on the order's version too; order
+    /// offsets are local to a region and guarded by its membership version.
+    pub(crate) regional_stars: Vec<Cache<RegionalProjectionKey, Vec<DrawnStar>>>,
     pub(crate) regional_orders: Vec<Cache<RegionalOrderKey, Vec<RegionalDrawRecord>>>,
     pub(crate) stale_slots: Vec<usize>, // slots of the regions whose cells or order must be recalculated this frame; shared by both passes
-    pub(crate) regional_cell_work: Vec<(usize, Cell)>, // cell scratch; each region's result is copied into its own allocation
+    pub(crate) regional_cell_work: Vec<DrawnStar>, // cell scratch; each region's result is copied into its own allocation
     pub(crate) regional_direction_work: Vec<crate::astro::Vector3>, // one region's rotated and refracted directions while it is projected; empty otherwise
     pub(crate) regional_order_work: Vec<RegionalDrawRecord>, // sort scratch; each region's result is copied into its own allocation
     pub(crate) regional_catalog: Option<std::sync::Arc<crate::model::SkyCatalog>>,
     pub(crate) regional_owner: Option<u64>,
     pub(crate) regional_active: bool,
     pub(crate) regional_stats: crate::cache::CacheStats,
-    pub(crate) regional_cells: Vec<(crate::model::RegionalStarIndex, Cell)>,
-    pub(crate) regional_ranges: Vec<(usize, usize)>, // start/end of each region in directly drawable cells
-    pub(crate) region_cell_scratch: Vec<Option<Cell>>, // temporary cells indexed within one observed region
-    pub(crate) assembled_for: Vec<(usize, usize, usize, u64, u64)>, // region, current observed row range, cell version, order version
-    pub(crate) assembly_valid: bool,
+    pub(crate) regional_spans: Vec<DrawnSpan>, // the requested regions in paint order with their paint index ranges and cell versions; rebuilt each frame
     /// Reuse policy; read by processing stages and replaced only by explicit reconfiguration.
     pub(crate) config: CacheConfig,
     /// Exact candidate key in observed order; cleared on a hit, transferred on successful refresh.
@@ -102,11 +100,7 @@ impl crate::cache::ReportBuffers for ProjectionCache {
         crate::cache::report_field(sink, "regional_catalog", &self.regional_catalog);
         crate::cache::report_field(sink, "regional_owner", &self.regional_owner);
         crate::cache::report_field(sink, "regional_active", &self.regional_active);
-        crate::cache::report_field(sink, "regional_cells", &self.regional_cells);
-        crate::cache::report_field(sink, "regional_ranges", &self.regional_ranges);
-        crate::cache::report_field(sink, "region_cell_scratch", &self.region_cell_scratch);
-        crate::cache::report_field(sink, "assembled_for", &self.assembled_for);
-        crate::cache::report_field(sink, "assembly_valid", &self.assembly_valid);
+        crate::cache::report_field(sink, "regional_spans", &self.regional_spans);
         crate::cache::report_field(sink, "config", &self.config);
         crate::cache::report_field(sink, "star_candidate", &self.star_candidate);
         crate::cache::report_field(sink, "order_candidate", &self.order_candidate);

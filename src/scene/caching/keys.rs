@@ -24,18 +24,17 @@ pub(crate) fn capture_star_keys(
         let StarKeys::Pixels(stars) = keys else { unreachable!() };
         stars.clear();
         stars.reserve(sky.stars.len());
-        prepare_pixel_star_inputs(sky, options, stars);
+        stars.extend(pixel_star_inputs(sky, options));
     }
 }
 
-/// Append the star fields pixel drawing needs, in paint order. Region columns are resolved once per region, so
-/// each star costs a few sequential reads plus one catalog colour lookup; no per-star view is built.
-pub(in crate::scene) fn prepare_pixel_star_inputs(sky: &ProjectedSky<'_>, options: &RenderOptions, inputs: &mut Vec<PixelStarKey>) {
-    let catalog = sky.stars.catalog();
-    sky.stars.visit_drawn(|_, star| {
-        if star.magnitude > options.magnitude_threshold || !crate::scene::pixel_star_fits(star.cell, sky.viewport) { return; }
-        inputs.push(PixelStarKey { cell: star.cell, magnitude: star.magnitude, color: catalog.display_color(star.source_index).rgb() });
-    });
+/// The stars pixel drawing paints, in paint order: bright enough and with their four-pixel footprint inside the
+/// viewport. On the production path each star is one sequential read of its region's drawn record; nothing is
+/// copied, resolved or looked up per star, so the raster reads this directly.
+pub(in crate::scene) fn pixel_star_inputs<'a>(sky: &'a ProjectedSky<'a>, options: &RenderOptions) -> impl Iterator<Item = PixelStarKey> + 'a {
+    let (threshold, viewport) = (options.magnitude_threshold, sky.viewport);
+    sky.stars.drawn().filter(move |star| star.magnitude <= threshold && crate::scene::pixel_star_fits(star.cell, viewport))
+        .map(|star| PixelStarKey { cell: star.cell, magnitude: star.magnitude, color: star.color })
 }
 
 fn capture_character_keys(

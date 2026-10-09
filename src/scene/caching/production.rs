@@ -1,6 +1,6 @@
 //! Production raster reuse compares protected region versions before reading individual stars.
-use crate::{cache::Group, model::{RenderProjection, RenderOptions, SceneKey, StarKeys, ProductionRasterKey, RasterRegion},
-    state::SceneCache, timing::{StepTimes, BufferId, BufferShape, IndexDomain, Operation}};
+use crate::{cache::Group, model::{RenderProjection, RenderOptions, SceneKey, StarKeys, ProductionRasterKey},
+    state::SceneCache, timing::{StepTimes, BufferId, BufferShape, IndexDomain}};
 
 pub(in crate::scene) fn draw_prepared_pixels<'a>(storage: &'a mut SceneCache, projected: &RenderProjection<'_>, options: &RenderOptions, epoch: f64, times: &mut StepTimes) -> Option<&'a image::RgbaImage> {
     let sky = projected.sky();
@@ -15,14 +15,7 @@ pub(in crate::scene) fn draw_prepared_pixels<'a>(storage: &'a mut SceneCache, pr
         return Some(storage.pixel_image());
     }
 
-    times.measure("Raster drawing inputs", || {
-        storage.pixel_inputs.clear();
-        storage.pixel_inputs.reserve(sky.stars.len());
-        super::keys::prepare_pixel_star_inputs(sky, options, &mut storage.pixel_inputs);
-    });
-    times.record_build(BufferId::PixelDrawingInputs, || BufferShape::vector(&storage.pixel_inputs, IndexDomain::DrawOrder));
-    times.describe("Raster drawing inputs", || format!("input stars={}; accepted inputs={}; prepared once for redraw", sky.stars.len(), storage.pixel_inputs.len()));
-    let image = super::super::pipeline::draw_pixel_sky_from_inputs(&mut storage.star_layer, &mut storage.star_opacities, &mut storage.image_scratch, sky, options, times, storage.pixel_inputs.iter().copied())?;
+    let image = super::super::pipeline::draw_pixel_sky_from_inputs(&mut storage.star_layer, &mut storage.star_opacities, &mut storage.image_scratch, sky, options, times, super::keys::pixel_star_inputs(sky, options))?; // the raster reads the regions' drawn records directly
     let outcome = times.measure("Raster cache store", || {
         let candidate = storage.pixel_candidate.take().expect("raster dependencies prepared");
         let (outcome, displaced) = storage.pixels.store_displacing(candidate, epoch, 0.0, image);
@@ -30,9 +23,6 @@ pub(in crate::scene) fn draw_prepared_pixels<'a>(storage: &'a mut SceneCache, pr
         outcome
     });
     super::super::diagnostics::memory::record_scene_commit(times, BufferId::PixelCandidate, BufferId::PixelScene, outcome);
-    let before = times.inspect_memory(|| BufferShape::vector(&storage.pixel_inputs, IndexDomain::DrawOrder));
-    storage.pixel_inputs.clear(); // retain capacity without retaining duplicate star rows
-    times.record_shape(BufferId::PixelDrawingInputs, Operation::Clear, before, || BufferShape::vector(&storage.pixel_inputs, IndexDomain::DrawOrder));
     Some(storage.pixel_image())
 }
 
@@ -54,8 +44,8 @@ fn capture_dependencies(candidate: &mut Option<SceneKey>, projected: &RenderProj
     let source = key.production.get_or_insert_with(|| ProductionRasterKey { source: projected.source, geometry: projected.geometry, regions: Vec::new() });
     source.source = projected.source;
     source.geometry = projected.geometry;
-    source.regions.reserve(projected.regions.len());
-    source.regions.extend(projected.regions.iter().zip(projected.assembled).map(|(region, assembled)| RasterRegion { observed: *region, cells: assembled.3, order: assembled.4 }));
+    source.regions.reserve(projected.spans.len());
+    source.regions.extend(projected.raster_regions());
 }
 
 #[cfg(test)]
@@ -75,19 +65,18 @@ mod tests {
         sky.stars[0].position = crate::astro::Vector3 { x: 0.0, y: 0.0, z: 1.0 };
         let view = View::default(); let size = ProjectionViewport { width: 24, height: 24 };
         let data = crate::projection::project_sky(&sky, &view, size);
-        let assembled = [(0, 0, 1, 1, 1)];
+        let spans = [crate::model::DrawnSpan { slot: 0, region: 0, start: 0, end: 1, generation: 1 }];
         let mut region = [ObservedRegion { region: 0, start: 0, end: 1, selection_generation: 1, motion_generation: 1, apparent_generation: 1 }];
         let mut cache = SceneCache::default();
         let mut previous = None;
         for magnitude in [0.0, 4.0] {
             sky.stars[0].magnitude = magnitude;
             region[0].motion_generation += 1;
-            let projected = RenderProjection { sky: data.view(&sky), source: (1, 1), regions: &region, assembled: &assembled, geometry: [1; 3] };
+            let projected = RenderProjection { sky: data.view(&sky), source: (1, 1), regions: &region, spans: &spans, geometry: [1; 3] };
             let image = draw_prepared_pixels(&mut cache, &projected, &options(), 0.0, &mut StepTimes::default()).unwrap().clone();
             assert_eq!(image, crate::scene::draw_pixel_sky(projected.sky(), &options(), &mut StepTimes::default()).unwrap());
             if let Some(previous) = previous { assert_ne!(image, previous); }
             previous = Some(image);
-            assert!(cache.pixel_inputs.is_empty());
             assert!(matches!(&cache.pixels.key().unwrap().stars, StarKeys::Pixels(rows) if rows.is_empty()));
             assert!(cache.pixels.key().unwrap().planets.is_empty());
         }
@@ -98,7 +87,7 @@ mod tests {
     fn failed_redraw_stays_invalid_and_retry_reuses_scratch() {
         let sky = crate::sky::create_sky_from_catalog(&crate::catalog::load_embedded_catalog().unwrap()).unwrap();
         let data = crate::projection::project_sky(&sky, &View::default(), ProjectionViewport { width: 20, height: 20 });
-        let mut projected = RenderProjection { sky: data.view(&sky), source: (1, 1), regions: &[], assembled: &[], geometry: [1; 3] };
+        let mut projected = RenderProjection { sky: data.view(&sky), source: (1, 1), regions: &[], spans: &[], geometry: [1; 3] };
         let mut cache = SceneCache::default();
         draw_prepared_pixels(&mut cache, &projected, &options(), 0.0, &mut StepTimes::default()).unwrap();
         let expected = cache.pixel_image().clone();
@@ -106,12 +95,9 @@ mod tests {
         assert!(draw_prepared_pixels(&mut cache, &projected, &options(), 0.0, &mut StepTimes::default()).is_none());
         assert!(cache.pixels.has_been_invalidated);
         assert_eq!(cache.pixels.stored().unwrap(), &expected);
-        let capacity = cache.pixel_inputs.capacity();
         projected.sky.viewport.width = 20;
         let mut times = StepTimes::with_trace(true);
         assert_eq!(draw_prepared_pixels(&mut cache, &projected, &options(), 0.0, &mut times).unwrap(), &expected);
-        assert!(times.trace().unwrap().steps.iter().any(|step| step.name == "Raster drawing inputs"));
-        assert_eq!(cache.pixel_inputs.capacity(), capacity);
-        assert!(cache.pixel_inputs.is_empty());
+        assert!(times.trace().unwrap().steps.iter().any(|step| step.name == "Raster stars"));
     }
 }

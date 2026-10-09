@@ -5,8 +5,8 @@ use crate::timing::StepTimes;
 
 pub(super) fn describe_scene(sky: &ProjectedSky<'_>, options: &RenderOptions, times: &mut StepTimes) {
     times.describe("Raster stars", || {
-        let (bright, placed) = count_drawable_stars(sky, options);
-        format!("input stars={}; rejected current magnitude > {}={}; then rejected missing cell={}; submitted stars={placed}; later objects may overwrite these", sky.stars.len(), options.magnitude_threshold, sky.stars.len()-bright, bright-placed)
+        let bright = count_drawable_stars(sky, options);
+        format!("input stars={}; rejected current magnitude > {}={}; submitted stars={bright}; later objects may overwrite these", sky.stars.len(), options.magnitude_threshold, sky.stars.len()-bright)
     });
     describe_scene_geometry(sky, options, times);
 }
@@ -81,8 +81,8 @@ pub(super) fn describe_pixel_scene(sky: &ProjectedSky<'_>, options: &RenderOptio
     times.describe("Star brightness preparation", || format!("field of view={} degrees; star opacity multiplier={}; opacity table entries={}; rebuilt={rebuilt}; catalog magnitudes unchanged", sky.fov_degrees, opacities.zoom_boost, opacities.opacities.len()));
     times.describe("Star layer initialization", || format!("pixels={pixels}; element bytes={}; premultiplied f32 RGB and opacity; reusable capacity", std::mem::size_of::<crate::model::StarPixel>()));
     times.describe("Raster stars", || {
-        let (bright, placed) = count_drawable_stars(sky, options);
-        format!("input stars={}; rejected magnitude={}; then rejected missing cell={}; then omitted edge stars={}; submitted stars={submitted}; four pixels per star; prepared inputs reused", sky.stars.len(), sky.stars.len()-bright, bright-placed, placed-submitted)
+        let bright = count_drawable_stars(sky, options);
+        format!("input stars={}; rejected magnitude={}; then omitted edge stars={}; submitted stars={submitted}; four pixels per star; read from the regions' drawn records", sky.stars.len(), sky.stars.len()-bright, bright-submitted)
     });
     times.describe("Star layer composition", || format!("input star pixels={pixels}; premultiplied RGB over the background; nonempty pixels raised to minimum opacity={}; output scene opacity=1", crate::constants::MIN_STAR_PIXEL_OPACITY));
 }
@@ -93,10 +93,7 @@ pub(super) fn describe_coverage_notice(canvas: &crate::canvas::Canvas, sky: &cra
     });
 }
 
-fn count_drawable_stars(sky: &ProjectedSky<'_>, options: &RenderOptions) -> (usize, usize) {
-    sky.stars.iter().fold((0, 0), |(bright, placed), star| {
-        if star.star.magnitude <= options.magnitude_threshold {
-            (bright + 1, placed + usize::from(star.cell.is_some()))
-        } else { (bright, placed) }
-    })
+/// Every projected star has a cell, so this is the brightness filter alone; the drawn records are read directly.
+fn count_drawable_stars(sky: &ProjectedSky<'_>, options: &RenderOptions) -> usize {
+    sky.stars.drawn().filter(|star| star.magnitude <= options.magnitude_threshold).count()
 }

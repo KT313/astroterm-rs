@@ -102,8 +102,8 @@ mod tests {
             regional_stars: (0..crate::constants::SIMULATION_REGION_COUNT).map(|_| Cache::default()).collect(),
             regional_orders: (0..crate::constants::SIMULATION_REGION_COUNT).map(|_| Cache::default()).collect(), ..Default::default()
         };
-        projection.regional_stars[123].store(((1, 1), Matrix3::IDENTITY, false, View::default(), ProjectionViewport { width: 10, height: 10 }), 0.0, 0.0, vec![(42, (3, 4))]);
-        projection.regional_orders[123].store((1, 1), 0.0, 0.0, vec![(42, 4.0, crate::catalog::StarId(7))]);
+        projection.regional_stars[123].store(((1, 1, 1), Matrix3::IDENTITY, false, View::default(), ProjectionViewport { width: 10, height: 10 }), 0.0, 0.0, vec![crate::model::DrawnStar { source_index: 42, color: [1, 2, 3], cell: (3, 4), magnitude: 4.0 }]);
+        projection.regional_orders[123].store((1, 1), 0.0, 0.0, vec![crate::model::RegionalDrawRecord { row: 0, source_index: 42, magnitude: 4.0 }]);
         let cells = RegionalTable { entries: &projection.regional_stars, nested_bytes: TableBytes::vector };
         let orders = RegionalTable { entries: &projection.regional_orders, nested_bytes: TableBytes::vector };
         assert_eq!(used(&projection), cells.bytes().used.unwrap() + orders.bytes().used.unwrap());

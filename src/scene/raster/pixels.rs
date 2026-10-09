@@ -16,9 +16,7 @@ use crate::timing::StepTimes;
 
 pub fn draw_pixel_sky(sky: &ProjectedSky<'_>, options: &RenderOptions, times: &mut StepTimes) -> Option<RgbaImage> {
     let mut storage = crate::state::SceneCache::default(); // headless callers still use an explicit buffer owner
-    let mut stars = Vec::with_capacity(sky.stars.len());
-    super::super::caching::prepare_pixel_star_inputs(sky, options, &mut stars);
-    draw_pixel_sky_from_inputs(&mut storage.star_layer, &mut storage.star_opacities, &mut storage.image_scratch, sky, options, times, stars)
+    draw_pixel_sky_from_inputs(&mut storage.star_layer, &mut storage.star_opacities, &mut storage.image_scratch, sky, options, times, super::super::caching::pixel_star_inputs(sky, options))
 }
 
 /// Build the sky image in `scratch` (the allocation displaced by the last store) and paint the background once.

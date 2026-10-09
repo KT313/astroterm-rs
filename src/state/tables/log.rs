@@ -165,7 +165,7 @@ mod tests {
             "cache.observation.layout_sources", "cache.observation.published", "cache.observation.use_refraction",
             "cache.observation.body_apparent", "cache.observation.horizontal", "cache.observation.refracted",
             "cache.observer.observer", "cache.observer.light_time", "cache.observation.illumination",
-            "cache.projection.stale_slots", "cache.projection.regional_cell_work", "cache.projection.regional_direction_work", "cache.projection.regional_order_work",
+            "cache.projection.stale_slots", "cache.projection.regional_cell_work", "cache.projection.regional_direction_work", "cache.projection.regional_order_work", "cache.projection.regional_spans",
             "cache.projection.star_candidate", "cache.projection.order_candidate", "cache.projection.draw_order_scratch",
             "cache.projection.stars", "cache.projection.stars.key", "cache.projection.order", "cache.projection.order.key",
             "cache.projection.bodies", "cache.projection.bodies.key", "cache.projection.constellations",

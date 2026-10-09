@@ -1,5 +1,5 @@
 //! Validate retained labels/text before reading star candidates or resetting the text grid.
-use crate::model::{PixelLabel, PixelLabelKey, PixelTextCache, PixelTextKey, ProductionRasterKey, RasterRegion,
+use crate::model::{PixelLabel, PixelLabelKey, PixelTextCache, PixelTextKey, ProductionRasterKey,
     RenderProjection, RenderResultVersion, ProjectedSky, RenderOptions, MetadataField};
 use crate::scene::{format_star_label, select_pixel_star_labels, star_rgb};
 use crate::timing::{BufferId, BufferShape, IndexDomain, StepTimes};
@@ -49,7 +49,7 @@ fn refresh_labels(cache: &mut PixelTextCache, sky: &ProjectedSky<'_>, prepared: 
         times.describe("Star labels", || format!("examined regions={regions}; examined candidates={examined}; eligible candidates={eligible}; selected labels={}; newly formatted={}; clipped origins get no replacement", cache.labels.len(), cache.labels.len()));
     });
     cache.labels_key = prepared.map(|source| {
-        regions.extend(source.regions.iter().zip(source.assembled).map(|(region, assembled)| RasterRegion { observed: *region, cells: assembled.3, order: assembled.4 }));
+        regions.extend(source.raster_regions());
         PixelLabelKey { projection: ProductionRasterKey { source: source.source, geometry: source.geometry, regions },
             viewport: sky.viewport, area, threshold: options.magnitude_threshold, enabled: options.dynamic_names }
     });
@@ -59,10 +59,7 @@ fn refresh_labels(cache: &mut PixelTextCache, sky: &ProjectedSky<'_>, prepared: 
 fn matches_labels(key: &PixelLabelKey, source: &RenderProjection<'_>, options: &RenderOptions, area: Rect) -> bool {
     key.area == area && key.viewport == source.sky().viewport && key.threshold == options.magnitude_threshold
         && key.enabled == options.dynamic_names && key.projection.source == source.source
-        && key.projection.regions.len() == source.regions.len()
-        && key.projection.regions.iter().zip(source.regions.iter().zip(source.assembled)).all(|(saved, (region, assembled))| {
-            saved.observed == *region && saved.cells == assembled.3 && saved.order == assembled.4
-        })
+        && key.projection.regions.iter().copied().eq(source.raster_regions())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -77,7 +74,7 @@ fn matches_text(key: &PixelTextKey, labels: u64, sky: &ProjectedSky<'_>, options
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{ObservedRegion, View, ProjectionViewport};
+    use crate::model::{DrawnSpan, ObservedRegion, View, ProjectionViewport};
 
     fn fixture() -> crate::model::ObservedSky {
         let mut parsed = crate::catalog::load_embedded_catalog().unwrap();
@@ -103,8 +100,8 @@ mod tests {
         let sky = fixture();
         let data = crate::projection::project_sky(&sky, &View::default(), ProjectionViewport { width: 160, height: 80 });
         let regions = [ObservedRegion { region: 0, start: 0, end: 12, selection_generation: 1, motion_generation: 1, apparent_generation: 1 }];
-        let assembled = [(0, 0, 12, 1, 1)];
-        let prepared = RenderProjection { sky: data.view(&sky), source: (1, 1), regions: &regions, assembled: &assembled, geometry: [1; 3] };
+        let spans = [DrawnSpan { slot: 0, region: 0, start: 0, end: 12, generation: 1 }];
+        let prepared = RenderProjection { sky: data.view(&sky), source: (1, 1), regions: &regions, spans: &spans, geometry: [1; 3] };
         let mut cache = PixelTextCache::default(); let mut version = RenderResultVersion::default();
         let mut buffer = Buffer::empty(Rect::default());
         let fields = [MetadataField { label: "Time".into(), value: "Paused".into() }];
@@ -132,15 +129,15 @@ mod tests {
         let sky = fixture();
         let mut data = crate::projection::project_sky(&sky, &View::default(), ProjectionViewport { width: 160, height: 80 });
         let mut regions = [ObservedRegion { region: 0, start: 0, end: 12, selection_generation: 1, motion_generation: 1, apparent_generation: 1 }];
-        let assembled = [(0, 0, 12, 1, 1)];
+        let spans = [DrawnSpan { slot: 0, region: 0, start: 0, end: 12, generation: 1 }];
         let mut cache = PixelTextCache::default(); let mut version = RenderResultVersion::default(); let mut buffer = Buffer::empty(Rect::default());
         for source in [(1, 1), (2, 1), (2, 2)] {
-            let prepared = RenderProjection { sky: data.view(&sky), source, regions: &regions, assembled: &assembled, geometry: [1; 3] };
+            let prepared = RenderProjection { sky: data.view(&sky), source, regions: &regions, spans: &spans, geometry: [1; 3] };
             let times = traced_refresh(&mut cache, &mut buffer, &mut version, &prepared, &[], true);
             assert!(visited(&times, "Star labels"));
         }
         regions[0].motion_generation += 1;
-        let prepared = RenderProjection { sky: data.view(&sky), source: (2, 2), regions: &regions, assembled: &assembled, geometry: [1; 3] };
+        let prepared = RenderProjection { sky: data.view(&sky), source: (2, 2), regions: &regions, spans: &spans, geometry: [1; 3] };
         assert!(visited(&traced_refresh(&mut cache, &mut buffer, &mut version, &prepared, &[], true), "Star labels"));
         let area = Rect::new(0, 0, 40, 20);
         for (threshold, enabled, layout) in [(0.25, true, area), (20.0, false, area), (20.0, true, Rect::new(0, 0, 30, 10))] {
@@ -157,7 +154,7 @@ mod tests {
     fn hidden_metadata_is_ignored_and_notices_are_removed_without_stale_cells() {
         let sky = fixture();
         let data = crate::projection::project_sky(&sky, &View::default(), ProjectionViewport { width: 160, height: 80 });
-        let prepared = RenderProjection { sky: data.view(&sky), source: (1, 1), regions: &[], assembled: &[], geometry: [1; 3] };
+        let prepared = RenderProjection { sky: data.view(&sky), source: (1, 1), regions: &[], spans: &[], geometry: [1; 3] };
         let mut cache = PixelTextCache::default(); let mut version = RenderResultVersion::default(); let mut buffer = Buffer::empty(Rect::default());
         let mut fields = vec![MetadataField { label: "Counter".into(), value: "1".into() }; 21];
         traced_refresh(&mut cache, &mut buffer, &mut version, &prepared, &fields, true);
