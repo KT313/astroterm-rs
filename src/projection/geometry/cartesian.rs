@@ -1,7 +1,7 @@
 //! Direct Cartesian camera projection of unit horizontal vectors (East, North, Up). The camera basis and scale
 //! are prepared once per view, with no per-object azimuth/altitude or polar intermediate.
 use crate::model::{ProjectionKind, View, ViewCenter};
-use crate::astro::Vector3;
+use crate::astro::{Matrix3, Vector3};
 use std::f64::consts::FRAC_PI_2;
 
 use crate::model::{CartesianCamera, ScreenPoint};
@@ -48,6 +48,14 @@ pub fn prepare_camera(view: &View) -> CartesianCamera {
         scale,
         kind: view.projection,
     }
+}
+
+/// The same camera with its axes expressed in the frame that `to_horizontal` rotates from. For any direction `a`
+/// in that frame, `axis · (R·a) = (Rᵀ·axis) · a`, so projecting `a` with this camera equals projecting `R·a` with the
+/// original one. The star loops use it to read apparent directions without a rotated copy of every star.
+pub fn rotate_camera_into(camera: CartesianCamera, to_horizontal: Matrix3) -> CartesianCamera {
+    let into_frame = to_horizontal.transpose();                                      // rotations are orthogonal: the inverse is the transpose
+    CartesianCamera { right: into_frame.apply(camera.right), up: into_frame.apply(camera.up), forward: into_frame.apply(camera.forward), ..camera }
 }
 
 /// Project a unit horizontal vector directly, preserving singular and antipodal handling.
@@ -138,6 +146,27 @@ mod tests {
                     "{kind:?} {fov}: {projected:?}"
                 );
                 assert!(crate::projection::project_camera(camera, camera.forward).unwrap().radius() < 1e-10);
+            }
+        }
+    }
+
+    #[test]
+    fn a_camera_rotated_into_the_apparent_frame_projects_apparent_directions_like_rotated_ones() {
+        let rotation = Matrix3::rotate_z(0.7).compose(Matrix3([[1.0, 0.0, 0.0], [0.0, 0.3_f64.cos(), -0.3_f64.sin()], [0.0, 0.3_f64.sin(), 0.3_f64.cos()]]));
+        for kind in [ProjectionKind::Stereographic, ProjectionKind::Equidistant] {
+            let view = View { center: ViewCenter::Facing { azimuth: 1.1, tilt: 0.2 }, projection: kind, fov_degrees: 200.0 };
+            let camera = crate::projection::prepare_camera(&view);
+            let rotated = rotate_camera_into(camera, rotation);
+            assert_eq!((rotated.scale, rotated.kind), (camera.scale, camera.kind));
+            for (azimuth, altitude) in [(0.0, 0.0), (1.0, 0.5), (-2.0, -0.4), (3.0, 1.2), (0.4, -1.5)] {
+                let apparent = Horizontal { azimuth, altitude }.to_unit_vector();
+                let expected = crate::projection::project_camera(camera, rotation.apply(apparent));
+                let actual = crate::projection::project_camera(rotated, apparent);
+                match (expected, actual) {
+                    (Some(expected), Some(actual)) => assert!((expected.x - actual.x).abs() < 1e-12 && (expected.y - actual.y).abs() < 1e-12, "{kind:?} {azimuth} {altitude}"),
+                    (None, None) => {}
+                    other => panic!("{kind:?} {azimuth} {altitude}: {other:?}"),
+                }
             }
         }
     }

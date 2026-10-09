@@ -25,19 +25,22 @@ pub(super) fn describe_observation(stars: crate::state::StellarResults<'_>, outp
             output.moon.illumination.illuminated_fraction, output.moon.phase
         )
     });
+    times.describe("Aberration", || {
+        format!(
+            "input/output stars={}; Sun/planets={}; Moon=1; inertial directions -> apparent directions; no membership filtering",
+            output.corrections.evaluated - output.corrections.skipped,
+            output.planets.len()
+        )
+    });
     for (name, description) in [
-        ("Aberration", "inertial directions -> apparent directions"),
         ("Horizon rotation", "apparent directions -> East/North/Up"),
-        (
-            "Refraction",
-            "airless horizontal directions -> refracted horizontal directions",
-        ),
+        ("Refraction", "airless horizontal directions -> refracted horizontal directions"),
     ] {
         times.describe(name, || {
             format!(
-                "input/output stars={}; Sun/planets={}; Moon=1; {description}; no membership filtering",
-                output.corrections.evaluated - output.corrections.skipped,
-                output.planets.len()
+                "input/output Sun/planets={}; Moon=1; {description}; stars={} stay apparent and are rotated when read or projected; no membership filtering",
+                output.planets.len(),
+                output.corrections.evaluated - output.corrections.skipped
             )
         });
     }

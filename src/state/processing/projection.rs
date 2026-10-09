@@ -15,6 +15,7 @@ pub struct ProjectionCache {
     pub(crate) regional_orders: Vec<Cache<RegionalOrderKey, Vec<RegionalDrawRecord>>>,
     pub(crate) stale_slots: Vec<usize>, // slots of the regions whose cells or order must be recalculated this frame; shared by both passes
     pub(crate) regional_cell_work: Vec<(usize, Cell)>, // cell scratch; each region's result is copied into its own allocation
+    pub(crate) regional_direction_work: Vec<crate::astro::Vector3>, // one region's rotated and refracted directions while it is projected; empty otherwise
     pub(crate) regional_order_work: Vec<RegionalDrawRecord>, // sort scratch; each region's result is copied into its own allocation
     pub(crate) regional_catalog: Option<std::sync::Arc<crate::model::SkyCatalog>>,
     pub(crate) regional_owner: Option<u64>,
@@ -96,6 +97,7 @@ impl crate::cache::ReportBuffers for ProjectionCache {
         report_region_storage(sink, "regional_orders", &self.regional_orders, cached_vector_bytes);
         crate::cache::report_field(sink, "stale_slots", &self.stale_slots);
         crate::cache::report_field(sink, "regional_cell_work", &self.regional_cell_work);
+        crate::cache::report_field(sink, "regional_direction_work", &self.regional_direction_work);
         crate::cache::report_field(sink, "regional_order_work", &self.regional_order_work);
         crate::cache::report_field(sink, "regional_catalog", &self.regional_catalog);
         crate::cache::report_field(sink, "regional_owner", &self.regional_owner);

@@ -191,47 +191,41 @@ fn regional_records_handle_noncontiguous_brightness_and_faint_endpoints() {
 }
 
 #[test]
-fn horizontal_request_reuses_capacity_and_equal_refresh_preserves_revision() {
+fn stellar_membership_changes_leave_the_body_direction_caches_alone() {
     let catalog = catalog();
     let (simulation, observer) = prepare();
     let mut cache = PipelineCache::default();
     let mut output = ObservedSky::new(catalog);
     frame(&mut cache, &simulation, &observer, 20.0, SkyRegion::All, &mut output);
-    let revision = cache.observation.horizontal_sources.revision;
-    let allocation = (cache.observation.horizontal_sources.regions.as_ptr(), cache.observation.horizontal_sources.regions.capacity());
+    let generation = cache.observation.horizontal.generation;
+    let hits = cache.observation.horizontal.stats.hits;
     let expected = output.clone();
     for invalidate in [false, true] {
         if invalidate { cache.observation.invalidate_region(crate::constants::CONSTELLATION_REGION); }
         frame(&mut cache, &simulation, &observer, 20.0, SkyRegion::All, &mut output);
         assert_eq!(output, expected);
-        assert_eq!(cache.observation.horizontal_sources.revision, revision);
-        assert_eq!((cache.observation.horizontal_sources.regions.as_ptr(), cache.observation.horizontal_sources.regions.capacity()), allocation);
     }
-    frame(&mut cache, &simulation, &observer, -20.0, SkyRegion::All, &mut output);
-    assert!(cache.observation.horizontal_sources.revision > revision);
-    assert_eq!((cache.observation.horizontal_sources.regions.as_ptr(), cache.observation.horizontal_sources.regions.capacity()), allocation);
-    let changed_revision = cache.observation.horizontal_sources.revision;
+    frame(&mut cache, &simulation, &observer, -20.0, SkyRegion::All, &mut output);             // the stars change, the bodies do not
     frame(&mut cache, &simulation, &observer, -21.0, SkyRegion::All, &mut output);
-    assert_eq!(cache.observation.horizontal_sources.revision, changed_revision); // new threshold, identical retained regional records
+    assert_eq!(cache.observation.horizontal.generation, generation);
+    assert_eq!(cache.observation.horizontal.stats.hits, hits + 4);
+    assert_eq!(cache.observation.horizontal.value().0.len(), output.planets.len());          // bodies only; stars are rotated when read
 }
 
 #[test]
-fn requested_empty_regions_change_membership_token_but_not_direction_generations() {
+fn requested_empty_regions_do_not_change_direction_generations() {
     let catalog = catalog();
     let (simulation, observer) = prepare();
     let mut cache = PipelineCache::default();
     let mut output = ObservedSky::new(catalog);
     frame(&mut cache, &simulation, &observer, -20.0, cone(1.0, 0.0), &mut output);
     let original = output.stars.clone(); // only the always-requested constellation endpoints remain
-    let revision = cache.observation.horizontal_sources.revision;
     let endpoint_generation = cache.observation.region_reports(crate::constants::CONSTELLATION_REGION).unwrap()[2].generation;
     let horizontal = cache.observation.horizontal.generation;
     frame(&mut cache, &simulation, &observer, -20.0, SkyRegion::All, &mut output);
-    assert!(cache.observation.horizontal_sources.revision > revision);
     assert_eq!(output.stars, original);
     assert_eq!(cache.observation.region_reports(crate::constants::CONSTELLATION_REGION).unwrap()[2].generation, endpoint_generation);
     assert_eq!(cache.observation.horizontal.generation, horizontal);
-    assert_eq!(cache.observation.horizontal_sources.regions.len(), crate::constants::SIMULATION_REGION_COUNT);
 }
 
 #[cfg(feature = "memory-diagnostics")]
@@ -243,9 +237,10 @@ fn inventory_keeps_original_regions_and_counts_request_capacity_without_combined
     frame(&mut cache, &simulation, &observer, 20.0, SkyRegion::All, &mut output);
     let snapshot = crate::state::collect_inventory("observation", &cache.observation);
     assert_eq!(snapshot.omitted_nodes, 0);
-    let metadata = snapshot.rows.iter().find(|row| row.kind == crate::cache::Kind::Heap && row.path.ends_with(".horizontal_sources.regions")).unwrap();
-    assert_eq!(metadata.used, Some(cache.observation.horizontal_sources.regions.len() * std::mem::size_of::<(usize, usize, usize, u64, u64)>()));
-    assert_eq!(metadata.reserved, Some(cache.observation.horizontal_sources.regions.capacity() * std::mem::size_of::<(usize, usize, usize, u64, u64)>()));
+    let metadata = snapshot.rows.iter().find(|row| row.kind == crate::cache::Kind::Heap && row.path.ends_with(".layout_sources")).unwrap();
+    assert_eq!(metadata.used, Some(cache.observation.layout_sources.len() * std::mem::size_of::<(usize, u64, u64)>()));
     assert!(!snapshot.rows.iter().any(|row| row.path == "observation.eligible" || row.path == "observation.corrections"));
+    let body_bytes = (output.planets.len() + 1) * std::mem::size_of::<Vector3>();
+    assert!(snapshot.rows.iter().filter(|row| row.kind == crate::cache::Kind::Heap && row.path.contains("horizontal")).all(|row| row.used.is_some_and(|used| used <= body_bytes))); // bodies only; no star-sized horizontal buffer
     assert!(snapshot.rows.iter().any(|row| row.kind == crate::cache::Kind::Heap && row.path.ends_with(".regions.results")));
 }

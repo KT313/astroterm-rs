@@ -14,12 +14,12 @@ pub use catalog::{
 };
 pub(crate) use catalog::{SelectedRegion, StellarFields, build_caps, unsupported_star_data};
 pub use celestial::{
-    ObservedSkyView, ObservedPlanets, ObservedStars, RegionData, ObservedRegion, Star, SelectedStar, ObservedStar, ObservedStarState, ObservedStarView, PlanetKind, Planet, Moon, Constellation, create_planets, create_moon,
+    ObservedSkyView, ObservedPlanets, ObservedStars, RegionData, ApparentFrame, ObservedRegion, Star, SelectedStar, ObservedStar, ObservedStarState, ObservedStarView, PlanetKind, Planet, Moon, Constellation, create_planets, create_moon,
     CorrectionStats, ObservedSky, Sky, MoonIllumination, Anchor, ObserverState, FrameTime, ModelFamily, StateRequest,
     SimulationError, InterpolationLimits, PLANET_LIMITS, MOON_LIMITS, ORIENTATION_LIMITS, CachePolicy, RefreshCounts,
 };
 pub(crate) use celestial::{
-    ObservationRegion, BodySamples, StellarWork, Directions, ObserverKey,
+    ObservationRegion, BodySamples, StellarWork, BodyDirections, ObserverKey,
     ObservationBodyKey, Sample, SolarRequestKey,
 };
 pub use presentation::{

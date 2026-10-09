@@ -42,7 +42,6 @@ fn observation_hits_equal_refresh_and_bypass_report_executed_work_only() {
     let mut sky = ObservedSky::new(catalog.clone());
     let first = frame(&mut simulation, &mut cache, &mut sky, 20.0, true);
     assert!(operations(&first, BufferId::RegionalBrightness).contains(&Operation::Build));
-    assert!(operations(&first, BufferId::HorizontalRequest).contains(&Operation::Build));
     assert!(!first.trace().unwrap().steps.iter().any(|step| ["Brightness output assembly", "Correction index selection", "Correction cache store"].contains(&step.name)));
     let subtraction = first.trace().unwrap().steps.iter().find(|step| step.name == "Observer subtraction").unwrap();
     assert!(subtraction.memory_events.iter().any(|event| matches!(event.event,
@@ -59,14 +58,13 @@ fn observation_hits_equal_refresh_and_bypass_report_executed_work_only() {
         MemoryEvent::Operation { buffer: BufferId::ObservedStars, operation: Operation::Write | Operation::Copy, .. })));
     let rotation = steps.iter().find(|step| step.name == "Horizon rotation calculation").unwrap();
     assert!(rotation.memory_events.iter().any(|record| matches!(record.event,
-        MemoryEvent::Borrow { buffer: BufferId::RegionalApparent, access: astroterm::timing::Access::ReadOnly, .. })));
-    assert!(rotation.memory_events.iter().any(|record| matches!(record.event,
-        MemoryEvent::Borrow { buffer: BufferId::BodyApparentDirections, access: astroterm::timing::Access::ReadOnly, .. })));
+        MemoryEvent::Borrow { buffer: BufferId::BodyApparentDirections, access: astroterm::timing::Access::ReadOnly, shape } if shape.len == Some(sky.planets.len()))));
+    assert!(!rotation.memory_events.iter().any(|record| matches!(record.event,
+        MemoryEvent::Borrow { buffer: BufferId::RegionalApparent, .. }))); // stars are not rotated here; the view rotates them when read
 
     let expected = sky.clone();
     let second = frame(&mut simulation, &mut cache, &mut sky, 20.0, true);
     assert_eq!(sky, expected);
-    assert_eq!(operations(&second, BufferId::HorizontalRequest), [Operation::Reuse]);
     assert_eq!(operations(&second, BufferId::RegionalBrightness), [Operation::Reuse]);
     assert!(operations(&second, BufferId::StellarSamples).contains(&Operation::Reuse));
     assert!(!second.trace().unwrap().steps.iter().any(|s| s.name == "Stellar batches"));
@@ -74,7 +72,11 @@ fn observation_hits_equal_refresh_and_bypass_report_executed_work_only() {
     let restoration: Vec<_> = second.trace().unwrap().steps.iter().filter(|s| s.name == "Direction restoration").collect();
     assert!(restoration.is_empty());
     for buffer in [BufferId::HorizontalDirections, BufferId::RefractedDirections] {
-        assert!(operations(&first, buffer).contains(&Operation::Move));
+        let built = first.trace().unwrap().steps.iter().flat_map(|s| &s.memory_events).find_map(|r| match r.event {
+            MemoryEvent::Operation { buffer: id, operation: Operation::Build, elements, .. } if id == buffer => Some(elements),
+            _ => None,
+        }).unwrap();
+        assert_eq!(built, Some(sky.planets.len() + 1)); // the bodies only; no star-sized direction buffer is built
         assert!(!operations(&first, buffer).contains(&Operation::Copy));
         assert!(operations(&second, buffer).contains(&Operation::Reuse));
         assert!(!operations(&second, buffer).contains(&Operation::Copy));

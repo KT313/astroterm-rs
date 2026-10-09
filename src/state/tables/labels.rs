@@ -23,13 +23,11 @@ pub(super) fn label_columns(path: &str, columns: &mut [Column]) {
 // region_output_work: direction_j2000/current_magnitude/uses_motion_fallback -> direction/magnitude/used_singular_fallback.
 // completed_request -> last_request; selected_stars_using_motion_fallback -> selected_fallback_count.
 // regional passes_brightness_filter -> region.eligible[row].
-// horizontal_sources.regions -> region ID / output start / output end / membership version / apparent version.
-// horizontal_sources.body_generation/revision -> body_direction_version/horizontal_request_version.
 // moon_illumination/moon_phase -> illumination tuple .0/.1.
 // projection star key (direction, passes_brightness_filter) -> tuple .0/.1.
 // projection order key (observed_star_index, current_magnitude, star_id) -> tuple .0/.1/.2.
 // projection stars (observed_star_index, screen_coordinates) -> tuple .0/.1; regional_cells uses (region_slot + observed_index, cell).
-// region_slot selects regional_output, observed_index selects final cached directions; projected_star_index -> legacy order[row].
+// region_slot selects regional_output, observed_index selects the frame-wide observed row (its region's apparent direction); projected_star_index -> legacy order[row].
 // requested_sources: sky_region_index -> tuple.0; validated_range_version -> tuple.1.
 // layout_sources: region ID / correction-result version / stellar-sample version; directions remain in their original caches.
 // regional_output: sky_region_index -> region; observed row start/end -> start/end; correction/stellar/aberration versions -> selection_generation/motion_generation/apparent_generation.
@@ -61,9 +59,6 @@ fn table_labels(path: &str) -> &'static [&'static str] {
         "cache.simulation.stars.selected_fallback_count" => &["selected_stars_using_motion_fallback"],
         "cache.simulation.stars.stellar_scratch" => &["initial_magnitude", "trajectory_parameters", "motion_properties"],
         "cache.simulation.stars.refresh_regions" => &["simulation_region_id"],
-        "cache.observation.horizontal_sources.regions" => &["sky_region_index", "observed_row_start", "observed_row_end_exclusive", "correction_membership_version", "aberration_version"],
-        "cache.observation.horizontal_sources.body_generation" => &["body_direction_version"],
-        "cache.observation.horizontal_sources.revision" => &["horizontal_request_version"],
         "cache.observation.layout_sources" => &["sky_region_index", "correction_membership_version", "stellar_sample_version"],
         "cache.observation.regional_output" => &["sky_region_index", "observed_row_start", "observed_row_end_exclusive", "correction_membership_version", "stellar_sample_version", "aberration_version"],
         "cache.projection.regional_cell_work" => &["catalog_star_index", "screen_coordinates"],
@@ -165,7 +160,7 @@ pub(super) fn column_notes(path: &str) -> &'static [&'static str] {
         "cache.simulation.stars.last_request" => &["Provenance of the completed request: selection owner/working generation, requested-region revision, requested TT and regional-results revision. This request time does not replace individual regions' calculation times."],
         "cache.observer.bodies" => &["Emission-time body states use J2000 axes, AU and AU/day relative to the solar-system center of mass. The separate Moon value is described in the table's existing notes."],
         "cache.observation.relative" => &["x/y/z are physical observer-relative displacement in AU along J2000 axes, not normalized directions."],
-        "cache.observation.horizontal" | "cache.observation.refracted" => &["x/y/z mean East/North/Up. Stars, planets and the Moon have unit directions after aberration. The refracted table additionally includes atmospheric bending."],
+        "cache.observation.horizontal" | "cache.observation.refracted" => &["x/y/z mean East/North/Up unit directions of the Sun, planets and the Moon after aberration. Stars are not stored this way: their apparent regional directions are rotated (and refracted) when read or projected. The refracted table additionally includes atmospheric bending."],
         "cache.observation.illumination" => &["Illuminated fraction ranges from 0 to 1; phase_angle is radians; waxing means the illuminated fraction is increasing. moon_phase is the named phase."],
         "timings.steps" => &["average_seconds is a smoothed wall-time average, not a sum. nesting_depth counts parent steps."],
         "timings.trace.steps" => &["Elapsed wall times include children; do not sum parents and children. own_diagnostic_seconds excludes child diagnostics. parent_step_index addresses this trace table; repeated batch passes may be aggregated."],

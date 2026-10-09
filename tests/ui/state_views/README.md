@@ -13,7 +13,6 @@ No terminal, filesystem dataset or large star list is needed.
 | `projection_backing_in_use.rs` | Projection storage cannot be invalidated while a rendering view borrows it. | E0502 |
 | `selection_ranges_in_use.rs` | Cached selection cannot be invalidated while its borrowed regional-range iterator remains in use. | E0502 |
 | `stellar_results_in_use.rs` | Stellar storage cannot be invalidated while its selected-sample iterator remains in use. | E0502 |
-| `readonly_apparent_directions.rs` | Borrowed apparent star and planet directions cannot be modified. | E0594 |
 | `borrowed_observation_in_use.rs` | An observation cache cannot be invalidated while its borrowed final sky view remains in use. | E0502 |
 | `disjoint_pipeline_fields.rs` | Source reads and separate projection, simulation and rendering writes can coexist. | Compiles and runs |
 

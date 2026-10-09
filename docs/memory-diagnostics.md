@@ -288,41 +288,37 @@ from regional correction records and borrowed stellar samples; their actual outp
 Counts retain the same meanings: evaluated working rows, skipped faint ordinary stars, and faint endpoints kept
 for constellation geometry. Empty regions still have output descriptors.
 
-The temporary correction-membership bridge has been replaced by `cache.observation.horizontal_sources`.
-Its `regions` table stores region IDs, output spans, membership versions and apparent-result versions. A separate
-`body_generation` records the solar-system input version, and `revision` is a dependency token. Metadata capacity
-is reused; it contains no copied directions. `Horizontal request preparation` and `HorizontalRequest` events
-report changes/reuse. The old brightness/correction assembly passes remain absent.
+The temporary correction-membership bridge is gone, and so is the horizontal request metadata that replaced it:
+stars are no longer rotated into a horizontal buffer at all. The old brightness/correction assembly passes remain absent.
 
-### Borrowed apparent directions
+### Apparent directions are the final star directions
 
 `cache.observation.apparent` and its combined star/body snapshot are removed. Stellar aberration remains in
-original regional owners and solar-system aberration in `body_apparent`. Horizon rotation borrows these through
-`ApparentDirections`, validates regional spans, and writes transformed output directly. The cached inputs remain
-unchanged. Body aberration now has its own cache report; regional counters describe stellar aberration.
+original regional owners and solar-system aberration in `body_apparent`. Body aberration has its own cache
+report; regional counters describe stellar aberration.
 
 Under **Aberration**, there is no apparent cache decision, direction capture/store or direction restoration.
-Under **Horizon rotation** and **Refraction**, refreshes now fill reusable work buffers and swap completed
-results into their caches. Hits borrow existing results; there is no direction capture or restoration pass. Read-only RegionalApparent/BodyApparentDirections
-borrow events describe rotation inputs; they do not imply copies or new allocations. This change does not claim
-that every remaining direction copy has been removed.
+**Horizon rotation** and **Refraction** cover only the Sun, planets and Moon: a refresh builds one small
+`BodyDirections` value (`HorizontalDirections`/`RefractedDirections` Build events with planets + 1 elements) and
+stores it; hits reuse it. A read-only `BodyApparentDirections` borrow describes the rotation input. No
+`RegionalApparent` borrow appears under these steps, because the stars' regional apparent directions are rotated
+(and refracted) when the view reads them, and projection folds the rotation into the camera axes instead.
 
 ### Borrowed final observation (Stage 7)
 
 The production loop keeps `cache.sky.stars` empty. Its scalar metadata and small body fields are preparation
-scratch; final star/body directions live in the horizontal/refraction caches and are exposed by a borrowed
-ObservedSkyView. Correction records and magnitudes remain in their original regional caches. Views do not appear
-as duplicate tables. `observe_cached_sky` / `materialize()` explicitly construct owned output when requested.
+scratch; final body directions live in the horizontal/refraction caches and final star directions are the
+regions' apparent directions seen through the frame's rotation, exposed by a borrowed ObservedSkyView. Correction
+records and magnitudes remain in their original regional caches. Views do not appear as duplicate tables.
+`observe_cached_sky` / `materialize()` explicitly construct owned output when requested.
 
-New original owners are `layout_sources`, `horizontal_work` and `refraction_work`. `published` records request
-provenance; `use_refraction` identifies the selected final directions. Work arrays retain capacity after swaps.
+`layout_sources` is the remaining small original owner here. `published` records request provenance;
+`use_refraction` identifies the selected body result and the frame's refraction flag.
 `Observed region layout` compares small regional versions and does not rebuild star rows. On valid paused hits,
-no Corrected-star buffer construction, direction calculation/capture/restoration, or owned materialization runs.
+no Corrected-star buffer construction, direction calculation, or owned materialization runs.
 Other pipeline work, including raster keys, composition and presentation, is outside this unchanged-input shortcut.
 
-HorizontalWork/RefractionWork events describe actual reserve/build/clear operations and result ownership moves.
-Their logical shape combines two direction vectors and an inline Moon value; it is not one contiguous allocation.
-Regional projected-cell addresses now contain a descriptor slot and logical observed row, both checked u32 values.
+Regional projected-cell addresses contain a descriptor slot and logical observed row, both checked u32 values.
 
 
 Production raster hits now inspect region/version metadata instead of rebuilding the star-sized key.

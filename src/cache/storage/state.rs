@@ -173,22 +173,6 @@ impl<K: PartialEq, T: PartialEq> Cache<K, Vec<T>> {
         StoreOutcome { value_changed }
     }
 }
-impl<K: PartialEq, T: PartialEq + Default> Cache<K, (Vec<T>, Vec<T>, T)> {
-    /// Publish a completed two-vector result and scalar without copying either payload.
-    pub fn store_reusing_pair(&mut self, key: K, epoch: f64, valid_seconds: f64, work: &mut (Vec<T>, Vec<T>, T)) -> StoreOutcome {
-        let value_changed = self.value.as_ref() != Some(work);
-        if value_changed { self.generation = self.generation.wrapping_add(1); }
-        if let Some(stored) = &mut self.value { std::mem::swap(stored, work); }
-        else { self.value = Some(std::mem::take(work)); }
-        self.key = Some(key);
-        self.calculated_at = Some(epoch);
-        self.valid_seconds = valid_seconds;
-        self.has_been_invalidated = false;
-        self.stats.refreshes += 1;
-        work.0.clear(); work.1.clear(); work.2 = T::default();
-        StoreOutcome { value_changed }
-    }
-}
 #[cfg(feature = "memory-diagnostics")]
 impl<K: super::buffers::ReportBuffers, V: super::buffers::ReportBuffers> super::buffers::ReportBuffers for Cache<K, V> {
     const HAS_BUFFERS: bool = K::HAS_BUFFERS || V::HAS_BUFFERS;
@@ -299,34 +283,5 @@ mod reuse_tests {
         work.extend([Counted(&comparisons), Counted(&comparisons)]);
         assert!(!cache.store_reusing((), 2.0, 0.0, &mut work).value_changed);
         assert_eq!(comparisons.get(), 2);
-    }
-}
-
-#[cfg(test)]
-mod pair_reuse_tests {
-    use super::*;
-    #[test]
-    fn pair_swap_preserves_metadata_generations_and_both_displaced_allocations() {
-        let mut cached: Cache<u8, (Vec<u32>, Vec<u32>, u32)> = Cache::default();
-        let mut reference = Cache::default();
-        let mut work = (Vec::with_capacity(8), Vec::with_capacity(4), 0);
-        for (epoch, key, star) in [(1.0, 1, 3), (2.0, 2, 3), (3.0, 2, 4)] {
-            let values = (vec![star, 7], vec![9], 10);
-            assert!(cached.needs_refresh(&key, epoch, Some(0.0), true));
-            reference.needs_refresh(&key, epoch, Some(0.0), true);
-            work.0.extend_from_slice(&values.0); work.1.extend_from_slice(&values.1); work.2 = values.2;
-            let incoming = (work.0.as_ptr(), work.1.as_ptr());
-            let displaced = cached.stored().map(|old| (old.0.as_ptr(), old.1.as_ptr()));
-            assert_eq!(cached.store_reusing_pair(key, epoch, 0.0, &mut work), reference.store(key, epoch, 0.0, values));
-            assert_eq!(cached, reference);
-            assert_eq!((cached.value().0.as_ptr(), cached.value().1.as_ptr()), incoming);
-            if let Some(displaced) = displaced { assert_eq!((work.0.as_ptr(), work.1.as_ptr()), displaced); }
-            assert!(work.0.is_empty() && work.1.is_empty());
-        }
-        assert_eq!(cached.generation, 2);
-        cached.invalidate();
-        work.0.push(99); // partial replacement is separate from the invalid previous result
-        assert_eq!(cached.stored().unwrap().0, [4, 7]);
-        assert!(std::panic::catch_unwind(|| cached.value()).is_err());
     }
 }

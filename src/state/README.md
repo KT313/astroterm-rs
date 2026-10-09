@@ -211,37 +211,38 @@ needed; none scans individual stars to decide reuse. Correction records retain c
 aberration has a separate small `body_apparent` cache. There are no combined eligibility flags or correction-index
 lists. `layout_sources` retains ordered region/correction/sample versions. Only changes rebuild the small
 `regional_output` spans and summed `layout_stats`; unchanged frames never scan individual retained stars here.
-Catalog indices stay in original regional records; spans address final direction buffers, including empty regions.
+Catalog indices stay in original regional records; spans address the regions' apparent directions, including empty regions.
 
-`ApparentDirections` is a local read-only view over requested region descriptors, original regional direction
-slices and the original body-apparent cache. It is created after successful regional/body aberration; no view is
-stored inside state. Region iteration verifies membership/result versions and direction counts before supplying
-one slice to its star loop. Horizon rotation receives this view beside separate writable horizontal metadata,
-cache and reusable work. It writes transformed directions directly; it never uses the summary's old positions
-as apparent inputs. Stars and Moon retain the direct path's vector lengths; planets use the same normalization.
+Stars end at their regional apparent (aberrated) directions. No star-sized horizontal or refracted buffer exists:
+`ObservedStars::regional` carries an `ApparentFrame` (the frame's horizon rotation and refraction flag), and
+`RegionData::position` rotates (and refracts) a row when it is read, with the same arithmetic the direct path
+applies in place. Projection does not even do that per star when refraction is off: `rotate_camera_into` rotates
+the three camera axes by the inverse rotation once per region refresh and the loop reads `RegionData::apparent`
+directly, since `axis · (R·a) = (Rᵀ·axis) · a`. With refraction on, the loop reads `position` (rotate, then
+refract, then project per star) without storing intermediates. The regional projection key already contains the
+rotation and the refraction flag. Fusing rotation, refraction and projection into one per-star chain measured a
+third slower than separate passes, so with refraction on each stale region is rotated and refracted into the
+region-sized `regional_direction_work` scratch first and projected from there.
 
-There is no combined apparent snapshot, apparent assembly or apparent restoration into observed output.
-The Stage-4 correction-membership bridge is also gone. `horizontal_sources.regions` stores ordered
-`(region_id, start, end, selection_generation, apparent_generation)` tuples, plus a separate body generation.
-Its reused-capacity snapshot advances `revision` only when these dependencies change. `(revision, rotation)`
-keys the horizontal cache, whose result generation still depends on exact direction equality. Owner/catalog
-replacement resets the metadata with observation storage. It is region-sized metadata, not a direction buffer.
-
-Regional/body apparent inputs stay unchanged. Horizontal and refraction misses fill `horizontal_work` or
-`refraction_work`, then `Cache::store_reusing_pair` compares once and swaps complete result allocations into the
-cache. Displaced vectors clear without shrinking. Hits return the original cache result without capture, restore,
-or a per-star loop. Initial population/growth still allocate; retained spare capacity can increase memory.
+`slot_columns` verifies a region's membership version and row count; `RegionData::apparent_directions` verifies
+the apparent version and direction count when a pass actually needs directions, so draw-order and label passes
+never touch that cache line. `get_regional` asserts the apparent version in debug builds. The `horizontal` and
+`refracted` caches hold only the Sun, planets and Moon (`BodyDirections`): `horizontal` is keyed by
+`(body_apparent.generation, rotation)` and `refracted` by `(horizontal.generation, true)`. Planets are normalized
+after rotation and the Moon keeps its vector length, as on the direct path. There is no horizontal request
+metadata and no direction work buffer any more.
 
 `sky::observe_cached_regions` returns a local `RegionalObservation` containing `ObservedSkyView`. Its star
 accessors combine original regional correction records (catalog index/draw flag), stellar samples (magnitude),
-and selected horizontal/refracted directions. It owns no star array. `ObservedStarView.state` either borrows an
+and the regions' apparent directions seen through the frame. It owns no star array. `ObservedStarView.state` either borrows an
 owned row or holds a small resolved value on the stack; neither variant owns heap memory. Plain regional cache
 record definitions live in model so this view never imports state; ObservationCache still owns their allocations.
 
 Production `cache.sky` contains scalar metadata and small body/illumination scratch; `cache.sky.stars` stays empty.
 Its body-position fields are intermediate values, not the final sky: read final body positions through the view.
 `published` validates stellar owner, selection/region request, result revision, epoch and catalog identity before
-`observed_view` can expose cached directions. `use_refraction` selects the completed result. Invalidation or a
+`observed_view` can expose cached directions. `use_refraction` selects the bodies' completed result and sets the
+frame's refraction flag. Invalidation or a
 new unfinished observation clears publication; immutable views prevent their owners from changing underneath.
 The loop reborrows this view after projection's mutable stage before rendering; no sibling references live in state.
 
@@ -295,6 +296,7 @@ view of the completed fields. That view does not build a reference vector or clo
 | `regional_orders` | Regional magnitude/ID sorted records with region-local observed-row offsets | Membership versions guard these offsets; camera and position-only changes do not invalidate order |
 | `regional_cells`, `regional_ranges`, `assembled_for` | Directly drawable cells, one start/end range per region, and small assembly dependency records | Reassemble only when requested regions, row ranges, cells or order versions change |
 | `stale_slots`, `regional_cell_work`, `regional_order_work` | Slots of the regions to recalculate this frame; cell and sort scratch shared sequentially across regions | Build into the scratch, compare once, copy into the region's own allocation (`Cache::store_in_place` + `adopt_work`), so no region ever inherits another region's capacity; scratch buffers retain capacity across frames and owner/catalog resets |
+| `regional_direction_work` | One region's rotated and refracted directions while that region is projected with refraction on | Region-sized scratch, empty between frames; without refraction the camera is rotated instead and no direction is written |
 | `region_cell_scratch` | Optional screen cells indexed within one observed region | Reused across regions and frames; empty after assembly, capacity bounded by the largest observed region encountered |
 | `star_candidate`, `stars` | Exact observed-position/flag key and visible output for the caller-editable headless fallback | Candidate is cleared on hit, moved into cache on successful refresh |
 | `order_candidate`, `order`, `draw_order_scratch` | Exact visible magnitude/ID inputs, draw-order permutation, temporary sort records | Same key lifecycle; sort scratch retains capacity between sorts |

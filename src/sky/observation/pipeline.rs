@@ -1,6 +1,6 @@
 //! Cached observation order. Individual stages own their cache decisions, numerical work and diagnostics.
 use crate::model::{ObservedSky, ObserverState};
-use crate::state::{ApparentDirections, ObservationCache};
+use crate::state::ObservationCache;
 use crate::timing::StepTimes;
 use super::caching::{
     capture_observation_reports, describe_observation_results,
@@ -28,12 +28,12 @@ fn prepare_cached_observation(
     // each cache owns a distinct coordinate-space result
     update_observer_subtraction(&mut storage.relative, bodies.cache, &storage.config, epoch, observer, output, times); // calculate body positions relative to the viewer
     update_moon_illumination(&mut storage.illumination, &storage.config, epoch, output, times); // calculate the illuminated part of the Moon
-    update_regional_aberration(storage, stars, observer, times); // correct apparent directions for the viewer’s velocity
-    let apparent = ApparentDirections::new(&storage.regional_output, &storage.regions, &storage.body_apparent); // borrow saved star and body directions without copying
-    update_horizon_rotation(apparent, &mut storage.horizontal_sources, &mut storage.horizontal, &mut storage.horizontal_work, &storage.config, epoch, observer.inertial_to_horizon, times); // turn apparent directions into local sky directions
-    update_refraction(&storage.horizontal, &mut storage.refracted, &mut storage.refraction_work, &storage.config, epoch, refraction && observer.atmosphere, times); // apply atmospheric bending when enabled
+    update_regional_aberration(storage, stars, observer, times); // correct apparent directions for the viewer’s velocity; stars end here and are rotated when read
+    update_horizon_rotation(&storage.body_apparent, &mut storage.horizontal, &storage.config, epoch, observer.inertial_to_horizon, times); // turn the bodies' apparent directions into local sky directions
+    update_refraction(&storage.horizontal, &mut storage.refracted, &storage.config, epoch, refraction && observer.atmosphere, times); // apply atmospheric bending to the bodies when enabled
     output.outside_accuracy_range = crate::astro::accuracy::needs_accuracy_warning(epoch); // record whether this date exceeds the supported interval
     storage.use_refraction = refraction && observer.atmosphere;
+    storage.frame = crate::model::ApparentFrame { horizon: observer.inertial_to_horizon, refraction: storage.use_refraction }; // how the published apparent star directions are read
     output.refracted = storage.use_refraction;
     storage.published = Some(stars.publication_key());
     describe_observation_results(storage, stars, output, threshold, previous_reports, times); // report counts without repeating calculations

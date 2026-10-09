@@ -70,12 +70,9 @@ impl Tables for ObservationCache {
         let path = |name: &str| join(prefix, name);
         visit(&path("regions"), &super::regions::ObservationRegionsTable(&self.regions), None);
         visit(&path("regional_output"), &self.regional_output, Some(Group::Projection));
-        self.horizontal_sources.visit_tables(&path("horizontal_sources"), visit);
         visit(&path("layout_sources"), &self.layout_sources, None);
         visit(&path("published"), &Single(&self.published), None);
         visit(&path("use_refraction"), &Single(&self.use_refraction), None);
-        visit(&path("horizontal_work"), &self.horizontal_work, None);
-        visit(&path("refraction_work"), &self.refraction_work, None);
         visit(&path("relative"), &self.relative, Some(Group::SolarSystemGeometry));
         visit(&path("body_apparent"), &self.body_apparent, Some(Group::ApparentDirections));
         visit(&path("horizontal"), &self.horizontal, Some(Group::HorizontalSky));
@@ -94,6 +91,7 @@ impl Tables for ProjectionCache {
         visit(&path("regional_orders"), &super::regions::RegionalTable { entries: &self.regional_orders, nested_bytes: super::TableBytes::vector }, Some(Group::DrawOrder));
         visit(&path("stale_slots"), &self.stale_slots, None);
         visit(&path("regional_cell_work"), &self.regional_cell_work, None);
+        visit(&path("regional_direction_work"), &self.regional_direction_work, None);
         visit(&path("regional_order_work"), &self.regional_order_work, None);
         visit(&path("regional_cells"), &self.regional_cells, None);
         visit(&path("regional_ranges"), &self.regional_ranges, None);
@@ -249,10 +247,3 @@ impl Tables for crate::state::StellarSimulationState {
     }
 }
 
-impl Tables for crate::state::HorizontalSources {
-    fn visit_tables(&self, prefix: &str, visit: &mut TableVisitor<'_>) {
-        visit(&join(prefix, "regions"), &self.regions, None);
-        visit(&join(prefix, "body_generation"), &Single(&self.body_generation), None);
-        visit(&join(prefix, "revision"), &Single(&self.revision), None);
-    }
-}

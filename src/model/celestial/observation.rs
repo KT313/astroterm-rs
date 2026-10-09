@@ -134,6 +134,7 @@ pub(crate) struct BodySamples {
     pub(crate) moon: crate::astro::models::BodyState,
 }
 
-pub(crate) type Directions = (Vec<Vector3>, Vec<Vector3>, Vector3);
+/// Horizontal directions of the Sun and planets, then the Moon; stars are rotated when read, never stored this way.
+pub(crate) type BodyDirections = (Vec<Vector3>, Vector3);
 pub(crate) type ObserverKey = (FrameTime, Observer, [u64; 3], u64, u64);
 pub(crate) type BodyKey = (ObserverState, u64, u64);

@@ -2,7 +2,8 @@
 use std::cmp::Ordering;
 use std::sync::Arc;
 use crate::cache::{Cache, Group};
-use crate::model::{CartesianCamera, ObservedRegion, ProjectionViewport, RegionalDrawRecord, View};
+use crate::astro::Vector3;
+use crate::model::{CartesianCamera, Cell, ObservedRegion, ProjectionViewport, RegionData, RegionalDrawRecord, View};
 use crate::state::{ProjectionCache, RegionalObservation};
 use crate::timing::{StepTimes, BufferId};
 
@@ -32,6 +33,7 @@ fn prepare_region_storage(storage: &mut ProjectionCache, observed: RegionalObser
     storage.region_cell_scratch.clear();
     storage.stale_slots.clear();
     storage.regional_cell_work.clear();
+    storage.regional_direction_work.clear();
     storage.regional_order_work.clear();
     storage.regional_ranges.clear();
 }
@@ -39,7 +41,7 @@ fn prepare_region_storage(storage: &mut ProjectionCache, observed: RegionalObser
 #[allow(clippy::too_many_arguments)]
 fn refresh_region_cells(storage: &mut ProjectionCache, observed: RegionalObservation<'_>, view: &View, viewport: ProjectionViewport, epoch: f64, camera: CartesianCamera, times: &mut StepTimes) -> (usize, usize, usize) {
     let reuse = storage.config.allows(Group::Projection);
-    let ProjectionCache { regional_stars, regional_cell_work: work, regional_stats, stale_slots, .. } = storage;
+    let ProjectionCache { regional_stars, regional_cell_work: work, regional_direction_work: directions, regional_stats, stale_slots, .. } = storage;
     let stats_before = *regional_stats;
     let region_key = |region: &ObservedRegion| ((region.selection_generation, region.apparent_generation), observed.horizon_rotation(), observed.refraction_enabled(), *view, viewport);
     stale_slots.clear();
@@ -57,21 +59,38 @@ fn refresh_region_cells(storage: &mut ProjectionCache, observed: RegionalObserva
             let region = &observed.regions()[slot];
             let stars = observed.sky().stars.region(slot, region);                          // resolve the region's columns once
             work.clear();                                                                   // one shared scratch; grows only when a region needs more room
-            for row in 0..stars.len() {
-                if !stars.drawable(row) { continue; }
-                calculated += 1;
-                let Some(point) = crate::projection::project_camera(camera, stars.position(row)) else { continue; };
-                if point.is_visible() { work.push((stars.source_index(row), crate::projection::project_to_cell(viewport, point))); }
-            }
+            calculated += match (stars.apparent_frame(), stars.apparent_directions()) {
+                (Some(frame), Some(apparent)) if !frame.refraction => project_region_rows(&stars, crate::projection::rotate_camera_into(camera, frame.horizon), viewport, work, |row| apparent[row]), // rotate three camera axes once instead of every star
+                (Some(frame), Some(apparent)) => {                                            // refraction bends each star after its rotation: rotate and refract the region into a small scratch, then project it (a fused per-star chain measured a third slower)
+                    directions.clear();
+                    directions.extend(apparent.iter().map(|&direction| frame.to_horizontal(direction)));
+                    project_region_rows(&stars, camera, viewport, work, |row| directions[row])
+                }
+                _ => project_region_rows(&stars, camera, viewport, work, |row| stars.position(row)), // owned rows are horizontal already
+            };
             let cache = &mut regional_stars[region.region];
             let before = cache.stats;
             cache.store_in_place(region_key(region), epoch, 0.0, |cells| crate::cache::adopt_work(cells, work)); // compare once, copy into the region's own allocation
             add_stats(regional_stats, before, cache.stats);
         }
-        work.clear();                                                                       // keep only capacity between frames
+        work.clear(); directions.clear();                                                   // keep only capacity between frames
     });
     times.record_regional_counts(BufferId::RegionalProjectedCells, stats_before, *regional_stats);
     (stale_slots.len(), observed.regions().len() - stale_slots.len(), calculated)
+}
+
+/// Project the drawable rows of one region into `work` with the camera matching the frame `direction` reads in.
+/// Returns how many rows were projected; only the visible ones are kept.
+#[inline]
+fn project_region_rows(stars: &RegionData<'_>, camera: CartesianCamera, viewport: ProjectionViewport, work: &mut Vec<(usize, Cell)>, direction: impl Fn(usize) -> Vector3) -> usize {
+    let mut calculated = 0;
+    for row in 0..stars.len() {
+        if !stars.drawable(row) { continue; }
+        calculated += 1;
+        let Some(point) = crate::projection::project_camera(camera, direction(row)) else { continue; };
+        if point.is_visible() { work.push((stars.source_index(row), crate::projection::project_to_cell(viewport, point))); }
+    }
+    calculated
 }
 
 fn refresh_region_orders(storage: &mut ProjectionCache, observed: RegionalObservation<'_>, epoch: f64, times: &mut StepTimes) -> (usize, usize) {
@@ -477,15 +496,17 @@ mod tests {
         storage.regional_cell_work.push(storage.regional_stars[0].value()[0]);
         storage.regional_order_work.reserve(32);
         storage.regional_order_work.push(storage.regional_orders[0].value()[0]);
+        storage.regional_direction_work.reserve(32);
+        storage.regional_direction_work.push(Vector3::default());
         let work = (storage.stale_slots.as_ptr(), storage.stale_slots.capacity(), storage.regional_cell_work.as_ptr(), storage.regional_cell_work.capacity(),
-            storage.regional_order_work.as_ptr(), storage.regional_order_work.capacity());
+            storage.regional_order_work.as_ptr(), storage.regional_order_work.capacity(), storage.regional_direction_work.as_ptr(), storage.regional_direction_work.capacity());
         prepare_region_storage(&mut storage, token(&sky, &regions));                       // new observation owner with matching numerical data
         assert!(storage.regional_stars.iter().all(|entry| entry.stored().is_none()));
         assert!(storage.regional_orders.iter().all(|entry| entry.stored().is_none()));
         assert!(!storage.assembly_valid);
-        assert!(storage.stale_slots.is_empty() && storage.regional_cell_work.is_empty() && storage.regional_order_work.is_empty());
+        assert!(storage.stale_slots.is_empty() && storage.regional_cell_work.is_empty() && storage.regional_order_work.is_empty() && storage.regional_direction_work.is_empty());
         assert_eq!((storage.stale_slots.as_ptr(), storage.stale_slots.capacity(), storage.regional_cell_work.as_ptr(), storage.regional_cell_work.capacity(),
-            storage.regional_order_work.as_ptr(), storage.regional_order_work.capacity()), work);
+            storage.regional_order_work.as_ptr(), storage.regional_order_work.capacity(), storage.regional_direction_work.as_ptr(), storage.regional_direction_work.capacity()), work);
     }
 
     #[test]

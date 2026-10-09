@@ -11,11 +11,11 @@ mod memory;
 pub use application::{ApplicationState, Persistent, Caches};
 pub use processing::{
     SimulationCaches, SimulationState, StellarSimulationState, ObserverPreparationCache, StarSelectionCache,
-    SelectedStars, StellarResults, PreparedBodies, ObservationCache, RegionalObservation, ApparentDirections, ProjectionCache, SceneCache,
+    SelectedStars, StellarResults, PreparedBodies, ObservationCache, RegionalObservation, ProjectionCache, SceneCache,
 };
 pub(crate) use processing::{
     ObserverBuffers, LightTimeBuffers, RegionCache, WorkingCache,
-    RelativeCache, IlluminationCache, HorizontalSources, HorizontalCache, StellarPublication, StellarRegions, StellarMotionBuffers,
+    RelativeCache, IlluminationCache, HorizontalCache, BodyApparentCache, StellarPublication, StellarRegions, StellarMotionBuffers,
     StarProjectionBuffers, DrawOrderBuffers,
 };
 pub use rendering::{RenderingState, CompressionSupport, CharacterState, PixelState, Presenter, TextRasterizer};

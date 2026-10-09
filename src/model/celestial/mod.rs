@@ -3,7 +3,7 @@ mod regions;
 pub use regions::ObservedRegion;
 pub(crate) use regions::ObservationRegion;
 mod views;
-pub use views::{ObservedSkyView, ObservedPlanets, ObservedStars, RegionData};
+pub use views::{ObservedSkyView, ObservedPlanets, ObservedStars, RegionData, ApparentFrame};
 mod objects;
 mod observation;
 mod simulation;
@@ -16,7 +16,7 @@ pub use simulation::{
     ORIENTATION_LIMITS, CachePolicy, RefreshCounts,
 };
 pub(crate) use observation::{
-    BodySamples, Directions, ObserverKey,
+    BodySamples, BodyDirections, ObserverKey,
     BodyKey as ObservationBodyKey,
 };
 pub(crate) use simulation::{Sample, SolarRequestKey, StellarWork};

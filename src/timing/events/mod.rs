@@ -13,7 +13,7 @@ pub enum BufferId {
     RegionalBrightness, RegionalValidation, RegionalVisibility, RegionalCorrections, RegionalApparent,
     RegionalProjectionKeys, RegionalProjectedCells, RegionalOrderKeys, RegionalDrawOrder, RegionalCellWork, RegionalOrderWork,
     RegionSelection, SelectionRequest, ValidatedCandidates, WorkingStars, StellarSamples, StellarScratch, StellarRefreshRegions,
-    StellarOutputWork, HorizontalRequest, ObservedLayout, HorizontalWork, RefractionWork, ObservedStars, ObservedBodies, BodySamples, RelativeBodies,
+    StellarOutputWork, ObservedLayout, ObservedStars, ObservedBodies, BodySamples, RelativeBodies,
     MoonIllumination, BodyApparentDirections, HorizontalDirections, RefractedDirections,
     ProjectedCells, ProjectionCandidate, ProjectionBodyCandidate, ProjectionFigureCandidate, ProjectionHorizonCandidate, DrawOrderCandidate, DrawOrderScratch,
     DrawOrder, ProjectedBodies, ProjectedFigures, ProjectedHorizon, ProjectedView,

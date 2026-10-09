@@ -5,7 +5,6 @@ mod caching;
 #[path = "processing/direct.rs"] mod processing;
 pub(crate) use processing::apply_direct_observation;
 #[path = "processing/stages.rs"] mod stages;
-#[path = "diagnostics/mod.rs"] mod memory;
 
 pub use pipeline::{observe_cached_sky, observe_cached_regions};
 use direct::{apply_aberration, apply_unit_aberration};

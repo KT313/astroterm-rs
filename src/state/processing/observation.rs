@@ -1,14 +1,14 @@
 //! Correction caches over prepared read-only model results. No intrinsic stellar motion is stored here.
-//! Regional flags and correction records are authoritative; only small request metadata spans regions.
-//! Separate coordinate-space snapshots prevent a corrected direction from becoming a model input.
+//! Regional flags, correction records and apparent directions are authoritative; stars are rotated to the horizon
+//! (and refracted) when read, so only the few bodies have stored horizontal and refracted directions.
 use crate::astro::{Matrix3, Vector3, models::BodyState};
 use crate::cache::{Cache, CacheConfig};
-use crate::model::{SkyCatalog, Directions, ObservationRegion};
+use crate::model::{SkyCatalog, BodyDirections, ObservationRegion};
 use std::sync::Arc;
 pub(crate) type RelativeCache = Cache<(u64, BodyState), (Vec<Vector3>, Vector3)>;
 pub(crate) type IlluminationCache = Cache<(Vector3, Vector3), (crate::model::MoonIllumination, crate::astro::MoonPhase)>;
 pub(crate) type BodyApparentCache = Cache<(u64, Vector3), (Vec<Vector3>, Vector3)>;
-pub(crate) type HorizontalCache = Cache<(u64, Matrix3), Directions>;
+pub(crate) type HorizontalCache = Cache<(u64, Matrix3), BodyDirections>;
 
 #[derive(Default)]
 pub struct ObservationCache {
@@ -20,17 +20,15 @@ pub struct ObservationCache {
     pub(crate) sources: Option<(super::StageId, super::StageId, super::StageId)>,
     pub(crate) config: CacheConfig,
     pub(crate) catalog: Option<Arc<SkyCatalog>>,                         // retained identity; catalog replacement clears all dependent fields
-    pub(crate) horizontal_sources: HorizontalSources,                  // region spans/versions and body version used by the horizontal cache
     pub(crate) relative: RelativeCache,                                // observer-relative AU vectors in planet order, plus Moon
     pub(crate) illumination: IlluminationCache,                        // Moon lighting from relative Sun/Moon geometry
     pub(crate) layout_sources: Vec<(usize, u64, u64)>,
     pub(crate) layout_stats: crate::model::CorrectionStats,
-    pub(crate) horizontal_work: Directions,
-    pub(crate) refraction_work: Directions,
     pub(crate) published: Option<crate::state::StellarPublication>,
     pub(crate) use_refraction: bool,
-    pub(crate) horizontal: HorizontalCache,                            // independent East/North/Up directions in the same order
-    pub(crate) refracted: Cache<(u64, bool), Directions>,                // independent refracted horizontal directions; never fed back into motion
+    pub(crate) frame: crate::model::ApparentFrame,                     // horizon rotation and refraction flag applied to the published apparent star directions when read
+    pub(crate) horizontal: HorizontalCache,                            // East/North/Up body directions, keyed by body version and horizon rotation
+    pub(crate) refracted: Cache<(u64, bool), BodyDirections>,            // refracted body directions; never fed back into motion
 }
 
 impl ObservationCache {
@@ -99,10 +97,7 @@ impl crate::cache::ReportBuffers for ObservationCache {
         });
         crate::cache::report_field(sink, "body_apparent", &self.body_apparent);
         crate::cache::report_field(sink, "regional_output", &self.regional_output);
-        crate::cache::report_field(sink, "horizontal_sources", &self.horizontal_sources);
         crate::cache::report_field(sink, "layout_sources", &self.layout_sources);
-        crate::cache::report_field(sink, "horizontal_work", &self.horizontal_work);
-        crate::cache::report_field(sink, "refraction_work", &self.refraction_work);
         crate::cache::report_field(sink, "config", &self.config);
         crate::cache::report_field(sink, "catalog", &self.catalog);
         crate::cache::report_field(sink, "relative", &self.relative);
@@ -129,52 +124,6 @@ impl<'a> RegionalObservation<'a> {
     pub fn refraction_enabled(&self) -> bool { self.refraction }
 }
 
-
-/// Dependency metadata only; no stellar or planetary directions are duplicated here.
-#[derive(Default)]
-pub(crate) struct HorizontalSources {
-    pub regions: Vec<(usize, usize, usize, u64, u64)>, // region ID, output start/end, membership version, apparent version
-    pub body_generation: Option<u64>,
-    pub revision: u64,
-}
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(HorizontalSources { regions });
-
-/// Read-only apparent directions for a completed observation request. Never stored beside its owners.
-#[derive(Clone, Copy)]
-pub struct ApparentDirections<'a> {
-    descriptors: &'a [crate::model::ObservedRegion],
-    regions: &'a [ObservationRegion],
-    bodies: &'a BodyApparentCache,
-}
-impl<'a> ApparentDirections<'a> {
-    pub(crate) fn new(descriptors: &'a [crate::model::ObservedRegion], regions: &'a [ObservationRegion], bodies: &'a BodyApparentCache) -> Self {
-        bodies.value(); // construction follows successful regional and body preparation
-        Self { descriptors, regions, bodies }
-    }
-    /// Each region is checked once before its original direction slice is consumed.
-    pub fn regions(&self) -> impl Iterator<Item = (&crate::model::ObservedRegion, &[Vector3])> {
-        self.descriptors.iter().map(|descriptor| {
-            let region = &self.regions[descriptor.region];
-            assert_eq!(region.corrections.generation, descriptor.selection_generation, "apparent membership does not match output");
-            assert_eq!(region.apparent.generation, descriptor.apparent_generation, "apparent version does not match output");
-            assert!(region.apparent.key().is_some_and(|key| key.0 == descriptor.selection_generation), "apparent directions use older membership");
-            let directions = region.apparent.value();
-            assert_eq!(directions.len(), descriptor.end - descriptor.start, "apparent region length does not match output");
-            (descriptor, directions.as_slice())
-        })
-    }
-    pub fn bodies(&self) -> (&[Vector3], Vector3) {
-        let bodies = self.bodies.value();
-        (&bodies.0, bodies.1)
-    }
-    pub(crate) fn star_count(&self) -> usize { self.descriptors.last().map_or(0, |region| region.end) }
-    pub(crate) fn body_generation(&self) -> u64 { self.bodies.generation }
-    pub(crate) fn dependencies(&self) -> impl ExactSizeIterator<Item = (usize, usize, usize, u64, u64)> {
-        self.descriptors.iter().map(|region| (region.region, region.start, region.end, region.selection_generation, region.apparent_generation))
-    }
-}
-
 impl ObservationCache {
     /// Reborrow completed observation with the same protected regional provenance used by projection.
     pub fn regional_view<'a>(&'a self, stars: crate::state::StellarResults<'a>, summary: &'a crate::model::ObservedSky) -> RegionalObservation<'a> {
@@ -185,9 +134,9 @@ impl ObservationCache {
     pub fn observed_view<'a>(&'a self, stars: crate::state::StellarResults<'a>, summary: &'a crate::model::ObservedSky) -> crate::model::ObservedSkyView<'a> {
         assert_eq!(self.published, Some(stars.publication_key()), "observed output does not match stellar request");
         assert!(Arc::ptr_eq(stars.selection.catalog, &summary.catalog) && self.catalog.as_ref().is_some_and(|catalog| Arc::ptr_eq(catalog, &summary.catalog)), "observed catalog does not match");
-        let directions = if self.use_refraction { self.refracted.value() } else { self.horizontal.value() };
+        let bodies = if self.use_refraction { self.refracted.value() } else { self.horizontal.value() };
         let rows = crate::model::ObservedStars::regional(&summary.catalog.stars, &self.regional_output, &self.regions,
-            &stars.regions.entries, &summary.catalog.grid.offsets, &directions.0);
-        crate::model::ObservedSkyView::cached(summary, rows, directions)
+            &stars.regions.entries, &summary.catalog.grid.offsets, &self.frame); // stars stay apparent; the frame rotates them on read
+        crate::model::ObservedSkyView::cached(summary, rows, bodies)
     }
 }

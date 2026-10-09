@@ -101,18 +101,18 @@ fn borrowed_results_follow_site_time_membership_and_refraction_changes() {
 }
 
 #[test]
-fn completed_view_is_invalidated_and_direction_work_capacity_is_retained() {
+fn completed_view_is_invalidated_and_no_star_sized_direction_table_exists() {
     let mut run = Run::new(CacheConfig::disabled(), 40);
     for _ in 0..3 { run.frame(J2000, Observer::default(), 20.0, true, false); }
-    let mut capacities = Vec::new();
+    let star_bytes = 40 * std::mem::size_of::<astroterm::astro::Vector3>();
+    let mut direction_tables = 0;
     run.observation.visit_tables("observation", &mut |name, table, _| {
-        if name.ends_with("horizontal_work") || name.ends_with("refraction_work") { capacities.push((name.to_owned(), table.bytes().reserved)); }
+        if name.contains("horizontal") || name.contains("refracted") {
+            direction_tables += 1;
+            assert!(table.bytes().used.is_some_and(|used| used < star_bytes), "{name} holds star-sized directions"); // bodies only; stars are rotated when read
+        }
     });
-    assert_eq!(capacities.len(), 2);
-    run.frame(J2000, Observer::default(), 20.0, true, false);
-    run.observation.visit_tables("observation", &mut |name, table, _| {
-        if let Some((_, capacity)) = capacities.iter().find(|(path, _)| path == name) { assert_eq!(table.bytes().reserved, *capacity); }
-    });
+    assert_eq!(direction_tables, 2);
     run.observation.invalidate_region(astroterm::constants::CONSTELLATION_REGION);
     assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run.observation.observed_view(run.stellar.results(run.selection.stars()), &run.summary))).is_err());
 }

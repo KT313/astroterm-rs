@@ -5,7 +5,7 @@ mod maps;
 mod sky;
 mod draw_order;
 
-pub use cartesian::{prepare_camera, project_camera};
+pub use cartesian::{prepare_camera, project_camera, rotate_camera_into};
 pub use maps::{project_equidistant_horizontal, project_stereographic_horizontal, project_stereographic_north};
 pub use sky::{polar_to_cell, project_light_direction, project_sky, project_sky_with_times, project_to_cell};
 pub(super) use draw_order::prepare_draw_order_with_times;
