@@ -64,14 +64,21 @@ pub(crate) struct SceneKey {
     pub(crate) labels: Vec<((i32, i32), &'static str)>,
 }
 
-/// One straight-alpha star pixel: RGB channels and opacity are independent floats in 0..1.
+/// One premultiplied star pixel: each RGB channel is already multiplied by the opacity, so blending needs no division.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct StarPixel {
     pub(crate) rgb: [f32; 3],
     pub(crate) opacity: f32,
 }
 row_columns!(StarPixel { rgb, opacity });
-// rgb = unscaled red/green/blue in 0..1; opacity = combined star coverage, also in 0..1.
+// rgb = red/green/blue times opacity, each in 0..=opacity; opacity = combined star coverage in 0..1.
+
+/// Star opacity per catalog magnitude code (thousandths of a magnitude above -10), built for one zoom boost.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct StarOpacityTable {
+    pub(crate) zoom_boost: f64,                                                        // 0 until built; real boosts are at least 1
+    pub(crate) opacities: Vec<f32>,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct PixelStarKey {

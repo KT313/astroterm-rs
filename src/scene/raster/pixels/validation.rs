@@ -1,4 +1,4 @@
-//! Scene-level checks for the straight-alpha star layer, cache reuse, labels and unrelated drawing layers.
+//! Scene-level checks for the premultiplied star layer, cache reuse, labels and unrelated drawing layers.
 use super::*;
 use crate::astro::Vector3;
 use crate::catalog::load_embedded_catalog;
@@ -106,8 +106,8 @@ fn edge_stars_are_omitted_before_drawing_and_do_not_use_label_slots() {
     let stars = trace.steps.iter().find(|s| s.name == "Raster stars").unwrap();
     assert!(stars.details[0].contains("omitted edge stars=2; submitted stars=6"));
     let names: Vec<_> = trace.steps.iter().map(|s| s.name).collect();
-    for pair in [ ["Star layer initialization", "Raster stars"], ["Raster stars", "Star opacity floor"],
-        ["Star opacity floor", "Canvas initialization"], ["Raster horizon", "Star layer composition"],
+    for pair in [ ["Star layer initialization", "Raster stars"], ["Star brightness preparation", "Raster stars"],
+        ["Raster stars", "Canvas initialization"], ["Raster horizon", "Star layer composition"],
         ["Star layer composition", "Raster planets"] ] {
         assert!(names.iter().position(|&n| n == pair[0]).unwrap() < names.iter().position(|&n| n == pair[1]).unwrap());
     }

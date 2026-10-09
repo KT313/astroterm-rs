@@ -6,9 +6,11 @@ use crate::model::SceneKey;
 #[derive(Default)]
 pub struct SceneCache {
     pub(crate) config: CacheConfig,
-    /// Straight-alpha star pixels in row order. Refilled on redraw; capacity survives frames and resize.
-    /// Kept separate from tiny-skia's premultiplied scene; 16 bytes per pixel, reported in memory diagnostics.
+    /// Premultiplied star pixels in row order. Refilled on redraw; capacity survives frames and resize.
+    /// Kept separate from tiny-skia's 8-bit scene; 16 bytes per pixel, reported in memory diagnostics.
     pub(crate) star_layer: Vec<crate::model::StarPixel>,
+    /// One opacity per catalog magnitude code for the current zoom boost; rebuilt only when the field of view changes it.
+    pub(crate) star_opacities: crate::model::StarOpacityTable,
     /// Regional dependency records for production, exact drawing inputs for editable callers.
     /// Hits clear live entries but retain flat capacities;
     /// successful refreshes transfer the candidate into the matching cache. Failed pixel draws retain it.
@@ -55,4 +57,4 @@ impl SceneCache {
     }
 }
 #[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(SceneCache { config, star_layer, pixel_inputs, image_scratch, pixel_candidate, character_candidate, pixels, characters });
+crate::cache::report_fields!(SceneCache { config, star_layer, star_opacities, pixel_inputs, image_scratch, pixel_candidate, character_candidate, pixels, characters });

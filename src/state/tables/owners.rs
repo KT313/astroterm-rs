@@ -176,6 +176,8 @@ impl Tables for SceneCache {
     fn visit_tables(&self, prefix: &str, visit: &mut TableVisitor<'_>) {
         let path = |name: &str| join(prefix, name);
         visit(&path("star_layer"), &self.star_layer, None);
+        visit(&path("star_opacities"), &self.star_opacities.opacities, None);
+        visit(&path("star_opacities.zoom_boost"), &Single(&self.star_opacities.zoom_boost), None);
         visit(&path("pixel_inputs"), &self.pixel_inputs, None);
         visit(&path("image_scratch"), &Bytes::binary(&self.image_scratch), None);
         if let Some(key) = &self.pixel_candidate { key.visit_tables(&path("pixel_candidate"), visit); }

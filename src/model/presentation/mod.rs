@@ -15,7 +15,7 @@ pub(crate) use projection::{
     RegionalStarIndex, RegionalProjectionKey, RegionalOrderKey, RegionalDrawRecord, DrawRecord, StarKey, BodyKey as ProjectionBodyKey, ConstellationKey,
     HorizonGeometry,
 };
-pub(crate) use rendering::{KittyDisplayKey, RenderResultVersion, PixelFrameKey, KittyEncodingKey, ProductionRasterKey, RasterRegion, SceneKey, StarPixel, PixelStarKey, CharacterStarKey, StarKeys, Glyph};
+pub(crate) use rendering::{KittyDisplayKey, RenderResultVersion, PixelFrameKey, KittyEncodingKey, ProductionRasterKey, RasterRegion, SceneKey, StarPixel, StarOpacityTable, PixelStarKey, CharacterStarKey, StarKeys, Glyph};
 
 mod text;
 pub(crate) use text::{PixelLabel, PixelLabelKey, PixelTextKey, PixelTextCache};

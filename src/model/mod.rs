@@ -30,7 +30,7 @@ pub use presentation::{
 };
 pub(crate) use presentation::{
     RegionalStarIndex, RegionalProjectionKey, RegionalOrderKey, RegionalDrawRecord, DrawRecord, StarKey, ProjectionBodyKey, ConstellationKey, HorizonGeometry,
-    PixelLabel, PixelLabelKey, PixelTextKey, PixelTextCache, KittyDisplayKey, RenderResultVersion, PixelFrameKey, KittyEncodingKey, ProductionRasterKey, RasterRegion, SceneKey, StarPixel, PixelStarKey, CharacterStarKey, StarKeys, Glyph,
+    PixelLabel, PixelLabelKey, PixelTextKey, PixelTextCache, KittyDisplayKey, RenderResultVersion, PixelFrameKey, KittyEncodingKey, ProductionRasterKey, RasterRegion, SceneKey, StarPixel, StarOpacityTable, PixelStarKey, CharacterStarKey, StarKeys, Glyph,
 };
 pub use configuration::{Config, SimulationSettings, TerminalSettings, RendererKind, GraphicsProtocol};
 

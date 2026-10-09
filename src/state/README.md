@@ -317,7 +317,7 @@ reuse, not a memory-reduction claim. Interrupted work is cleared on retry and ne
 
 Labels independently select the global brightest five by comparing up to five eligible candidates from each
 region. Pixel candidates still pass the full-footprint check. The winners occupy a fixed stack array; regional
-ranges let selection skip the rest of the stars. The opacity floor still runs once after all star drawing. New region
+ranges let selection skip the rest of the stars. The opacity floor is applied while compositing the star layer. New region
 slots are initialized lazily on first use and reset on catalog/owner replacement. Unrequested results are retained;
 these new caches use exact dependency invalidation, not the stellar ten-day TTL.
 
@@ -361,7 +361,8 @@ stars are found. This needs no heap allocation; a view with many edge stars may 
 
 | Owner/fields | Producer → consumer; units | Retention/reset |
 |---|---|---|
-| `SceneCache.star_layer` | Prepared pixel-star inputs → custom RGB/opacity blend → opacity floor → opaque sky composition; row-major `StarPixel` values | 16 bytes per pixel (f32 RGB + opacity); reset and reused on refresh, unchanged on hit; capacity retained across resize |
+| `SceneCache.star_layer` | Prepared pixel-star inputs → premultiplied source-over blend → opaque sky composition with the opacity floor; row-major `StarPixel` values | 16 bytes per pixel (f32 premultiplied RGB + opacity); reset and reused on refresh, unchanged on hit; capacity retained across resize |
+| `SceneCache.star_opacities` | Field of view → zoom boost → one opacity per catalog magnitude code (65,536 `f32`); stars look their opacity up instead of evaluating the power curve | 256 KiB; built on the first pixel redraw, refilled in place only when the boost changes |
 | Scene candidates and committed keys | Trusted region/version metadata OR exact input capture; only exact callers copy per-star and body/arc/horizon geometry | Hits clear flat vectors while retaining capacity; nested strings/arcs drop; refresh transfers candidate; failed pixel draws retain it for reset/retry |
 | `SceneCache.pixel_inputs` | Trusted raster miss → drawing; accepted screen coordinates, magnitude and RGB | Empty after success, capacity retained; no per-star writes on hits |
 | `SceneCache.image_scratch` | Bytes of the sky image displaced by the last pixel store; the next redraw draws into them | Taken on redraw, refilled by `store_displacing`; the displaced key becomes the next cleared candidate |

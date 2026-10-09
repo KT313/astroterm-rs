@@ -30,6 +30,7 @@ report_fields!(SceneKey { production, stars, planets, constellations, horizon, l
 report_fields!(Glyph { coverage });
 report_fields!(Frame { sky, panel });
 
+report_fields!(crate::model::StarOpacityTable { zoom_boost, opacities });
 impl crate::cache::ReportBuffers for StarKeys {
     fn report_buffers(&self, sink: &mut dyn crate::cache::BufferSink) {
         use crate::cache::report_field;

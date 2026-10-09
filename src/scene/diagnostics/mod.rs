@@ -76,16 +76,15 @@ fn describe_scene_geometry(sky: &ProjectedSky<'_>, options: &RenderOptions, time
     });
 }
 
-pub(super) fn describe_pixel_scene(sky: &ProjectedSky<'_>, options: &RenderOptions, pixels: usize, submitted: usize, zoom_boost: f64, times: &mut StepTimes) {
+pub(super) fn describe_pixel_scene(sky: &ProjectedSky<'_>, options: &RenderOptions, pixels: usize, submitted: usize, opacities: &crate::model::StarOpacityTable, rebuilt: bool, times: &mut StepTimes) {
     describe_scene_geometry(sky, options, times);
-    times.describe("Star brightness preparation", || format!("field of view={} degrees; star opacity multiplier={zoom_boost}; catalog magnitudes unchanged", sky.fov_degrees));
-    times.describe("Star layer initialization", || format!("pixels={pixels}; element bytes={}; straight-alpha f32 RGB and opacity; reusable capacity", std::mem::size_of::<crate::model::StarPixel>()));
+    times.describe("Star brightness preparation", || format!("field of view={} degrees; star opacity multiplier={}; opacity table entries={}; rebuilt={rebuilt}; catalog magnitudes unchanged", sky.fov_degrees, opacities.zoom_boost, opacities.opacities.len()));
+    times.describe("Star layer initialization", || format!("pixels={pixels}; element bytes={}; premultiplied f32 RGB and opacity; reusable capacity", std::mem::size_of::<crate::model::StarPixel>()));
     times.describe("Raster stars", || {
         let (bright, placed) = count_drawable_stars(sky, options);
         format!("input stars={}; rejected magnitude={}; then rejected missing cell={}; then omitted edge stars={}; submitted stars={submitted}; four pixels per star; prepared inputs reused", sky.stars.len(), sky.stars.len()-bright, bright-placed, placed-submitted)
     });
-    times.describe("Star opacity floor", || format!("input/output pixels={pixels}; minimum opacity={}; zero opacity and RGB unchanged", crate::constants::MIN_STAR_PIXEL_OPACITY));
-    times.describe("Star layer composition", || format!("input star pixels={pixels}; straight RGB multiplied by opacity once; output scene opacity=1"));
+    times.describe("Star layer composition", || format!("input star pixels={pixels}; premultiplied RGB over the background; nonempty pixels raised to minimum opacity={}; output scene opacity=1", crate::constants::MIN_STAR_PIXEL_OPACITY));
 }
 
 pub(super) fn describe_coverage_notice(canvas: &crate::canvas::Canvas, sky: &crate::model::ProjectedSky<'_>, times: &mut crate::timing::StepTimes) {
