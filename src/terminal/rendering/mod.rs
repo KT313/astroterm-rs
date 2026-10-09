@@ -39,7 +39,7 @@ impl Renderer {
             RenderingState::Pixels(r) => {
                 r.display_valid = false;
                 r.scene_cache.configure(config);
-                r.rgb_version.invalidate();
+                r.frame_version.invalidate();
                 r.frame_key = None;
                 r.encoding_key = None;
                 r.reuse_assets = config.allows(crate::cache::Group::RasterAssets);

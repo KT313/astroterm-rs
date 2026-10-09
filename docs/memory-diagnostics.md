@@ -167,7 +167,7 @@ it never extrapolates uninspected children.
 
 Pixel text cells and their small label/dependency records remain in state between frames. Valid unchanged
 production text borrows this completed grid; refresh resets cells so removed labels never remain visible.
-Kitty retains completed RGB and one reusable RGBA work buffer. Readiness/version fields distinguish completed
+Kitty retains one completed opaque RGBA frame plus an RGB scratch filled when an upload is prepared. Readiness/version fields distinguish completed
 results from invalid or partial work; retained capacity can increase steady memory. The sky-only raster cache remains
 available for reuse and is borrowed directly during composition. Halfblocks require one short-lived image copy
 at the external encoder's ownership boundary; graphics-image composition does not copy into an intermediate sky
@@ -354,13 +354,15 @@ or reset of the working engine on an actual encoding pass; they do not mean a pr
 reused. Each image remains an independent zlib stream. Encoding/display cache hits perform no engine operation.
 
 
-The Kitty shared-memory prototype keeps the original RGB buffer and copies into at most one temporary POSIX
-object. `shared_memory` reports selected transport; `shared_upload_bytes` exposes the pending object's logical
-extent. This OS storage is reported separately as an external extent, not owned Rust heap, RSS or a client mapping.
-Normal after-frame snapshots have no pending object. `SharedImage` Copy/Release events retain evidence of its
-transient bytes. `Shared memory preparation` includes creation/copy/name encoding; `Shared memory consumption`
-measures bounded waiting for the terminal's unlink. The small command-write time is not a display-latency claim.
-On timeout or unavailable shared storage, the session falls back to normal streaming; failed writes remain errors.
+The Kitty shared-memory transport strips the frame's alpha into the RGB scratch and copies it into at most one
+temporary POSIX object. `shared_memory` reports selected transport; `shared_upload_bytes` exposes the pending
+object's logical extent. This OS storage is reported separately as an external extent, not owned Rust heap, RSS or
+a client mapping. Normal after-frame snapshots have no pending object. `SharedImage` Copy/Release events retain
+evidence of its transient bytes. `Pixel conversion` strips the alpha into the RGB scratch; `Shared memory
+preparation` includes creation/copy and name encoding; `Shared memory consumption` measures bounded waiting for
+the terminal's unlink. The small command-write
+time is not a display-latency claim. On timeout or unavailable shared storage, the session falls back to normal
+streaming; failed writes remain errors.
 
 Unavailable/unconfirmed Kitty shared memory also produces a yellow display notice, independent of `-m`.
 Runtime fallback adds it on the next frame; its presence participates in text-cache validity.

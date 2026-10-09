@@ -94,7 +94,6 @@ fn table_labels(path: &str) -> &'static [&'static str] {
         _ if path.ends_with(".labels") => &["screen_coordinates", "label_text"],
         _ if path.ends_with(".raster_text.glyphs") => &["character", "glyph_dimensions_and_spacing", "coverage_mask_bytes"],
         _ if path.ends_with(".frame_image") || path.ends_with(".scene_cache.pixels") => &["rgba_pixel_row"],
-        _ if path.ends_with(".rgb") => &["rgb_pixel_row"],
         _ if path.ends_with(".upload") => &["text_chunk"],
         _ if path.ends_with(".compressed") || path.ends_with(".serialized") => &["byte_chunk"],
         _ if path.ends_with(".text") || path.ends_with(".composed") || path.ends_with(".serialization_blank")

@@ -3,6 +3,7 @@ use std::io::{self, Write};
 use crate::{state::PixelState, timing::{StepTimes, BufferId, BufferShape, IndexDomain, Operation}};
 use crate::terminal::transport::graphics::{kitty, present_frame};
 use super::{encode_kitty_upload, describe_upload};
+use super::composition::convert_kitty_pixels;
 
 pub(super) fn prepare_shared_upload(state: &mut PixelState, times: &mut StepTimes) -> bool {
     prepare_shared_upload_with(state, times, kitty::create_shared_image)
@@ -13,9 +14,11 @@ fn prepare_shared_upload_with(state: &mut PixelState, times: &mut StepTimes, cre
     state.shared_upload = None;
     state.encoding_key = None; // upload bytes will hold a name, so an older streamed payload must not be reused
     state.compressed.clear();
+    convert_kitty_pixels(state, times);                                             // the terminal reads a quarter fewer bytes than the RGBA frame
+    let frame = state.frame_image.as_ref().expect("completed frame");
     let result = times.measure("Shared memory preparation", || -> io::Result<()> {
-        let object = create(state.rgb.as_raw())?;
-        kitty::encode_shared_upload(&object, state.rgb.dimensions(), state.kitty_image_id, false, state.tmux, &mut state.upload);
+        let object = create(&state.rgb)?;
+        kitty::encode_shared_upload(&object, frame.dimensions(), state.kitty_image_id, false, state.tmux, &mut state.upload);
         state.shared_upload = Some(object);
         Ok(())
     });
@@ -24,7 +27,7 @@ fn prepare_shared_upload_with(state: &mut PixelState, times: &mut StepTimes, cre
         times.describe("Shared memory preparation", || format!("streaming fallback: {error}"));
         return false;
     }
-    times.record_shape(BufferId::SharedImage, Operation::Copy, None, || BufferShape::slice(state.rgb.as_raw(), IndexDomain::Bytes));
+    times.record_shape(BufferId::SharedImage, Operation::Copy, None, || BufferShape::slice(&state.rgb, IndexDomain::Bytes));
     times.describe("Shared memory preparation", || format!("RGB bytes copied={}; command bytes={}; no compression or pixel base64; one pending object", state.rgb.len(), state.upload.len()));
     true
 }
@@ -63,8 +66,8 @@ mod tests {
     fn preparation_failure_selects_streaming_without_publishing_a_name() {
         let mut state = super::super::lifetime_tests::pixels(ratatui_image::picker::ProtocolType::Kitty);
         state.shared_memory = true;
-        state.rgb = image::RgbImage::from_pixel(2, 2, image::Rgb([1, 2, 3]));
-        state.rgb_version.publish(true);
+        state.frame_image = Some(image::RgbaImage::from_pixel(2, 2, image::Rgba([1, 2, 3, 255])));
+        state.frame_version.publish(true);
         assert!(!prepare_shared_upload_with(&mut state, &mut StepTimes::default(), |_| Err(io::Error::other("injected allocation failure"))));
         assert!(!state.shared_memory && state.shared_upload.is_none());
         encode_kitty_upload(&mut state, &mut StepTimes::default()).unwrap();

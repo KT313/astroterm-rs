@@ -44,8 +44,7 @@ pub fn open_pixel_renderer(
         time_zone: None,
         text_scale,
         frame_image: None,
-        rgb: image::RgbImage::new(0, 0),
-        rgb_version: Default::default(),
+        frame_version: Default::default(),
         frame_key: None,
         encoding_key: None,
         displayed_key: None,
@@ -56,6 +55,7 @@ pub fn open_pixel_renderer(
         text: ratatui::buffer::Buffer::empty(Rect::default()),
         composed: ratatui::buffer::Buffer::empty(Rect::default()),
         upload: String::new(),
+        rgb: Vec::new(),
         compressed: Vec::new(),
         compressor: None,
         encoded: None,
@@ -82,7 +82,7 @@ pub fn pixel_viewport(state: &PixelState) -> Viewport {
 pub fn fit_pixel_terminal(state: &mut PixelState, session: &mut TerminalSession) -> io::Result<()> {
     state.display_valid = false;
     state.scene_cache.invalidate();
-    state.rgb_version.invalidate();
+    state.frame_version.invalidate();
     state.frame_key = None;
     state.encoding_key = None;
     state.text_version.invalidate();

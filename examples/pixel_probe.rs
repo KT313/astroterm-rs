@@ -53,8 +53,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             astroterm::scene::paint_text_buffer(&mut raster_text, &mut frame_image, &text, (10, 20));
         }
         if protocol == ProtocolType::Kitty {
-            let rgb = DynamicImage::ImageRgba8(frame_image).into_rgb8();
-            let encoded = encode_kitty_upload(&rgb, KITTY_IMAGE_IDS[0], true, false)?;
+            let encoded = encode_kitty_upload(&frame_image, KITTY_IMAGE_IDS[0], true, false)?; // opaque RGBA goes out as is
             let encode_ms = start.elapsed().as_secs_f64() * 1000.0;
             let start = Instant::now();
             let mut out = Vec::new();

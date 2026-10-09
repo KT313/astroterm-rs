@@ -4,8 +4,6 @@ mod presentation;
 pub(in crate::terminal) use presentation::present_kitty_image;
 mod composition;
 pub(in crate::terminal) use composition::{prepare_kitty_pixels, encode_kitty_upload};
-#[cfg(test)]
-use composition::convert_kitty_pixels;
 use crate::terminal::TerminalSession;
 use crate::terminal::transport::graphics::{compose_halfblocks, compose_image, encode_image, kitty, present_frame, serialize_frame_into};
 use crate::astro::{Observer, SimulationClock};
@@ -40,14 +38,13 @@ pub(in crate::terminal) fn initialize_pixel_canvas(state: &mut PixelState, times
         let mut bytes = state.frame_image.take().map_or_else(Vec::new, image::RgbaImage::into_raw);
         let length = width as usize * height as usize * 4;
         bytes.try_reserve(length.saturating_sub(bytes.len())).map_err(io::Error::other)?;
-        bytes.resize(length, 0);
-        for pixel in bytes.chunks_exact_mut(4) { pixel.copy_from_slice(&crate::constants::PIXEL_BACKGROUND_RGBA); }
+        bytes.resize(length, 0);                                                      // sky composition overwrites every pixel, so no background fill here
         Ok::<_, io::Error>(Some(image::RgbaImage::from_raw(width, height, bytes).expect("validated RGBA length")))
     })?;
-    if let Some(frame) = &state.frame_image { times.record_shape(BufferId::FrameImage, Operation::Build, before, || BufferShape::vector(frame.as_raw(), IndexDomain::Bytes)); } // reset retained pixels so text never accumulates
+    if let Some(frame) = &state.frame_image { times.record_shape(BufferId::FrameImage, Operation::Build, before, || BufferShape::vector(frame.as_raw(), IndexDomain::Bytes)); }
     times.describe("Frame canvas", || {
         format!(
-            "protocol={:?}; screen={}x{} cells; font={}x{} pixels; initialized RGBA bytes={}",
+            "protocol={:?}; screen={}x{} cells; font={}x{} pixels; reserved RGBA bytes={}",
             state.protocol,
             state.screen.width,
             state.screen.height,
@@ -94,11 +91,11 @@ pub(in crate::terminal) fn compose_pixel_sky(state: &mut PixelState, times: &mut
         {
             times.record_borrow(BufferId::PixelScene, Access::ReadOnly, || BufferShape::vector(state.scene_cache.pixel_image().as_raw(), IndexDomain::Bytes));
             times.record_borrow(BufferId::FrameImage, Access::Writable, || BufferShape::vector(frame.as_raw(), IndexDomain::Bytes));
-            times.record_unknown(BufferId::FrameImage, Operation::Copy); // image::replace clips; no second pixel walk to count copied bytes
+            times.record_unknown(BufferId::FrameImage, Operation::Copy); // clipped copy plus background fill of the margins; no second pixel walk to count bytes
         }
         times.describe("Sky composition", || {
             format!(
-                "source sky={}x{} pixels; target={}x{} pixels; output RGBA bytes={}",
+                "source sky={}x{} pixels; target={}x{} pixels; margins filled with background; output RGBA bytes={}",
                 state.scene_cache.pixel_image().width(),
                 state.scene_cache.pixel_image().height(),
                 frame.width(),
@@ -109,6 +106,8 @@ pub(in crate::terminal) fn compose_pixel_sky(state: &mut PixelState, times: &mut
     }
 }
 
+/// Copy the clipped sky into the frame and paint the background onto every pixel outside it, in one pass over the rows.
+/// Every frame pixel is written, so stale pixels from the previous frame never survive.
 fn compose_sky_image(sky: &image::RgbaImage, frame: &mut image::RgbaImage, x: i64, y: i64) {
     let target_x = x.clamp(0, i64::from(frame.width())) as usize;
     let target_y = y.clamp(0, i64::from(frame.height())) as usize;
@@ -116,17 +115,29 @@ fn compose_sky_image(sky: &image::RgbaImage, frame: &mut image::RgbaImage, x: i6
     let source_y = y.saturating_neg().clamp(0, i64::from(sky.height())) as usize;
     let width = (frame.width() as usize - target_x).min(sky.width() as usize - source_x);
     let height = (frame.height() as usize - target_y).min(sky.height() as usize - source_y);
-    if width == 0 || height == 0 { return; }
 
     let source_stride = sky.width() as usize * 4;
     let target_stride = frame.width() as usize * 4;
     let row_bytes = width * 4;
     let source = sky.as_raw();
     let target = frame.as_mut();
-    for row in 0..height {
-        let source_start = (source_y + row) * source_stride + source_x * 4;
-        let target_start = (target_y + row) * target_stride + target_x * 4;
-        target[target_start..target_start + row_bytes].copy_from_slice(&source[source_start..source_start + row_bytes]); // copy the clipped row, including its unchanged alpha
+    if target.is_empty() { return; }
+    for (row, line) in target.chunks_exact_mut(target_stride).enumerate() {
+        if width == 0 || height == 0 || row < target_y || row >= target_y + height { fill_background(line); continue; } // rows above and below the sky
+        let (left, rest) = line.split_at_mut(target_x * 4);
+        let (middle, right) = rest.split_at_mut(row_bytes);
+        fill_background(left);
+        let source_start = (source_y + row - target_y) * source_stride + source_x * 4;
+        middle.copy_from_slice(&source[source_start..source_start + row_bytes]); // copy the clipped row, including its unchanged alpha
+        fill_background(right);
+    }
+}
+
+/// Whole-word stores when the slice is aligned; the byte loop covers the rare unaligned allocation.
+fn fill_background(bytes: &mut [u8]) {
+    match bytemuck::try_cast_slice_mut::<u8, u32>(bytes) {
+        Ok(words) => words.fill(u32::from_ne_bytes(crate::constants::PIXEL_BACKGROUND_RGBA)),
+        Err(_) => for pixel in bytes.chunks_exact_mut(4) { pixel.copy_from_slice(&crate::constants::PIXEL_BACKGROUND_RGBA); },
     }
 }
 
@@ -376,8 +387,7 @@ mod lifetime_tests {
             time_zone: None,
             text_scale: 1.0,
             frame_image: None,
-            rgb: image::RgbImage::new(0, 0),
-            rgb_version: Default::default(),
+            frame_version: Default::default(),
             frame_key: None,
             encoding_key: None,
             displayed_key: None,
@@ -388,6 +398,7 @@ mod lifetime_tests {
             text: ratatui::buffer::Buffer::empty(Rect::default()),
             composed: ratatui::buffer::Buffer::empty(Rect::default()),
             upload: String::new(),
+            rgb: Vec::new(),
             compressed: Vec::new(),
             compressor: None,
             encoded: None,
@@ -402,17 +413,18 @@ mod lifetime_tests {
     }
 
     #[test]
-    fn sky_row_copy_matches_image_replace_for_clipping_and_extreme_offsets() {
-        for (source_width, source_height, target_width, target_height) in [(5, 3, 8, 6), (8, 6, 5, 3), (5, 3, 5, 3), (0, 3, 5, 3), (5, 0, 0, 3), (5, 3, 5, 0)] {
+    fn sky_composition_matches_image_replace_over_the_background_for_clipping_and_extreme_offsets() {
+        let background = image::Rgba(crate::constants::PIXEL_BACKGROUND_RGBA);
+        for (source_width, source_height, target_width, target_height) in [(5, 3, 8, 6), (8, 6, 5, 3), (5, 3, 5, 3), (0, 3, 5, 3), (5, 0, 0, 3), (5, 3, 5, 0), (5, 3, 1, 7)] {
             let source = image::RgbaImage::from_fn(source_width, source_height, |x, y| image::Rgba([x as u8, y as u8, (x + y) as u8, (x * 31 + y * 17) as u8]));
-            let original = image::RgbaImage::from_fn(target_width, target_height, |x, y| image::Rgba([91, x as u8, y as u8, 37]));
+            let stale = image::RgbaImage::from_fn(target_width, target_height, |x, y| image::Rgba([91, x as u8, y as u8, 37]));
             for x in [i64::MIN, -9, -5, -4, -1, 0, 1, 4, 5, 8, i64::MAX] {
                 for y in [i64::MIN, -7, -3, -2, -1, 0, 1, 2, 3, 6, i64::MAX] {
-                    let mut expected = original.clone();
+                    let mut expected = image::RgbaImage::from_pixel(target_width, target_height, background);
                     image::imageops::replace(&mut expected, &source, x, y);
-                    let mut actual = original.clone();
+                    let mut actual = stale.clone();
                     compose_sky_image(&source, &mut actual, x, y);
-                    assert_eq!(actual, expected, "source={source_width}x{source_height}, target={target_width}x{target_height}, offset=({x}, {y})");
+                    assert_eq!(actual, expected, "source={source_width}x{source_height}, target={target_width}x{target_height}, offset=({x}, {y})"); // no stale pixel survives
                 }
             }
         }
@@ -435,7 +447,7 @@ mod lifetime_tests {
     }
 
     #[test]
-    fn completed_text_and_kitty_rgb_are_retained_after_encoding() {
+    fn completed_text_and_kitty_frame_are_retained_after_encoding() {
         for protocol in [ProtocolType::Kitty, ProtocolType::Sixel, ProtocolType::Iterm2, ProtocolType::Halfblocks] {
             let mut state = pixels(protocol);
             let sky = crate::sky::create_sky_from_catalog(&crate::catalog::load_embedded_catalog().unwrap()).unwrap();
@@ -456,10 +468,9 @@ mod lifetime_tests {
                 paint_pixel_text(&mut state, (2, 2), &mut times);
                 assert!(!state.text.content.is_empty()); // completed grid survives both graphics and half-block consumers
                 if protocol == ProtocolType::Kitty {
-                    convert_kitty_pixels(&mut state, &mut times).unwrap();
-                    assert!(!state.rgb.is_empty());
+                    state.frame_version.publish(true);
                     encode_kitty_upload(&mut state, &mut times).unwrap();
-                    assert!(!state.rgb.is_empty()); // completed RGB is retained for encoding reuse
+                    assert!(state.frame_image.is_some()); // the completed frame is retained for encoding reuse
                     assert!(!state.upload.is_empty());
                     assert!(state.compressed.capacity() > 0);
                 } else {

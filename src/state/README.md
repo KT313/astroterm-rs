@@ -368,7 +368,8 @@ stars are found. This needs no heap allocation; a view with many edge stars may 
 | `SceneCache.image_scratch` | Bytes of the sky image displaced by the last pixel store; the next redraw draws into them | Taken on redraw, refilled by `store_displacing`; the displaced key becomes the next cleared candidate |
 | Scene pixel/character results | Raster passes → composition; RGBA pixels or canvas cells | Pixel image borrowed; character clone on refresh and restore on hit |
 | Character `frame`, `presenter` | Sky/panel drawing → full-screen composition → diff writer | Resize replaces canvases and discards previous-frame snapshot; successful presentation updates previous |
-| Pixel `frame_image`, `rgb` | Borrowed cached sky → sky/text composition → RGB conversion/encoding | Kitty retains reusable RGBA work and completed RGB; other graphics protocols consume RGBA during encoding |
+| Pixel `frame_image` | Borrowed cached sky → sky composition (margins filled with the background in the same pass) → text painting → Kitty upload preparation or encoding | Kitty retains the completed frame; other graphics protocols consume it during encoding |
+| Pixel `rgb` | Alpha-stripped copy of the frame ("Pixel conversion", before shared-memory preparation or streaming encoding; `f=24`, a quarter fewer bytes to copy, compress, write and read) | Capacity retained; filled only when a changed frame is uploaded |
 | Pixel `text`, `composed`, `encoded` | Text/image composition → serialization; ratatui cells or protocol handle | Text retained with dependencies; composed/encoded results rebuilt for non-Kitty output; encoded internals are opaque |
 | Metadata `fields`, character `step_fields`, cache strings/notices | Metadata/timing formatting → panel/text | Field vectors refill in place; strings are rebuilt; notices retained as needed |
 | `TextRasterizer` font/glyph map | Lazy glyph rasterization → text painting; glyph-keyed coverage bytes | Cell-size change, bypass or 512-glyph policy clears masks; font internals remain opaque |
@@ -377,12 +378,14 @@ stars are found. This needs no heap allocation; a view with many edge stars may 
 
 Kitty composition checks `frame_key` before initializing or touching pixel buffers. Its owner-local sky/text
 versions, dimensions, screen/sky placement, physical font size, text-cell size and background cover every image
-input. `rgb_version` is ready only after complete conversion; failed preparation invalidates it. The conversion
-copies RGB channels without multiplying alpha, because drawing already blends into an opaque background.
-`encoding_key` combines that RGB revision with dimensions, compression capability, tmux and target image ID.
-Encoding reuse borrows the existing upload/compression buffers; alternating image IDs correctly require new
-commands. Both result paths require Raster and RasterAssets reuse. Retained RGBA/RGB capacity can increase
-steady memory; no peak-memory reduction is claimed.
+input. `frame_version` is ready only after sky composition and text painting completed; failed preparation
+invalidates it. Every frame pixel is opaque (background, sky and text all leave alpha at 255), so the alpha channel is
+dropped without blending when an upload is prepared: the "Pixel conversion" step runs just before shared-memory
+preparation or streaming encoding, so unchanged frames never convert. An RGBA shared object (`f=32`) was tried and
+measured slower in Kitty (more bytes to copy and for the terminal to read). `encoding_key` combines that frame revision with dimensions,
+compression capability, tmux and target image ID. Encoding reuse borrows the existing upload/compression buffers;
+alternating image IDs correctly require new commands. Both result paths require Raster and RasterAssets reuse.
+Retained RGBA capacity can increase steady memory; no peak-memory reduction is claimed.
 
 Text and sky are prepared before full-image composition. Consequently the live timing panel shows the current
 raster timings and the previously measured composition/conversion timings; those later steps have not executed
@@ -527,8 +530,8 @@ Retained capacity raises steady memory relative to the old temporary grid; no lo
 ### Completed rendering versus displayed output
 
 `RenderResultVersion` distinguishes missing/invalid output from a completed owner-local revision. PixelState
-owns the label descriptions/dependencies, retained text grid, RGBA work, completed RGB, frame/encoding keys and
-`displayed_key` / `display_valid`. The displayed key is the last successfully submitted RGB revision plus screen,
+owns the label descriptions/dependencies, retained text grid, the completed RGBA frame, frame/encoding keys and
+`displayed_key` / `display_valid`. The displayed key is the last successfully submitted frame revision plus screen,
 dimensions and transport settings. `display_valid` becomes false before writes and on resize/clearing/configure;
 failed writes preserve the old key and image ID. It becomes true with the new key only after upload and swap
 writes/flushes succeed. An unchanged valid display skips encoding, upload, swap and ID advancement.
@@ -548,14 +551,15 @@ encoding/display hits do not reset it. Bypass still recompresses each image but 
 The backend does not expose allocation sizes, so inventory/table diagnostics mark its working memory opaque.
 
 
-### Prototype Kitty shared-memory transport
+### Kitty shared-memory transport
 
 POSIX builds probe a private three-byte RGB shared-memory object at startup (`a=q,t=s`, ID 33), before crossterm
 starts reading keys. Only an explicit successful reply enables the path. Other platforms, inaccessible namespaces,
 rejection and silence retain normal streaming. `shared_memory` selects the transport; metadata displays Transport.
 
-PixelState retains its existing RGB Vec. A changed frame copies it into one fresh, exclusive, mode-0600 named
-object and sends only its name/dimensions/byte length. No client mapping, unsafe block or new catalog storage is
+PixelState retains its completed RGBA frame and an RGB scratch. A changed frame is stripped of alpha into the
+scratch and copied into one fresh, exclusive, mode-0600 named
+object; only its name/dimensions/byte length are sent. No client mapping, unsafe block or new catalog storage is
 introduced. `SharedMemoryImage` owns the name and File; its custom Drop is required to unlink unconsumed OS names
 on errors/unwinding. Normal terminal consumption unlinks the name; the client observes its original fd's zero link
 count before releasing it. Recreated names are not confused with the original inode. At most one image is pending.
@@ -565,7 +569,9 @@ is bounded by KITTY_SHARED_MEMORY_TIMEOUT_MS, sleeping between checks. Creation/
 switches to streaming; after a consumption timeout, the same back image ID is replaced by a complete streamed
 image before placement. Terminal write failures remain errors and never advance the displayed key/image ID.
 The frame loop never reads protocol replies, so keyboard input has no competing reader. No current compressed
-result is reused after upload bytes were repurposed for a shared-memory name.
+result is reused after upload bytes were repurposed for a shared-memory name. Deferring the consumption check to
+the next frame was tried and did not help: with an idle simulation the next frame starts at once and waits just
+the same, while a never-consumed object would then cost a lost frame.
 
 Preparation and consumption waits have separate timers; a small Image upload time measures command writes only,
 not terminal display/GPU completion. Shared bytes appear as an external extent, not Rust heap or a client mapping;

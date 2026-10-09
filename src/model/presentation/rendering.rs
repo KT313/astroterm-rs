@@ -163,7 +163,7 @@ impl RenderResultVersion {
 }
 row_columns!(RenderResultVersion { revision, ready });
 
-/// Complete inputs to one retained RGB frame. Versions are local to the same PixelState owner.
+/// Complete inputs to one retained opaque RGBA frame. Versions are local to the same PixelState owner.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PixelFrameKey {
     pub sky_version: u64,
@@ -180,13 +180,13 @@ row_columns!(PixelFrameKey { sky_version, text_version, dimensions, screen, sky_
 /// Exact Kitty upload parameters; image IDs cannot share already encoded command bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct KittyEncodingKey {
-    pub rgb_version: u64,
+    pub frame_version: u64,
     pub dimensions: (u32, u32),
     pub compression: u8, // 0 unknown, 1 supported, 2 unsupported; preserves capability changes as well as byte format
     pub tmux: bool,
     pub image_id: u32,
 }
-row_columns!(KittyEncodingKey { rgb_version, dimensions, compression, tmux, image_id });
+row_columns!(KittyEncodingKey { frame_version, dimensions, compression, tmux, image_id });
 
 /// A completed render can either submit output or leave an already displayed Kitty frame untouched.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -198,10 +198,10 @@ impl RenderOutcome {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct KittyDisplayKey {
     pub shared_memory: bool,
-    pub rgb_version: u64,
+    pub frame_version: u64,
     pub dimensions: (u32, u32),
     pub screen: [u16; 4],
     pub compression: u8,
     pub tmux: bool,
 }
-row_columns!(KittyDisplayKey { shared_memory, rgb_version, dimensions, screen, compression, tmux });
+row_columns!(KittyDisplayKey { shared_memory, frame_version, dimensions, screen, compression, tmux });

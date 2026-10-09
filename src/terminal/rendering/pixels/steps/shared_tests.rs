@@ -24,8 +24,8 @@ impl Write for Receiver {
             if self.fail_upload { return Err(io::Error::other("injected shared upload failure")); }
             if self.consume {
                 let mut input = std::fs::File::from(rustix::shm::open(name.as_c_str(), rustix::shm::OFlags::RDONLY, rustix::shm::Mode::empty())?);
-                let mut rgb = Vec::new(); input.read_to_end(&mut rgb)?;
-                self.pixels.push(rgb);
+                let mut rgba = Vec::new(); input.read_to_end(&mut rgba)?;
+                self.pixels.push(rgba);
                 rustix::shm::unlink(name.as_c_str())?;
             }
         }
@@ -36,26 +36,32 @@ impl Write for Receiver {
 fn pixels() -> PixelState {
     let mut state = super::super::lifetime_tests::pixels(ProtocolType::Kitty);
     state.shared_memory = true;
-    state.rgb = image::RgbImage::from_pixel(16, 8, image::Rgb([11, 22, 33]));
-    state.rgb_version.publish(true);
+    state.frame_image = Some(image::RgbaImage::from_pixel(16, 8, image::Rgba([11, 22, 33, 255])));
+    state.frame_version.publish(true);
     state
 }
+fn rgb(state: &PixelState) -> Vec<u8> { state.frame_image.as_ref().unwrap().as_raw().chunks_exact(4).flat_map(|pixel| pixel[..3].to_vec()).collect() }
 fn missing(name: &CString) -> bool {
     rustix::shm::open(name.as_c_str(), rustix::shm::OFlags::RDONLY, rustix::shm::Mode::empty()).is_err_and(|error| error == rustix::io::Errno::NOENT)
 }
 
 #[test]
-fn shared_transfer_keeps_rgb_and_bypasses_compression_then_reuses_the_display() {
+fn shared_transfer_keeps_the_frame_and_bypasses_compression_then_reuses_the_display() {
     for tmux in [false, true] {
         let mut state = pixels(); state.tmux = tmux;
-        let mut out = Receiver::new(true); let pointer = state.rgb.as_ptr();
+        let mut out = Receiver::new(true); let pointer = state.frame_image.as_ref().unwrap().as_ptr();
         let mut times = StepTimes::with_trace(true);
         assert_eq!(present_kitty_image(&mut state, &mut out, &mut times).unwrap(), RenderOutcome::Presented);
-        assert_eq!(out.pixels, [state.rgb.as_raw().clone()]);
-        assert_eq!(state.rgb.as_ptr(), pointer); assert!(state.compressor.is_none());
+        assert_eq!(out.pixels, [rgb(&state)]);                                        // the object carries RGB, not the RGBA frame
+        assert_eq!(state.frame_image.as_ref().unwrap().as_ptr(), pointer); assert!(state.compressor.is_none());
         assert!(state.shared_upload.is_none() && state.shared_memory);
         assert!(out.names.iter().all(missing));
-        assert!(!times.trace().unwrap().steps.iter().any(|step| step.name == "Image encoding"));
+        let names: Vec<_> = times.trace().unwrap().steps.iter().map(|step| step.name).collect();
+        assert!(!names.contains(&"Image encoding"));
+        assert!(names.iter().position(|&n| n == "Pixel conversion").unwrap() < names.iter().position(|&n| n == "Shared memory preparation").unwrap());
+        let upload = names.iter().position(|&n| n == "Image upload").unwrap();
+        assert!(upload < names.iter().position(|&n| n == "Shared memory consumption").unwrap());
+        assert!(names.iter().position(|&n| n == "Shared memory consumption").unwrap() < names.iter().position(|&n| n == "Image swap").unwrap());
         let count = out.output.len();
         assert_eq!(present_kitty_image(&mut state, &mut out, &mut times).unwrap(), RenderOutcome::ReusedDisplayedFrame);
         assert_eq!(out.output.len(), count); assert_eq!(out.names.len(), 1);
@@ -79,7 +85,7 @@ fn an_unconsumed_object_falls_back_to_a_complete_stream_before_the_swap() {
         if started && header.contains("m=") { compressed.extend(base64_simd::STANDARD.decode_to_vec(payload.split('\x1b').next().unwrap()).unwrap()); }
     }
     let mut decoded = Vec::new(); flate2::read::ZlibDecoder::new(compressed.as_slice()).read_to_end(&mut decoded).unwrap();
-    assert_eq!(decoded, *state.rgb.as_raw());
+    assert_eq!(decoded, rgb(&state));
     assert!(state.display_valid && !state.displayed_key.unwrap().shared_memory);
 }
 

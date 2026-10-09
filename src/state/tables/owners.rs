@@ -142,11 +142,10 @@ impl Tables for PixelState {
     fn visit_tables(&self, prefix: &str, visit: &mut TableVisitor<'_>) {
         let path = |name: &str| join(prefix, name);
         visit(&path("frame_image"), &self.frame_image, None);
-        visit(&path("rgb"), &self.rgb, None);
         visit(&path("shared_memory"), &Single(&self.shared_memory), None);
         visit(&path("shared_upload_bytes"), &Single(&self.shared_upload.as_ref().map(|object| object.bytes)), None);
         visit(&path("shared_upload"), &Opaque { present: self.shared_upload.is_some(), what: "one pending POSIX RGB object; bytes held by the OS, no client mapping" }, None);
-        visit(&path("rgb_version"), &Single(&self.rgb_version), None);
+        visit(&path("frame_version"), &Single(&self.frame_version), None);
         visit(&path("frame_key"), &Single(&self.frame_key), None);
         visit(&path("encoding_key"), &Single(&self.encoding_key), None);
         visit(&path("displayed_key"), &Single(&self.displayed_key), None);
@@ -164,6 +163,7 @@ impl Tables for PixelState {
         visit(&path("serialization_blank"), &self.serialization_blank, None);
         visit(&path("serialized"), &Bytes::binary(&self.serialized), None);
         visit(&path("upload"), &Bytes::string(&self.upload), None);
+        visit(&path("rgb"), &Bytes::binary(&self.rgb), None);
         visit(&path("compressed"), &Bytes::binary(&self.compressed), None);
         visit(&path("compressor"), &Opaque { present: self.compressor.is_some(), what: "retained zlib engine; internal allocation sizes are opaque" }, None);
         visit(&path("fields"), &self.fields, None);

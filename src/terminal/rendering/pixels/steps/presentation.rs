@@ -4,6 +4,7 @@ use crate::{cache::Group, model::{KittyDisplayKey, RenderOutcome}, state::{Pixel
     timing::{BufferId, BufferShape, IndexDomain, Operation, StepTimes}};
 use crate::terminal::transport::graphics::{kitty, present_frame};
 use super::{encode_kitty_upload, serialize_kitty_swap};
+use super::composition::completed_frame;
 use super::shared_memory::{prepare_shared_upload, upload_kitty_pixels};
 
 #[cfg(all(test, unix))]
@@ -11,13 +12,13 @@ use super::shared_memory::{prepare_shared_upload, upload_kitty_pixels};
 mod shared_tests;
 
 pub(in crate::terminal) fn present_kitty_image(state: &mut PixelState, out: &mut impl Write, times: &mut StepTimes) -> io::Result<RenderOutcome> {
-    let Some(rgb_version) = state.rgb_version.current() else { return Err(io::Error::other("cannot present incomplete Kitty pixels")); };
-    let mut key = KittyDisplayKey { shared_memory: state.shared_memory, rgb_version, dimensions: state.rgb.dimensions(),
+    let Some((frame_version, frame)) = completed_frame(state) else { return Err(io::Error::other("cannot present incomplete Kitty pixels")); };
+    let mut key = KittyDisplayKey { shared_memory: state.shared_memory, frame_version, dimensions: frame.dimensions(),
         screen: [state.screen.x, state.screen.y, state.screen.width, state.screen.height], tmux: state.tmux,
         compression: match state.compression { CompressionSupport::Supported => 1, CompressionSupport::Unsupported => 2, CompressionSupport::Unknown => 0 } };
     let reuse = times.measure("Presentation decision", || state.display_valid && state.displayed_key == Some(key)
         && state.reuse_assets && state.scene_cache.config.allows(Group::Raster) && state.scene_cache.config.allows(Group::RasterAssets));
-    times.describe("Presentation decision", || format!("existing terminal image reused={reuse}; RGB revision={rgb_version}"));
+    times.describe("Presentation decision", || format!("existing terminal image reused={reuse}; frame revision={frame_version}"));
     if reuse { return Ok(RenderOutcome::ReusedDisplayedFrame); }                      // no encoding, writes, flushes, swap or image-ID advance
 
     if !prepare_shared_upload(state, times) { encode_kitty_upload(state, times)?; }
@@ -62,8 +63,8 @@ mod tests {
     }
     fn pixels() -> PixelState {
         let mut state = super::super::lifetime_tests::pixels(ProtocolType::Kitty);
-        state.rgb = image::RgbImage::from_pixel(16, 8, image::Rgb([21, 42, 84]));
-        state.rgb_version.publish(true);
+        state.frame_image = Some(image::RgbaImage::from_pixel(16, 8, image::Rgba([21, 42, 84, 255])));
+        state.frame_version.publish(true);
         state
     }
     fn present(state: &mut PixelState, writer: &mut Writer) -> io::Result<RenderOutcome> {
@@ -81,7 +82,7 @@ mod tests {
             assert!(times.trace().unwrap().steps.iter().all(|step| !["Image encoding", "Image upload", "Image swap", "Present"].contains(&step.name)));
             assert_eq!((out.bytes.len(), out.writes, out.flushes, state.kitty_image_id), before);
         }
-        state.rgb_version.publish(true);
+        state.frame_version.publish(true);
         assert_eq!(present(&mut state, &mut out).unwrap(), RenderOutcome::Presented);
         assert_eq!(out.flushes, before.2 + 2);
     }
@@ -100,7 +101,7 @@ mod tests {
         assert_eq!(present(&mut state, &mut out).unwrap(), RenderOutcome::Presented);
         state.scene_cache.configure(&CacheConfig::disabled());
         for _ in 0..2 { assert_eq!(present(&mut state, &mut out).unwrap(), RenderOutcome::Presented); }
-        state.rgb_version.invalidate();
+        state.frame_version.invalidate();
         let bytes = out.bytes.len();
         assert!(present(&mut state, &mut out).is_err());
         assert_eq!(out.bytes.len(), bytes);
@@ -111,7 +112,7 @@ mod tests {
         for (fail_write, fail_flush) in [(Some(1), None), (Some(2), None), (None, Some(1)), (None, Some(2))] {
             let mut state = pixels(); present(&mut state, &mut Writer::default()).unwrap();
             let old = state.displayed_key; let id = state.kitty_image_id;
-            state.rgb_version.publish(true);
+            state.frame_version.publish(true);
             let mut out = Writer { fail_write, fail_flush, ..Default::default() };
             assert!(present(&mut state, &mut out).is_err());
             assert_eq!(state.displayed_key, old); assert_eq!(state.kitty_image_id, id); assert!(!state.display_valid);

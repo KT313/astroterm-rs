@@ -1,5 +1,6 @@
-//! Kitty RGB transport. Upload the back image outside synchronization, then atomically place it and delete
+//! Kitty image transport. Upload the back image outside synchronization, then atomically place it and delete
 //! the previous image. Two IDs bound terminal storage; no Unicode placeholder cells are required.
+//! Both transports send RGB: a quarter fewer bytes to copy, compress, write and for the terminal to read.
 mod compression;
 mod shared_memory;
 pub(crate) use shared_memory::{create_shared_image, encode_shared_upload, wait_for_shared_consumption};
@@ -9,7 +10,7 @@ use std::{
     io::{self, Write as _},
 };
 
-use image::RgbImage;
+use image::RgbaImage;
 use ratatui::layout::Rect;
 use ratatui_image::picker::cap_parser::Parser;
 
@@ -20,8 +21,8 @@ pub fn other_image_id(id: u32) -> u32 {
 }
 
 /// Encode only an upload, without changing the visible placement. The caller supplies an already composed,
-/// opaque RGB image; alpha blending belongs to rasterization, before this boundary.
-pub fn encode_upload(image: &RgbImage, id: u32, compress: bool, tmux: bool) -> io::Result<Vec<u8>> {
+/// opaque RGBA image (alpha 255 everywhere); alpha blending belongs to rasterization, before this boundary.
+pub fn encode_upload(image: &RgbaImage, id: u32, compress: bool, tmux: bool) -> io::Result<Vec<u8>> {
     let mut compressed = Vec::new();
     let mut output = String::new();
     encode_upload_into(image, id, compress, tmux, &mut compressed, &mut output)?;
@@ -29,20 +30,28 @@ pub fn encode_upload(image: &RgbImage, id: u32, compress: bool, tmux: bool) -> i
 }
 
 /// Populate application-owned compression and upload buffers after the prior upload has finished.
-pub fn encode_upload_into(image: &RgbImage, id: u32, compress: bool, tmux: bool, compressed: &mut Vec<u8>, output: &mut String) -> io::Result<()> {
-    encode_upload_reusing(image, id, compress, tmux, &mut None, compressed, output)
+pub fn encode_upload_into(image: &RgbaImage, id: u32, compress: bool, tmux: bool, compressed: &mut Vec<u8>, output: &mut String) -> io::Result<()> {
+    let mut rgb = Vec::new();
+    strip_alpha(image, &mut rgb);
+    encode_upload_reusing(&rgb, image.dimensions(), id, compress, tmux, &mut None, compressed, output)
+}
+
+/// Drop the constant alpha channel into the `rgb` scratch. Drawing already blended onto the opaque background.
+pub(crate) fn strip_alpha(image: &RgbaImage, rgb: &mut Vec<u8>) {
+    rgb.resize(image.len() / 4 * 3, 0);
+    for (pixel, target) in image.as_raw().chunks_exact(4).zip(rgb.chunks_exact_mut(3)) { target.copy_from_slice(&pixel[..3]); }
 }
 
 /// Keep the zlib engine alongside its output buffers; a reset starts a complete independent stream each time.
+/// `rgb` is the already alpha-stripped frame of `dimensions`.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn encode_upload_reusing(image: &RgbImage, id: u32, compress: bool, tmux: bool, engine: &mut Option<flate2::Compress>, compressed: &mut Vec<u8>, output: &mut String) -> io::Result<()> {
+pub(crate) fn encode_upload_reusing(rgb: &[u8], dimensions: (u32, u32), id: u32, compress: bool, tmux: bool, engine: &mut Option<flate2::Compress>, compressed: &mut Vec<u8>, output: &mut String) -> io::Result<()> {
     compressed.clear();
     output.clear();
-    let raw = image.as_raw();
     let bytes = if compress {
-        compression::compress_image(raw, engine, compressed)?;
+        compression::compress_image(rgb, engine, compressed)?;
         compressed.as_slice()
-    } else { raw.as_slice() };
+    } else { rgb };
 
     // Base64 chunks may contain at most 4096 bytes, corresponding to 3072 input bytes.
     let (start, escape, end) = Parser::tmux_start_escape_end(tmux);
@@ -56,8 +65,8 @@ pub(crate) fn encode_upload_reusing(image: &RgbImage, id: u32, compress: bool, t
             write!(
                 output,
                 "i={id},a=t,f=24,{compression}t=d,s={},v={},",
-                image.width(),
-                image.height()
+                dimensions.0,
+                dimensions.1
             )
             .unwrap();
         }
@@ -112,10 +121,12 @@ mod tests {
     use super::*;
     use std::io::Read;
 
+    fn rgb(image: &RgbaImage) -> Vec<u8> { image.as_raw().chunks_exact(4).flat_map(|pixel| pixel[..3].to_vec()).collect() }
+
     #[test]
     fn owned_transport_scratch_reuses_capacity_without_stale_payload() {
-        let large = RgbImage::from_fn(127, 83, |x, y| image::Rgb([x as u8, y as u8, (x * y) as u8]));
-        let small = RgbImage::from_pixel(2, 2, image::Rgb([1, 2, 3]));
+        let large = RgbaImage::from_fn(127, 83, |x, y| image::Rgba([x as u8, y as u8, (x * y) as u8, 255]));
+        let small = RgbaImage::from_pixel(2, 2, image::Rgba([1, 2, 3, 255]));
         let mut compressed = Vec::new();
         let mut upload = String::new();
         encode_upload_into(&large, IMAGE_IDS[0], true, false, &mut compressed, &mut upload).unwrap();
@@ -135,9 +146,9 @@ mod tests {
 
     #[test]
     fn rgb_transfers_round_trip_with_and_without_compression_and_tmux() {
-        // Incompressible-looking RGB verifies multi-chunk transfers as well as the final partial chunk.
-        let image = RgbImage::from_fn(127, 83, |x, y| {
-            image::Rgb([(x * 31 + y * 17) as u8, (x * y + 71) as u8, (x * 91 + y * 43) as u8])
+        // Incompressible-looking pixels verify multi-chunk transfers as well as the final partial chunk.
+        let image = RgbaImage::from_fn(127, 83, |x, y| {
+            image::Rgba([(x * 31 + y * 17) as u8, (x * y + 71) as u8, (x * 91 + y * 43) as u8, 255])
         });
         for compress in [false, true] {
             for tmux in [false, true] {
@@ -169,7 +180,7 @@ mod tests {
                 } else {
                     bytes
                 };
-                assert_eq!(decoded, *image.as_raw());
+                assert_eq!(decoded, rgb(&image)); // streamed payloads carry no alpha
             }
         }
     }

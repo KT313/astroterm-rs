@@ -1,4 +1,4 @@
-//! Copy existing RGB into a named POSIX object; no mappings or terminal-input reader are needed in the frame loop.
+//! Copy the frame's RGB into a named POSIX object; no mappings or terminal-input reader are needed in the frame loop.
 use std::{io, fmt::Write as _};
 use crate::state::SharedMemoryImage;
 use ratatui_image::picker::cap_parser::Parser;
@@ -20,7 +20,7 @@ pub(crate) fn create_shared_image(rgb: &[u8]) -> io::Result<SharedMemoryImage> {
         };
         let mut object = SharedMemoryImage { name, file: File::from(fd), bytes: rgb.len() };
         object.file.set_len(rgb.len() as u64)?;
-        object.file.write_all(rgb)?;                                                 // preserve the completed RGB allocation; this prototype adds one copy
+        object.file.write_all(rgb)?;                                                 // the RGB scratch stays with the application; this transport adds one copy
         return Ok(object);
     }
     Err(io::Error::other("cannot obtain a unique shared-memory name"))
@@ -47,6 +47,7 @@ fn was_consumed(object: &SharedMemoryImage) -> io::Result<bool> {
     Ok(object.file.metadata()?.nlink() == 0) // check the original inode, even if another object reused its name
 }
 
+/// True once the terminal has read and unlinked the object; bounded polling.
 pub(crate) fn wait_for_shared_consumption(object: &SharedMemoryImage) -> io::Result<bool> {
     #[cfg(unix)]
     {

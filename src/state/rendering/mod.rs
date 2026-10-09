@@ -62,10 +62,9 @@ pub struct PixelState {
     pub(crate) time_zone: Option<(Observer, ObserverTimeZone)>,
     pub(crate) raster_text: Option<TextRasterizer>,
     pub(crate) text_scale: f64,
-    // Full-frame sky/text bitmap and the temporary opaque RGB conversion result.
+    // Full-frame opaque sky/text bitmap; Kitty uploads it as RGBA without any conversion.
     pub(crate) frame_image: Option<image::RgbaImage>,
-    pub(crate) rgb: image::RgbImage,
-    pub(crate) rgb_version: crate::model::RenderResultVersion,
+    pub(crate) frame_version: crate::model::RenderResultVersion,
     pub(crate) frame_key: Option<crate::model::PixelFrameKey>,
     pub(crate) encoding_key: Option<crate::model::KittyEncodingKey>,
     pub(crate) displayed_key: Option<crate::model::KittyDisplayKey>, // last successful submission; preserved on errors
@@ -77,6 +76,7 @@ pub struct PixelState {
     pub(crate) composed: ratatui::buffer::Buffer,
     // Refilled only after prior writes/flushes finish. Flat buffers retain capacity; no protocol/key recycling.
     pub(crate) upload: String,
+    pub(crate) rgb: Vec<u8>, // alpha-stripped frame, filled when a Kitty upload is prepared (shared object or stream)
     pub(crate) compressed: Vec<u8>,
     pub(crate) compressor: Option<flate2::Compress>, // lazy zlib engine; reset between independent images, retain its working memory
     pub(crate) encoded: Option<ratatui_image::protocol::Protocol>,
@@ -162,14 +162,14 @@ impl crate::cache::ReportBuffers for PixelState {
         report_field(sink, "cache_diagnostics", &self.cache_diagnostics);
         report_field(sink, "raster_text", &self.raster_text);
         report_field(sink, "frame_image", &self.frame_image);
-        report_field(sink, "rgb_pixels", self.rgb.as_raw());
-        report_field(sink, "rgb_version", &self.rgb_version);
+        report_field(sink, "frame_version", &self.frame_version);
         report_field(sink, "frame_key", &self.frame_key);
         report_field(sink, "encoding_key", &self.encoding_key);
         report_field(sink, "displayed_key", &self.displayed_key);
         report_field(sink, "display_valid", &self.display_valid);
         report_field(sink, "fields", &self.fields);
         report_field(sink, "upload", &self.upload);
+        report_field(sink, "rgb", &self.rgb);
         report_field(sink, "compressed", &self.compressed);
         report_field(sink, "shared_upload", &self.shared_upload);
         if sink.enter("compressor", std::mem::size_of_val(&self.compressor)) {
