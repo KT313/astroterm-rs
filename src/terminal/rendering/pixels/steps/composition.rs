@@ -82,10 +82,10 @@ fn allow_image_reuse(state: &PixelState) -> bool {
     state.reuse_assets && state.scene_cache.config.allows(Group::Raster) && state.scene_cache.config.allows(Group::RasterAssets)
 }
 
-/// Until presentation skipping lands, alternating image IDs legitimately require new upload command bytes.
+/// Changed images are encoded for their target ID; compression working memory survives across images.
 pub(in crate::terminal) fn encode_kitty_upload(state: &mut PixelState, times: &mut StepTimes) -> io::Result<()> {
-    encode_kitty_upload_with(state, times, |state| kitty::encode_upload_into(&state.rgb, state.kitty_image_id,
-        state.compression == CompressionSupport::Supported, state.tmux, &mut state.compressed, &mut state.upload))
+    encode_kitty_upload_with(state, times, |state| kitty::encode_upload_reusing(&state.rgb, state.kitty_image_id,
+        state.compression == CompressionSupport::Supported, state.tmux, &mut state.compressor, &mut state.compressed, &mut state.upload))
 }
 
 fn encode_kitty_upload_with(state: &mut PixelState, times: &mut StepTimes, encode: impl FnOnce(&mut PixelState) -> io::Result<()>) -> io::Result<()> {
@@ -106,7 +106,11 @@ fn encode_kitty_upload_with(state: &mut PixelState, times: &mut StepTimes, encod
 
     state.encoding_key = None;                                                      // partial compression or commands must not be reused on retry
     let before = times.inspect_memory(|| (describe_upload(state), BufferShape::vector(&state.compressed, IndexDomain::Bytes)));
+    let reused_engine = state.compressor.is_some();
     let result = times.measure("Image encoding", || encode(state));
+    if state.compression == CompressionSupport::Supported && state.compressor.is_some() {
+        times.record_unknown(BufferId::CompressionEngine, if reused_engine { Operation::Reuse } else { Operation::Build });
+    }
     times.record_borrow(BufferId::RgbImage, Access::ReadOnly, || BufferShape::vector(state.rgb.as_raw(), IndexDomain::Bytes));
     times.record_shape(BufferId::UploadBytes, Operation::Clear, before.map(|s| s.0), || { let mut shape = before.unwrap().0; shape.len = Some(0); shape });
     times.record_shape(BufferId::CompressedBytes, Operation::Clear, before.map(|s| s.1), || { let mut shape = before.unwrap().1; shape.len = Some(0); shape });

@@ -260,3 +260,41 @@ fn reused_pixels_and_encoding_report_reuse_without_build_or_conversion_events() 
     assert!(trace.steps.iter().flat_map(|step| &step.memory_events).all(|event| !matches!(event.event,
         crate::timing::MemoryEvent::Operation { operation: Operation::Build | Operation::Clear | Operation::Copy, .. })));
 }
+
+#[test]
+fn compressor_is_lazy_and_each_warm_encode_starts_a_new_stream() {
+    let mut state = pixels();
+    state.rgb = image::RgbImage::from_pixel(40, 20, image::Rgb([11, 22, 33]));
+    state.rgb_version.publish(true);
+    state.compression = CompressionSupport::Unsupported;
+    encode_kitty_upload(&mut state, &mut StepTimes::default()).unwrap();
+    assert!(state.compressor.is_none());
+    for (width, height, color) in [(40, 20, [11, 22, 33]), (7, 3, [54, 21, 9]), (40, 20, [0, 0, 0])] {
+        state.rgb = image::RgbImage::from_pixel(width, height, image::Rgb(color));
+        state.rgb_version.publish(true);
+        state.compression = CompressionSupport::Supported;
+        encode_kitty_upload(&mut state, &mut StepTimes::default()).unwrap();
+        assert_eq!(state.compressor.as_ref().unwrap().total_in(), state.rgb.len() as u64);
+        assert_eq!(decode_upload(&state.upload, true), *state.rgb.as_raw());
+        state.compression = CompressionSupport::Unsupported;
+        encode_kitty_upload(&mut state, &mut StepTimes::default()).unwrap();
+        assert!(state.compressor.is_some()); // retained working memory remains available for the next compressed image
+        assert_eq!(decode_upload(&state.upload, false), *state.rgb.as_raw());
+    }
+}
+
+#[cfg(feature = "memory-diagnostics")]
+#[test]
+fn changed_images_report_engine_build_once_then_working_memory_reuse() {
+    let mut state = pixels();
+    state.rgb = image::RgbImage::from_pixel(12, 8, image::Rgb([1, 2, 3]));
+    for expected in [Operation::Build, Operation::Reuse, Operation::Reuse] {
+        state.rgb_version.publish(true); // force real compression, not an encoded-result hit
+        let mut times = StepTimes::with_trace(true); times.enable_memory_events(true);
+        encode_kitty_upload(&mut state, &mut times).unwrap();
+        let events: Vec<_> = times.trace().unwrap().steps.iter().flat_map(|step| &step.memory_events).filter_map(|event| {
+            if let crate::timing::MemoryEvent::Operation { buffer: BufferId::CompressionEngine, operation, .. } = event.event { Some(operation) } else { None }
+        }).collect();
+        assert_eq!(events, [expected]);
+    }
+}

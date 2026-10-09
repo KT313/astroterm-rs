@@ -55,6 +55,7 @@ pub fn open_pixel_renderer(
         composed: ratatui::buffer::Buffer::empty(Rect::default()),
         upload: String::new(),
         compressed: Vec::new(),
+        compressor: None,
         encoded: None,
         serialization_blank: ratatui::buffer::Buffer::empty(Rect::default()),
         serialized: Vec::new(),

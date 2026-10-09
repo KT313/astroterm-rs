@@ -528,3 +528,11 @@ writes/flushes succeed. An unchanged valid display skips encoding, upload, swap 
 actual successful presentation calls and display reuse separately, instead of inferring success from entering
 an I/O timer. Non-Kitty renderers retain their normal presentation behavior. Known invalidations are handled;
 out-of-band terminal image loss is not detected. Live timing metadata still updates and can require new output.
+
+
+Kitty compression retains a lazy `PixelState.compressor` (`flate2::Compress`) beside the existing compressed
+bytes. It resets before each changed image, discarding dictionary/checksum/history while retaining backend
+working allocations. Compression writes directly into available compressed-buffer capacity; no per-image
+ZlibEncoder or intermediate writer buffer is constructed. Uncompressed output needs no engine initialization;
+encoding/display hits do not reset it. Bypass still recompresses each image but can reuse working allocations.
+The backend does not expose allocation sizes, so inventory/table diagnostics mark its working memory opaque.

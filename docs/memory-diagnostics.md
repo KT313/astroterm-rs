@@ -346,3 +346,9 @@ Live frame-time metadata remains live. It can change text/RGB and force uploads 
 Composition now follows text layout, so the timing panel samples the previous composition/conversion timings;
 this avoids allocating a full image merely to discover its dimensions. New output caches use conservative
 owner-local revisions; generic Cache value-generation semantics are unchanged. No panel throttling was added.
+
+
+`compressor` is lazy retained zlib working storage, separate from `compressed` output bytes. Its allocator sizes
+are opaque and reported as unknown coverage, not zero. `CompressionEngine` Build/Reuse events describe creation
+or reset of the working engine on an actual encoding pass; they do not mean a previous compressed result was
+reused. Each image remains an independent zlib stream. Encoding/display cache hits perform no engine operation.

@@ -73,6 +73,7 @@ pub struct PixelState {
     // Refilled only after prior writes/flushes finish. Flat buffers retain capacity; no protocol/key recycling.
     pub(crate) upload: String,
     pub(crate) compressed: Vec<u8>,
+    pub(crate) compressor: Option<flate2::Compress>, // lazy zlib engine; reset between independent images, retain its working memory
     pub(crate) encoded: Option<ratatui_image::protocol::Protocol>,
     pub(crate) serialization_blank: ratatui::buffer::Buffer,
     pub(crate) serialized: Vec<u8>,
@@ -165,6 +166,10 @@ impl crate::cache::ReportBuffers for PixelState {
         report_field(sink, "fields", &self.fields);
         report_field(sink, "upload", &self.upload);
         report_field(sink, "compressed", &self.compressed);
+        if sink.enter("compressor", std::mem::size_of_val(&self.compressor)) {
+            if self.compressor.is_some() { sink.unknown("retained zlib engine working memory; backend allocation sizes are opaque"); }
+            sink.leave();
+        }
         if self.encoded.is_some() { sink.unknown("ratatui-image encoded protocol internals are opaque"); }
         report_cell_buffer(sink, "serialization_blank", &self.serialization_blank);
         report_field(sink, "serialized", &self.serialized);

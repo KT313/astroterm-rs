@@ -19,7 +19,7 @@ pub enum BufferId {
     DrawOrder, ProjectedBodies, ProjectedFigures, ProjectedHorizon, ProjectedView,
     PixelCandidate, PixelDrawingInputs, CharacterCandidate, StarLayer, PixelScene, CharacterScene,
     CharacterFrame, PanelCanvas, PresenterScreen, PreviousFrame, FrameImage, HalfblockTransfer, RgbImage, MetadataFields,
-    StepFields, PixelLabels, TextCells, ComposedCells, GlyphMasks, Font, EncodedImage, UploadBytes, CompressedBytes, SerializedBytes,
+    StepFields, PixelLabels, TextCells, ComposedCells, GlyphMasks, Font, EncodedImage, UploadBytes, CompressionEngine, CompressedBytes, SerializedBytes,
     SerializationBlank,
 }
 

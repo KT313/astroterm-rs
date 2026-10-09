@@ -51,6 +51,7 @@ pub const MAX_INTERACTIVE_SPEED: f64 = 1e12;                                    
 pub const DEFAULT_CELL_ASPECT_RATIO: f64 = 2.0;                                           // assumed character-cell height divided by width if detection fails
 
 // Drawing, labels and text layout
+pub const KITTY_COMPRESSION_GROWTH_BYTES: usize = 32 * 1024;                              // grow compressed output by at least this much when its buffer fills
 pub const MAX_IMAGE_PIXELS: usize = 16_777_216;                                           // maximum width × height allowed for a pixel image
 pub const PIXEL_BACKGROUND_RGBA: [u8; 4] = [3, 6, 14, 255];                               // dark sky background; the last value must stay 255 for full opacity
 pub const STAR_OPACITY_REFERENCE_MAGNITUDE: f64 = 0.0;                                    // stars this bright or brighter start at full opacity

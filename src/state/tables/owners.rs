@@ -161,6 +161,7 @@ impl Tables for PixelState {
         visit(&path("serialized"), &Bytes::binary(&self.serialized), None);
         visit(&path("upload"), &Bytes::string(&self.upload), None);
         visit(&path("compressed"), &Bytes::binary(&self.compressed), None);
+        visit(&path("compressor"), &Opaque { present: self.compressor.is_some(), what: "retained zlib engine; internal allocation sizes are opaque" }, None);
         visit(&path("fields"), &self.fields, None);
         visit(&path("raster_text.glyphs"), &self.raster_text.as_ref().map(|r| &r.glyphs), Some(Group::RasterAssets));
         visit(&path("encoded"), &Opaque { present: self.encoded.is_some(), what: "encoded terminal-protocol payload" }, None);

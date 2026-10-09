@@ -1,5 +1,7 @@
 //! Kitty RGB transport. Upload the back image outside synchronization, then atomically place it and delete
 //! the previous image. Two IDs bound terminal storage; no Unicode placeholder cells are required.
+mod compression;
+
 use std::{
     fmt::Write as _,
     io::{self, Write as _},
@@ -26,17 +28,19 @@ pub fn encode_upload(image: &RgbImage, id: u32, compress: bool, tmux: bool) -> i
 
 /// Populate application-owned compression and upload buffers after the prior upload has finished.
 pub fn encode_upload_into(image: &RgbImage, id: u32, compress: bool, tmux: bool, compressed: &mut Vec<u8>, output: &mut String) -> io::Result<()> {
+    encode_upload_reusing(image, id, compress, tmux, &mut None, compressed, output)
+}
+
+/// Keep the zlib engine alongside its output buffers; a reset starts a complete independent stream each time.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_upload_reusing(image: &RgbImage, id: u32, compress: bool, tmux: bool, engine: &mut Option<flate2::Compress>, compressed: &mut Vec<u8>, output: &mut String) -> io::Result<()> {
     compressed.clear();
     output.clear();
     let raw = image.as_raw();
     let bytes = if compress {
-        let mut encoder = flate2::write::ZlibEncoder::new(&mut *compressed, flate2::Compression::fast());
-        encoder.write_all(raw)?;
-        encoder.finish()?;
+        compression::compress_image(raw, engine, compressed)?;
         compressed.as_slice()
-    } else {
-        raw.as_slice()
-    };
+    } else { raw.as_slice() };
 
     // Base64 chunks may contain at most 4096 bytes, corresponding to 3072 input bytes.
     let (start, escape, end) = Parser::tmux_start_escape_end(tmux);
