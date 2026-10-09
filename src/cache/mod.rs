@@ -11,7 +11,7 @@ mod diagnostics;
 mod buffers;
 
 pub use config::{CacheConfig, Group, GroupPolicy};
-pub use state::{Cache, CacheStats, RefreshReason, StoreOutcome, rewrite_in_place};
+pub use state::{Cache, CacheStats, RefreshReason, StoreOutcome, adopt_work, rewrite_in_place};
 pub use diagnostics::{CacheReport, Quality, format_stats};
 #[cfg(feature = "memory-diagnostics")]
 pub use buffers::{BufferDescriptor, BufferSink, InventorySnapshot, Kind, Owner, ReportBuffers, report_external, report_field};

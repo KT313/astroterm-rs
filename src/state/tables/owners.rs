@@ -90,6 +90,7 @@ impl Tables for ProjectionCache {
         let path = |name: &str| join(prefix, name);
         visit(&path("regional_stars"), &super::regions::RegionalTable { entries: &self.regional_stars, nested_bytes: super::TableBytes::vector }, Some(Group::Projection));
         visit(&path("regional_orders"), &super::regions::RegionalTable { entries: &self.regional_orders, nested_bytes: super::TableBytes::vector }, Some(Group::DrawOrder));
+        visit(&path("stale_slots"), &self.stale_slots, None);
         visit(&path("regional_cell_work"), &self.regional_cell_work, None);
         visit(&path("regional_order_work"), &self.regional_order_work, None);
         visit(&path("regional_cells"), &self.regional_cells, None);

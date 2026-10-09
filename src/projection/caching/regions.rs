@@ -4,8 +4,7 @@ use std::sync::Arc;
 use crate::cache::{Cache, Group};
 use crate::model::{CartesianCamera, ObservedRegion, ProjectionViewport, RegionalDrawRecord, View};
 use crate::state::{ProjectionCache, RegionalObservation};
-use crate::timing::{StepTimes, BufferId, BufferShape, IndexDomain, Operation};
-use super::memory::record_region_store;
+use crate::timing::{StepTimes, BufferId};
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::projection) fn project_regional_stars(storage: &mut ProjectionCache, observed: RegionalObservation<'_>, view: &View, viewport: ProjectionViewport, epoch: f64, camera: CartesianCamera, times: &mut StepTimes) {
@@ -31,6 +30,7 @@ fn prepare_region_storage(storage: &mut ProjectionCache, observed: RegionalObser
     storage.assembled_for.clear();
     storage.assembly_valid = false;
     storage.region_cell_scratch.clear();
+    storage.stale_slots.clear();
     storage.regional_cell_work.clear();
     storage.regional_order_work.clear();
     storage.regional_ranges.clear();
@@ -39,75 +39,72 @@ fn prepare_region_storage(storage: &mut ProjectionCache, observed: RegionalObser
 #[allow(clippy::too_many_arguments)]
 fn refresh_region_cells(storage: &mut ProjectionCache, observed: RegionalObservation<'_>, view: &View, viewport: ProjectionViewport, epoch: f64, camera: CartesianCamera, times: &mut StepTimes) -> (usize, usize, usize) {
     let reuse = storage.config.allows(Group::Projection);
-    let mut refreshed = 0;
-    let mut reused = 0;
+    let ProjectionCache { regional_stars, regional_cell_work: work, regional_stats, stale_slots, .. } = storage;
+    let stats_before = *regional_stats;
+    let region_key = |region: &ObservedRegion| ((region.selection_generation, region.apparent_generation), observed.horizon_rotation(), observed.refraction_enabled(), *view, viewport);
+    stale_slots.clear();
+    times.measure("Regional projection decision", || {                                     // one timer per pass, not one per region
+        for (slot, region) in observed.regions().iter().enumerate() {
+            let cache = &mut regional_stars[region.region];
+            let before = cache.stats;
+            if cache.needs_refresh(&region_key(region), epoch, None, reuse) { stale_slots.push(slot); }
+            else { add_stats(regional_stats, before, cache.stats); }
+        }
+    });
     let mut calculated = 0;
-    for (slot, region) in observed.regions().iter().enumerate() {
-        let key = ((region.selection_generation, region.apparent_generation), observed.horizon_rotation(), observed.refraction_enabled(), *view, viewport);
-        let cache = &mut storage.regional_stars[region.region];
-        let before = cache.stats;
-        let refresh = times.measure("Regional projection decision", || cache.needs_refresh(&key, epoch, None, reuse));
-        times.record_candidate_decision(times.last_memory_step(), BufferId::RegionalProjectionKeys, BufferId::RegionalProjectedCells, refresh, cache.stats.last_reason);
-        if !refresh { add_stats(&mut storage.regional_stats, before, cache.stats); reused += 1; continue; }
-        let sky = observed.sky();
-        let stars = sky.stars.region(slot, region);                                          // resolve the region's columns once
-        let cells = &mut storage.regional_cell_work;
-        prepare_region_work(times, "Regional cell work preparation", BufferId::RegionalCellWork, cells, stars.len(), IndexDomain::Catalog);
-        times.measure("Regional visible star calculation", || {
+    times.measure("Regional visible star calculation", || {
+        for &slot in stale_slots.iter() {
+            let region = &observed.regions()[slot];
+            let stars = observed.sky().stars.region(slot, region);                          // resolve the region's columns once
+            work.clear();                                                                   // one shared scratch; grows only when a region needs more room
             for row in 0..stars.len() {
                 if !stars.drawable(row) { continue; }
                 calculated += 1;
                 let Some(point) = crate::projection::project_camera(camera, stars.position(row)) else { continue; };
-                if point.is_visible() { cells.push((stars.source_index(row), crate::projection::project_to_cell(viewport, point))); }
+                if point.is_visible() { work.push((stars.source_index(row), crate::projection::project_to_cell(viewport, point))); }
             }
-        });
-        times.record_build(BufferId::RegionalCellWork, || BufferShape::vector(cells, IndexDomain::Catalog));
-        let transition = times.inspect_memory(|| (BufferShape::vector(cells, IndexDomain::Catalog), cache.stored().map(|old| BufferShape::vector(old, IndexDomain::Catalog))));
-        let outcome = times.measure("Regional projection store", || cache.store_reusing(key, epoch, 0.0, cells));
-        record_region_store(times, BufferId::RegionalCellWork, BufferId::RegionalProjectedCells, transition, cells, IndexDomain::Catalog, outcome);
-        add_stats(&mut storage.regional_stats, before, cache.stats);
-        refreshed += 1;
-    }
-    (refreshed, reused, calculated)
+            let cache = &mut regional_stars[region.region];
+            let before = cache.stats;
+            cache.store_in_place(region_key(region), epoch, 0.0, |cells| crate::cache::adopt_work(cells, work)); // compare once, copy into the region's own allocation
+            add_stats(regional_stats, before, cache.stats);
+        }
+        work.clear();                                                                       // keep only capacity between frames
+    });
+    times.record_regional_counts(BufferId::RegionalProjectedCells, stats_before, *regional_stats);
+    (stale_slots.len(), observed.regions().len() - stale_slots.len(), calculated)
 }
 
 fn refresh_region_orders(storage: &mut ProjectionCache, observed: RegionalObservation<'_>, epoch: f64, times: &mut StepTimes) -> (usize, usize) {
     let reuse = storage.config.allows(Group::DrawOrder);
-    let mut refreshed = 0;
-    let mut reused = 0;
-    for (slot, region) in observed.regions().iter().enumerate() {
-        let key = (region.selection_generation, region.motion_generation);                  // position-only corrections and camera changes do not affect brightness order
-        let cache = &mut storage.regional_orders[region.region];
-        let before = cache.stats;
-        let refresh = times.measure("Regional draw-order decision", || cache.needs_refresh(&key, epoch, None, reuse));
-        times.record_candidate_decision(times.last_memory_step(), BufferId::RegionalOrderKeys, BufferId::RegionalDrawOrder, refresh, cache.stats.last_reason);
-        if !refresh { add_stats(&mut storage.regional_stats, before, cache.stats); reused += 1; continue; }
-        let sky = observed.sky();
-        let stars = sky.stars.region(slot, region);
-        let order = &mut storage.regional_order_work;
-        prepare_region_work(times, "Regional order work preparation", BufferId::RegionalOrderWork, order, stars.len(), IndexDomain::Observed);
-        times.measure("Regional sort record construction", || order.extend((0..stars.len()).filter(|&row| stars.drawable(row))
-            .map(|row| (row, stars.magnitude(row), sky.catalog.stars.id(stars.source_index(row))))));
-        times.record_build(BufferId::RegionalOrderWork, || BufferShape::vector(order, IndexDomain::Observed));
-        times.measure("Regional magnitude and ID sort", || order.sort_unstable_by(compare_records));
-        let transition = times.inspect_memory(|| (BufferShape::vector(order, IndexDomain::Observed), cache.stored().map(|old| BufferShape::vector(old, IndexDomain::Observed))));
-        let outcome = times.measure("Regional draw-order store", || cache.store_reusing(key, epoch, 0.0, order));
-        record_region_store(times, BufferId::RegionalOrderWork, BufferId::RegionalDrawOrder, transition, order, IndexDomain::Observed, outcome);
-        add_stats(&mut storage.regional_stats, before, cache.stats);
-        refreshed += 1;
-    }
-    (refreshed, reused)
-}
-
-fn prepare_region_work<T>(times: &mut StepTimes, step: &'static str, buffer: BufferId, work: &mut Vec<T>, rows: usize, domain: IndexDomain) {
-    let before = times.inspect_memory(|| BufferShape::vector(work, domain));
-    times.measure(step, || { work.clear(); work.reserve(rows); });                           // discard partial work on retry; grow only when this region needs more room
-    times.with_memory(|times| {
-        let after = BufferShape::vector(work, domain);
-        times.record_shape(buffer, Operation::Clear, before, || after);
-        let operation = if before.is_some_and(|shape| shape.capacity == after.capacity) { Operation::Reuse } else { Operation::Reserve };
-        times.record_shape(buffer, operation, before, || after);
+    let ProjectionCache { regional_orders, regional_order_work: work, regional_stats, stale_slots, .. } = storage;
+    let stats_before = *regional_stats;
+    let region_key = |region: &ObservedRegion| (region.selection_generation, region.motion_generation); // position-only corrections and camera changes do not affect brightness order
+    stale_slots.clear();
+    times.measure("Regional draw-order decision", || {
+        for (slot, region) in observed.regions().iter().enumerate() {
+            let cache = &mut regional_orders[region.region];
+            let before = cache.stats;
+            if cache.needs_refresh(&region_key(region), epoch, None, reuse) { stale_slots.push(slot); }
+            else { add_stats(regional_stats, before, cache.stats); }
+        }
     });
+    times.measure("Regional draw-order calculation", || {
+        for &slot in stale_slots.iter() {
+            let region = &observed.regions()[slot];
+            let sky = observed.sky();
+            let stars = sky.stars.region(slot, region);
+            work.clear();                                                                   // one shared scratch; grows only when a region needs more room
+            work.extend((0..stars.len()).filter(|&row| stars.drawable(row)).map(|row| (row, stars.magnitude(row), sky.catalog.stars.id(stars.source_index(row)))));
+            work.sort_unstable_by(compare_records);
+            let cache = &mut regional_orders[region.region];
+            let before = cache.stats;
+            cache.store_in_place(region_key(region), epoch, 0.0, |order| crate::cache::adopt_work(order, work)); // compare once, copy the sorted records into the region's own allocation
+            add_stats(regional_stats, before, cache.stats);
+        }
+        work.clear();                                                                       // keep only capacity between frames
+    });
+    times.record_regional_counts(BufferId::RegionalDrawOrder, stats_before, *regional_stats);
+    (stale_slots.len(), observed.regions().len() - stale_slots.len())
 }
 
 fn add_stats(total: &mut crate::cache::CacheStats, before: crate::cache::CacheStats, after: crate::cache::CacheStats) {
@@ -397,16 +394,12 @@ mod tests {
         }
     }
 
-    fn allocation_set<T>(entries: &[Cache<impl PartialEq, Vec<T>>], work: &Vec<T>) -> Vec<(usize, usize)> {
-        let mut allocations: Vec<_> = entries.iter().filter_map(|entry| entry.stored())
-            .chain(std::iter::once(work)).filter(|values| values.capacity() != 0)
-            .map(|values| (values.as_ptr() as usize, values.capacity())).collect();
-        allocations.sort_unstable();
-        allocations
+    fn allocations<K: PartialEq, T>(entries: &[Cache<K, Vec<T>>]) -> Vec<Option<(usize, usize)>> {
+        entries.iter().map(|entry| entry.stored().map(|values| (values.as_ptr() as usize, values.capacity()))).collect()
     }
 
     #[test]
-    fn replacement_buffers_stabilize_across_different_region_sizes_and_hits() {
+    fn region_results_keep_their_own_allocations_across_refreshes_and_hits() {
         let sky = fixture();
         let regions = [(0, 0, 1), (1, 1, 8), (2, 8, 8)].map(|(region, start, end)| ObservedRegion {
             region, start, end, selection_generation: 1, motion_generation: 1, apparent_generation: 1,
@@ -418,25 +411,25 @@ mod tests {
         assert!(storage.regional_cell_work.is_empty() && storage.regional_order_work.is_empty());
         assert_eq!(storage.regional_stars[0].value().len(), 1);
         assert_eq!(storage.regional_orders[1].value().len(), 7);
-        for _ in 0..4 { check(&mut storage, observed, &view, viewport); }                     // circulate every allocation through the largest region
-        let cells = allocation_set(&storage.regional_stars, &storage.regional_cell_work);
-        let orders = allocation_set(&storage.regional_orders, &storage.regional_order_work);
-        assert!(cells.iter().chain(&orders).all(|&(_, capacity)| capacity >= 7));
+        let cells = allocations(&storage.regional_stars);
+        let orders = allocations(&storage.regional_orders);
+        assert!(cells.iter().chain(&orders).flatten().all(|&(_, capacity)| capacity <= 8));  // sized for their own region (Vec growth rounds 7 up to 8), never for the largest one
         for _ in 0..5 {
-            check(&mut storage, observed, &view, viewport);
-            assert_eq!(allocation_set(&storage.regional_stars, &storage.regional_cell_work), cells);
-            assert_eq!(allocation_set(&storage.regional_orders, &storage.regional_order_work), orders);
-            assert!(storage.regional_cell_work.is_empty() && storage.regional_order_work.is_empty());
+            check(&mut storage, observed, &view, viewport);                                  // bypass mode recalculates every region in place
+            assert_eq!(allocations(&storage.regional_stars), cells);
+            assert_eq!(allocations(&storage.regional_orders), orders);
+            assert!(storage.regional_order_work.is_empty());
             assert_eq!(storage.regional_stars[1].generation, 1);
             assert_eq!(storage.regional_orders[1].generation, 1);
         }
         storage.config = CacheConfig::default();
-        let work = (storage.regional_cell_work.as_ptr(), storage.regional_order_work.as_ptr());
-        let mut times = StepTimes::with_trace(true);
-        project_cached_regions(&mut storage, observed, &view, viewport, 1.0, &mut times);
-        assert_eq!((storage.regional_cell_work.as_ptr(), storage.regional_order_work.as_ptr()), work);
-        assert!(!times.trace().unwrap().steps.iter().any(|step| matches!(step.name,
-            "Regional cell work preparation" | "Regional order work preparation" | "Regional magnitude and ID sort")));
+        let work = storage.regional_order_work.as_ptr();
+        let hits = storage.regional_stats.hits;
+        project_cached_regions(&mut storage, observed, &view, viewport, 1.0, &mut StepTimes::default());
+        assert_eq!(storage.regional_order_work.as_ptr(), work);
+        assert!(storage.stale_slots.is_empty());                                             // every region was reused
+        assert_eq!(storage.regional_stats.hits, hits + 2 * regions.len() as u64);
+        assert_eq!(allocations(&storage.regional_stars), cells);
     }
 
     #[test]
@@ -478,18 +471,20 @@ mod tests {
         let observed = token(&sky, &regions);
         let mut storage = ProjectionCache::default();
         check(&mut storage, observed, &View::default(), ProjectionViewport { width: 80, height: 40 });
+        storage.stale_slots.reserve(32);
+        storage.stale_slots.push(0);
         storage.regional_cell_work.reserve(32);
         storage.regional_cell_work.push(storage.regional_stars[0].value()[0]);
         storage.regional_order_work.reserve(32);
         storage.regional_order_work.push(storage.regional_orders[0].value()[0]);
-        let work = (storage.regional_cell_work.as_ptr(), storage.regional_cell_work.capacity(),
+        let work = (storage.stale_slots.as_ptr(), storage.stale_slots.capacity(), storage.regional_cell_work.as_ptr(), storage.regional_cell_work.capacity(),
             storage.regional_order_work.as_ptr(), storage.regional_order_work.capacity());
         prepare_region_storage(&mut storage, token(&sky, &regions));                       // new observation owner with matching numerical data
         assert!(storage.regional_stars.iter().all(|entry| entry.stored().is_none()));
         assert!(storage.regional_orders.iter().all(|entry| entry.stored().is_none()));
         assert!(!storage.assembly_valid);
-        assert!(storage.regional_cell_work.is_empty() && storage.regional_order_work.is_empty());
-        assert_eq!((storage.regional_cell_work.as_ptr(), storage.regional_cell_work.capacity(),
+        assert!(storage.stale_slots.is_empty() && storage.regional_cell_work.is_empty() && storage.regional_order_work.is_empty());
+        assert_eq!((storage.stale_slots.as_ptr(), storage.stale_slots.capacity(), storage.regional_cell_work.as_ptr(), storage.regional_cell_work.capacity(),
             storage.regional_order_work.as_ptr(), storage.regional_order_work.capacity()), work);
     }
 
@@ -524,31 +519,30 @@ mod tests {
 
     #[cfg(feature = "memory-diagnostics")]
     #[test]
-    fn regional_events_and_inventory_report_growth_reuse_and_retained_work() {
-        use crate::timing::MemoryEvent;
+    fn regional_events_and_inventory_report_reuse_and_retained_work() {
+        use crate::timing::{MemoryEvent, Operation};
         let sky = fixture(); let regions = descriptors(); let observed = token(&sky, &regions);
         let mut storage = ProjectionCache::new(CacheConfig::disabled());
-        let mut growth = Vec::new();
-        for frame in 0..6 {
+        for _ in 0..3 {
             let mut times = StepTimes::with_trace(true); times.enable_memory_events(true);
-            project_cached_regions(&mut storage, observed, &View::default(), ProjectionViewport { width: 80, height: 40 }, frame as f64, &mut times);
+            project_cached_regions(&mut storage, observed, &View::default(), ProjectionViewport { width: 80, height: 40 }, 0.0, &mut times);
             let events: Vec<_> = times.trace().unwrap().steps.iter().flat_map(|step| &step.memory_events).map(|record| record.event).collect();
-            growth.push(events.iter().any(|event| matches!(event, MemoryEvent::Operation {
-                buffer: BufferId::RegionalCellWork | BufferId::RegionalOrderWork, operation: Operation::Reserve, .. })));
-            assert!(events.iter().any(|event| matches!(event, MemoryEvent::Operation {
-                buffer: BufferId::RegionalProjectedCells, operation: Operation::Move, .. })));
-            assert!(events.iter().any(|event| matches!(event, MemoryEvent::Operation {
-                buffer: BufferId::RegionalDrawOrder, operation: Operation::Store { value_changed }, .. } if *value_changed == (frame == 0))));
-            assert!(!events.iter().any(|event| matches!(event, MemoryEvent::Operation {
-                buffer: BufferId::RegionalCellWork | BufferId::RegionalOrderWork | BufferId::RegionalProjectedCells | BufferId::RegionalDrawOrder,
-                operation: Operation::Copy, .. })));
+            for expected in [BufferId::RegionalProjectedCells, BufferId::RegionalDrawOrder] {
+                assert!(events.iter().any(|event| matches!(event, MemoryEvent::Operation { buffer, operation: Operation::Build, elements: Some(3), .. } if *buffer == expected)), "{expected:?}"); // bypass rebuilds all three regions
+                assert!(!events.iter().any(|event| matches!(event, MemoryEvent::Operation { buffer, operation: Operation::Copy | Operation::Reuse, .. } if *buffer == expected)));
+            }
         }
-        assert!(growth[0]); assert!(!growth[4] && !growth[5]);                                // no capacity growth once all replacement allocations are large enough
+        storage.config = CacheConfig::default();
+        let mut times = StepTimes::with_trace(true); times.enable_memory_events(true);
+        project_cached_regions(&mut storage, observed, &View::default(), ProjectionViewport { width: 80, height: 40 }, 0.0, &mut times);
+        let events: Vec<_> = times.trace().unwrap().steps.iter().flat_map(|step| &step.memory_events).map(|record| record.event).collect();
+        assert!(events.iter().any(|event| matches!(event, MemoryEvent::Operation { buffer: BufferId::RegionalProjectedCells, operation: Operation::Reuse, elements: Some(3), .. })));
         let inventory = crate::state::collect_inventory("projection", &storage);
-        for (name, bytes) in [("regional_cell_work", storage.regional_cell_work.capacity() * std::mem::size_of::<(usize, crate::model::Cell)>()),
-            ("regional_order_work", storage.regional_order_work.capacity() * std::mem::size_of::<RegionalDrawRecord>())] {
-            let row = inventory.rows.iter().find(|row| row.path.ends_with(name) && row.kind == crate::cache::Kind::Heap).unwrap();
-            assert_eq!(row.used, Some(0)); assert_eq!(row.reserved, Some(bytes));
-        }
+        let row = inventory.rows.iter().find(|row| row.path.ends_with("regional_order_work") && row.kind == crate::cache::Kind::Heap).unwrap();
+        assert_eq!(row.used, Some(0)); assert_eq!(row.reserved, Some(storage.regional_order_work.capacity() * std::mem::size_of::<RegionalDrawRecord>()));
+        let row = inventory.rows.iter().find(|row| row.path.ends_with("regional_cell_work") && row.kind == crate::cache::Kind::Heap).unwrap();
+        assert_eq!(row.used, Some(0)); assert_eq!(row.reserved, Some(storage.regional_cell_work.capacity() * std::mem::size_of::<(usize, crate::model::Cell)>()));
+        let row = inventory.rows.iter().find(|row| row.path.ends_with("stale_slots") && row.kind == crate::cache::Kind::Heap).unwrap();
+        assert_eq!(row.reserved, Some(storage.stale_slots.capacity() * std::mem::size_of::<usize>()));
     }
 }

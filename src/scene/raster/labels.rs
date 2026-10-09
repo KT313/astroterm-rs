@@ -44,7 +44,7 @@ pub(crate) fn select_star_labels(options: &RenderOptions, sky: &ProjectedSky<'_>
             if star.magnitude > options.magnitude_threshold { return false; }              // the remaining stars in this region are dimmer
             if !eligible_cell(star.cell) { return true; }
             labels.eligible += 1;
-            keep_brightest(&mut labels, &mut candidates_by_rank, index, (star.magnitude, catalog.id(star.source_index).0));
+            keep_brightest(&mut labels, &mut candidates_by_rank, index, star.magnitude, || catalog.id(star.source_index).0);
             candidates += 1;
             candidates < DYNAMIC_NAME_COUNT                                                // no sixth candidate from this region can enter the global top five
         });
@@ -53,12 +53,19 @@ pub(crate) fn select_star_labels(options: &RenderOptions, sky: &ProjectedSky<'_>
     labels
 }
 
-fn keep_brightest(labels: &mut StarLabels, ranks: &mut [(f64, u32); DYNAMIC_NAME_COUNT], index: usize, rank: (f64, u32)) {
+/// The identifier is only read when the star can enter the list: most candidates are dimmer than the current fifth.
+fn keep_brightest(labels: &mut StarLabels, ranks: &mut [(f64, u32); DYNAMIC_NAME_COUNT], index: usize, magnitude: f64, id: impl FnOnce() -> u32) {
     let mut position = labels.end;
+    let rank;
     if position == DYNAMIC_NAME_COUNT {
         position -= 1;
+        if magnitude > ranks[position].0 { return; }                                        // dimmer than the fifth: no identifier needed
+        rank = (magnitude, id());
         if compare_rank(rank, ranks[position]) != Ordering::Less { return; }
-    } else { labels.end += 1; }
+    } else {
+        labels.end += 1;
+        rank = (magnitude, id());
+    }
     labels.indices[position] = index;
     ranks[position] = rank;
     while position > 0 && compare_rank(rank, ranks[position - 1]) == Ordering::Less {

@@ -133,6 +133,15 @@ impl<K: PartialEq, T> Cache<K, Vec<T>> {
         StoreOutcome { value_changed }
     }
 }
+/// Make `target` equal to `work` inside its own allocation: one early-exit compare, then a copy only when they
+/// differ. Cheaper than an element-wise rewrite when most elements change; true if anything changed.
+pub fn adopt_work<T: PartialEq + Clone>(target: &mut Vec<T>, work: &[T]) -> bool {
+    if target.as_slice() == work { return false; }
+    target.clear();
+    target.extend_from_slice(work);
+    true
+}
+
 /// Replace `target`'s elements with `values` without reallocating when the length fits; true if anything changed.
 pub fn rewrite_in_place<T: PartialEq>(target: &mut Vec<T>, values: impl Iterator<Item = T>) -> bool {
     let mut changed = false;

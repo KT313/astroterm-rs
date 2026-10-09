@@ -7,16 +7,18 @@ use crate::model::{CorrectionStats, ObservedRegion, SelectedStar};
 pub(in crate::sky::observation) fn update_regional_brightness(storage: &mut ObservationCache, stars: StellarResults<'_>, threshold: f64, output: &mut ObservedSky, times: &mut StepTimes) {
     let regional_before = storage.region_stats[0];
     times.measure_steps("Current brightness", |times| {
+        let reuse = storage.config.allows(Group::StellarVisibility);                       // one policy lookup, not one per region
+        let mut stale = false;
         times.measure("Brightness region decisions", || {
             for &region in stars.selection.regions() {
                 let key = (stars.selection.region_generation(region), stars.region_generation(region), threshold);
                 let entry = &mut storage.regions[region].eligible;
                 let before = entry.stats;
-                entry.needs_refresh(&key, stars.selection.epoch, None, storage.config.allows(Group::StellarVisibility));
+                stale |= entry.needs_refresh(&key, stars.selection.epoch, None, reuse);
                 add_region_stats(&mut storage.region_stats[0], before, entry.stats);
             }
         });
-        times.measure("Regional brightness calculation", || {
+        if stale { times.measure("Regional brightness calculation", || {
             for &region in stars.selection.regions() {
                 let entry = &mut storage.regions[region].eligible;
                 if !entry.has_been_invalidated { continue; }
@@ -29,7 +31,7 @@ pub(in crate::sky::observation) fn update_regional_brightness(storage: &mut Obse
                 entry.store(key, stars.selection.epoch, 0.0, flags);
                 add_region_stats(&mut storage.region_stats[0], before, entry.stats);
             }
-        });
+        }); }                                                                               // on hits no region is stale; skip the second pass over all regions
         output.magnitude_threshold = threshold;
     });
     times.record_regional_counts(BufferId::RegionalVisibility, regional_before, storage.region_stats[0]);
@@ -39,16 +41,18 @@ pub(in crate::sky::observation) fn update_regional_brightness(storage: &mut Obse
 pub(in crate::sky::observation) fn update_regional_corrections(storage: &mut ObservationCache, stars: StellarResults<'_>, output: &mut ObservedSky, times: &mut StepTimes) {
     let regional_before = storage.region_stats[1];
     times.measure_steps("Correction selection", |times| {
+        let reuse = storage.config.allows(Group::StellarVisibility);
+        let mut stale = false;
         times.measure("Correction cache decision", || {
             for &region in stars.selection.regions() {
                 let entry = &mut storage.regions[region];
                 let key = (stars.selection.region_generation(region), entry.eligible.generation);
                 let before = entry.corrections.stats;
-                entry.corrections.needs_refresh(&key, stars.selection.epoch, None, storage.config.allows(Group::StellarVisibility));
+                stale |= entry.corrections.needs_refresh(&key, stars.selection.epoch, None, reuse);
                 add_region_stats(&mut storage.region_stats[1], before, entry.corrections.stats);
             }
         });
-        times.measure("Regional correction selection", || {
+        if stale { times.measure("Regional correction selection", || {
             for &region in stars.selection.regions() {
                 let entry = &mut storage.regions[region];
                 if !entry.corrections.has_been_invalidated { continue; }
@@ -69,7 +73,7 @@ pub(in crate::sky::observation) fn update_regional_corrections(storage: &mut Obs
                 entry.corrections.store(key, stars.selection.epoch, 0.0, (records, stats));
                 add_region_stats(&mut storage.region_stats[1], before, entry.corrections.stats);
             }
-        });
+        }); }
         prepare_observed_layout(storage, stars, times);
         output.corrections = storage.layout_stats;
     });
@@ -83,12 +87,13 @@ pub(in crate::sky::observation) fn update_regional_aberration(storage: &mut Obse
         let epoch = observer.time.tt;
         let velocity = observer.state.velocity;
         let mut refresh_regions = false;
+        let reuse = storage.config.allows(Group::ApparentDirections);
         times.measure("Apparent region decisions", || {
             for &region in stars.selection.regions() {
                 let entry = &mut storage.regions[region];
                 let key = (entry.corrections.generation, stars.region_generation(region), velocity);
                 let before = entry.apparent.stats;
-                refresh_regions |= entry.apparent.needs_refresh(&key, epoch, None, storage.config.allows(Group::ApparentDirections));
+                refresh_regions |= entry.apparent.needs_refresh(&key, epoch, None, reuse);
                 add_region_stats(&mut storage.region_stats[2], before, entry.apparent.stats);
             }
         });

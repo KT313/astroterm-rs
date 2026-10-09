@@ -81,7 +81,7 @@ impl SelectedStars<'_> {
     pub fn request_revision(&self) -> u64 { self.request_revision }
     /// Region-local candidate version; other regions entering or leaving the view do not change it.
     pub fn region_generation(&self, region: usize) -> u64 {
-        assert!(self.regions.binary_search(&region).is_ok(), "region was not requested");
+        debug_assert!(self.regions.binary_search(&region).is_ok(), "region was not requested"); // callers take regions from this list
         self.regional_selection[region].value(); // only publish completed regional validation
         self.regional_selection[region].generation
     }

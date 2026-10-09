@@ -13,8 +13,9 @@ pub struct ProjectionCache {
     /// Cells retain catalog indices; order offsets are local to a region and guarded by its membership version.
     pub(crate) regional_stars: Vec<Cache<RegionalProjectionKey, Vec<(usize, Cell)>>>,
     pub(crate) regional_orders: Vec<Cache<RegionalOrderKey, Vec<RegionalDrawRecord>>>,
-    pub(crate) regional_cell_work: Vec<(usize, Cell)>, // replacement cells; swap with one completed region at a time
-    pub(crate) regional_order_work: Vec<RegionalDrawRecord>, // replacement sorting records; keep capacity after each swap
+    pub(crate) stale_slots: Vec<usize>, // slots of the regions whose cells or order must be recalculated this frame; shared by both passes
+    pub(crate) regional_cell_work: Vec<(usize, Cell)>, // cell scratch; each region's result is copied into its own allocation
+    pub(crate) regional_order_work: Vec<RegionalDrawRecord>, // sort scratch; each region's result is copied into its own allocation
     pub(crate) regional_catalog: Option<std::sync::Arc<crate::model::SkyCatalog>>,
     pub(crate) regional_owner: Option<u64>,
     pub(crate) regional_active: bool,
@@ -93,6 +94,7 @@ impl crate::cache::ReportBuffers for ProjectionCache {
         use super::support::regions::{report_region_storage, cached_vector_bytes};
         report_region_storage(sink, "regional_stars", &self.regional_stars, cached_vector_bytes);
         report_region_storage(sink, "regional_orders", &self.regional_orders, cached_vector_bytes);
+        crate::cache::report_field(sink, "stale_slots", &self.stale_slots);
         crate::cache::report_field(sink, "regional_cell_work", &self.regional_cell_work);
         crate::cache::report_field(sink, "regional_order_work", &self.regional_order_work);
         crate::cache::report_field(sink, "regional_catalog", &self.regional_catalog);

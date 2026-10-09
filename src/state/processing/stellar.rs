@@ -113,7 +113,7 @@ impl StellarResults<'_> {
     }
     /// Only requested regions have been checked for freshness for this frame.
     pub fn region_samples(&self, region: usize) -> &[StellarSample] {
-        assert!(self.selection.regions.binary_search(&region).is_ok(), "region was not requested");
+        debug_assert!(self.selection.regions.binary_search(&region).is_ok(), "region was not requested"); // callers take regions from this list; a release search per call would cost a binary search over all requested regions
         self.regions.entries[region].value()
     }
     pub fn region_generation(&self, region: usize) -> u64 {
