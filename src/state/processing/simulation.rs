@@ -9,10 +9,10 @@ pub struct SimulationState {
     pub(crate) group: SolarGroup,                  // reception and emission preparation share this request lifecycle
     pub(crate) reuse: [bool; 3],                    // explicit planet/Moon/orientation reuse switches, separate from sample spans
     pub(crate) exact_mode: bool,                   // the direct-reference mode must refresh even while paused
-    pub(crate) planet_work: Vec<Sample<[BodyState; 9]>>, // each work buffer retains the displaced sample allocation
+    pub(crate) planet_work: Vec<Sample<BodyState>>,   // one work buffer serves all nine planetary lists in turn; it retains the displaced allocation
     pub(crate) moon_work: Vec<Sample<BodyState>>,
     pub(crate) orientation_work: Vec<Sample<Matrix3>>,
-    pub(crate) planets: Vec<Sample<[BodyState; 9]>>, // reception/emission samples in BodyId order; bounded by request policy
+    pub(crate) planets: [Vec<Sample<BodyState>>; 9], // per body in BodyId order: reception and that body's emission samples; bounded by request policy
     pub(crate) moon: Vec<Sample<BodyState>>,         // parent-relative lunar samples, composed with Earth at the requested time
     pub(crate) orientation: Vec<Sample<Matrix3>>,    // slow inertial-to-date rotation; Earth spin/site geometry remain observation work
     pub(crate) policy: CachePolicy,                // permitted TT half-spans; zero means exact-time coverage, not disabled caching
@@ -35,7 +35,7 @@ impl SimulationState {
     }
     /// Compatibility for standalone sampling callers. Managed frames use begin_solar_system_frame instead.
     pub fn begin_frame(&mut self) {
-        if !self.reuse[0] { self.planets.clear(); }
+        if !self.reuse[0] { self.clear_planets(); }
         if !self.reuse[1] { self.moon.clear(); }
         if !self.reuse[2] { self.orientation.clear(); }
         if self.reuse.contains(&false) { self.invalidate(); }
@@ -49,8 +49,9 @@ impl SimulationState {
         self.invalidate();
         self.group.request_key = None;
     }
+    fn clear_planets(&mut self) { for samples in &mut self.planets { samples.clear(); } }
     pub(crate) fn clear_samples(&mut self) {
-        self.planets.clear();
+        self.clear_planets();
         self.moon.clear();
         self.orientation.clear();
         self.planet_work.clear();
@@ -97,7 +98,7 @@ impl SimulationState {
         self.versions[index] = version;
         self.invalidate();
         match family {
-            ModelFamily::Planets => self.planets.clear(),
+            ModelFamily::Planets => self.clear_planets(),
             ModelFamily::Moon => self.moon.clear(),
             ModelFamily::Orientation => {
                 self.orientation.clear();
@@ -137,7 +138,7 @@ crate::cache::report_flat!(SolarGroup);
 impl Default for SimulationState {
     fn default() -> Self {
         Self { identity: Default::default(), group: Default::default(), reuse: [true; 3], exact_mode: false,
-            planets: Vec::new(), moon: Vec::new(), orientation: Vec::new(), planet_work: Vec::new(), moon_work: Vec::new(), orientation_work: Vec::new(),
+            planets: Default::default(), moon: Vec::new(), orientation: Vec::new(), planet_work: Vec::new(), moon_work: Vec::new(), orientation_work: Vec::new(),
             policy: Default::default(), refresh_counts: Default::default(), versions: [0; 3] }
     }
 }

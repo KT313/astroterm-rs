@@ -12,8 +12,10 @@ fn frame(simulation: &mut SimulationState, observer: &mut ObserverPreparationCac
 }
 
 fn sample_allocations(simulation: &SimulationState) -> [(usize, usize, usize); 6] {
+    let planets = simulation.planets.iter().fold((0, 0, 0), |(pointers, len, capacity), samples|
+        (pointers ^ (samples.as_ptr() as usize).rotate_left(len as u32), len + samples.len(), capacity + samples.capacity())); // one fingerprint over the nine per-body lists
     [
-        (simulation.planets.as_ptr() as usize, simulation.planets.len(), simulation.planets.capacity()),
+        planets,
         (simulation.moon.as_ptr() as usize, simulation.moon.len(), simulation.moon.capacity()),
         (simulation.orientation.as_ptr() as usize, simulation.orientation.len(), simulation.orientation.capacity()),
         (simulation.planet_work.as_ptr() as usize, simulation.planet_work.len(), simulation.planet_work.capacity()),
@@ -142,7 +144,7 @@ fn failed_request_cannot_publish_and_retry_matches_fresh_preparation() {
 }
 
 #[test]
-fn reordering_retained_samples_invalidates_completion_without_new_evaluations() {
+fn an_already_covered_request_keeps_completion_without_new_evaluations() {
     let mut simulation = SimulationState::default();
     let mut observer = ObserverPreparationCache::default();
     let time = FrameTime::from_utc(J2000);
@@ -150,10 +152,12 @@ fn reordering_retained_samples_invalidates_completion_without_new_evaluations() 
     let body = crate::astro::models::BodyId::Neptune;
     let emission = observer.light_time.value().emission_tt[body as usize];
     let before = simulation.refresh_counts;
+    let saved = simulation.planets.clone();
     update_solar_system(&mut simulation, time, &[StateRequest { body, tt: emission }], &mut StepTimes::default()).unwrap();
     assert_eq!(simulation.refresh_counts, before);
-    assert!(simulation.group.has_been_invalidated);
-    assert!(simulation.group.complete_key.is_none());
+    assert_eq!(simulation.planets, saved);                                                     // every body's list already led with these epochs
+    assert!(!simulation.group.has_been_invalidated);
+    assert!(simulation.group.complete_key.is_some());
 }
 
 #[test]

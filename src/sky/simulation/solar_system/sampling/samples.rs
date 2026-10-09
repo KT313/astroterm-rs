@@ -1,40 +1,43 @@
 //! Independently refreshed planetary, lunar and orientation samples. No observer or camera lives here.
 //! Linear intervals control interpolation error only, not the underlying ephemerides' astronomical accuracy.
 //! Bounded samples cover reception and per-body emission epochs; extra disjoint requests fail explicitly.
+//! Each planet has its own sample list, so an emission epoch costs one body evaluation, not all nine.
 
 use crate::state::SimulationState;
 use crate::astro::models::{
-    BodyId, BodyState, moons::evaluate_moon, orientation::compute_slow_orientation, planets::evaluate_planets,
+    BodyId, BodyState, moons::evaluate_moon, orientation::compute_slow_orientation, planets::evaluate_planet,
 };
 use crate::astro::COMPUTATIONAL_INTERVAL;
 use crate::timing::{StepTimes, BufferId, BufferShape, IndexDomain};
 use super::memory::record_sample_family;
 
-use crate::model::{ModelFamily, SimulationError, Sample};
+use crate::model::{ModelFamily, SimulationError, Sample, StateRequest};
 
-pub(super) fn refresh_planet_samples(state: &mut SimulationState, epochs: &[f64], before: crate::model::RefreshCounts, times: &mut StepTimes) -> Result<bool, SimulationError> {
-    let memory_before = times.inspect_memory(|| (BufferShape::vector(&state.planets, IndexDomain::ModelSamples), BufferShape::vector(&state.planet_work, IndexDomain::ModelSamples)));
-    let result = times.measure("Planet samples", || {
-        prepare_samples(
-            &mut state.planets,
-            &mut state.planet_work,
-            epochs,
-            state.policy.planets_days,
-            ModelFamily::Planets,
-            &mut state.refresh_counts.planets,
-            |tt| {
-                let values = evaluate_planets(tt);
-                if values.iter().all(is_finite_state) {
-                    Ok(values)
-                } else {
-                    Err(SimulationError::NonFiniteState(ModelFamily::Planets))
-                }
-            },
-        )
+/// Every body needs the reception state (observer anchor and initial light-time guess) plus its own requested
+/// emission epochs; Earth additionally serves as the Moon's parent at the Moon's emission epochs.
+pub(super) fn refresh_planet_samples(state: &mut SimulationState, reception: f64, requests: &[StateRequest], before: crate::model::RefreshCounts, times: &mut StepTimes) -> Result<bool, SimulationError> {
+    let result = times.measure_with_memory("Planet samples", |times| {
+        let mut rebuilt = false;
+        let mut epochs = Vec::with_capacity(4);                                         // one small list, refilled per body
+        for body in BodyId::PLANETS {
+            epochs.clear();
+            epochs.push(reception);
+            epochs.extend(requests.iter().filter(|request| request.body == body || (request.body == BodyId::Moon && body == BodyId::Earth)).map(|request| request.tt));
+            let samples = &mut state.planets[body as usize];
+            let memory_before = times.inspect_memory(|| (BufferShape::vector(samples, IndexDomain::ModelSamples), BufferShape::vector(&state.planet_work, IndexDomain::ModelSamples)));
+            let counted = state.refresh_counts.planets;
+            let result = prepare_samples(samples, &mut state.planet_work, &epochs, state.policy.planets_days, ModelFamily::Planets, &mut state.refresh_counts.planets, |tt| {
+                let value = evaluate_planet(body, tt);
+                if is_finite_state(&value) { Ok(value) } else { Err(SimulationError::NonFiniteState(ModelFamily::Planets)) }
+            });
+            let step = times.active_memory_step();                                      // events belong to this still-running step
+            record_sample_family(times, step, (BufferId::PlanetSamples, BufferId::PlanetSampleWork), memory_before, (samples, &state.planet_work), state.refresh_counts.planets - counted, result.as_ref().ok().copied());
+            rebuilt |= result?;
+        }
+        Ok(rebuilt)
     });
-    record_sample_family(times, (BufferId::PlanetSamples, BufferId::PlanetSampleWork), memory_before, (&state.planets, &state.planet_work), state.refresh_counts.planets - before.planets, result.as_ref().ok().copied());
     let rebuilt = result?;
-    times.describe("Planet samples", || format!("requested epochs={}; new sample blocks={}; retained blocks={}; half-span={} days; each evaluation supplies all planetary states", epochs.len(), state.refresh_counts.planets - before.planets, state.planets.len(), state.policy.planets_days));
+    times.describe("Planet samples", || format!("requested epochs={} per body plus the Moon's parent; new body samples={}; retained body samples={}; half-span={} days; each evaluation supplies one body", requests.len() + 1, state.refresh_counts.planets - before.planets, state.planets.iter().map(Vec::len).sum::<usize>(), state.policy.planets_days));
     Ok(rebuilt)
 }
 
@@ -58,7 +61,8 @@ pub(super) fn refresh_lunar_samples(state: &mut SimulationState, epochs: &[f64],
             },
         )
     });
-    record_sample_family(times, (BufferId::LunarSamples, BufferId::LunarSampleWork), memory_before, (&state.moon, &state.moon_work), state.refresh_counts.moon - before.moon, result.as_ref().ok().copied());
+    let step = times.last_memory_step();
+    record_sample_family(times, step, (BufferId::LunarSamples, BufferId::LunarSampleWork), memory_before, (&state.moon, &state.moon_work), state.refresh_counts.moon - before.moon, result.as_ref().ok().copied());
     let rebuilt = result?;
     times.describe("Lunar samples", || {
         format!(
@@ -92,7 +96,8 @@ pub(super) fn refresh_orientation_samples(state: &mut SimulationState, tt: f64, 
             },
         )
     });
-    record_sample_family(times, (BufferId::OrientationSamples, BufferId::OrientationSampleWork), memory_before, (&state.orientation, &state.orientation_work), state.refresh_counts.orientation - before.orientation, result.as_ref().ok().copied());
+    let step = times.last_memory_step();
+    record_sample_family(times, step, (BufferId::OrientationSamples, BufferId::OrientationSampleWork), memory_before, (&state.orientation, &state.orientation_work), state.refresh_counts.orientation - before.orientation, result.as_ref().ok().copied());
     let rebuilt = result?;
     times.describe("Orientation samples", || format!("requested epochs=1; new sample blocks={}; retained blocks={}; half-span={} days; output slow orientation matrices", state.refresh_counts.orientation - before.orientation, state.orientation.len(), state.policy.orientation_days));
     Ok(rebuilt)
@@ -123,7 +128,7 @@ fn prepare_samples<T: Clone>(
     evaluate: impl Fn(f64) -> Result<T, SimulationError>,
 ) -> Result<bool, SimulationError> {
     let maximum_samples = match family {
-        ModelFamily::Planets => BodyId::PLANETS.len() + 2, // reception, planetary emissions, and the lunar parent
+        ModelFamily::Planets => 3,                          // per body: reception, its own emission, and for Earth the lunar parent epoch
         ModelFamily::Moon => 2,
         ModelFamily::Orientation => 1,
     };
@@ -274,7 +279,7 @@ mod tests {
                 linear_parent,
             )
             .unwrap();
-            assert!(samples.len() <= 22);
+            assert!(samples.len() <= 6);
             assert!(find_sample(&samples, tt, ModelFamily::Planets).is_ok());
             assert!(find_sample(&samples, tt - 0.1, ModelFamily::Planets).is_ok());
         }

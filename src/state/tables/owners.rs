@@ -53,7 +53,9 @@ impl Tables for ObservedSky {
 
 impl Tables for SimulationState {
     fn visit_tables(&self, prefix: &str, visit: &mut TableVisitor<'_>) {
-        visit(&join(prefix, "planets"), &self.planets, None);
+        for (body, samples) in crate::astro::models::BodyId::PLANETS.iter().zip(&self.planets) {
+            visit(&join(prefix, &format!("planets.{}", body.name())), samples, None);        // one sample list per body
+        }
         visit(&join(prefix, "moon"), &self.moon, None);
         visit(&join(prefix, "orientation"), &self.orientation, None);
         visit(&join(prefix, "planet_work"), &self.planet_work, None);

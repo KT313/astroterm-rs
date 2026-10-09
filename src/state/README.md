@@ -509,6 +509,12 @@ each swaps with its corresponding saved sample list and is cleared without shrin
 previous saved list from that family call. Both allocations retain capacity; inventory/table reports include
 the scratch storage. Unchanged lists and completed paused requests avoid rebuilding and copying.
 
+Planetary samples are one list per body (`planets[BodyId as usize]`, tables `solar_system.planets.<body>`), each
+holding the reception epoch plus that body's own emission epochs; Earth's list also covers the Moon's emission
+epochs as the lunar parent. One emission epoch therefore costs one VSOP87 body evaluation instead of all nine, and
+the nine lists share the single `planet_work` buffer in turn. Results are bit-identical to the former batch
+evaluation because the same body is evaluated at the same epoch.
+
 ### Retained pixel labels and text
 
 `PixelState.text_cache` owns at most `DYNAMIC_NAME_COUNT` label descriptions (text, color and cell origin),

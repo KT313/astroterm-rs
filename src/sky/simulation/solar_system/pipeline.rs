@@ -18,15 +18,15 @@ fn prepare_requested_samples(state: &mut SimulationState, time: FrameTime, reque
     validate_sample_times(time, requests)?;                                 // reject non-finite simulation or requested times
     let reception = [time.tt];                                            // reception-only frames need no allocated time lists
     let requested_epochs;
-    let (planet_epochs, moon_epochs) = if requests.is_empty() {
-        (reception.as_slice(), reception.as_slice())
+    let moon_epochs = if requests.iter().all(|request| request.body != BodyId::Moon) {
+        reception.as_slice()
     } else {
-        requested_epochs = collect_sample_times(time, requests);
-        (requested_epochs.0.as_slice(), requested_epochs.1.as_slice())
+        requested_epochs = collect_lunar_epochs(time, requests);
+        requested_epochs.as_slice()
     };
     let before = state.refresh_counts;
 
-    let planets = refresh_planet_samples(state, planet_epochs, before, times)?; // prepare Sun and planet positions wherever coverage is missing
+    let planets = refresh_planet_samples(state, time.tt, requests, before, times)?; // prepare each body wherever its own coverage is missing
     let moon = refresh_lunar_samples(state, moon_epochs, before, times)?;       // prepare the Moon's position relative to Earth
     let orientation = refresh_orientation_samples(state, time.tt, before, times)?; // prepare Earth's slowly changing axis direction
     Ok(planets || moon || orientation)
@@ -39,16 +39,10 @@ fn validate_sample_times(time: FrameTime, requests: &[StateRequest]) -> Result<(
     Ok(())
 }
 
-fn collect_sample_times(time: FrameTime, requests: &[StateRequest]) -> (Vec<f64>, Vec<f64>) {
-    let mut planet_epochs = Vec::with_capacity(requests.len() + 1);         // every requested body needs a planetary sample at its emission time
+/// Reception first, then the Moon's own emission epochs; planetary epochs are collected per body during their refresh.
+fn collect_lunar_epochs(time: FrameTime, requests: &[StateRequest]) -> Vec<f64> {
     let mut moon_epochs = Vec::with_capacity(requests.iter().filter(|request| request.body == BodyId::Moon).count() + 1);
-    planet_epochs.push(time.tt);
     moon_epochs.push(time.tt);
-    for request in requests {
-        planet_epochs.push(request.tt); // the Moon also needs its parent at emission, never at reception
-        if request.body == BodyId::Moon {
-            moon_epochs.push(request.tt);
-        }
-    }
-    (planet_epochs, moon_epochs)
+    moon_epochs.extend(requests.iter().filter(|request| request.body == BodyId::Moon).map(|request| request.tt));
+    moon_epochs
 }

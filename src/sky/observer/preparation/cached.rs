@@ -112,7 +112,7 @@ fn update_body_sampling(
     });
     {
         record_cache(times, BufferId::BodySamples, memory_before, bodies_cache);
-        times.record_borrow(BufferId::PlanetSamples, Access::ReadOnly, || BufferShape::vector(&simulation.planets, IndexDomain::ModelSamples));
+        for samples in &simulation.planets { times.record_borrow(BufferId::PlanetSamples, Access::ReadOnly, || BufferShape::vector(samples, IndexDomain::ModelSamples)); }
         times.record_borrow(BufferId::LunarSamples, Access::ReadOnly, || BufferShape::vector(&simulation.moon, IndexDomain::ModelSamples));
     }
     result

@@ -156,7 +156,8 @@ mod tests {
             "persistent.catalog.endpoint_indices", "preparation", "persistent.catalog.names",
             "persistent.catalog.constellations",
             "cache.sky.stars", "cache.sky.planets", "cache.sky.moon", "cache.sky.candidate_indices",
-            "cache.simulation.solar_system.planets", "cache.simulation.solar_system.moon", "cache.simulation.solar_system.orientation",
+            "cache.simulation.solar_system.planets.sun", "cache.simulation.solar_system.planets.earth", "cache.simulation.solar_system.planets.neptune",
+            "cache.simulation.solar_system.moon", "cache.simulation.solar_system.orientation",
             "cache.simulation.solar_system.planet_work", "cache.simulation.solar_system.moon_work", "cache.simulation.solar_system.orientation_work", "cache.simulation.solar_system.group",
             "cache.simulation.stars.prepared_classes", "cache.simulation.stars.stellar_scratch", "cache.selection.region",
             "cache.selection.requested_sources", "cache.selection.statistics", "cache.selection.selection_revision", "cache.selection.working",
@@ -228,7 +229,7 @@ mod tests {
         for row in stars.lines().filter(|l| l.starts_with('|')) { assert_eq!(row.matches('|').count(), 10); }
         let sky = section(&text, "cache.sky.stars");
         assert!(sky.contains("| Row | catalog\\_row\\_index: usize | passes\\_brightness\\_filter: bool | current\\_magnitude: f64 | direction: Vector3 |"));
-        assert!(section(&text, "cache.simulation.solar_system.planets").contains(&markdown_text("sampled_state: [BodyState; 9]")));
+        assert!(section(&text, "cache.simulation.solar_system.planets.earth").contains(&markdown_text("sampled_state: BodyState")));
         let trace = section(&text, "timings.trace.steps");
         assert!(trace.contains("parent\\_step\\_index: Option&lt;usize&gt;"));
         assert!(section(&text, "cache.simulation.stars.regions").contains("| Row | simulation\\_region\\_id: usize | calculated\\_at\\_tt\\_jd: Option&lt;f64&gt; |"));
