@@ -59,6 +59,12 @@ fn frame(cache: &mut PipelineCache, simulation: &SimulationState, observer: &Obs
         assert!(rows.windows(2).all(|pair| pair[0].source_index < pair[1].source_index));
     }
     assert_eq!(cursor, result.sky().stars.len());
+    let endpoints = result.sky().stars.constellation_columns().expect("constellation region is always requested");
+    for &index in result.sky().figures().endpoints() {
+        let through_find = result.sky().stars.find(index).map(|star| star.state.into_owned());
+        assert_eq!(endpoints.find_row(index).map(|row| endpoints.star(row)), through_find);      // the endpoint columns agree with the general lookup
+    }
+    assert_eq!(endpoints.find_row(usize::MAX), None);
     *output = result.sky().materialize(); // explicit test snapshot; the production path does not materialize
     for descriptor in &cache.observation.regional_output {
         let reports = cache.observation.region_reports(descriptor.region).unwrap();

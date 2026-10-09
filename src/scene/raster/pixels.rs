@@ -57,19 +57,20 @@ pub(in crate::scene) fn draw_pixel_horizon(canvas: &mut Pixmap, sky: &ProjectedS
     }
 }
 
+/// Every visible arc goes into one path and is stroked once; a stroke per segment cost a blitter setup each.
 pub(in crate::scene) fn draw_pixel_constellations(canvas: &mut Pixmap, sky: &ProjectedSky<'_>, options: &RenderOptions) {
-    if options.constellations {
-        for figure in sky.constellations {
-            if figure.maximum_magnitude > options.magnitude_threshold {
-                continue;
-            }
-            for arc in &figure.arcs {
-                for pair in arc.points.windows(2) {
-                    draw_segment(canvas, pair[0], pair[1], [68, 86, 112], 0.8);
-                }
-            }
+    if !options.constellations { return; }
+    let mut path = PathBuilder::new();
+    for figure in sky.constellations.iter().filter(|figure| figure.maximum_magnitude <= options.magnitude_threshold) {
+        for arc in &figure.arcs {
+            let mut points = arc.points.iter().map(|&(y, x)| (x as f32, y as f32));
+            let Some((x, y)) = points.next() else { continue; };
+            path.move_to(x, y);                                                       // each arc is its own subpath; arcs are not joined to each other
+            for (x, y) in points { path.line_to(x, y); }
         }
     }
+    let Some(path) = path.finish() else { return; };
+    stroke_path(canvas, &path, [68, 86, 112], 0.8);
 }
 
 pub(in crate::scene) fn draw_pixel_planets(canvas: &mut Pixmap, sky: &ProjectedSky<'_>) {
@@ -147,18 +148,13 @@ fn draw_segment(canvas: &mut Pixmap, a: (i32, i32), b: (i32, i32), rgb: [u8; 3],
     let Some(path) = path.finish() else {
         return;
     };
+    stroke_path(canvas, &path, rgb, width);
+}
+
+fn stroke_path(canvas: &mut Pixmap, path: &tiny_skia::Path, rgb: [u8; 3], width: f32) {
     let mut paint = Paint::default();
     paint.set_color_rgba8(rgb[0], rgb[1], rgb[2], 255);
-    canvas.stroke_path(
-        &path,
-        &paint,
-        &Stroke {
-            width,
-            ..Stroke::default()
-        },
-        Transform::identity(),
-        None,
-    );
+    canvas.stroke_path(path, &paint, &Stroke { width, ..Stroke::default() }, Transform::identity(), None);
 }
 
 /// Illuminate a sphere: n·light > 0, with cos(phase angle) = 2*fraction-1. Four subpixel samples soften both

@@ -65,8 +65,12 @@ pub(super) fn project_cached_constellations(storage: &mut ProjectionCache, sky: 
         // Only endpoint geometry affects arcs, not the other stars in the selected region.
         let figures = sky.figures();
         let required = figures.endpoints();
-        let endpoints = required.iter().filter_map(|&index| sky.stars.find(index))
-            .map(|star| (star.source_index, star.position, star.magnitude)).collect();
+        let columns = sky.stars.constellation_columns();                           // every endpoint lives in one region; resolve it once, not per star
+        let endpoints = required.iter().filter_map(|&index| {
+            let columns = columns?;
+            let row = columns.find_row(index)?;
+            Some((index, columns.position(row), columns.magnitude(row)))
+        }).collect();
         let key = (endpoints, sky.figures().clone(), sky.magnitude_threshold, *view, viewport);
         {
             let step = times.active_memory_step();

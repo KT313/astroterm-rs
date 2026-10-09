@@ -140,7 +140,8 @@ pub(in crate::projection) fn project_constellations(
     viewport: Viewport,
 ) -> Vec<ProjectedConstellation> {
     let camera = crate::projection::prepare_camera(view); // all segments share the same viewing direction and scale
-    let find_star = |index| stars.find(index);
+    let columns = stars.constellation_columns();          // every endpoint lives in one region; resolve it once, not per star
+    let find_star = |index| { let columns = columns?; columns.find_row(index).map(|row| columns.star(row)) };
     figures
         .iter()
         .filter_map(|figure| {

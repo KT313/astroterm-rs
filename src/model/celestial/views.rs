@@ -70,6 +70,19 @@ impl<'a> ObservedStars<'a> {
             }
         }
     }
+    /// The columns holding every constellation endpoint, resolved once: the exclusive constellation region on the
+    /// production path (normally the last requested region), or all stars of a flat sky. `None` when that region is
+    /// not requested this frame. Endpoint lookups then cost one binary search each instead of three.
+    pub(crate) fn constellation_columns(self) -> Option<RegionData<'a>> {
+        match self.source {
+            StarSource::Owned(rows) => Some(RegionData::Owned(rows)),
+            StarSource::Regional { descriptors, .. } => {
+                let slot = descriptors.iter().rposition(|region| region.region == crate::constants::CONSTELLATION_REGION)?;
+                Some(self.slot_columns(slot).0)
+            }
+        }
+    }
+    /// General lookup for any star; searches the region first. Hot paths use `constellation_columns` instead.
     pub(crate) fn find(self, source_index: usize) -> Option<ObservedStarView<'a>> {
         match self.source {
             StarSource::Owned(rows) => rows.binary_search_by_key(&source_index, |row| row.source_index).ok().map(|index| self.get(index)),
@@ -98,6 +111,13 @@ impl RegionData<'_> {
         match self { Self::Owned(rows) => rows.len(), Self::Regional { rows, .. } => rows.len() }
     }
     pub fn is_empty(&self) -> bool { self.len() == 0 }
+    /// Row of the star with this catalog index. Rows are sorted by `source_index`, so this is one binary search.
+    pub fn find_row(&self, source_index: usize) -> Option<usize> {
+        match self {
+            Self::Owned(rows) => rows.binary_search_by_key(&source_index, |row| row.source_index).ok(),
+            Self::Regional { rows, .. } => rows.binary_search_by_key(&source_index, |row| row.source_index).ok(),
+        }
+    }
     pub fn source_index(&self, row: usize) -> usize {
         match self { Self::Owned(rows) => rows[row].source_index, Self::Regional { rows, .. } => rows[row].source_index }
     }

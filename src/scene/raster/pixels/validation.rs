@@ -142,6 +142,28 @@ fn empty_star_layer_does_not_change_horizon_constellations_planets_moon_or_grid(
 }
 
 #[test]
+fn constellation_arcs_are_stroked_as_polylines_only_when_enabled_and_bright_enough() {
+    let (sky, mut data) = fixture(64, 48);
+    data.order.clear();
+    let arc = |points: Vec<(i32, i32)>| crate::model::ProjectedArc { start: points[0], end: *points.last().unwrap(), points, includes_start: true, includes_end: true };
+    data.constellations.push(crate::model::ProjectedConstellation { maximum_magnitude: 2.0, arcs: vec![arc(vec![(5, 5), (5, 40), (30, 40)]), arc(vec![(40, 10), (40, 50)])] });
+    data.constellations.push(crate::model::ProjectedConstellation { maximum_magnitude: 25.0, arcs: vec![arc(vec![(10, 60), (45, 60)])] }); // fainter than the threshold
+    let projected = data.view(&sky);
+    let background = initialize_pixel_canvas(projected.viewport, &mut Vec::new()).unwrap();
+    let mut canvas = background.clone();
+    draw_pixel_constellations(&mut canvas, &projected, &options());
+    let lit = |canvas: &tiny_skia::Pixmap| canvas.pixels().iter().zip(background.pixels()).filter(|(a, b)| a != b).count();
+    assert!(lit(&canvas) >= 35 + 25 + 40 && lit(&canvas) <= 3 * (35 + 25 + 40), "lit pixels={}", lit(&canvas)); // about one pixel per unit of path length
+    for (y, x) in [(5, 5), (5, 40), (29, 40), (40, 10), (40, 49), (5, 22), (17, 40), (40, 30)] { // butt caps stop at the exact end coordinate
+        assert_ne!(canvas.pixel(x, y).unwrap(), background.pixel(x, y).unwrap(), "({y}, {x}) should be on a stroked line");
+    }
+    for x in 59..=61 { assert_eq!(canvas.pixel(x, 20).unwrap(), background.pixel(x, 20).unwrap(), "the faint figure must not be drawn"); }
+    let mut disabled = background.clone();
+    draw_pixel_constellations(&mut disabled, &projected, &RenderOptions { constellations: false, ..options() });
+    assert_eq!(disabled.data(), background.data());
+}
+
+#[test]
 fn blended_layer_table_reports_straight_colors_and_owned_capacity() {
     use crate::state::Tables;
     let (sky, data) = fixture(16, 16);
