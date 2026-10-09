@@ -15,6 +15,8 @@ pub struct SceneCache {
     /// Nested label strings and constellation arc payloads are dropped when the candidate is cleared.
     pub(crate) pixel_candidate: Option<SceneKey>,
     pub(crate) pixel_inputs: Vec<crate::model::PixelStarKey>, // filled only for a trusted production redraw
+    /// Bytes of the image displaced by the last pixel store; the next redraw draws into this allocation.
+    pub(crate) image_scratch: Vec<u8>,
     pub(crate) character_candidate: Option<SceneKey>,
     /// Completed sky pixels before metadata; the renderer borrows this allocation.
     pub(crate) pixels: Cache<SceneKey, image::RgbaImage>,
@@ -53,4 +55,4 @@ impl SceneCache {
     }
 }
 #[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(SceneCache { config, star_layer, pixel_inputs, pixel_candidate, character_candidate, pixels, characters });
+crate::cache::report_fields!(SceneCache { config, star_layer, pixel_inputs, image_scratch, pixel_candidate, character_candidate, pixels, characters });

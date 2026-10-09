@@ -84,7 +84,7 @@ crate::cache::report_fields!(CatalogPreparation { motion_bounds });
 crate::cache::report_fields!(PreparedCatalog { catalog, preparation });
 
 /// One immutable definition set, shared by catalog users and retained cache keys.
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, Default, PartialEq, Eq)] // Eq lets `Arc<ConstellationSet>` keys compare by pointer first
 pub struct ConstellationSet {
     pub(crate) figures: Vec<Constellation>,
     pub(crate) endpoints: Vec<usize>,

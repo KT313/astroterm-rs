@@ -104,6 +104,48 @@ impl<K: PartialEq, V: PartialEq> Cache<K, V> {
         }
         self.value()
     }
+    /// Like `store`, but hand the displaced key and value back so the caller can reuse their allocations.
+    pub fn store_displacing(&mut self, key: K, epoch: f64, valid_seconds: f64, value: V) -> (StoreOutcome, Option<(K, V)>) {
+        let value_changed = self.value.as_ref() != Some(&value);
+        if value_changed { self.generation = self.generation.wrapping_add(1); }
+        let displaced = self.key.take().zip(self.value.take());
+        self.key = Some(key);
+        self.value = Some(value);
+        self.calculated_at = Some(epoch);
+        self.valid_seconds = valid_seconds;
+        self.has_been_invalidated = false;
+        self.stats.refreshes += 1;
+        (StoreOutcome { value_changed }, displaced)
+    }
+}
+impl<K: PartialEq, T> Cache<K, Vec<T>> {
+    /// Overwrite the stored vector in place, keeping its allocation. `rewrite` fills it and reports whether any
+    /// element changed (see `rewrite_in_place`); call needs_refresh first so an interrupted rewrite stays invalid.
+    pub fn store_in_place(&mut self, key: K, epoch: f64, valid_seconds: f64, rewrite: impl FnOnce(&mut Vec<T>) -> bool) -> StoreOutcome {
+        let was_missing = self.value.is_none();
+        let value_changed = rewrite(self.value.get_or_insert_with(Vec::new)) || was_missing;
+        if value_changed { self.generation = self.generation.wrapping_add(1); }
+        self.key = Some(key);
+        self.calculated_at = Some(epoch);
+        self.valid_seconds = valid_seconds;
+        self.has_been_invalidated = false;
+        self.stats.refreshes += 1;
+        StoreOutcome { value_changed }
+    }
+}
+/// Replace `target`'s elements with `values` without reallocating when the length fits; true if anything changed.
+pub fn rewrite_in_place<T: PartialEq>(target: &mut Vec<T>, values: impl Iterator<Item = T>) -> bool {
+    let mut changed = false;
+    let mut written = 0;
+    for value in values {
+        match target.get_mut(written) {
+            Some(slot) => { if *slot != value { *slot = value; changed = true; } }
+            None => { target.push(value); changed = true; }
+        }
+        written += 1;
+    }
+    if written < target.len() { target.truncate(written); changed = true; }
+    changed
 }
 impl<K: PartialEq, T: PartialEq> Cache<K, Vec<T>> {
     /// Publish complete work without copying elements; keep the displaced allocation for the next refresh.

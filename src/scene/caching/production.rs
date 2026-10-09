@@ -22,9 +22,12 @@ pub(in crate::scene) fn draw_prepared_pixels<'a>(storage: &'a mut SceneCache, pr
     });
     times.record_build(BufferId::PixelDrawingInputs, || BufferShape::vector(&storage.pixel_inputs, IndexDomain::DrawOrder));
     times.describe("Raster drawing inputs", || format!("input stars={}; accepted inputs={}; prepared once for redraw", sky.stars.len(), storage.pixel_inputs.len()));
-    let image = super::super::pipeline::draw_pixel_sky_from_inputs(&mut storage.star_layer, sky, options, times, storage.pixel_inputs.iter().copied())?;
+    let image = super::super::pipeline::draw_pixel_sky_from_inputs(&mut storage.star_layer, &mut storage.image_scratch, sky, options, times, storage.pixel_inputs.iter().copied())?;
     let outcome = times.measure("Raster cache store", || {
-        storage.pixels.store(storage.pixel_candidate.take().expect("raster dependencies prepared"), epoch, 0.0, image)
+        let candidate = storage.pixel_candidate.take().expect("raster dependencies prepared");
+        let (outcome, displaced) = storage.pixels.store_displacing(candidate, epoch, 0.0, image);
+        super::recycle_displaced_pixels(storage, displaced);
+        outcome
     });
     super::super::diagnostics::memory::record_scene_commit(times, BufferId::PixelCandidate, BufferId::PixelScene, outcome);
     let before = times.inspect_memory(|| BufferShape::vector(&storage.pixel_inputs, IndexDomain::DrawOrder));

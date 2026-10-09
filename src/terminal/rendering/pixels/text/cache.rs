@@ -33,7 +33,8 @@ fn refresh_labels(cache: &mut PixelTextCache, sky: &ProjectedSky<'_>, prepared: 
         return;
     }
     cache.labels_version.invalidate();
-    cache.labels_key = None;                                                               // editable callers always refresh without retaining false provenance
+    let mut regions = cache.labels_key.take().map_or_else(Vec::new, |key| key.projection.regions); // editable callers always refresh without retaining false provenance
+    regions.clear();                                                                       // ...but the region list keeps its capacity for the new key
     times.measure_steps("Star labels", |times| {
         let candidates = select_pixel_star_labels(options, sky);
         let (examined, regions, eligible) = (candidates.examined, candidates.regions, candidates.eligible);
@@ -47,9 +48,11 @@ fn refresh_labels(cache: &mut PixelTextCache, sky: &ProjectedSky<'_>, prepared: 
         times.record_build(BufferId::PixelLabels, || BufferShape::vector(&cache.labels, IndexDomain::Objects));
         times.describe("Star labels", || format!("examined regions={regions}; examined candidates={examined}; eligible candidates={eligible}; selected labels={}; newly formatted={}; clipped origins get no replacement", cache.labels.len(), cache.labels.len()));
     });
-    cache.labels_key = prepared.map(|source| PixelLabelKey { projection: ProductionRasterKey { source: source.source,
-        geometry: source.geometry, regions: source.regions.iter().zip(source.assembled).map(|(region, assembled)| RasterRegion { observed: *region, cells: assembled.3, order: assembled.4 }).collect() },
-        viewport: sky.viewport, area, threshold: options.magnitude_threshold, enabled: options.dynamic_names });
+    cache.labels_key = prepared.map(|source| {
+        regions.extend(source.regions.iter().zip(source.assembled).map(|(region, assembled)| RasterRegion { observed: *region, cells: assembled.3, order: assembled.4 }));
+        PixelLabelKey { projection: ProductionRasterKey { source: source.source, geometry: source.geometry, regions },
+            viewport: sky.viewport, area, threshold: options.magnitude_threshold, enabled: options.dynamic_names }
+    });
     cache.labels_version.publish(true);
 }
 

@@ -282,12 +282,20 @@ fn pixel_candidate_reuses_hit_capacity_then_moves_on_refresh() {
 
     let generation = cache.pixels.generation;
     let refreshes = cache.pixels.stats.refreshes;
+    let image_bytes = cache.pixels.value().as_raw().as_ptr();
     cache.invalidate();
     assert_eq!(draw_pixels(&mut cache, &view, &options(), J2000 + 1.0, &mut times).cloned().unwrap(), expected);
-    assert!(cache.pixel_candidate.is_none());
-    assert_eq!(cache.pixels.stats.refreshes, refreshes + 1);
+    let candidate = cache.pixel_candidate.as_ref().unwrap();                                 // the displaced key waits, cleared, for the next comparison
+    let StarKeys::Pixels(stars) = &candidate.stars else { panic!("pixel key expected") };
+    assert!(stars.is_empty() && candidate.planets.is_empty() && stars.capacity() > 0);
+    assert_eq!(cache.image_scratch.as_ptr(), image_bytes);                                   // the displaced image's bytes wait for the next redraw
+    assert_eq!(draw_pixels(&mut cache, &view, &options(), J2000 + 2.0, &mut times).cloned().unwrap(), expected);
+    cache.invalidate();
+    draw_pixels(&mut cache, &view, &options(), J2000 + 3.0, &mut times).unwrap();
+    assert_eq!(cache.pixels.value().as_raw().as_ptr(), image_bytes);                         // ...and is drawn into on the next refresh
+    assert_eq!(cache.pixels.stats.refreshes, refreshes + 2);
     assert_eq!(cache.pixels.generation, generation); // equal raster results keep the existing generation
-    assert_eq!(cache.pixels.calculated_at, Some(J2000 + 1.0));
+    assert_eq!(cache.pixels.calculated_at, Some(J2000 + 3.0));
 }
 
 #[test]
@@ -343,7 +351,7 @@ fn failed_pixel_refresh_keeps_committed_value_and_candidate_for_retry() {
 
     projected.viewport = viewport;
     assert_eq!(draw_pixels(&mut cache, &projected.view(&sky), &options(), J2000 + 2.0, &mut times).cloned().unwrap(), expected);
-    assert!(cache.pixel_candidate.is_none());
+    assert!(cache.pixel_candidate.as_ref().is_some_and(|key| matches!(&key.stars, StarKeys::Pixels(rows) if rows.is_empty()))); // the displaced key is retained, cleared
     assert_eq!(cache.pixels.generation, generation); // retry compared against the old committed image
     assert_eq!(cache.pixels.stats.refreshes, refreshes + 1);
     assert!(!cache.pixels.has_been_invalidated);

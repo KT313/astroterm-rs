@@ -57,7 +57,7 @@ pub(crate) fn draw_sky_scene_with_times(canvas: &mut Canvas, options: &RenderOpt
 }
 
 /// Paint straight-alpha stars, then composite them into an opaque scene before other objects and text.
-pub(super) fn draw_pixel_sky_from_inputs(layer: &mut Vec<crate::model::StarPixel>, sky: &ProjectedSky<'_>, options: &RenderOptions, times: &mut StepTimes, stars: impl IntoIterator<Item = crate::model::PixelStarKey>) -> Option<image::RgbaImage> {
+pub(super) fn draw_pixel_sky_from_inputs(layer: &mut Vec<crate::model::StarPixel>, image_scratch: &mut Vec<u8>, sky: &ProjectedSky<'_>, options: &RenderOptions, times: &mut StepTimes, stars: impl IntoIterator<Item = crate::model::PixelStarKey>) -> Option<image::RgbaImage> {
 
     times.measure("Star layer initialization", || initialize_star_layer(layer, sky.viewport))?; // clear reusable floating-point pixels to transparent black
     record_star_layer(times, layer, true);
@@ -67,7 +67,7 @@ pub(super) fn draw_pixel_sky_from_inputs(layer: &mut Vec<crate::model::StarPixel
     times.measure("Star opacity floor", || apply_minimum_star_opacity(layer));                // make faint nonempty pixels visible without changing their colors
     record_star_layer(times, layer, false);
 
-    let mut canvas = times.measure("Canvas initialization", || initialize_pixel_canvas(sky.viewport))?; // allocate the sky image and fill its background
+    let mut canvas = times.measure("Canvas initialization", || initialize_pixel_canvas(sky.viewport, image_scratch))?; // reuse the displaced sky image and fill its background
     record_pixel_initialization(times, &canvas);
     times.measure("Raster horizon", || draw_pixel_horizon(&mut canvas, sky));                // place the horizon behind celestial objects
     record_pixel_horizon(times, &canvas, sky);

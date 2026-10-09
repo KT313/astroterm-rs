@@ -73,13 +73,24 @@ pub(super) fn prepare_pixel_candidate(storage: &mut SceneCache, sky: &ProjectedS
 pub(super) fn refresh_pixel_scene(storage: &mut SceneCache, sky: &ProjectedSky<'_>, options: &RenderOptions, epoch: f64, times: &mut StepTimes) -> Option<()> {
     let key = storage.pixel_candidate.as_ref().expect("raster candidate captured");
     let StarKeys::Pixels(stars) = &key.stars else { unreachable!("pixel drawing requires pixel inputs") };
-    let image = super::pipeline::draw_pixel_sky_from_inputs(&mut storage.star_layer, sky, options, times, stars.iter().copied())?;
+    let image = super::pipeline::draw_pixel_sky_from_inputs(&mut storage.star_layer, &mut storage.image_scratch, sky, options, times, stars.iter().copied())?;
     let outcome = times.measure("Raster cache store", || {
         let key = storage.pixel_candidate.take().expect("raster candidate captured");
-        storage.pixels.store(key, epoch, 0.0, image)
+        let (outcome, displaced) = storage.pixels.store_displacing(key, epoch, 0.0, image);
+        recycle_displaced_pixels(storage, displaced);
+        outcome
     });
     record_scene_commit(times, BufferId::PixelCandidate, BufferId::PixelScene, outcome);
     Some(())
+}
+
+/// Keep the allocations a pixel store displaced: the old key becomes the next (cleared) candidate and the old
+/// image's bytes become the next canvas.
+pub(super) fn recycle_displaced_pixels(storage: &mut SceneCache, displaced: Option<(SceneKey, image::RgbaImage)>) {
+    let Some((mut key, image)) = displaced else { return; };
+    clear_scene_candidate(&mut key);
+    storage.pixel_candidate = Some(key);
+    storage.image_scratch = image.into_raw();
 }
 
 pub(super) fn clear_pixel_candidate(storage: &mut SceneCache, times: &mut StepTimes) {

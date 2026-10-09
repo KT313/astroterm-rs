@@ -100,11 +100,11 @@ pub(in crate::sky::observation) fn update_regional_aberration(storage: &mut Obse
                 if entry.apparent.has_been_invalidated {
                     let samples = stars.region_samples(region);
                     let start = stars.selection.catalog.grid.offsets[region];
-                    let positions = entry.corrections.value().0.iter().map(|row|
-                        super::super::apply_unit_aberration(samples[row.source_index - start].direction, beta)).collect();
+                    let rows = &entry.corrections.value().0;
                     let key = (entry.corrections.generation, stars.region_generation(region), velocity);
                     let before = entry.apparent.stats;
-                    entry.apparent.store(key, epoch, 0.0, positions);
+                    entry.apparent.store_in_place(key, epoch, 0.0, |apparent| crate::cache::rewrite_in_place(apparent, rows.iter().map(|row|
+                        super::super::apply_unit_aberration(samples[row.source_index - start].direction, beta)))); // keep each region's allocation
                     add_region_stats(&mut storage.region_stats[2], before, entry.apparent.stats);
                 }
             }

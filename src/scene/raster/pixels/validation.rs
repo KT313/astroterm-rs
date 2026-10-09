@@ -131,7 +131,7 @@ fn empty_star_layer_does_not_change_horizon_constellations_planets_moon_or_grid(
         data.facing = facing;
         let projected = data.view(&sky);
         let actual = draw_pixel_sky(&projected, &options, &mut StepTimes::default()).unwrap();
-        let mut expected = initialize_pixel_canvas(projected.viewport).unwrap();
+        let mut expected = initialize_pixel_canvas(projected.viewport, &mut Vec::new()).unwrap();
         draw_pixel_horizon(&mut expected, &projected);
         draw_pixel_constellations(&mut expected, &projected, &options);
         draw_pixel_planets(&mut expected, &projected);

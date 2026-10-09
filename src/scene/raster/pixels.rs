@@ -8,7 +8,7 @@ use crate::scene::pipeline::draw_pixel_sky_from_inputs;
 
 pub(in crate::scene) use stars::{initialize_star_layer, calculate_zoom_opacity_boost, draw_pixel_stars, apply_minimum_star_opacity, composite_star_layer};
 pub(crate) use stars::{pixel_star_fits, select_pixel_star_labels};
-use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Stroke, Transform};
+use tiny_skia::{FillRule, Paint, PathBuilder, Pixmap, Stroke, Transform};
 
 use crate::model::{RenderOptions, ObservedStarView, PlanetKind, ProjectedSky, ScreenPoint};
 use crate::timing::StepTimes;
@@ -18,10 +18,11 @@ pub fn draw_pixel_sky(sky: &ProjectedSky<'_>, options: &RenderOptions, times: &m
     let mut storage = crate::state::SceneCache::default(); // headless callers still use an explicit buffer owner
     let mut stars = Vec::with_capacity(sky.stars.len());
     super::super::caching::prepare_pixel_star_inputs(sky, options, &mut stars);
-    draw_pixel_sky_from_inputs(&mut storage.star_layer, sky, options, times, stars)
+    draw_pixel_sky_from_inputs(&mut storage.star_layer, &mut storage.image_scratch, sky, options, times, stars)
 }
 
-pub(in crate::scene) fn initialize_pixel_canvas(viewport: crate::model::ProjectionViewport) -> Option<Pixmap> {
+/// Build the sky image in `scratch` (the allocation displaced by the last store) and paint the background once.
+pub(in crate::scene) fn initialize_pixel_canvas(viewport: crate::model::ProjectionViewport, scratch: &mut Vec<u8>) -> Option<Pixmap> {
     let (width, height) = (
         u32::try_from(viewport.width).ok()?,
         u32::try_from(viewport.height).ok()?,
@@ -29,9 +30,25 @@ pub(in crate::scene) fn initialize_pixel_canvas(viewport: crate::model::Projecti
     if u64::from(width) * u64::from(height) > crate::constants::MAX_IMAGE_PIXELS as u64 {
         return None;
     }
-    let mut canvas = Pixmap::new(width, height)?;
-    canvas.fill(Color::from_rgba8(PIXEL_BACKGROUND_RGBA[0], PIXEL_BACKGROUND_RGBA[1], PIXEL_BACKGROUND_RGBA[2], 255));
-    Some(canvas)
+    let size = tiny_skia::IntSize::from_wh(width, height)?;
+    let length = width as usize * height as usize * 4;
+    let mut data = std::mem::take(scratch);
+    if data.len() != length {
+        data.clear();
+        if data.try_reserve_exact(length).is_err() { *scratch = data; return None; }
+        data.resize(length, 0);
+    }
+    fill_background(&mut data);
+    Pixmap::from_vec(data, size)
+}
+
+/// Opaque background, so the premultiplied bytes equal the straight colour; one word store per pixel.
+fn fill_background(data: &mut [u8]) {
+    let pixel = [PIXEL_BACKGROUND_RGBA[0], PIXEL_BACKGROUND_RGBA[1], PIXEL_BACKGROUND_RGBA[2], 255];
+    match bytemuck::try_cast_slice_mut::<u8, u32>(data) {
+        Ok(words) => words.fill(u32::from_ne_bytes(pixel)),
+        Err(_) => for target in data.chunks_exact_mut(4) { target.copy_from_slice(&pixel); },
+    }
 }
 
 pub(in crate::scene) fn draw_pixel_horizon(canvas: &mut Pixmap, sky: &ProjectedSky<'_>) {
@@ -186,6 +203,7 @@ fn draw_moon_disc(canvas: &mut Pixmap, center: (f32, f32), radius: f32, fraction
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tiny_skia::Color;
     #[test]
     fn moon_phase_and_screen_direction_control_the_lit_half() {
         for (fraction, direction, left, right) in [

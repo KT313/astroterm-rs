@@ -176,6 +176,7 @@ impl Tables for SceneCache {
         let path = |name: &str| join(prefix, name);
         visit(&path("star_layer"), &self.star_layer, None);
         visit(&path("pixel_inputs"), &self.pixel_inputs, None);
+        visit(&path("image_scratch"), &Bytes::binary(&self.image_scratch), None);
         if let Some(key) = &self.pixel_candidate { key.visit_tables(&path("pixel_candidate"), visit); }
         if let Some(key) = &self.character_candidate { key.visit_tables(&path("character_candidate"), visit); }
         visit(&path("pixels"), &self.pixels, Some(Group::Raster));
