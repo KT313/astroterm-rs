@@ -9,7 +9,7 @@ use std::{
 };
 
 const MAGIC: &[u8; 8] = b"ASTROCAT";
-const VERSION: u32 = 7; // 7: u16 fixed-point magnitudes and persisted clipping counts
+const VERSION: u32 = 8; // 8: u64 label byte boundaries for large Gaia selections
 const PREFIX: usize = 64;
 const MAX_SECTIONS: usize = 64;
 

@@ -128,11 +128,15 @@ pub struct Arguments {
     #[arg(short = 'R', long)]
     pub refraction: bool,
 
-    /// Load athyg (downloads about 200 MB on first use), or an AT-HYG CSV file (.csv or .csv.gz), instead of
+    /// Load athyg (~200 MB), gaia-gdr3 (requires --dataset-files), or an AT-HYG CSV (.csv or .csv.gz), instead of
     /// the built-in Yale Bright Star Catalog. Existing files and values containing a path separator are paths.
-    /// Constellation figures are matched by HR number
+    /// Constellation figures are matched by HR number for AT-HYG; Gaia subsets have no figures
     #[arg(long, value_name = "name|path")]
     pub dataset: Option<PathBuf>,
+
+    /// Number of Gaia DR3 files to load, in fixed sky order (0 means no catalog stars). Only for gaia-gdr3
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u16).range(0..=i64::from(crate::catalog::datasets::GAIA_DR3_FILE_COUNT)))]
+    pub dataset_files: Option<u16>,
 
     /// Hide star labels. By default, label the five brightest visible stars, using catalog identifiers when
     /// proper names are unavailable. Sun, planet and Moon labels are independent

@@ -15,6 +15,7 @@ impl<T: Pod> Deref for CatalogArray<T> {
     fn deref(&self) -> &[T] { &self.0 }
 }
 impl<T: Pod> CatalogArray<T> {
+    pub(crate) fn try_reserve(&mut self, additional: usize) -> std::io::Result<()> { self.0.try_reserve(additional).map_err(std::io::Error::other) }
     pub fn capacity(&self) -> usize { self.0.capacity() }
     pub(crate) fn shrink_to_fit(&mut self) { self.0.shrink_to_fit(); }
     pub(crate) fn bytes(&self) -> &[u8] { bytemuck::cast_slice(&self.0) }

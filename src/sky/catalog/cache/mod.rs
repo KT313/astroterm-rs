@@ -1,5 +1,6 @@
 //! Prepared-catalog loading, source fingerprints and owned-file decoding and validation.
 mod pipeline;
+mod gaia;
 mod loading;
 mod format;
 

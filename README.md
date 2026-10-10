@@ -35,6 +35,14 @@ The built-in Bright Star Catalog works offline without downloads. For about 2.5 
 ./target/release/astroterm -i Tokyo --dataset athyg -t 8 -cCu
 ```
 
+For a larger, partial-sky Gaia subset:
+
+```sh
+./target/release/astroterm -i Tokyo --dataset gaia-gdr3 --dataset-files 1 -t 10 -c
+```
+
+Each file is about 230 MB. Only missing files are downloaded. See [Gaia loading and limitations](docs/gaia-dataset.md).
+
 ## Views
 
 ```sh
@@ -125,6 +133,8 @@ source <(./target/release/astroterm --bash-completions)
 
 ## Differences from the C version
 
+Gaia DR3 file subsets are also supported, using Gaia G brightness in the existing magnitude field.
+
 Solar-system results refresh when simulated time or observer location changes; paused frames reuse completed results.
 A cache TTL of `0` permits same-time reuse; `--disable-cache` disables it.
 
@@ -206,6 +216,10 @@ Optional, not distributed with this repository:
   [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). `--dataset athyg` downloads the pinned v4.0 file
   from its [Git LFS media URL](https://codeberg.org/astronexus/athyg/media/branch/main/data/athyg_40.csv.gz) into the
   per-user data folder. Manual copies can be placed anywhere, including the gitignored `datasets/` folder.
+
+- Gaia DR3 main-source subsets: [ESA/Gaia/DPAC](https://www.cosmos.esa.int/web/gaia/dr3).
+  Only the checksum manifest is bundled; selected star files are downloaded separately.
+  See [conversion details and acknowledgements](docs/gaia-dataset.md).
 
 </details>
 

@@ -1,7 +1,9 @@
 //! Star, constellation, city and orbit data embedded into the binary at compile time, and star datasets loaded from
-//! files (AT-HYG) instead of the embedded star catalog.
+//! files (AT-HYG or Gaia DR3) instead of the embedded star catalog.
 
 mod athyg;
+mod gaia;
+pub(crate) use gaia::{GaiaSource, GaiaReadStats, read_gaia_file};
 mod bsc5;
 pub mod cache;
 mod cities;
@@ -48,7 +50,7 @@ pub struct Catalog {
     pub constellations: Vec<ConstellationFigure>,
 }
 
-/// Identity within a catalog: BSC5 HR number, or zero-based AT-HYG data-row index (including skipped rows).
+/// Identity within a catalog: BSC5 HR number, or zero-based external data-row index (including skipped rows).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct StarId(pub u32);
 

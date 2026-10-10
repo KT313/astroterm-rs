@@ -1,5 +1,6 @@
 //! Catalog preparation, conservative selection and prepared-file loading.
 mod pipeline;
+mod gaia;
 mod preparation;
 mod grid;
 mod cache;

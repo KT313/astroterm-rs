@@ -1,4 +1,7 @@
 //! Dataset names, per-user locations and verified streaming downloads. No terminal state is active here.
+mod gaia;
+pub(crate) use gaia::{GaiaFile, resolve_gaia_files};
+
 use sha2::{Digest, Sha256};
 use std::{
     ffi::OsStr,
@@ -11,29 +14,33 @@ use std::{
 pub const ATHYG_URL: &str = "https://codeberg.org/astronexus/athyg/media/branch/main/data/athyg_40.csv.gz";
 pub const ATHYG_SHA256: &str = "69ad04dd33d7c7bb4f5e1b4682798075811547ea9fb8d0e802e5b319c46818a6";
 pub const ATHYG_BYTES: u64 = 199_688_001;
+pub const GAIA_DR3_FILE_COUNT: u16 = 3386; // fixed count in the bundled release manifest
 const ATHYG_FILE: &str = "athyg_40.csv.gz";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Dataset {
     Athyg,
+    GaiaGdr3 { files: u16 },
     Path(PathBuf),
 }
 impl Dataset {
-    /// Existing files win over names. A separator explicitly selects a path, including a missing path.
-    pub fn parse(value: &OsStr) -> Result<Self, String> {
+    /// Existing files win over names; the Gaia selection requires an explicit file count.
+    pub fn parse(value: &OsStr) -> Result<Self, String> { Self::parse_with_files(value, None) }
+
+    pub fn parse_with_files(value: &OsStr, files: Option<u16>) -> Result<Self, String> {
         let path = Path::new(value);
         let has_separator = value.as_encoded_bytes().iter().any(|&b| b == b'/' || b == b'\\');
-        if path.is_file() || has_separator {
-            return Ok(Self::Path(path.to_owned()));
+        if !path.is_file() && !has_separator && value == "gaia-gdr3" {
+            let files = files.ok_or("--dataset gaia-gdr3 requires --dataset-files (0..=3386)")?;
+            if files > GAIA_DR3_FILE_COUNT { return Err("--dataset-files must be between 0 and 3386".into()); }
+            return Ok(Self::GaiaGdr3 { files });
         }
-        if value == "athyg" {
-            return Ok(Self::Athyg);
-        }
-        Err(format!(
-            "Unknown dataset '{}'. Known names: athyg. For a file path use ./<file>.",
-            path.display()
-        ))
+        if files.is_some() { return Err("--dataset-files is only valid with --dataset gaia-gdr3".into()); }
+        if path.is_file() || has_separator { return Ok(Self::Path(path.to_owned())); }
+        if value == "athyg" { return Ok(Self::Athyg); }
+        Err(format!("Unknown dataset '{}'. Known names: athyg, gaia-gdr3. For a file path use ./<file>.", path.display()))
     }
+
 }
 
 #[derive(Clone, Debug, Default)]
@@ -57,6 +64,7 @@ pub fn resolve_dataset(
 ) -> io::Result<PathBuf> {
     match dataset {
         Dataset::Path(path) => Ok(path.clone()),
+        Dataset::GaiaGdr3 { .. } => Err(io::Error::other("Gaia uses the multi-file catalog loader")),
         Dataset::Athyg => {
             let directory = directories.data.as_ref().ok_or_else(|| {
                 io::Error::other(format!(

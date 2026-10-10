@@ -105,7 +105,7 @@ Spatial regions exclude endpoints; the final region contains exactly the unique 
 | `stars` columns `id`, `name`, `display_color` | Stable u32 identity and label/color references; ordering, labels and appearance read them | Same |
 | `grid.offsets`, coarse/fine caps | Catalog-region membership and conservative angular caps; region/brightness filtering reads them | Same; cap vectors are also built for cache-loaded catalogs |
 | `figures.endpoints`, constellation figures/segments | Sorted catalog-index union and resolved endpoint pairs; endpoint merge and arc projection read them | Same |
-| `names.text`, `names.boundaries`, `names.ascii_alternatives` | Shared label text with u32 boundaries and sparse ASCII variants; one-based star references survive sorting | Same; preparation-only deduplication map is dropped |
+| `names.text`, `names.boundaries`, `names.ascii_alternatives` | Shared label text with u64 byte boundaries and sparse ASCII variants; one-based star references survive sorting | Same; preparation-only deduplication map is dropped |
 
 The per-star columns are declared once as `StarRow` (`model/catalog/storage/columns.rs`); `StarRowVec` owns one
 vector per column and `StarRowSlice` borrows them for processing. The logger receives the original `StarStorage`,

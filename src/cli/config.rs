@@ -46,6 +46,9 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
         }
     }
 
+    if arguments.dataset.is_none() && arguments.dataset_files.is_some() {
+        return Err(ConfigError("--dataset-files is only valid with --dataset gaia-gdr3".into()));
+    }
     // observer location (a city overrides latitude and longitude) and time
     let observer = match &arguments.city {
         Some(name) => locate_city(cities, name)?,
@@ -106,7 +109,7 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
         dataset: arguments
             .dataset
             .as_ref()
-            .map(|p| Dataset::parse(p.as_os_str()))
+            .map(|p| Dataset::parse_with_files(p.as_os_str(), arguments.dataset_files))
             .transpose()
             .map_err(ConfigError)?,
     })
@@ -254,6 +257,21 @@ mod tests {
         );
         assert!(!config.terminal.metadata_panel && !config.simulation.refraction && !config.terminal.quit_on_any_key);
         assert!(!config.terminal.frame_times && config.render.dynamic_names);
+    }
+
+    #[test]
+    fn gaia_requires_a_bounded_file_count_and_other_datasets_reject_it() {
+        for count in ["0", "1", "3386"] {
+            let config = config_from(&["--dataset", "gaia-gdr3", "--dataset-files", count]).unwrap();
+            assert_eq!(config.dataset, Some(Dataset::GaiaGdr3 { files: count.parse().unwrap() }));
+        }
+        for args in [&["--dataset", "gaia-gdr3"][..], &["--dataset-files", "1"],
+            &["--dataset", "athyg", "--dataset-files", "1"], &["--dataset", "./gaia.csv", "--dataset-files", "1"]] {
+            assert!(config_from(args).is_err());
+        }
+        for count in ["-1", "1.5", "3387", "65536"] {
+            assert!(Arguments::try_parse_from(["astroterm", "--dataset", "gaia-gdr3", "--dataset-files", count]).is_err());
+        }
     }
 
     #[test]

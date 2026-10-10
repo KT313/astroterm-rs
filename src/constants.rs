@@ -93,3 +93,7 @@ pub const TABLE_BYTE_PREVIEW_CHUNK_SIZE: usize = 64;                            
 pub const MAX_CELL_CHARS: usize = 160;                                                    // maximum characters displayed in one debug-table cell
 pub const MAX_NESTED_ITEMS: usize = 4;                                                    // maximum items previewed inside a nested value
 pub const MAX_PREVIEW_DEPTH: usize = 3;                                                   // maximum nesting shown inside a debug-table value
+
+// Gaia catalog import
+pub const GAIA_DISTANCE_MIN_SIGNAL: f64 = 10.0;                                         // require this parallax signal-to-error ratio before estimating distance
+pub const GAIA_DOWNLOAD_MAX_BYTES: u64 = 1024 * 1024 * 1024;                             // stop an unexpectedly large individual download

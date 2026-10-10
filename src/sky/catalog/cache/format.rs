@@ -33,7 +33,7 @@ const SECTION_COUNT: usize = STAR_SECTIONS + 9;
 /// Source hashes deliberately invalidate caches even for conservative implementation-only changes.
 pub fn catalog_fingerprint() -> [u8; 32] {
     let mut hash = Sha256::new();
-    hash.update(b"astroterm catalog v7; vector columns; little-endian u64 indices; validation=1; HR=1; override=1; motion=1; quantization=1; cube-Morton=3; exclusive-constellation-region=1");
+    hash.update(b"astroterm catalog v8; label-offsets=u64; vector columns; little-endian u64 indices; validation=1; HR=1; override=1; motion=1; quantization=1; cube-Morton=3; exclusive-constellation-region=1");
     for value in [
         crate::astro::COMPUTATIONAL_INTERVAL.start_tt,
         crate::astro::COMPUTATIONAL_INTERVAL.end_tt,

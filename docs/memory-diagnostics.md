@@ -52,7 +52,7 @@ memory details and typed column headers; each cell has a bounded preview. Label 
 have different row counts. The main table's byte counts cover its columns only, excluding those side tables. Startup-only movement bounds
 have their own `preparation` owner and disappear after `free_preparation_only_data()`. No missing column is
 replaced with zeros. Prepared display labels and immutable constellation definitions are shared from the catalog. Proper names and catalog
-identifiers use the same label rules; `name_entry` references a pair of adjacent u32 boundaries.
+identifiers use the same label rules; `name_entry` references a pair of adjacent u64 byte boundaries.
 
 Debug headers use descriptive labels, such as `initial_magnitude` and `brightest_possible_magnitude`, while Rust
 fields retain their existing names. Column notes explain units, coordinate systems, index targets and reserved exception fields.

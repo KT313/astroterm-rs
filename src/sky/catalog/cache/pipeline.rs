@@ -25,6 +25,9 @@ pub fn load_sky_catalog_with_times(
     times: &mut StepTimes,
 ) -> io::Result<PreparedCatalog> {
     let Some(dataset) = dataset else { return report_clipping(load_embedded_sky(times)?, notices); }; // use the built-in catalog unless another dataset was selected
+    if let Dataset::GaiaGdr3 { files } = dataset {
+        return report_clipping(super::gaia::load_gaia_catalog(*files, directories, notices, times)?, notices);
+    }
     let source = times.measure("Dataset resolution", || resolve_dataset(dataset, directories, notices))?;
     times.describe("Dataset resolution", || format!("source={}", source.display()));
     let path = resolve_cache_path(&source, directories, notices); // find an optional prepared-cache location

@@ -42,8 +42,9 @@ pub(crate) fn load_catalog(state: &mut ApplicationState, directories: &DatasetDi
             times,
         )
     });
+    let allow_empty = state.config.dataset == Some(astroterm::catalog::datasets::Dataset::GaiaGdr3 { files: 0 }); // zero files explicitly requests no stars
     let catalog = match catalog {
-        Ok(catalog) if catalog.catalog.stars.is_empty() => Err(io::Error::other("dataset contains no stars")), // an empty catalog is only valid before loading
+        Ok(catalog) if catalog.catalog.stars.is_empty() && !allow_empty => Err(io::Error::other("dataset contains no stars")),
         Ok(catalog) => Ok(catalog),
         Err(error) => Err(io::Error::other(error)),
     };
@@ -52,6 +53,9 @@ pub(crate) fn load_catalog(state: &mut ApplicationState, directories: &DatasetDi
         Err(error) => return Err(finish_requested_report(Err(error), &state.config, &state.timings,
             &mut io::stdout().lock(), &mut io::stderr().lock())),
     };
+    if matches!(state.config.dataset, Some(astroterm::catalog::datasets::Dataset::GaiaGdr3 { .. })) && state.config.render.constellations {
+        eprintln!("Gaia DR3: constellation figures are unavailable; only the selected Gaia sources are loaded.");
+    }
     state.replace_catalog(catalog);                                          // the single catalog install point
     let catalog = &state.persistent.catalog;
 

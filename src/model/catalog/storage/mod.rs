@@ -282,6 +282,17 @@ impl StarStorage {
             }
         }
     }
+    pub(crate) fn try_reserve(&mut self, additional: usize) -> io::Result<()> {
+        let rows = self.rows_mut();
+        rows.u0.try_reserve(additional).map_err(io::Error::other)?;
+        rows.w.try_reserve(additional).map_err(io::Error::other)?;
+        rows.magnitude.try_reserve(additional).map_err(io::Error::other)?;
+        rows.brightness_key.try_reserve(additional).map_err(io::Error::other)?;
+        rows.distance.try_reserve(additional).map_err(io::Error::other)?;
+        rows.id.try_reserve(additional).map_err(io::Error::other)?;
+        rows.name.try_reserve(additional).map_err(io::Error::other)?;
+        rows.display_color.try_reserve(additional).map_err(io::Error::other)
+    }
     pub(crate) fn reserve(&mut self, capacity: usize) {
         self.rows_mut().reserve(capacity);
     }

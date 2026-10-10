@@ -33,7 +33,12 @@ fn build_catalog(
     representatives: &HashMap<u32, crate::catalog::StarId>,
     figures: &[ConstellationFigure],
 ) -> std::io::Result<PreparedCatalog> {
-    let (mut stars, mut bounds, names) = prepare_compact_stars(entries, &names)?;                 // keep valid stars in compact column storage
+    let (stars, bounds, names) = prepare_compact_stars(entries, &names)?; // convert this parser's rows into compact storage
+    finish_catalog(stars, bounds, names, representatives, figures)
+}
+
+pub(super) fn finish_catalog(mut stars: crate::model::StarStorage, mut bounds: Vec<f32>, names: StarNames,
+    representatives: &HashMap<u32, crate::catalog::StarId>, figures: &[ConstellationFigure]) -> std::io::Result<PreparedCatalog> {
     let hr_by_id = index_representative_ids(representatives);       // retain the chosen star for each shared HR catalog number
     let endpoints = collect_endpoint_ids(&stars, &hr_by_id, figures);
     sort_stars_by_region_and_brightness(&mut stars, &mut bounds, &endpoints); // each star belongs to one spatial or constellation region

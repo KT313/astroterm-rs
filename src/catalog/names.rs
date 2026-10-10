@@ -13,7 +13,7 @@ impl NameId {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StarNames {
     text: CatalogArray<u8>,
-    boundaries: CatalogArray<u32>,
+    boundaries: CatalogArray<u64>,
     ascii_alternatives: CatalogArray<[u32; 2]>, // sorted [Unicode entry, ASCII entry]; most labels need no row
 }
 impl Default for StarNames {
@@ -22,22 +22,22 @@ impl Default for StarNames {
 impl StarNames {
     pub(crate) fn capacity(&self) -> usize { self.text.capacity() }
     pub(crate) fn bytes(&self) -> &[u8] { &self.text }
-    pub(crate) fn boundaries(&self) -> &CatalogArray<u32> { &self.boundaries }
+    pub(crate) fn boundaries(&self) -> &CatalogArray<u64> { &self.boundaries }
     pub(crate) fn ascii_alternatives(&self) -> &CatalogArray<[u32; 2]> { &self.ascii_alternatives }
     pub(crate) fn contains(&self, entry: u32) -> bool { entry == 0 || (entry as usize) < self.boundaries.len() }
 
-    pub(crate) fn from_arrays(text: CatalogArray<u8>, boundaries: CatalogArray<u32>, ascii_alternatives: CatalogArray<[u32; 2]>) -> io::Result<Self> {
+    pub(crate) fn from_arrays(text: CatalogArray<u8>, boundaries: CatalogArray<u64>, ascii_alternatives: CatalogArray<[u32; 2]>) -> io::Result<Self> {
         let names = Self { text, boundaries, ascii_alternatives };
         names.validate()?;
         Ok(names)
     }
     pub(crate) fn validate(&self) -> io::Result<()> {
         let text = std::str::from_utf8(&self.text).map_err(|_| invalid("invalid UTF-8 label buffer"))?;
-        let end = u32::try_from(text.len()).map_err(|_| invalid("label text exceeds u32 byte range"))?;
+        let end = u64::try_from(text.len()).map_err(|_| invalid("label text exceeds u64 byte range"))?;
         if self.boundaries.first() != Some(&0) || self.boundaries.last() != Some(&end)
             || self.boundaries.len().saturating_sub(1) as u64 > u64::from(u32::MAX)
             || self.boundaries.windows(2).any(|p| p[0] > p[1])
-            || self.boundaries.iter().any(|&b| !text.is_char_boundary(b as usize)) {
+            || self.boundaries.iter().any(|&b| usize::try_from(b).ok().is_none_or(|b| !text.is_char_boundary(b))) {
             return Err(invalid("invalid label boundaries"));
         }
         let mut previous = 0;
@@ -53,14 +53,16 @@ impl StarNames {
     pub fn insert(&mut self, name: &str) -> io::Result<NameId> {
         let end = checked_text_end(self.text.len(), name.len())?;
         let entry = u32::try_from(self.boundaries.len()).map_err(|_| invalid("label count exceeds u32 range"))?;
+        self.text.try_reserve(name.len())?;
+        self.boundaries.try_reserve(1)?;
         for &byte in name.as_bytes() { self.text.push(byte); }
         self.boundaries.push(end);
         Ok(NameId(entry))
     }
     pub fn get(&self, name: Option<NameId>) -> Option<&str> {
         let index = name?.0 as usize;
-        let start = *self.boundaries.get(index - 1)? as usize;
-        let end = *self.boundaries.get(index)? as usize;
+        let start = usize::try_from(*self.boundaries.get(index - 1)?).ok()?;
+        let end = usize::try_from(*self.boundaries.get(index)?).ok()?;
         std::str::from_utf8(self.text.get(start..end)?).ok()
     }
     pub fn get_for_mode(&self, name: Option<NameId>, unicode: bool) -> Option<&str> {
@@ -71,9 +73,9 @@ impl StarNames {
         self.get(Some(name))
     }
 }
-fn checked_text_end(length: usize, added: usize) -> io::Result<u32> {
-    length.checked_add(added).and_then(|end| u32::try_from(end).ok())
-        .ok_or_else(|| invalid("label text exceeds u32 byte range (4,294,967,295 bytes)"))
+fn checked_text_end(length: usize, added: usize) -> io::Result<u64> {
+    length.checked_add(added).and_then(|end| u64::try_from(end).ok())
+        .ok_or_else(|| invalid("label text exceeds addressable byte range"))
 }
 
 /// Preparation-only dictionary. Equal text with equal ASCII behavior shares one entry; the dictionary drops on finish.
@@ -126,8 +128,9 @@ mod tests {
     #[test]
     fn boundaries_and_alternatives_are_validated_without_large_allocations() {
         StarNames::default().validate().unwrap();
-        assert_eq!(checked_text_end(u32::MAX as usize - 1, 1).unwrap(), u32::MAX);
-        assert!(checked_text_end(u32::MAX as usize, 1).is_err());
+        assert_eq!(checked_text_end(u32::MAX as usize - 1, 1).unwrap(), u64::from(u32::MAX));
+        #[cfg(target_pointer_width = "64")]
+        assert_eq!(checked_text_end(u32::MAX as usize, 1).unwrap(), u64::from(u32::MAX) + 1);
         assert!(checked_text_end(usize::MAX, 1).is_err());
         for boundaries in [vec![], vec![1, 2], vec![0, 1, 2], vec![0, 3], vec![0, 2, 1, 2]] {
             assert!(StarNames::from_arrays("α".as_bytes().to_vec().into(), boundaries.into(), vec![].into()).is_err());
