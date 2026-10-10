@@ -1,9 +1,8 @@
 //! Fixed four-pixel stars with premultiplied RGB and a tabulated opacity curve. No drawing-library blending is used here.
-use crate::catalog::MIN_MAGNITUDE;
 use crate::constants::{MAX_IMAGE_PIXELS, MIN_STAR_PIXEL_OPACITY,
     STAR_OPACITY_REFERENCE_MAGNITUDE, STAR_OPACITY_MAGNITUDE_SCALE, MIN_FOV_DEGREES,
     STAR_BRIGHTNESS_REFERENCE_FOV_DEGREES, STAR_BRIGHTNESS_ZOOM_POWER};
-use crate::model::{Cell, PixelStarKey, ProjectedSky, ProjectionViewport, RenderOptions, StarOpacityTable, StarPixel};
+use crate::model::{Cell, PixelStarKey, ProjectedSky, ProjectionViewport, RenderOptions, StarColor, StarOpacityTable, StarPixel};
 use tiny_skia::Pixmap;
 
 /// One opacity per catalog magnitude code: thousandths of a magnitude from -10.000 through 55.535.
@@ -61,20 +60,13 @@ pub(in crate::scene) fn prepare_star_opacities(table: &mut StarOpacityTable, fov
     true
 }
 
-/// Nearest catalog code, like `encode_magnitude`; the cast clamps magnitudes below -10 and NaN to the brightest entry.
-#[inline]
-fn look_up_star_opacity(table: &[f32; OPACITY_TABLE_LEN], magnitude: f64) -> f32 {
-    let code = ((magnitude - MIN_MAGNITUDE) * 1000.0 + 0.5) as usize;
-    table[code.min(OPACITY_TABLE_LEN - 1)]
-}
-
 /// Inputs already passed the full-footprint check for this viewport. Normal Rust bounds checks stay enabled.
 pub(in crate::scene) fn draw_pixel_stars(layer: &mut [StarPixel], width: usize, opacities: &StarOpacityTable, stars: impl IntoIterator<Item = PixelStarKey>) -> usize {
     let table: &[f32; OPACITY_TABLE_LEN] = opacities.opacities.as_slice().try_into().expect("prepared star opacity table");
     let mut submitted = 0;
     for star in stars {
-        let opacity = look_up_star_opacity(table, star.magnitude);
-        let premultiplied = star.color.map(|level| UNIT_LEVELS[usize::from(level)] * opacity); // the star's own color share, computed once per star
+        let opacity = table[usize::from(star.magnitude)];                                   // the record's code indexes the table directly
+        let premultiplied = StarColor::rgb_of(star.color).map(|level| UNIT_LEVELS[usize::from(level)] * opacity); // the star's own color share, computed once per star
         let (y, x) = (star.cell.0 as usize, star.cell.1 as usize);
         let bottom_right = y * width + x;
         for offset in [bottom_right - width - 1, bottom_right - width, bottom_right - 1, bottom_right] {
@@ -179,15 +171,9 @@ mod tests {
         for code in (0..OPACITY_TABLE_LEN).step_by(997).chain([OPACITY_TABLE_LEN - 1]) {
             assert_eq!(built.opacities[code], calculate_star_opacity(crate::catalog::decode_magnitude(code as u16), 1.0));
         }
-        let entries: &[f32; OPACITY_TABLE_LEN] = built.opacities.as_slice().try_into().unwrap();
-        assert_eq!(look_up_star_opacity(entries, 2.0), built.opacities[12000]);
-        assert_eq!(look_up_star_opacity(entries, 2.0004), built.opacities[12000]);
-        assert_eq!(look_up_star_opacity(entries, 2.0006), built.opacities[12001]);
-        assert_eq!(look_up_star_opacity(entries, -12.0), built.opacities[0]);
-        assert_eq!(look_up_star_opacity(entries, f64::NAN), built.opacities[0]);
-        assert_eq!(look_up_star_opacity(entries, 60.0), built.opacities[OPACITY_TABLE_LEN - 1]);
+        assert_eq!(usize::from(crate::catalog::magnitude_code(2.0)), 12000);               // records index the table by this code
         let exact = calculate_star_opacity(16.6667, 1.0);
-        assert!((look_up_star_opacity(entries, 16.6667) - exact).abs() < exact * 2e-4); // half a thousandth of a magnitude at most
+        assert!((built.opacities[usize::from(crate::catalog::magnitude_code(16.6667))] - exact).abs() < exact * 2e-4); // half a thousandth of a magnitude at most
 
         let allocation = built.opacities.as_ptr();
         assert!(prepare_star_opacities(&mut built, STAR_BRIGHTNESS_REFERENCE_FOV_DEGREES / 2.0));
@@ -250,14 +236,15 @@ mod tests {
             let mut layer = Vec::new();
             initialize_star_layer(&mut layer, viewport).unwrap();
             assert!(pixel_star_fits((y, x), viewport));
-            let star = PixelStarKey { cell: (y, x), magnitude: STAR_OPACITY_REFERENCE_MAGNITUDE, color: [255, 0, 0] };
+            let red_orange = StarColor::RedOrange;                                        // palette entry [255, 142, 91]
+            let star = PixelStarKey { cell: (y, x), magnitude: crate::catalog::magnitude_code(STAR_OPACITY_REFERENCE_MAGNITUDE), color: red_orange.index() };
             assert_eq!(draw_pixel_stars(&mut layer, width, &opacities, [star]), 1);
             let lit: Vec<_> = layer.iter().filter(|p| p.opacity > 0.0).collect();
             assert_eq!(lit.len(), 4);
-            assert!(lit.iter().all(|p| p.opacity == 1.0 && p.rgb == [1.0, 0.0, 0.0]));
+            assert!(lit.iter().all(|p| p.opacity == 1.0 && p.rgb == red_orange.rgb().map(|level| level as f32 / 255.0)));
 
             initialize_star_layer(&mut layer, viewport).unwrap();
-            draw_pixel_stars(&mut layer, width, &opacities, [PixelStarKey { magnitude: STAR_OPACITY_REFERENCE_MAGNITUDE + 2.0 / STAR_OPACITY_MAGNITUDE_SCALE, ..star }]);
+            draw_pixel_stars(&mut layer, width, &opacities, [PixelStarKey { magnitude: crate::catalog::magnitude_code(STAR_OPACITY_REFERENCE_MAGNITUDE + 2.0 / STAR_OPACITY_MAGNITUDE_SCALE), ..star }]);
             let lit: Vec<_> = layer.iter().filter(|p| p.opacity > 0.0).collect();
             assert_eq!(lit.len(), 4);
             for pixel in lit { close(pixel.opacity, 0.01); close(pixel.rgb[0], 0.01); } // faint stars retain the configured curve too

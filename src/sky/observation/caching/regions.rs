@@ -19,13 +19,14 @@ pub(in crate::sky::observation) fn update_regional_brightness(storage: &mut Obse
             }
         });
         if stale { times.measure("Regional brightness calculation", || {
+            let threshold_code = crate::catalog::magnitude_code(threshold);              // samples hold magnitude codes
             for &region in stars.selection.regions() {
                 let entry = &mut storage.regions[region].eligible;
                 if !entry.has_been_invalidated { continue; }
                 let rows = borrow_region_rows(stars, region);
                 let samples = stars.region_samples(region);
                 let start = stars.selection.catalog.grid.offsets[region];
-                let flags = rows.iter().map(|row| row.drawable && samples[row.source_index - start].magnitude <= threshold).collect();
+                let flags = rows.iter().map(|row| row.drawable && samples[row.source_index - start].magnitude <= threshold_code).collect();
                 let key = (stars.selection.region_generation(region), stars.region_generation(region), threshold);
                 let before = entry.stats;
                 entry.store(key, stars.selection.epoch, 0.0, flags);

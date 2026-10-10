@@ -8,7 +8,7 @@ pub(crate) fn simulate_stars_direct(catalog: StellarFields<'_>, selected: &[Sele
     let values = selected.iter().map(|star| {
         let sample = trajectories.motion(star.source_index).evaluate(years, catalog.magnitude(star.source_index));
         singular += usize::from(sample.used_singular_fallback);
-        (sample.direction, sample.magnitude)
+        (sample.direction, sample.magnitude_value())
     }).collect();
     (values, singular)
 }

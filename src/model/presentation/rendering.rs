@@ -80,11 +80,13 @@ pub(crate) struct StarOpacityTable {
     pub(crate) opacities: Vec<f32>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// One star as the pixel raster reads it: compact like the regional drawn records, decoded through the opacity
+/// table and the palette while blending.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PixelStarKey {
     pub(crate) cell: (i32, i32),
-    pub(crate) magnitude: f64,
-    pub(crate) color: [u8; 3],
+    pub(crate) magnitude: u16, // catalog magnitude code
+    pub(crate) color: u8,      // palette index
 }
 row_columns!(PixelStarKey { cell, magnitude, color });
 

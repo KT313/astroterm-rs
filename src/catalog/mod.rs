@@ -22,7 +22,7 @@ pub use bsc5::{Bsc5Entry, parse_bsc5};
 pub use cities::{City, find_city, parse_cities, suggest_cities};
 pub use designation::Designation;
 pub use names::{NameId, StarNames};
-pub use magnitude::{decode_magnitude, encode_magnitude, validate_magnitude, encode_brightness_bound, passes_brightness_bound, MagnitudeClipping, MIN_MAGNITUDE, MAX_MAGNITUDE, MAGNITUDE_CLIPPING_WARNING};
+pub use magnitude::{decode_magnitude, encode_magnitude, magnitude_code, validate_magnitude, encode_brightness_bound, passes_brightness_bound, MagnitudeClipping, MIN_MAGNITUDE, MAX_MAGNITUDE, MAGNITUDE_CLIPPING_WARNING};
 pub(crate) use names::LabelBuilder;
 pub use orbits::{
     EARTH_ORBIT, JUPITER_ORBIT, MARS_ORBIT, MERCURY_ORBIT, MOON_ORBIT, NEPTUNE_ORBIT, SATURN_ORBIT, URANUS_ORBIT,

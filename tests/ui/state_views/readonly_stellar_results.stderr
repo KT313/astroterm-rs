@@ -1,5 +1,5 @@
 error[E0594]: cannot assign to data in a `&` reference
  --> tests/ui/state_views/readonly_stellar_results.rs:3:5
   |
-3 |     results.selected_samples().next().unwrap().1.magnitude = 0.0;
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ cannot assign
+3 |     results.selected_samples().next().unwrap().1.magnitude = 0;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ cannot assign

@@ -1,11 +1,19 @@
-//! Two-byte catalog magnitudes. Runtime calculations always use decoded f64 values.
+//! Two-byte catalog magnitudes. The motion model evaluates a current magnitude as f64 and stores it as a code
+//! again (`magnitude_code`); only few-star callers decode.
 use std::io;
 
 pub const MIN_MAGNITUDE: f64 = -10.0;
 pub const MAX_MAGNITUDE: f64 = 55.535;
-pub const MAGNITUDE_CLIPPING_WARNING: &str = "Stored brightness bounds clipped; early filtering may do extra work. Current brightness is not clipped.";
+pub const MAGNITUDE_CLIPPING_WARNING: &str = "Stored brightness bounds clipped; early filtering may do extra work. Current brightness saturates at the same limits.";
 
 pub fn decode_magnitude(code: u16) -> f64 { f64::from(code) / 1000.0 - 10.0 }
+
+/// The code of a calculated (current) magnitude: nearest thousandth, clamped to the storable range. Values below
+/// -10 and NaN become code 0, values above 55.535 become `u16::MAX`. Every record after the simulation holds
+/// magnitudes in this form; the raster's opacity table is indexed by it directly.
+pub fn magnitude_code(value: f64) -> u16 {
+    ((value - MIN_MAGNITUDE) * 1000.0 + 0.5).clamp(0.0, f64::from(u16::MAX)) as u16 // NaN stays NaN through clamp and casts to 0
+}
 
 pub fn validate_magnitude(value: f64) -> io::Result<()> {
     if !value.is_finite() || !(MIN_MAGNITUDE..=MAX_MAGNITUDE).contains(&value) {
@@ -57,6 +65,19 @@ pub fn passes_brightness_bound(code: u16, threshold: f64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn calculated_magnitude_codes_round_to_thousandths_and_clamp() {
+        assert_eq!(magnitude_code(2.0), 12000);
+        assert_eq!(magnitude_code(2.0004), 12000);
+        assert_eq!(magnitude_code(2.0006), 12001);
+        assert_eq!(magnitude_code(-10.0), 0);
+        assert_eq!(magnitude_code(-12.0), 0);
+        assert_eq!(magnitude_code(f64::NAN), 0);
+        assert_eq!(magnitude_code(55.535), u16::MAX);
+        assert_eq!(magnitude_code(60.0), u16::MAX);
+        for value in [-9.999, 0.0, 4.1231, 20.0, 55.534] { assert_eq!(magnitude_code(value), encode_magnitude(value).unwrap()); } // same rounding as the stored catalog codes
+    }
 
     #[test]
     fn raw_range_and_nearest_step_ties_are_explicit() {

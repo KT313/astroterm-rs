@@ -318,7 +318,7 @@ records and magnitudes remain in their original regional caches. Views do not ap
 no Corrected-star buffer construction, direction calculation, or owned materialization runs.
 Other pipeline work, including raster keys, composition and presentation, is outside this unchanged-input shortcut.
 
-Regional projected cells are `DrawnStar` records (catalog index as a checked u32, colour, cell, magnitude) stored in
+Regional projected cells are `DrawnStar` records (catalog index as a checked u32, cell, magnitude code, palette index) stored in
 each region's draw order; `regional_spans` holds one small record per requested region in paint order.
 
 

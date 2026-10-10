@@ -111,7 +111,7 @@ fn compact_pixel_keys_track_visual_metadata_across_catalogs_without_copying_name
     let refreshes = cache.pixels.stats.refreshes;
     check_pixels(&mut cache, &projected, &options());
     assert_eq!(cache.pixels.stats.refreshes, refreshes);
-    assert_eq!(std::mem::size_of::<crate::model::PixelStarKey>(), 24);
+    assert_eq!(std::mem::size_of::<crate::model::PixelStarKey>(), 12);
 }
 
 #[test]

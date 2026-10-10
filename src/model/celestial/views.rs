@@ -61,7 +61,7 @@ impl<'a> ObservedStars<'a> {
         let sample = &samples[region.region].stored().expect("published stellar samples")[row.source_index - offsets[region.region]];
         let apparent = record.apparent.stored().expect("published apparent directions")[index - region.start];
         ObservedStarView { catalog: self.catalog, state: ObservedStarState::Owned(ObservedStar {
-            source_index: row.source_index, drawable: row.drawable, magnitude: sample.magnitude, position: frame.to_horizontal(apparent),
+            source_index: row.source_index, drawable: row.drawable, magnitude: crate::catalog::decode_magnitude(sample.magnitude), position: frame.to_horizontal(apparent),
         }) } // a small value on access, never a retained combined array
     }
     pub fn iter(self) -> impl DoubleEndedIterator<Item = ObservedStarView<'a>> + ExactSizeIterator {
@@ -153,10 +153,19 @@ impl<'a> RegionData<'a> {
     pub fn drawable(&self, row: usize) -> bool {
         match self { Self::Owned(rows) => rows[row].drawable, Self::Regional { rows, .. } => rows[row].drawable }
     }
+    /// The current magnitude as the catalog code the samples hold (encoded for owned rows); the form every record
+    /// after the simulation uses, so hot loops compare and copy it without decoding.
+    pub fn magnitude_code(&self, row: usize) -> u16 {
+        match self {
+            Self::Owned(rows) => crate::catalog::magnitude_code(rows[row].magnitude),
+            Self::Regional { rows, samples, offset, .. } => samples[rows[row].source_index - offset].magnitude,
+        }
+    }
+    /// The current magnitude as a float, for few-star callers.
     pub fn magnitude(&self, row: usize) -> f64 {
         match self {
             Self::Owned(rows) => rows[row].magnitude,
-            Self::Regional { rows, samples, offset, .. } => samples[rows[row].source_index - offset].magnitude,
+            Self::Regional { .. } => crate::catalog::decode_magnitude(self.magnitude_code(row)),
         }
     }
     /// Horizontal direction of one row (East, North, Up), refracted when the frame says so. Few-star paths; a hot

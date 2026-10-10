@@ -84,15 +84,15 @@ fn refresh_region_cells(storage: &mut ProjectionCache, observed: RegionalObserva
 }
 
 /// Project one region's drawable rows in their draw order into `work`, with the camera matching the frame
-/// `direction` reads in. Only the visible stars are kept, each with its catalog index, colour and magnitude, so
-/// the records are what the raster and label passes read. A region's directions fit the cache, so reading them
-/// in draw order costs nothing extra; the pass is bound by the sequential record traffic.
+/// `direction` reads in. Only the visible stars are kept, each with its catalog index, magnitude code and palette
+/// index, so the records are what the raster and label passes read. A region's directions fit the cache, so
+/// reading them in draw order costs nothing extra; the pass is bound by the sequential record traffic.
 #[inline]
 fn project_region_rows(catalog: &StarStorage, order: &[RegionalDrawRecord], camera: CartesianCamera, viewport: ProjectionViewport, work: &mut Vec<DrawnStar>, direction: impl Fn(usize) -> Vector3) {
     for record in order {
         let Some(point) = crate::projection::project_camera(camera, direction(record.row as usize)) else { continue; };
         if !point.is_visible() { continue; }
-        work.push(DrawnStar { source_index: record.source_index, color: catalog.display_color(record.source_index as usize).rgb(), cell: crate::projection::project_to_cell(viewport, point), magnitude: record.magnitude });
+        work.push(DrawnStar { source_index: record.source_index, cell: crate::projection::project_to_cell(viewport, point), magnitude: record.magnitude, color: catalog.display_color_index(record.source_index as usize) });
     }
 }
 
@@ -116,7 +116,7 @@ fn refresh_region_orders(storage: &mut ProjectionCache, observed: RegionalObserv
             let sky = observed.sky();
             let stars = sky.stars.region(slot, region);
             work.clear();                                                                   // one shared scratch; grows only when a region needs more room
-            work.extend((0..stars.len()).filter(|&row| stars.drawable(row)).map(|row| RegionalDrawRecord { row: row as u32, source_index: stars.source_index(row) as u32, magnitude: stars.magnitude(row) }));
+            work.extend((0..stars.len()).filter(|&row| stars.drawable(row)).map(|row| RegionalDrawRecord { row: row as u32, source_index: stars.source_index(row) as u32, magnitude: stars.magnitude_code(row) }));
             work.sort_unstable_by(|a, b| compare_records(&sky.catalog.stars, a, b));
             let cache = &mut regional_orders[region.region];
             let before = cache.stats;
@@ -136,10 +136,10 @@ fn add_stats(total: &mut crate::cache::CacheStats, before: crate::cache::CacheSt
     total.last_reason = after.last_reason;
 }
 
-/// Dimmest first; equal magnitudes (+0 and -0 are equal, matching the exact fallback) are ordered by ascending
-/// catalog id, read only for such ties.
+/// Dimmest first by magnitude code (a thousandth of a magnitude); equal codes are ordered by ascending catalog
+/// id, read only for such ties.
 fn compare_records(catalog: &StarStorage, a: &RegionalDrawRecord, b: &RegionalDrawRecord) -> Ordering {
-    if a.magnitude == b.magnitude { catalog.id(a.source_index as usize).cmp(&catalog.id(b.source_index as usize)) } else { b.magnitude.total_cmp(&a.magnitude) }
+    if a.magnitude == b.magnitude { catalog.id(a.source_index as usize).cmp(&catalog.id(b.source_index as usize)) } else { b.magnitude.cmp(&a.magnitude) }
 }
 
 /// The paint order is the ordinary regions in request order, then the sky-wide constellation group on top. Each
@@ -210,7 +210,7 @@ mod tests {
             }).collect();
         assert_eq!(actual.stars.iter().collect::<Vec<_>>(), expected_stars);
         let drawn: Vec<_> = actual.stars.drawn().enumerate().map(|(index, star)| (index, star.source_index as usize, star.magnitude, star.cell, star.color)).collect();
-        let through_views: Vec<_> = actual.stars.iter().enumerate().map(|(index, s)| (index, s.star.source_index, s.star.magnitude, s.cell.unwrap(), s.star.display_color().rgb())).collect();
+        let through_views: Vec<_> = actual.stars.iter().enumerate().map(|(index, s)| (index, s.star.source_index, crate::catalog::magnitude_code(s.star.magnitude), s.cell.unwrap(), s.star.display_color().index())).collect();
         assert_eq!(drawn, through_views);                                                   // the stored records agree with the per-star views
         assert_eq!(actual.stars.iter().rev().map(|s| s.star.source_index).collect::<Vec<_>>(), through_views.iter().rev().map(|s| s.1).collect::<Vec<_>>());
         for range in actual.stars.sorted_ranges() {
@@ -338,8 +338,8 @@ mod tests {
         let observed = token(&sky, &regions);
         let view = View::default();
         let viewport = ProjectionViewport { width: 80, height: 40 };
-        assert_eq!(std::mem::size_of::<DrawnStar>(), 24);
-        assert_eq!(std::mem::size_of::<RegionalDrawRecord>(), 16);
+        assert_eq!(std::mem::size_of::<DrawnStar>(), 16);
+        assert_eq!(std::mem::size_of::<RegionalDrawRecord>(), 12);
         for config in [CacheConfig::default(), CacheConfig::disabled()] {
             let mut storage = ProjectionCache::new(config);
             check(&mut storage, observed, &view, viewport);

@@ -120,8 +120,8 @@ fn compare_prepared(
                 position
             };
             let mut observed = ObservedStar::from_star(&star, i, position);
-            observed.magnitude = sample.magnitude;
-            observed.drawable = sample.magnitude <= threshold;
+            observed.magnitude = sample.magnitude_value();
+            observed.drawable = observed.magnitude <= threshold;
             observed
         })
         .collect();
@@ -382,7 +382,7 @@ fn seam_threshold_horizon_and_view_edge_cases_are_not_culled() {
                 };
                 let visible = astroterm::projection::project_camera(astroterm::projection::prepare_camera(&view), position)
                     .is_some_and(|p| p.is_visible());
-                (sample.magnitude <= 5.0 && visible).then_some(s.id)
+                (sample.magnitude_value() <= 5.0 && visible).then_some(s.id)
             })
             .collect();
         assert!(!expected.is_empty());

@@ -74,7 +74,7 @@ fn quantization_changes_ties_but_keeps_id_order_and_decoded_runtime_values() {
 }
 
 #[test]
-fn clipped_minimum_passes_grid_and_candidate_checks_before_unclipped_current_filter() {
+fn clipped_minimum_passes_grid_and_candidate_checks_before_the_saturating_current_filter() {
     use astroterm::{astro::{J2000, JULIAN_YEAR_DAYS, Matrix3, Observer, Vector3}, model::FrameTime,
         sky::{observe_sky, prepare_observation, update_solar_system}, state::SimulationState, timing::StepTimes};
     let parsed = load_csv("ra,dec,mag,dist,rv\n0,0,-9.9,10,-100\n0,0,-10,,\n").unwrap();
@@ -82,7 +82,7 @@ fn clipped_minimum_passes_grid_and_candidate_checks_before_unclipped_current_fil
     // Both encoded-zero rows pass an arbitrarily bright early threshold; final brightness still decides.
     assert_eq!(catalog.count_bright_stars(-50.0), 2);
     let mut sky = ObservedSky::new(catalog);
-    for (years, drawn) in [(0.0, 0), (9000.0, 1)] {
+    for (years, drawn) in [(0.0, 1), (9000.0, 2)] {                                        // the current magnitude saturates at -10.000, so the threshold -10 draws it
         let tt = J2000 + years * JULIAN_YEAR_DAYS;
         let time = FrameTime { utc: tt, ut1: tt, tt };
         let mut simulation = SimulationState::exact();
@@ -90,10 +90,10 @@ fn clipped_minimum_passes_grid_and_candidate_checks_before_unclipped_current_fil
         let mut observer = prepare_observation(&mut simulation, time, Observer::default()).unwrap();
         observer.inertial_to_horizon = Matrix3::IDENTITY;
         observer.state.velocity = Vector3::default();
-        observe_sky(&simulation, &observer, -10.05, false, SkyRegion::All, &mut sky, &mut StepTimes::default()).unwrap();
+        observe_sky(&simulation, &observer, -10.0, false, SkyRegion::All, &mut sky, &mut StepTimes::default()).unwrap();
         assert_eq!(sky.stars.iter().filter(|s| s.drawable).count(), drawn);
         assert_eq!(sky.selection.candidates, 2);
-        if drawn == 1 { assert!(sky.stars[0].magnitude < -10.05); }
+        if drawn == 2 { assert_eq!(sky.stars[0].magnitude, -10.0); }                       // the approaching star is calculated brighter and saturates
     }
 }
 
@@ -128,12 +128,12 @@ fn clipping_notice_coexists_with_date_notice_and_cache_tracks_it() {
 }
 
 #[test]
-fn runtime_magnitude_can_grow_beyond_the_storage_maximum() {
+fn runtime_magnitude_beyond_the_storage_maximum_saturates() {
     let parsed = load_csv("ra,dec,mag,dist,rv\n0,0,55.535,10,100\n").unwrap();
     let prepared = prepare_owned_catalog(parsed).unwrap();
     let star = prepared.catalog.stars.get(0);
     assert_eq!(star.magnitude, 55.535);
-    assert!(star.motion.evaluate(9000.0, star.magnitude).magnitude > 55.535);
+    assert_eq!(star.motion.evaluate(9000.0, star.magnitude).magnitude, u16::MAX); // the calculated value is fainter; the sample code clamps and is not a clipping event
     assert!(!prepared.catalog.stars.magnitude_clipping().any());
 }
 
@@ -144,5 +144,5 @@ fn stationary_minimum_magnitude_does_not_warn_for_direction_quantization() {
     let star = prepared.catalog.stars.get(0);
     assert!(!prepared.catalog.stars.magnitude_clipping().any());
     assert_eq!(star.brightness_key, -10.0);
-    for years in [-9900.0, 0.0, 10000.0] { assert_eq!(star.motion.evaluate(years, star.magnitude).magnitude, -10.0); }
+    for years in [-9900.0, 0.0, 10000.0] { assert_eq!(star.motion.evaluate(years, star.magnitude).magnitude_value(), -10.0); }
 }

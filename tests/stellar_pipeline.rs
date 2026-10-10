@@ -103,7 +103,7 @@ fn threshold_crossing_uses_interval_key_then_current_magnitude() {
             assert_eq!(sky.runtime_singular_count, 1);
             assert!(sky.stars.is_empty());
             assert_eq!(sky.corrections.skipped, 1);
-            assert_eq!(sky.catalog.stars.motion(0).evaluate(years, 5.5).magnitude, 5.5);
+            assert_eq!(sky.catalog.stars.motion(0).evaluate(years, 5.5).magnitude_value(), 5.5);
         }
     }
 }

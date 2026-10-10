@@ -36,5 +36,7 @@ impl StarColor {
     }
     pub fn index(self) -> u8 { self as u8 }
     pub fn rgb(self) -> [u8; 3] { PALETTE[self as usize].0 }
+    /// RGB of a stored palette index without building the enum; panics on an index the catalog would have rejected.
+    pub fn rgb_of(index: u8) -> [u8; 3] { PALETTE[usize::from(index)].0 }
     pub fn terminal_color(self) -> Option<Color> { PALETTE[self as usize].1 }
 }

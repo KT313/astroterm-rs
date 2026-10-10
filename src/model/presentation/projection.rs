@@ -355,7 +355,8 @@ impl PartialEq for ProjectedStars<'_> {
 
 /// The ordered path has no stored records; one is built from the star view when a drawn record is asked for.
 fn drawn_record(star: &ProjectedStar<'_>) -> DrawnStar {
-    DrawnStar { source_index: star.star.source_index as u32, color: star.star.display_color().rgb(), cell: star.cell.expect("drawn stars have cells"), magnitude: star.star.magnitude }
+    DrawnStar { source_index: star.star.source_index as u32, cell: star.cell.expect("drawn stars have cells"),
+        magnitude: crate::catalog::magnitude_code(star.star.magnitude), color: star.star.display_color().index() }
 }
 
 /// Sequential walks advance a span cursor instead of searching the span of every index as `get` does.
@@ -424,15 +425,16 @@ impl Iterator for DrawnStars<'_> {
 pub(crate) struct SortedRange { pub(crate) indices: std::ops::Range<usize>, span: usize }
 
 /// One drawn star of a region, stored in the region's paint order: the columns the raster and label passes read,
-/// in 24 bytes, so neither pass resolves region columns or looks anything up per star.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// in 16 bytes, so neither pass resolves region columns or looks anything up per star. Magnitude and colour stay
+/// in the catalog's compact forms; the raster decodes both through its tables.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct DrawnStar {
     pub(crate) source_index: u32, // catalog star index; catalog loading limits star ids, hence rows, to u32
-    pub(crate) color: [u8; 3],    // catalog display colour, resolved when the star was projected
     pub(crate) cell: Cell,
-    pub(crate) magnitude: f64,
+    pub(crate) magnitude: u16,    // current magnitude as the catalog code (`crate::catalog::magnitude_code`)
+    pub(crate) color: u8,         // catalog palette index (`StarColor`)
 }
-row_columns!(DrawnStar { source_index, color, cell, magnitude });
+row_columns!(DrawnStar { source_index, cell, magnitude, color });
 #[cfg(feature = "memory-diagnostics")]
 crate::cache::report_flat!(DrawnStar);
 
@@ -469,10 +471,10 @@ pub(crate) type RegionalProjectionKey = ((u64, u64, u64), crate::astro::Matrix3,
 pub(crate) type RegionalOrderKey = (u64, u64);
 
 /// One drawable row of a region in its draw order (dimmest first, ties by ascending catalog id): the
-/// membership-versioned row, its catalog index and current magnitude, 16 bytes. The cells pass reads these
+/// membership-versioned row, its catalog index and current magnitude code, 12 bytes. The cells pass reads these
 /// sequentially and needs no other column of the region but the directions.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct RegionalDrawRecord { pub(crate) row: u32, pub(crate) source_index: u32, pub(crate) magnitude: f64 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RegionalDrawRecord { pub(crate) row: u32, pub(crate) source_index: u32, pub(crate) magnitude: u16 }
 row_columns!(RegionalDrawRecord { row, source_index, magnitude });
 #[cfg(feature = "memory-diagnostics")]
 crate::cache::report_flat!(RegionalDrawRecord);

@@ -177,7 +177,9 @@ statistics/revision, one reusable `region_output_work` vector and scalar publica
 and initializes every slot empty/invalid before the loop. Lazy headless setup uses the first requested TT.
 Each requested region checks one timestamp/invalidation flag, then refreshes its complete catalog range when
 needed. The constellation region follows precisely the same numerical/cache path. No per-star cache map remains.
-Numerical passes borrow trajectory/magnitude columns, evaluate in f64, and append samples in catalog order.
+Numerical passes borrow trajectory/magnitude columns, evaluate in f64, and append samples in catalog order; a
+sample stores its current magnitude as the catalog's u16 code again (`magnitude_code`), so the float exists only
+inside the evaluation and every later record (draw records, drawn stars, pixel keys) copies the code.
 
 The default/max stellar TTL is 864000 simulated seconds in `constants.rs`; existing config overrides may
 shorten it. Values are held, not interpolated or accuracy-qualified. Both direction and magnitude can remain at a
@@ -262,7 +264,7 @@ resolve a region's three columns once and return `RegionData`: borrowed slices o
 (`source_index`, `drawable`), the final directions and the stellar samples (`magnitude`, addressed by
 `source_index - offset`). Draw-order records and projection index those slices and read only the columns they
 need; the cache `expect` checks run once per region instead of once per star. Projection writes each region's
-drawn stars (`DrawnStar`: catalog index, colour, cell, magnitude) in the region's draw order, so the raster
+drawn stars (`DrawnStar`: catalog index, cell, magnitude code, palette index; 16 bytes) in the region's draw order, so the raster
 (`ProjectedStars::drawn`) and label (`visit_range`) scans read those records sequentially and touch no other
 column. `ObservedStarView` remains for single-star callers, the character path and tests; on the regional path a
 view is found from a drawn record by one binary search over its region's rows.
@@ -294,8 +296,8 @@ view of the completed fields. That view does not build a reference vector or clo
 | Fields | Contents and use | Lifecycle |
 |---|---|---|
 | Immutable definition handle in constellation key | Read-only original definitions and their endpoint union | Shared; custom figures replace an immutable set through `set_figure_override` |
-| `regional_stars` | One small dependency key and a retained `DrawnStar` vector per region: the region's visible stars in its draw order with catalog index, colour, cell and magnitude | Refresh only requested regions whose membership, apparent, draw-order, rotation, refraction, view or viewport dependency changed |
-| `regional_orders` | Regional dimmest-first records (region-local row, catalog index, magnitude), ties by ascending ID | Membership versions guard these offsets; camera and position-only changes do not invalidate order; the cell key carries the order's generation |
+| `regional_stars` | One small dependency key and a retained `DrawnStar` vector per region: the region's visible stars in its draw order with catalog index, cell, magnitude code and palette index | Refresh only requested regions whose membership, apparent, draw-order, rotation, refraction, view or viewport dependency changed |
+| `regional_orders` | Regional dimmest-first records (region-local row, catalog index, magnitude code), ties by ascending ID | Membership versions guard these offsets; camera and position-only changes do not invalidate order; the cell key carries the order's generation |
 | `regional_spans` | One record per requested region in paint order (ordinary regions, then the constellation group): descriptor slot, region, paint index range, cell generation | Rebuilt every frame from region metadata (no star reads); the view maps paint indices through it and raster/label keys take their per-region versions from it |
 | `stale_slots`, `regional_cell_work`, `regional_order_work` | Slots of the regions to recalculate this frame; cell and sort scratch shared sequentially across regions | Build into the scratch, compare once, copy into the region's own allocation (`Cache::store_in_place` + `adopt_work`), so no region ever inherits another region's capacity; scratch buffers retain capacity across frames and owner/catalog resets |
 | `regional_direction_work` | One region's rotated and refracted directions while that region is projected with refraction on | Region-sized scratch, empty between frames; without refraction the camera is rotated instead and no direction is written |
@@ -471,7 +473,9 @@ Prepared `magnitude` and `brightness_key` columns now each own u16 codes, decode
 Raw magnitudes are validated as f64 in [-10.000, 55.535], then rounded to the nearest thousandth; halfway scaled
 values round upward (fainter). Bounds use that decoded initial magnitude and the effective stored trajectory,
 round downward, and are checked against decoding roundoff. Stationary stars keep constant brightness in both
-the runtime model and the bound calculation. Current-time magnitudes stay unclipped f64.
+the runtime model and the bound calculation. Current-time magnitudes are evaluated in f64 and stored as codes
+again: rounded to the nearest thousandth and saturating at the same limits, so draw order and label ranking
+tie within a thousandth of a magnitude (then by catalog id) and the raster indexes its opacity table by the code.
 The compact star columns occupy 41 bytes per star (column payload, excluding containers and side tables).
 
 Derived out-of-range bounds clip to an endpoint. Bound code zero always passes early brightness pruning, even

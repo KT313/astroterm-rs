@@ -165,7 +165,7 @@ fn regional_records_handle_noncontiguous_brightness_and_faint_endpoints() {
     for (region, magnitudes) in [(normal, &[3.0, 12.0, 4.0][..]), (endpoint, &[12.0, 4.0][..])] {
         let entry = &mut cache.stars.regions.entries[region];
         let mut samples = entry.value().clone();
-        for (sample, &magnitude) in samples.iter_mut().zip(magnitudes) { sample.magnitude = magnitude; }
+        for (sample, &magnitude) in samples.iter_mut().zip(magnitudes) { sample.magnitude = crate::catalog::magnitude_code(magnitude); }
         assert!(entry.store((), observer.time.tt, crate::constants::STELLAR_REGION_TTL_SECONDS, samples).value_changed);
         cache.stars.region_results_generation += 1; // inject changing magnitudes independently of conservative catalog order
     }
@@ -179,7 +179,7 @@ fn regional_records_handle_noncontiguous_brightness_and_faint_endpoints() {
     assert_eq!(actual, [(start, true, 3.0), (start + 2, true, 4.0), (endpoint_start, false, 12.0), (endpoint_start + 1, true, 4.0)]);
 
     let stars = cache.stars.results(cache.selection.stars());
-    let motion: Vec<_> = stars.selected_samples().map(|(_, sample)| (sample.direction, sample.magnitude)).collect(); // test-only input to the independent direct reference
+    let motion: Vec<_> = stars.selected_samples().map(|(_, sample)| (sample.direction, sample.magnitude_value())).collect(); // test-only input to the independent direct reference
     let mut expected = ObservedSky::new(catalog);
     crate::sky::apply_direct_observation(cache.selection.stars().rows(), &motion, stars.fallback_count(),
         cache.observer.bodies.value().clone(), &observer, 10.0, true, &mut expected, &mut StepTimes::default());

@@ -95,5 +95,6 @@ pub(super) fn describe_coverage_notice(canvas: &crate::canvas::Canvas, sky: &cra
 
 /// Every projected star has a cell, so this is the brightness filter alone; the drawn records are read directly.
 fn count_drawable_stars(sky: &ProjectedSky<'_>, options: &RenderOptions) -> usize {
-    sky.stars.drawn().filter(|star| star.magnitude <= options.magnitude_threshold).count()
+    let threshold = crate::catalog::magnitude_code(options.magnitude_threshold);
+    sky.stars.drawn().filter(|star| star.magnitude <= threshold).count()
 }

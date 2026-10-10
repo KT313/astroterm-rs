@@ -21,6 +21,7 @@ pub(super) fn label_columns(path: &str, columns: &mut [Column]) {
 // regional has_been_invalidated/generation are Cache fields; sample_count/samples inspect its original stored Vec.
 // catalog_row_index -> endpoint_indices/candidate_indices/candidates/selected[row], or an endpoint row.
 // region_output_work: direction_j2000/current_magnitude/uses_motion_fallback -> direction/magnitude/used_singular_fallback.
+// Every current_magnitude after the simulation (stellar samples, draw records, drawn stars, pixel keys) is the u16 catalog code (code / 1000 - 10).
 // completed_request -> last_request; selected_stars_using_motion_fallback -> selected_fallback_count.
 // regional passes_brightness_filter -> region.eligible[row].
 // moon_illumination/moon_phase -> illumination tuple .0/.1.
@@ -171,7 +172,7 @@ pub(super) fn column_notes(path: &str) -> &'static [&'static str] {
 pub(super) fn label_color_columns(columns: &mut [Column]) {
     for column in columns {
         if column.name == "color" {
-            column.name = if column.dtype == "[u8; 3]" { "base_rgb_color" } else { "terminal_color" };
+            column.name = match column.dtype { "[u8; 3]" => "base_rgb_color", "u8" => "palette_color_index", _ => "terminal_color" };
         }
     }
 }
@@ -201,7 +202,7 @@ mod tests {
         assert_eq!(names::<(usize, (i32, i32))>("cache.projection.stars"), ["observed_star_index", "screen_coordinates"]);
         assert_eq!(names::<usize>("cache.projection.order"), ["projected_star_index"]);
         assert_eq!(names::<DrawRecord>("cache.projection.draw_order_scratch"), ["current_magnitude", "star_id", "projected_star_index"]);
-        assert_eq!(names::<PixelStarKey>("cache.rendering.pixels.scene_cache.pixels.key.stars"), ["screen_coordinates", "current_magnitude", "base_rgb_color"]);
+        assert_eq!(names::<PixelStarKey>("cache.rendering.pixels.scene_cache.pixels.key.stars"), ["screen_coordinates", "current_magnitude", "palette_color_index"]);
         assert_eq!(names::<CharacterStarKey>("cache.rendering.characters.scene_cache.characters.key.stars"), ["screen_coordinates", "symbol", "terminal_color"]);
         assert_eq!(names::<ProjectedArc>("arc"), ["start_coordinates", "end_coordinates", "path_coordinates", "includes_original_start", "includes_original_end"]);
         assert_eq!(names::<ObserverState>("cache.observer.observer")[8], "body_emission_times_tt_jd");

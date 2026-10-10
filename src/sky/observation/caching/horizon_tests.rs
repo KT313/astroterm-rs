@@ -23,7 +23,7 @@ fn fixture() -> Fixture {
         storage.regions[id].apparent.store((1, 1, Vector3::default()), J2000, 0.0, directions);
         storage.regional_output.push(ObservedRegion { region: id, start, end, selection_generation: 1, motion_generation: 1, apparent_generation: 1 });
         let mut region_samples = Cache::default();
-        region_samples.store((), J2000, 0.0, output.stars[start..end].iter().map(|star| StellarSample { direction: Vector3::default(), magnitude: star.magnitude, used_singular_fallback: false }).collect());
+        region_samples.store((), J2000, 0.0, output.stars[start..end].iter().map(|star| StellarSample { direction: Vector3::default(), magnitude: crate::catalog::magnitude_code(star.magnitude), used_singular_fallback: false }).collect());
         samples.push(region_samples);
     }
     let bodies = output.planets.iter().enumerate().map(|(i, _)| Vector3 { x: i as f64 + 1.0, y: 2.0, z: -0.1 }).collect();

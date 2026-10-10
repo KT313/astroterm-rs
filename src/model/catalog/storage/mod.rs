@@ -356,7 +356,7 @@ mod tests {
             storage.push(star(motion, magnitude as f64)).unwrap();
             assert!(storage.brightness_key(0) <= storage.magnitude(0));
             assert_eq!(
-                storage.motion(0).evaluate(10000.0, storage.magnitude(0)).magnitude,
+                storage.motion(0).evaluate(10000.0, storage.magnitude(0)).magnitude_value(),
                 5.0
             );
         }
@@ -463,7 +463,7 @@ mod tests {
                 let t = if i==32 { original.closest_approach(start,end).0 } else { start + (end-start)*i as f64/31.0 };
                 let sample = stored.evaluate(t,5.0);
                 prop_assert!(separation(original.evaluate(t,5.0).direction,sample.direction) <= MAX_DIRECTION_ERROR + 1e-12);
-                prop_assert!(storage.brightness_key(0) <= sample.magnitude);
+                prop_assert!(storage.brightness_key(0) <= sample.magnitude_value());
                 prop_assert!(separation(storage.stored_direction(0),sample.direction) <= f64::from(bound));
             }
         }

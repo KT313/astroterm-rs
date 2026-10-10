@@ -34,14 +34,15 @@ impl ExactSizeIterator for StarLabels {}
 pub(crate) fn select_star_labels(options: &RenderOptions, sky: &ProjectedSky<'_>, eligible_cell: impl Fn(Cell) -> bool) -> StarLabels {
     let mut labels = StarLabels { indices: [0; DYNAMIC_NAME_COUNT], start: 0, end: 0, examined: 0, regions: 0, eligible: 0 };
     if !options.dynamic_names || DYNAMIC_NAME_COUNT == 0 { return labels; }
-    let mut candidates_by_rank = [(0.0, 0u32); DYNAMIC_NAME_COUNT];
+    let mut candidates_by_rank = [(0u16, 0u32); DYNAMIC_NAME_COUNT];
     let catalog = sky.stars.catalog();
+    let threshold = crate::catalog::magnitude_code(options.magnitude_threshold);          // records hold magnitude codes
     for range in sky.stars.sorted_ranges() {
         labels.regions += 1;
         let mut candidates = 0;
         sky.stars.visit_range(&range, true, |index, star| {                                // bright end first, straight from the region's drawn records
             labels.examined += 1;
-            if star.magnitude > options.magnitude_threshold { return false; }              // the remaining stars in this region are dimmer
+            if star.magnitude > threshold { return false; }                                // the remaining stars in this region are dimmer
             if !eligible_cell(star.cell) { return true; }
             labels.eligible += 1;
             keep_brightest(&mut labels, &mut candidates_by_rank, index, star.magnitude, || catalog.id(star.source_index as usize).0);
@@ -54,7 +55,7 @@ pub(crate) fn select_star_labels(options: &RenderOptions, sky: &ProjectedSky<'_>
 }
 
 /// The identifier is only read when the star can enter the list: most candidates are dimmer than the current fifth.
-fn keep_brightest(labels: &mut StarLabels, ranks: &mut [(f64, u32); DYNAMIC_NAME_COUNT], index: usize, magnitude: f64, id: impl FnOnce() -> u32) {
+fn keep_brightest(labels: &mut StarLabels, ranks: &mut [(u16, u32); DYNAMIC_NAME_COUNT], index: usize, magnitude: u16, id: impl FnOnce() -> u32) {
     let mut position = labels.end;
     let rank;
     if position == DYNAMIC_NAME_COUNT {
@@ -75,15 +76,15 @@ fn keep_brightest(labels: &mut StarLabels, ranks: &mut [(f64, u32); DYNAMIC_NAME
     }
 }
 
-fn compare_rank(a: (f64, u32), b: (f64, u32)) -> Ordering {
-    if a.0 == b.0 { b.1.cmp(&a.1) } else { a.0.total_cmp(&b.0) } // signed zero keeps the existing magnitude tie rule
+fn compare_rank(a: (u16, u32), b: (u16, u32)) -> Ordering {
+    if a.0 == b.0 { b.1.cmp(&a.1) } else { a.0.cmp(&b.0) }       // brighter code first; equal codes (a thousandth of a magnitude) by id
 }
 
 #[cfg(test)]
 fn compare_brightest(sky: &ProjectedSky<'_>, a: usize, b: usize) -> Ordering {
     let a = sky.stars.get(a).star;
     let b = sky.stars.get(b).star;
-    compare_rank((a.magnitude, a.id().0), (b.magnitude, b.id().0))
+    compare_rank((crate::catalog::magnitude_code(a.magnitude), a.id().0), (crate::catalog::magnitude_code(b.magnitude), b.id().0))
 }
 
 #[cfg(test)]
@@ -95,8 +96,8 @@ mod tests {
     fn regional(sky: &crate::model::ObservedSky, groups: &[&[(usize, Cell)]]) -> (Vec<crate::cache::Cache<crate::model::RegionalProjectionKey, Vec<crate::model::DrawnStar>>>, Vec<crate::model::DrawnSpan>) {
         let (mut regions, mut spans, mut start) = (Vec::new(), Vec::new(), 0);
         for (slot, group) in groups.iter().enumerate() {
-            let stars: Vec<_> = group.iter().map(|&(row, cell)| crate::model::DrawnStar { source_index: sky.stars[row].source_index as u32,
-                color: sky.star_view(row).display_color().rgb(), cell, magnitude: sky.stars[row].magnitude }).collect();
+            let stars: Vec<_> = group.iter().map(|&(row, cell)| crate::model::DrawnStar { source_index: sky.stars[row].source_index as u32, cell,
+                magnitude: crate::catalog::magnitude_code(sky.stars[row].magnitude), color: sky.star_view(row).display_color().index() }).collect();
             let mut cache = crate::cache::Cache::default();
             cache.store(((1, 1, 1), crate::astro::Matrix3::IDENTITY, false, View::default(), ProjectionViewport { width: 40, height: 40 }), 0.0, 0.0, stars);
             spans.push(crate::model::DrawnSpan { slot, region: slot, start, end: start + group.len(), generation: cache.generation });

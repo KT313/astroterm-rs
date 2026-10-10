@@ -70,8 +70,10 @@ impl StarStorage {
         NameId::from_entry(name)
     }
     pub fn display_color(&self, index: usize) -> crate::model::StarColor {
-        crate::model::StarColor::from_index(self.rows.display_color.as_slice()[index]).expect("validated color index")
+        crate::model::StarColor::from_index(self.display_color_index(index)).expect("validated color index")
     }
+    /// The stored palette index itself (validated on load), for records that keep the compact form.
+    pub fn display_color_index(&self, index: usize) -> u8 { self.rows.display_color.as_slice()[index] }
 }
 
 #[cfg(test)]

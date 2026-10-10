@@ -567,7 +567,7 @@ mod tests {
         let (start, end) = crate::astro::models::stars::computational_years();
         let (closest, ratio) = prepared.motion.closest_approach(start, end);
         assert!(closest > 0.0 && closest < end && ratio < 1.0);
-        assert!(prepared.motion.evaluate(closest, prepared.magnitude).magnitude < prepared.magnitude - 0.5);
+        assert!(prepared.motion.evaluate(closest, prepared.magnitude).magnitude_value() < prepared.magnitude - 0.5);
     }
 
     /// A few rows in the AT-HYG v4 layout (shortened to the columns used plus a few others).

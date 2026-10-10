@@ -262,7 +262,7 @@ fn moving_distance_stars_hold_magnitudes_until_regional_expiry() {
         projection: astroterm::model::ProjectionKind::Equidistant,
         ..View::default()
     };
-    for seconds in [0.0, 10.0, -10.0, 100.0] {
+    for seconds in [0.0, 36000.0, -36000.0, 360000.0] {                                   // hours apart: the receding star's magnitude code changes by whole thousandths
         let tt = J2000 + seconds / 86400.0;
         cached.frame(tt, view, 5.0, false, Observer::default());
         direct.frame(tt, view, 5.0, false, Observer::default());
@@ -280,7 +280,7 @@ fn moving_distance_stars_hold_magnitudes_until_regional_expiry() {
     let cat = cached.sky.catalog.clone();
     let mut cached = Pipeline::new(cat.clone(), CacheConfig::default());
     let mut direct = Pipeline::new(cat, CacheConfig::disabled());
-    let tt = J2000 + 10.0 / 86400.0;
+    let tt = J2000 + 36000.0 / 86400.0;
     for threshold in [5.0, 6.0, 5.0, 6.0] {
         cached.frame(tt, view, threshold, true, Observer::default());
         direct.frame(tt, view, threshold, true, Observer::default());
