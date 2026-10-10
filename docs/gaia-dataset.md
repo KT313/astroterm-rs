@@ -46,6 +46,11 @@ The program never automatically evicts these caches: **each distinct requested c
 full prepared catalog**, and replaced content-addressed objects can remain on disk. Remove unwanted caches
 manually while astroterm is closed if disk space is needed.
 
+Unlike the optional whole-catalog cache in bulk-file mode, nonzero `--dataset-stars` requires a usable
+cache directory: reusable converted blocks are part of this mode's contract. Missing or unwritable converted
+storage fails explicitly. A failure to save the optional final whole-selection cache remains a notice.
+Zero does not need either directory.
+
 MAST defaults on Linux:
 
 - Pinned metadata, raw blocks and atomic references: `~/.local/share/astroterm/gaia-gdr3/mast-parquet-v1/`
@@ -53,7 +58,9 @@ MAST defaults on Linux:
 - Combined prepared catalogs: `~/.cache/astroterm/gaia-gdr3-mast-<fingerprint>.catalog`
 
 Files are stored under content hashes; small references are published only after complete verified writes.
-Interrupted work leaves completed blocks reusable and restarts the incomplete block. Checksums detect local
+Interrupted work leaves completed blocks reusable and restarts the incomplete block. A damaged discovery
+or footer object is refetched and restored only if it matches the original pinned identity; changed remote
+metadata is never silently adopted. Cache errors include the local path. Checksums detect local
 corruption; they are not independent publisher checksums. Metadata is pinned locally and partition ETags
 are pinned when first accessed. A changed pinned object fails explicitly rather than mixing revisions.
 Unvisited files are pinned lazily, so this is not a provider-guaranteed atomic historical snapshot. Complete

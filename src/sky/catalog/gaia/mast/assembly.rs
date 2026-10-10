@@ -32,7 +32,7 @@ pub(super) fn assemble_selected_catalog(selection: &MastSelection, store: &BlobS
                     crate::catalog::Catalog::check_star_count(stars.len() as u64 + 1).map_err(io::Error::other)?;
                     stars.push_prepared(row, clipping);
                     bounds.push(bound);
-                    for (total, n) in stats.iter_mut().zip(counts) { *total += n; }
+                    for (bit, total) in stats.iter_mut().enumerate() { *total += u64::from(counts & (1 << bit) != 0); }
                 },
                 ConvertedRow::Missing => missing += 1,
                 ConvertedRow::Error { message, unsupported } => {

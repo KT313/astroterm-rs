@@ -18,12 +18,12 @@ impl Http {
             .timeout_global(Some(Duration::from_secs(MAST_REQUEST_SECONDS))).build().new_agent() }
     }
 }
-impl Fetch for Http {
-    fn fetch(&self, path: &str, range: Option<&str>, identity: Option<&Identity>, limit: usize, deadline: Instant) -> io::Result<Response> {
+impl Http {
+    fn fetch_url(&self, url: &str, range: Option<&str>, identity: Option<&Identity>, limit: usize, deadline: Instant) -> io::Result<Response> {
         for attempt in 0..=MAST_REQUEST_RETRIES {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() { return Err(io::Error::new(io::ErrorKind::TimedOut, "MAST block deadline exceeded")); }
-            let mut request = self.agent.get(format!("{BASE}{path}")).header("Accept-Encoding", "identity")
+            let mut request = self.agent.get(url).header("Accept-Encoding", "identity")
                 .config().http_status_as_error(false).timeout_global(Some(remaining.min(Duration::from_secs(MAST_REQUEST_SECONDS)))).build();
             if let Some(range) = range { request = request.header("Range", range); }
             if let Some(id) = identity { request = request.header("If-Match", &id.etag); }
@@ -48,7 +48,8 @@ impl Fetch for Http {
                 let (first, last, total) = parse_range(text)?;
                 let (expected_first, expected_last) = requested_range(range, total)?;
                 if (first, last) != (expected_first, expected_last) { return Err(invalid("MAST returned the wrong byte range")); }
-                start = first; length = Some(last - first + 1);
+                start = first;
+                length = Some(last - first + 1);
                 let etag = response.headers().get("ETag").and_then(|v| v.to_str().ok()).ok_or_else(|| invalid("missing MAST ETag"))?.to_string();
                 let id = Identity { etag, size: total };
                 if id.etag.len() > 256 || id.etag.starts_with("W/") || identity.is_some_and(|expected| expected != &id) { return Err(invalid("MAST object identity changed")); }
@@ -67,10 +68,17 @@ impl Fetch for Http {
         unreachable!()
     }
 }
+impl Fetch for Http {
+    fn fetch(&self, path: &str, range: Option<&str>, identity: Option<&Identity>, limit: usize, deadline: Instant) -> io::Result<Response> {
+        self.fetch_url(&format!("{BASE}{path}"), range, identity, limit, deadline)
+    }
+}
+fn retry_delay(attempt: usize, retry: Option<u64>) -> Duration { Duration::from_secs(retry.unwrap_or(1 << attempt).min(60)) }
 fn pause(attempt: usize, retry: Option<u64>, deadline: Instant) -> io::Result<()> {
-    let delay = Duration::from_secs(retry.unwrap_or(1 << attempt).min(60));
+    let delay = retry_delay(attempt, retry);
     if Instant::now() + delay >= deadline { return Err(io::Error::new(io::ErrorKind::TimedOut, "MAST retry deadline exceeded")); }
-    std::thread::sleep(delay); Ok(())
+    std::thread::sleep(delay);
+    Ok(())
 }
 fn parse_range(text: &str) -> io::Result<(u64, u64, u64)> {
     let (span, total) = text.strip_prefix("bytes ").and_then(|s| s.split_once('/')).ok_or_else(|| invalid("invalid Content-Range"))?;
@@ -90,13 +98,4 @@ fn requested_range(range: &str, size: u64) -> io::Result<(u64, u64)> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn exact_and_suffix_ranges_reject_invalid_response_bounds() {
-        assert_eq!(parse_range("bytes 40-49/50").unwrap(), (40,49,50));
-        assert_eq!(requested_range("bytes=-262144",50).unwrap(),(0,49));
-        assert_eq!(requested_range("bytes=40-49",50).unwrap(),(40,49));
-        for bad in ["bytes 5-4/10","bytes 0-10/10","bytes */10","items 0-1/2","bytes 0-1/*"] {assert!(parse_range(bad).is_err());}
-    }
-}
+mod tests;

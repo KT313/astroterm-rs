@@ -16,7 +16,7 @@ pub(super) struct ConvertedBlock {
 pub(super) struct ConvertedEntry { pub id: u64, pub result: ConvertedRow }
 #[derive(Serialize, Deserialize)]
 pub(super) enum ConvertedRow {
-    Ready { row: StarRow, bound: f32, clipping: [u64; 2], label: String, stats: [u64; 5] },
+    Ready { row: StarRow, bound: f32, clipping: [u64; 2], label: String, stats: u8 },
     Missing,
     Duplicate,
     Error { message: String, unsupported: bool },
@@ -64,7 +64,7 @@ fn convert_block(rows: &[MastRow]) -> io::Result<ConvertedBlock> {
         let result = prepare_row_status(input, ordinal, previous);
         entries.push(ConvertedEntry { id: input.source_id, result });
     }
-    Ok(ConvertedBlock { version: 1, first, last, entries })
+    Ok(ConvertedBlock { version: 2, first, last, entries })
 }
 
 fn prepare_row_status(input: &MastRow, ordinal: usize, previous: Option<&MastRow>) -> ConvertedRow {
@@ -87,24 +87,30 @@ fn prepare_entry(input: &MastRow, ordinal: usize) -> io::Result<ConvertedRow> {
     let star = convert_source(source, &mut stats)?;
     let (row, bound, clipping) = StarStorage::prepare_row(star)?;                                   // qualify and encode once; assembly later appends these exact bytes
     Ok(ConvertedRow::Ready { row, bound, clipping, label,
-        stats: [stats.missing_motion, stats.angular_only, stats.missing_rv, stats.missing_color, stats.saturated_color] })
+        stats: pack_stats(&stats) })
 }
 
 fn validate_block(data: &ConvertedBlock, count: usize) -> io::Result<()> {
-    if data.version != 1 || data.entries.len() != count || count == 0
+    if data.version != 2 || data.entries.len() != count || count == 0
         || data.entries[0].id != data.first.source_id || data.entries[count - 1].id != data.last.source_id {
         return Err(io::Error::other("invalid converted MAST shape"));
     }
     for (i, entry) in data.entries.iter().enumerate() {
         match &entry.result {
             ConvertedRow::Duplicate if i == 0 || data.entries[i - 1].id != entry.id => return Err(io::Error::other("invalid duplicate marker")),
-            ConvertedRow::Ready { row, bound, label, .. } if !is_valid_record(row, *bound, label, i) => {
+            ConvertedRow::Ready { row, bound, label, stats, .. } if *stats & !0x1f != 0 || !is_valid_record(row, *bound, label, i) => {
                 return Err(io::Error::other("invalid converted MAST record"));
             },
             _ => {},
         }
     }
     Ok(())
+}
+
+/// Five per-source outcomes occupy bits 0..4 in the same order as the printed totals.
+fn pack_stats(stats: &ConversionStats) -> u8 {
+    [stats.missing_motion, stats.angular_only, stats.missing_rv, stats.missing_color, stats.saturated_color]
+        .into_iter().enumerate().fold(0, |flags, (bit, count)| flags | (u8::from(count != 0) << bit))
 }
 
 fn is_valid_record(row: &StarRow, bound: f32, label: &str, ordinal: usize) -> bool {
