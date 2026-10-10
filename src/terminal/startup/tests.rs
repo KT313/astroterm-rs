@@ -15,6 +15,31 @@ fn disabled_and_plain_targets_preserve_partial_notices() {
 }
 
 #[test]
+fn plain_writer_announces_stage_changes_and_counts_at_most_once_per_second() {
+    let mut reporter = StartupProgress::new(Vec::new(), false, true);
+    reporter.begin_stage(Stage::Download, "GaiaSource_000000-003111.csv.gz", Unit::Bytes, Some(230_000_000));
+    reporter.set_position(10_000_000);                                                       // within a second of the announcement
+    for _ in 0..3 { reporter.begin_stage(Stage::Verify, "file", Unit::Bytes, Some(128)); reporter.finish_stage(Outcome::Complete); }
+    reporter.begin_stage(Stage::Parse, "", Unit::Rows, None);
+    reporter.plain.as_mut().unwrap().last_line -= Duration::from_secs(2);
+    reporter.set_position(4096);
+    reporter.set_position(8192);                                                             // within a second of the last count line
+    reporter.begin_stage(Stage::Download, "", Unit::Bytes, Some(230_000_000));
+    reporter.plain.as_mut().unwrap().last_line -= Duration::from_secs(2);
+    reporter.set_position(100_000_000);
+    reporter.begin_stage(Stage::Sort, "", Unit::Work, None);
+    reporter.plain.as_mut().unwrap().last_line -= Duration::from_secs(2);
+    reporter.set_position(7);                                                                // work stages have no count line
+    reporter.finish(true);
+    assert_eq!(String::from_utf8_lossy(&reporter.writer),
+        "Downloading...\nVerifying source...\nLoading stars...\nLoading stars: 4096 rows\nDownloading...\nDownloading: 100 MB of 230 MB\nSorting stars by region...\n");
+    let mut silent = StartupProgress::new(Vec::new(), false, false);
+    silent.begin_stage(Stage::Parse, "", Unit::Rows, None);
+    silent.set_position(4096);
+    assert!(silent.writer.is_empty());
+}
+
+#[test]
 fn hidden_animation_target_does_not_swallow_notices_and_buffer_is_bounded() {
     let mut reporter = StartupProgress::new(Vec::new(), false, false);
     reporter.display = Some(MultiProgress::with_draw_target(ProgressDrawTarget::hidden()));

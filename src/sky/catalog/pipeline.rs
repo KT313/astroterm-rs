@@ -15,6 +15,7 @@ pub fn prepare_catalog(catalog: &Catalog) -> std::io::Result<PreparedCatalog> {
         catalog.names.clone(),
         &catalog.hr_representatives,
         &catalog.constellations,
+        &mut NoProgress(std::io::sink()),
     )
 }
 
@@ -24,7 +25,7 @@ pub fn prepare_owned_catalog(catalog: Catalog) -> std::io::Result<PreparedCatalo
 }
 
 pub(super) fn prepare_owned_catalog_with_progress(catalog: Catalog, progress: &mut dyn DatasetProgress) -> std::io::Result<PreparedCatalog> {
-    build_catalog_with_progress(
+    build_catalog(
         catalog.stars.into_iter(),
         catalog.names,
         &catalog.hr_representatives,
@@ -33,16 +34,7 @@ pub(super) fn prepare_owned_catalog_with_progress(catalog: Catalog, progress: &m
     )
 }
 
-fn build_catalog(
-    entries: impl Iterator<Item = crate::catalog::CatalogStar>,
-    names: StarNames,
-    representatives: &HashMap<u32, crate::catalog::StarId>,
-    figures: &[ConstellationFigure],
-) -> std::io::Result<PreparedCatalog> {
-    build_catalog_with_progress(entries, names, representatives, figures, &mut NoProgress(std::io::sink()))
-}
-
-fn build_catalog_with_progress(entries: impl Iterator<Item = crate::catalog::CatalogStar>, names: StarNames,
+fn build_catalog(entries: impl Iterator<Item = crate::catalog::CatalogStar>, names: StarNames,
     representatives: &HashMap<u32, crate::catalog::StarId>, figures: &[ConstellationFigure], progress: &mut dyn DatasetProgress) -> std::io::Result<PreparedCatalog> {
     let (stars, bounds, names) = prepare_compact_stars(entries, &names, progress)?; // convert this parser's rows into compact storage
     finish_catalog(stars, bounds, names, representatives, figures, progress)

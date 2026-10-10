@@ -5,11 +5,9 @@ use crate::model::{SkyCatalog, PreparedCatalog, CatalogPreparation, SkyGrid, Con
 use super::super::grid::stored_cell;
 use crate::catalog::{
     StarNames,
-    cache::{PreparedCatalogBytes, invalid},
+    cache::{PreparedCatalogBytes, invalid, write_sections},
     load_constellation_figures,
 };
-#[cfg(test)]
-use crate::catalog::cache::write_sections;
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashSet,
@@ -129,7 +127,7 @@ pub(super) fn write_cached_catalog_with_progress(path: &Path, prepared: &Prepare
         &[], // reserved exception payload: nonempty records are unsupported in this version
         bytemuck::cast_slice(&clipping),
     ]);
-    crate::catalog::cache::write_sections_with_progress(path, fingerprint, &sections, progress)
+    write_sections(path, fingerprint, &sections, progress)
 }
 
 pub fn load_cached_catalog(path: &Path, fingerprint: &[u8; 32]) -> io::Result<PreparedCatalog> {
@@ -137,7 +135,7 @@ pub fn load_cached_catalog(path: &Path, fingerprint: &[u8; 32]) -> io::Result<Pr
 }
 
 pub(super) fn load_cached_catalog_with_progress(path: &Path, fingerprint: &[u8; 32], progress: &mut dyn crate::progress::DatasetProgress) -> io::Result<PreparedCatalog> {
-    let data = PreparedCatalogBytes::open_with_progress(path, fingerprint, progress)?;
+    let data = PreparedCatalogBytes::open(path, fingerprint, progress)?;
     if data.section_count() != SECTION_COUNT {
         return Err(invalid("catalog section count mismatch"));
     }
@@ -364,11 +362,11 @@ mod tests {
         let ordinary = load_sky_catalog(Some(&dataset), &dirs, &mut notices).unwrap();
         let path = cache_path(&source, dirs.cache.as_ref().unwrap()).unwrap();
         let fingerprint = super::super::loading::fingerprint_source(&Some(path.clone()));
-        let original = PreparedCatalogBytes::open(&path, &fingerprint).unwrap();
+        let original = PreparedCatalogBytes::open(&path, &fingerprint, &mut crate::progress::NoProgress(io::sink())).unwrap();
         for section_index in [EXCEPTIONS, STAR_SECTIONS - 1] {
             let mut sections: Vec<Vec<u8>> = (0..SECTION_COUNT).map(|i| original.section(i).unwrap().to_vec()).collect();
             sections[section_index] = vec![0; 56]; // nonempty placeholder or orphan; contents must never be consumed
-            write_sections(&path, &fingerprint, &sections.iter().map(Vec::as_slice).collect::<Vec<_>>()).unwrap();
+            write_sections(&path, &fingerprint, &sections.iter().map(Vec::as_slice).collect::<Vec<_>>(), &mut crate::progress::NoProgress(io::sink())).unwrap();
             let saved = fs::read(&path).unwrap();
             let error = load_sky_catalog(Some(&dataset), &dirs, &mut notices).unwrap_err();
             assert_eq!(error.kind(), io::ErrorKind::Unsupported);

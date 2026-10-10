@@ -41,6 +41,7 @@ pub(super) fn label_columns(path: &str, columns: &mut [Column]) {
 fn table_labels(path: &str) -> &'static [&'static str] {
     match path {
         "preparation" => &["max_direction_change_radians"],
+        "star_counts" => &["stars_loaded", "stars_in_candidate_regions", "stars_passing_filter", "stars_passing_projection"],
         "persistent.catalog.stars" => &["initial_direction", "scaled_velocity_per_year", "initial_magnitude", "brightest_possible_magnitude", "initial_distance_parsecs", "star_id", "name_entry", "display_color_index"],
         "persistent.catalog.names.boundaries" => &["label_byte_boundary"],
         "persistent.catalog.names.ascii_alternatives" => &["unicode_and_ascii_entries"],
@@ -100,6 +101,7 @@ fn field_label(name: &'static str) -> &'static str {
         "cell" => "screen_coordinates",
         "id" => "star_id",
         "projected_index" => "projected_star_index",
+        "region_stars" => "stars_in_selected_regions",
         "maximum_magnitude" => "faintest_endpoint_magnitude",
         "arcs" => "projected_line_sections",
         "abbreviation" => "constellation_abbreviation",
@@ -132,6 +134,7 @@ pub(super) fn column_notes(path: &str) -> &'static [&'static str] {
         "persistent.catalog.grid.coarse_caps" | "persistent.catalog.grid.fine_caps" => &["A cap covers a circular patch of sky: its center is a unit direction in J2000 axes and its radius is an angle in radians."],
         "persistent.catalog.names" => &["Rows preview chunks of the shared UTF-8 text buffer, not individual names; the boundary table locates each label."],
         "preparation" => &["Conservative maximum angular drift from the initial direction over the supported interval, in radians. Freed after preparation."],
+        "star_counts" => &["Published by catalog installation, selection, observation and projection; later stages do not rescan stars. Candidate regions include the constellation group once; the loaded total changes only when a catalog is installed."],
         "cache.selection.requested_sources" => &["Ordered metadata for the current requested regions. Each row identifies a region and its validated-range generation, not an individual star. selection_revision changes when this sequence changes, even if the resulting working star rows stay equal."],
         "cache.selection.working" => &["is_draw_candidate records early selection membership, before the current-time brightness check. Other rows are retained for constellation lines."],
         "cache.sky.stars" | "cache.projection.star_candidate" | "cache.projection.stars.key" => &["passes_brightness_filter does not guarantee visibility on screen. Completed observation directions use East/North/Up (x/y/z); during observation the same mutable record passes through earlier coordinate systems."],

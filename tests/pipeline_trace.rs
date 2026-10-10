@@ -34,7 +34,7 @@ fn source_and_cached_loads_report_actual_work_and_ordered_skip_reasons() {
     for warm in [false, true] {
         let mut times = StepTimes::with_trace(true);
         let catalog =
-            load_sky_catalog_with_times(Some(&Dataset::Path(path.clone())), &dirs, &mut Vec::new(), &mut times)
+            load_sky_catalog_with_times(Some(&Dataset::Path(path.clone())), &dirs, &mut astroterm::progress::NoProgress(Vec::new()), &mut times)
                 .unwrap();
         assert_eq!(catalog.catalog.stars.len(), 2);
         let mut report = Vec::new();

@@ -1,6 +1,6 @@
 //! Gaia DR3 ECSV parsing only. Conversion into our sky model belongs to the sky layer.
 mod reader;
-pub(crate) use reader::read_gaia_file_with_progress;
+pub(crate) use reader::read_gaia_file;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct GaiaSource {

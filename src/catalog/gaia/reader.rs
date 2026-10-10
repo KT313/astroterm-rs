@@ -8,19 +8,14 @@ use std::{collections::HashSet, fs::File, io::{self, BufReader, Read}};
 
 const FIELDS: [&str; 12] = ["source_id", "ra", "dec", "ref_epoch", "pmra", "pmdec", "parallax", "parallax_over_error", "radial_velocity", "phot_g_mean_mag", "phot_bp_mean_mag", "phot_rp_mean_mag"];
 
-pub(crate) fn read_gaia_file_with_progress(file: &GaiaFile, stats: &mut GaiaReadStats, progress: &mut dyn DatasetProgress, consume: impl FnMut(GaiaSource) -> io::Result<()>) -> io::Result<()> {
+pub(crate) fn read_gaia_file(file: &GaiaFile, stats: &mut GaiaReadStats, progress: &mut dyn DatasetProgress, consume: impl FnMut(GaiaSource) -> io::Result<()>) -> io::Result<()> {
     progress.begin_stage(Stage::Parse, &file.entry.name, Unit::Rows, None);
-    read_sources_with_progress(MultiGzDecoder::new(BufReader::new(File::open(&file.path)?)), file.entry.first_cell, file.entry.last_cell, stats, progress, consume)
+    read_sources(MultiGzDecoder::new(BufReader::new(File::open(&file.path)?)), file.entry.first_cell, file.entry.last_cell, stats, progress, consume)
         .map_err(|error| io::Error::new(error.kind(), format!("{}: {error}", file.path.display())))
 }
 
-#[cfg(test)]
-fn read_sources(reader: impl Read, first_cell: u32, last_cell: u32, stats: &mut GaiaReadStats, consume: impl FnMut(GaiaSource) -> io::Result<()>) -> io::Result<()> {
-    read_sources_with_progress(reader, first_cell, last_cell, stats, &mut crate::progress::NoProgress(io::sink()), consume)
-}
-
-fn read_sources_with_progress(reader: impl Read, first_cell: u32, last_cell: u32, stats: &mut GaiaReadStats, progress: &mut dyn DatasetProgress, mut consume: impl FnMut(GaiaSource) -> io::Result<()>) -> io::Result<()> {
-    let start = stats.rows;
+fn read_sources(reader: impl Read, first_cell: u32, last_cell: u32, stats: &mut GaiaReadStats, progress: &mut dyn DatasetProgress, mut consume: impl FnMut(GaiaSource) -> io::Result<()>) -> io::Result<()> {
+    let (start, start_missing) = (stats.rows, stats.missing_required); // this file's own counts; stats accumulate across files
     let mut csv = ReaderBuilder::new().comment(Some(b'#')).from_reader(reader);
     let headers = csv.headers().map_err(io::Error::other)?;
     let unique: HashSet<_> = headers.iter().collect();
@@ -59,10 +54,10 @@ fn read_sources_with_progress(reader: impl Read, first_cell: u32, last_cell: u32
         })();
         result.map_err(|error| io::Error::new(error.kind(), format!("row {row}: {error}")))?;
         if (stats.rows - start).is_multiple_of(crate::constants::STARTUP_PROGRESS_ROWS) {
-            progress.set_position(stats.rows - start); progress.set_retained(stats.rows - stats.missing_required);
+            progress.set_position(stats.rows - start); progress.set_retained(stats.rows - start - (stats.missing_required - start_missing));
         }
     }
-    progress.set_position(stats.rows - start); progress.set_retained(stats.rows - stats.missing_required); progress.finish_stage(Outcome::Complete);
+    progress.set_position(stats.rows - start); progress.set_retained(stats.rows - start - (stats.missing_required - start_missing)); progress.finish_stage(Outcome::Complete);
     Ok(())
 }
 fn text(row: &ByteRecord, column: usize) -> io::Result<Option<&str>> {

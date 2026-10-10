@@ -37,6 +37,7 @@ fn main() {
                     clock.julian_date(),
                     &clock,
                     &config.simulation.observer,
+                    &projected.star_counts(),
                     &mut astroterm::timing::StepTimes::default(),
                 )
                 .unwrap();

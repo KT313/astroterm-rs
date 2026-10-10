@@ -15,20 +15,11 @@ pub fn load_sky_catalog(
     directories: &DatasetDirectories,
     notices: &mut (impl Write + ?Sized),
 ) -> io::Result<PreparedCatalog> {
-    load_sky_catalog_with_times(dataset, directories, notices, &mut StepTimes::default())
+    load_sky_catalog_with_times(dataset, directories, &mut NoProgress(notices), &mut StepTimes::default())
 }
 
 /// The production loader with optional startup diagnostics; cache-loaded catalogs are not reparsed for statistics.
-pub fn load_sky_catalog_with_times(
-    dataset: Option<&Dataset>,
-    directories: &DatasetDirectories,
-    notices: &mut (impl Write + ?Sized),
-    times: &mut StepTimes,
-) -> io::Result<PreparedCatalog> {
-    load_sky_catalog_with_progress(dataset, directories, &mut NoProgress(notices), times)
-}
-
-pub fn load_sky_catalog_with_progress(dataset: Option<&Dataset>, directories: &DatasetDirectories,
+pub fn load_sky_catalog_with_times(dataset: Option<&Dataset>, directories: &DatasetDirectories,
     notices: &mut dyn DatasetProgress, times: &mut StepTimes) -> io::Result<PreparedCatalog> {
     let result = load_reported_catalog(dataset, directories, notices, times);
     notices.finish_stage(if result.is_ok() { crate::progress::Outcome::Complete } else { crate::progress::Outcome::Failed });
@@ -41,13 +32,13 @@ fn load_reported_catalog(dataset: Option<&Dataset>, directories: &DatasetDirecto
     if let Dataset::GaiaGdr3 { files } = dataset {
         return report_clipping(super::gaia::load_gaia_catalog(*files, directories, notices, times)?, notices);
     }
-    let source = times.measure("Dataset resolution", || crate::catalog::datasets::resolve_dataset_with_progress(dataset, directories, notices))?;
+    let source = times.measure("Dataset resolution", || crate::catalog::datasets::resolve_dataset(dataset, directories, notices))?;
     times.describe("Dataset resolution", || format!("source={}", source.display()));
     let path = resolve_cache_path(&source, directories, notices); // find an optional prepared-cache location
     let fingerprint = fingerprint_source(&path);                // identify the source and all preparation rules
     if let Some(catalog) = try_load_prepared_catalog(&path, &fingerprint, notices, times)? { return report_clipping(catalog, notices); }
 
-    let parsed = times.measure_steps("AT-HYG loading", |times| crate::catalog::load_athyg_catalog_with_progress(&source, times, notices)).map_err(io::Error::other)?;
+    let parsed = times.measure_steps("AT-HYG loading", |times| crate::catalog::load_athyg_catalog_with_times(&source, times, notices)).map_err(io::Error::other)?;
     let catalog = prepare_catalog(parsed, times, notices)?;               // compact and index the parsed stars
     write_prepared_catalog_if_stable(path, &source, &catalog, &fingerprint, notices, times)?; // save only if the source stayed unchanged
     report_clipping(catalog, notices)

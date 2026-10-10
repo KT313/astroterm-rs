@@ -45,7 +45,6 @@ All datasets share the startup progress display, which finishes before the sky r
 Use `--no-progress` to hide updates while keeping warnings and loading summaries. Redirected stderr gets
 plain text. See [dataset progress and star counts](dataset-progress.md).
 
-
 On Linux, default locations are:
 
 - Raw inputs: `~/.local/share/astroterm/gaia-gdr3/gaia_source/`

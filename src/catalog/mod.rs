@@ -3,7 +3,7 @@
 
 mod athyg;
 mod gaia;
-pub(crate) use gaia::{GaiaSource, GaiaReadStats, read_gaia_file_with_progress};
+pub(crate) use gaia::{GaiaSource, GaiaReadStats, read_gaia_file};
 mod bsc5;
 pub mod cache;
 mod cities;
@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::fmt;
 
 pub use athyg::load_athyg_catalog;
-pub(crate) use athyg::load_athyg_catalog_with_progress;
+pub(crate) use athyg::load_athyg_catalog_with_times;
 pub use bsc5::{Bsc5Entry, parse_bsc5};
 pub use cities::{City, find_city, parse_cities, suggest_cities};
 pub use designation::Designation;
@@ -179,7 +179,7 @@ pub fn load_embedded_catalog() -> Result<Catalog, CatalogError> {
 }
 
 pub(crate) fn load_embedded_catalog_with_progress(progress: &mut dyn crate::progress::DatasetProgress) -> Result<Catalog, CatalogError> {
-    let entries = bsc5::parse_bsc5_with_progress(BSC5_DATA, progress)?;
+    let entries = bsc5::parse_bsc5(BSC5_DATA, progress)?;
     let star_names = parse_star_names(STAR_NAMES_TEXT, entries.len())?;
     let mut names = StarNames::default();
     let stars = entries

@@ -15,20 +15,20 @@ fn source(directory: &Path, first: u32) -> GaiaFile {
 fn prefix_and_source_identity_change_cache_but_extra_files_do_not() {
     let dir = tempfile::tempdir().unwrap();
     let a = source(dir.path(), 0);
-    let first = fingerprint_files(std::slice::from_ref(&a)).unwrap();
+    let first = fingerprint_files(std::slice::from_ref(&a));
     let b = source(dir.path(), 1);
-    assert_eq!(first, fingerprint_files(std::slice::from_ref(&a)).unwrap());
-    assert_ne!(first, fingerprint_files(&[a.clone(), b]).unwrap());
+    assert_eq!(first, fingerprint_files(std::slice::from_ref(&a)));
+    assert_ne!(first, fingerprint_files(&[a.clone(), b]));
     let mut changed = a;
     changed.entry.checksum[0] ^= 1;
-    assert_ne!(first, fingerprint_files(&[changed]).unwrap());
+    assert_ne!(first, fingerprint_files(&[changed]));
 }
 
 #[test]
 fn multiple_files_prepare_owned_rows_and_hit_cache_without_reparsing() {
     let dir = tempfile::tempdir().unwrap();
     let files = vec![source(dir.path(), 0), source(dir.path(), 1)];
-    let fingerprint = fingerprint_files(&files).unwrap();
+    let fingerprint = fingerprint_files(&files);
     let path = Some(dir.path().join("result.catalog"));
     let mut notices = Vec::new();
     let prepared = load_prepared_gaia(&files, path.clone(), &fingerprint, &mut crate::progress::NoProgress(&mut notices), &mut StepTimes::default()).unwrap();
@@ -66,7 +66,7 @@ fn zero_catalog_and_cache_hits_always_explain_g_magnitude() {
 fn previous_label_boundary_format_is_rejected() {
     let dir = tempfile::tempdir().unwrap();
     let files = vec![source(dir.path(), 0)];
-    let fingerprint = fingerprint_files(&files).unwrap();
+    let fingerprint = fingerprint_files(&files);
     let path = dir.path().join("old.catalog");
     load_prepared_gaia(&files, Some(path.clone()), &fingerprint, &mut crate::progress::NoProgress(Vec::new()), &mut StepTimes::default()).unwrap();
     let mut bytes = fs::read(&path).unwrap();

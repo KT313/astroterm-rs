@@ -1,7 +1,5 @@
 //! Aligned, checksummed cache container. The higher sky layer owns the catalog schema and semantic validation.
 use crate::progress::{DatasetProgress, Stage, Unit, Outcome, ProgressReader};
-#[cfg(test)]
-use crate::progress::NoProgress;
 mod array;
 pub use array::CatalogArray;
 use std::{
@@ -30,11 +28,7 @@ pub struct PreparedCatalogBytes {
     sections: Vec<Range<usize>>,
 }
 impl PreparedCatalogBytes {
-    #[cfg(test)]
-    pub(crate) fn open(path: &Path, fingerprint: &[u8; 32]) -> io::Result<Self> {
-        Self::open_with_progress(path, fingerprint, &mut NoProgress(io::sink()))
-    }
-    pub(crate) fn open_with_progress(path: &Path, fingerprint: &[u8; 32], progress: &mut dyn DatasetProgress) -> io::Result<Self> {
+    pub(crate) fn open(path: &Path, fingerprint: &[u8; 32], progress: &mut dyn DatasetProgress) -> io::Result<Self> {
         if !supported() {
             return Err(invalid("prepared cache requires a 64-bit little-endian target"));
         }
@@ -115,12 +109,7 @@ fn read_u64(bytes: &[u8], offset: usize) -> io::Result<u64> {
 }
 
 /// Write in the destination folder and atomically replace the final name only after the complete file is synced.
-#[cfg(test)]
-pub(crate) fn write_sections(path: &Path, fingerprint: &[u8; 32], sections: &[&[u8]]) -> io::Result<()> {
-    write_sections_with_progress(path, fingerprint, sections, &mut NoProgress(io::sink()))
-}
-
-pub(crate) fn write_sections_with_progress(path: &Path, fingerprint: &[u8; 32], sections: &[&[u8]], progress: &mut dyn DatasetProgress) -> io::Result<()> {
+pub(crate) fn write_sections(path: &Path, fingerprint: &[u8; 32], sections: &[&[u8]], progress: &mut dyn DatasetProgress) -> io::Result<()> {
     if !supported() || sections.len() > MAX_SECTIONS {
         return Err(invalid("unsupported cache layout"));
     }

@@ -3,7 +3,7 @@
 //! The file is a 28 byte header followed by 32 byte little-endian entries, sorted by catalog number.
 
 use super::CatalogError;
-use crate::progress::{DatasetProgress, NoProgress, Stage, Unit, Outcome};
+use crate::progress::{DatasetProgress, Stage, Unit, Outcome};
 
 const HEADER_BYTES: usize = 28;
 const ENTRY_BYTES: usize = 32;
@@ -30,11 +30,7 @@ impl Bsc5Entry {
 }
 
 /// Parse all entries of a binary BSC5 file.
-pub fn parse_bsc5(data: &[u8]) -> Result<Vec<Bsc5Entry>, CatalogError> {
-    parse_bsc5_with_progress(data, &mut NoProgress(std::io::sink()))
-}
-
-pub(super) fn parse_bsc5_with_progress(data: &[u8], progress: &mut dyn DatasetProgress) -> Result<Vec<Bsc5Entry>, CatalogError> {
+pub fn parse_bsc5(data: &[u8], progress: &mut dyn DatasetProgress) -> Result<Vec<Bsc5Entry>, CatalogError> {
     // header: STARN (the entry count) is negative when coordinates are J2000, which they are in BSC5
     let header = data
         .get(..HEADER_BYTES)
@@ -93,6 +89,7 @@ fn read_f64(bytes: &[u8], offset: usize) -> f64 {
 mod tests {
     use super::*;
     use crate::catalog::BSC5_DATA;
+    use crate::progress::NoProgress;
 
     const EPSILON: f64 = 0.01;
     const MOTION_EPSILON: f64 = 1e-20;
@@ -110,7 +107,7 @@ mod tests {
 
     #[test]
     fn parses_every_entry_in_catalog_order() {
-        let entries = parse_bsc5(BSC5_DATA).expect("embedded catalog parses");
+        let entries = parse_bsc5(BSC5_DATA, &mut NoProgress(std::io::sink())).expect("embedded catalog parses");
         assert_eq!(entries.len(), 9110);
         assert!(
             entries
@@ -122,7 +119,7 @@ mod tests {
 
     #[test]
     fn parses_reference_entries() {
-        let entries = parse_bsc5(BSC5_DATA).expect("embedded catalog parses");
+        let entries = parse_bsc5(BSC5_DATA, &mut NoProgress(std::io::sink())).expect("embedded catalog parses");
 
         let first = entries[0];
         assert!((first.right_ascension - 0.023).abs() < EPSILON && (first.declination - 0.789).abs() < EPSILON);
@@ -144,7 +141,7 @@ mod tests {
 
     #[test]
     fn identifies_placeholder_entries() {
-        let entries = parse_bsc5(BSC5_DATA).expect("embedded catalog parses");
+        let entries = parse_bsc5(BSC5_DATA, &mut NoProgress(std::io::sink())).expect("embedded catalog parses");
         let placeholders: Vec<u32> = entries
             .iter()
             .filter(|e| !e.has_data())
@@ -161,12 +158,12 @@ mod tests {
     #[test]
     fn rejects_truncated_data() {
         assert!(matches!(
-            parse_bsc5(&BSC5_DATA[..10]),
+            parse_bsc5(&BSC5_DATA[..10], &mut NoProgress(std::io::sink())),
             Err(CatalogError::TruncatedBsc5 { entry: None })
         ));
         let cut = &BSC5_DATA[..HEADER_BYTES + ENTRY_BYTES * 3 + 5];
         assert!(matches!(
-            parse_bsc5(cut),
+            parse_bsc5(cut, &mut NoProgress(std::io::sink())),
             Err(CatalogError::TruncatedBsc5 { entry: Some(3) })
         ));
     }

@@ -61,17 +61,10 @@ struct Columns {
 
 /// Load an AT-HYG CSV file (`.csv` or gzip-compressed `.csv.gz`), with the embedded constellation figures.
 pub fn load_athyg_catalog(path: &Path) -> Result<Catalog, CatalogError> {
-    load_athyg_catalog_with_times(path, &mut crate::timing::StepTimes::default())
+    load_athyg_catalog_with_times(path, &mut crate::timing::StepTimes::default(), &mut NoProgress(io::sink()))
 }
 
-pub(crate) fn load_athyg_catalog_with_times(
-    path: &Path,
-    times: &mut crate::timing::StepTimes,
-) -> Result<Catalog, CatalogError> {
-    load_athyg_catalog_with_progress(path, times, &mut NoProgress(io::sink()))
-}
-
-pub(crate) fn load_athyg_catalog_with_progress(path: &Path, times: &mut crate::timing::StepTimes, progress: &mut dyn DatasetProgress) -> Result<Catalog, CatalogError> {
+pub(crate) fn load_athyg_catalog_with_times(path: &Path, times: &mut crate::timing::StepTimes, progress: &mut dyn DatasetProgress) -> Result<Catalog, CatalogError> {
     let describe_error = |error: io::Error| CatalogError::Io(format!("cannot read {}: {error}", path.display()));
 
     // decompress if the file starts like a gzip file
@@ -83,7 +76,7 @@ pub(crate) fn load_athyg_catalog_with_progress(path: &Path, times: &mut crate::t
         Box::new(file)
     };
 
-    parse_athyg_with_progress(reader, times, progress).map_err(|error| match error {
+    parse_athyg_with_times(reader, times, progress).map_err(|error| match error {
         CatalogError::Io(message) => CatalogError::Io(format!("cannot read {}: {message}", path.display())),
         other => other,
     })
@@ -92,15 +85,10 @@ pub(crate) fn load_athyg_catalog_with_progress(path: &Path, times: &mut crate::t
 /// Parse the stars of AT-HYG CSV data.
 #[cfg(test)]
 fn parse_athyg(reader: impl Read) -> Result<Catalog, CatalogError> {
-    parse_athyg_with_times(reader, &mut crate::timing::StepTimes::default())
+    parse_athyg_with_times(reader, &mut crate::timing::StepTimes::default(), &mut NoProgress(io::sink()))
 }
 
-#[cfg(test)]
-fn parse_athyg_with_times(reader: impl Read, times: &mut crate::timing::StepTimes) -> Result<Catalog, CatalogError> {
-    parse_athyg_with_progress(reader, times, &mut NoProgress(io::sink()))
-}
-
-fn parse_athyg_with_progress(reader: impl Read, times: &mut crate::timing::StepTimes, progress: &mut dyn DatasetProgress) -> Result<Catalog, CatalogError> {
+fn parse_athyg_with_times(reader: impl Read, times: &mut crate::timing::StepTimes, progress: &mut dyn DatasetProgress) -> Result<Catalog, CatalogError> {
     progress.begin_stage(Stage::Parse, "AT-HYG", Unit::Rows, None);
     let (stars, names, row, missing, sun) =
         times.measure("CSV validation and parsing", || -> Result<_, CatalogError> {

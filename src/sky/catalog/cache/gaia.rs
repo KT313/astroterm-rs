@@ -1,15 +1,15 @@
 //! Gaia's prepared cache identifies the entire selected prefix, never just its first input file.
-use crate::catalog::datasets::{resolve_gaia_files_with_progress, DatasetDirectories, GaiaFile};
+use crate::catalog::datasets::{resolve_gaia_files, DatasetDirectories, GaiaFile};
 use crate::model::PreparedCatalog;
 use crate::timing::StepTimes;
 use sha2::{Digest, Sha256};
-use std::{io, path::PathBuf, time::UNIX_EPOCH};
+use std::{io, path::PathBuf};
 use super::{format::catalog_fingerprint, loading::try_load_prepared_catalog};
 
 pub(super) fn load_gaia_catalog(count: u16, directories: &DatasetDirectories, notices: &mut dyn crate::progress::DatasetProgress, times: &mut StepTimes) -> io::Result<PreparedCatalog> {
     writeln!(notices, "Gaia DR3: using G magnitude in the existing V-magnitude field; no G-to-V conversion. The star threshold uses G.")?;
-    let files = times.measure_steps("Dataset resolution", |times| resolve_gaia_files_with_progress(count, directories, notices, times))?;
-    let fingerprint = fingerprint_files(&files)?;
+    let files = times.measure_steps("Dataset resolution", |times| resolve_gaia_files(count, directories, notices, times))?;
+    let fingerprint = fingerprint_files(&files);
     let path = directories.cache.as_ref().filter(|_| crate::catalog::cache::supported()).map(|directory| {
         directory.join(format!("gaia-gdr3-{}.catalog", fingerprint.iter().map(|b| format!("{b:02x}")).collect::<String>()))
     });
@@ -38,7 +38,8 @@ fn check_sources(files: &[GaiaFile]) -> io::Result<()> {
     Ok(())
 }
 
-fn fingerprint_files(files: &[GaiaFile]) -> io::Result<[u8; 32]> {
+/// Verified name and checksum identify each input; where the file sits and when it was written do not matter.
+fn fingerprint_files(files: &[GaiaFile]) -> [u8; 32] {
     let mut hash = Sha256::new();
     hash.update(catalog_fingerprint());
     hash.update(b"Gaia DR3 G-as-V; J2016-TCB-approx-TT to J2000; RV0; Gaia-only; import-v1");
@@ -47,17 +48,9 @@ fn fingerprint_files(files: &[GaiaFile]) -> io::Result<[u8; 32]> {
     for file in files {
         hash.update(file.entry.name.as_bytes());
         hash.update(file.entry.checksum);
-        let path = file.path.canonicalize()?;
-        let bytes = path.as_os_str().as_encoded_bytes();
-        hash.update((bytes.len() as u64).to_le_bytes());
-        hash.update(bytes);
-        hash.update(file.size.to_le_bytes());
-        let modified = file.modified.duration_since(UNIX_EPOCH).map_err(io::Error::other)?;
-        hash.update(modified.as_secs().to_le_bytes());
-        hash.update(modified.subsec_nanos().to_le_bytes());
     }
     for source in [include_bytes!("../../../catalog/gaia/reader.rs").as_slice(), include_bytes!("../gaia/conversion.rs").as_slice(), include_bytes!("../gaia/mod.rs").as_slice(), include_bytes!("gaia.rs").as_slice()] { hash.update(source); }
-    Ok(hash.finalize().into())
+    hash.finalize().into()
 }
 
 #[cfg(test)]

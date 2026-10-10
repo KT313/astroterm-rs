@@ -1,8 +1,8 @@
 //! Dataset names, per-user locations and verified streaming downloads. No terminal state is active here.
 mod gaia;
-pub(crate) use gaia::{GaiaFile, resolve_gaia_files_with_progress};
+pub(crate) use gaia::{GaiaFile, resolve_gaia_files};
 
-use crate::progress::{DatasetProgress, NoProgress, Stage, Unit, Outcome};
+use crate::progress::{DatasetProgress, Stage, Unit, Outcome};
 use sha2::{Digest, Sha256};
 use std::{
     ffi::OsStr,
@@ -58,15 +58,7 @@ impl DatasetDirectories {
     }
 }
 
-pub fn resolve_dataset(
-    dataset: &Dataset,
-    directories: &DatasetDirectories,
-    notices: &mut impl Write,
-) -> io::Result<PathBuf> {
-    resolve_dataset_with_progress(dataset, directories, &mut NoProgress(notices))
-}
-
-pub(crate) fn resolve_dataset_with_progress(dataset: &Dataset, directories: &DatasetDirectories, notices: &mut dyn DatasetProgress) -> io::Result<PathBuf> {
+pub fn resolve_dataset(dataset: &Dataset, directories: &DatasetDirectories, notices: &mut dyn DatasetProgress) -> io::Result<PathBuf> {
     notices.begin_stage(Stage::Resolve, "", Unit::Work, None);
     match dataset {
         Dataset::Path(path) => Ok(path.clone()),
@@ -99,7 +91,7 @@ pub(crate) fn resolve_dataset_with_progress(dataset: &Dataset, directories: &Dat
                     .header("Accept-Encoding", "identity")
                     .call()
                     .map_err(io::Error::other)?;
-                install_verified_with_progress(
+                install_verified(
                     response.body_mut().as_reader(),
                     &target,
                     ATHYG_BYTES,
@@ -115,12 +107,7 @@ pub(crate) fn resolve_dataset_with_progress(dataset: &Dataset, directories: &Dat
 }
 
 /// Verify the exact compressed bytes, bounded by the pinned size. RAII removes the temporary on every error.
-#[cfg(test)]
-fn install_verified(source: impl Read, target: &Path, expected_size: u64, expected_hash: &str, notices: &mut impl Write) -> io::Result<()> {
-    install_verified_with_progress(source, target, expected_size, expected_hash, &mut NoProgress(notices))
-}
-
-fn install_verified_with_progress(
+fn install_verified(
     mut source: impl Read,
     target: &Path,
     expected_size: u64,
@@ -163,6 +150,7 @@ fn install_verified_with_progress(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::progress::NoProgress;
     #[test]
     fn names_and_explicit_or_existing_paths_resolve() {
         assert_eq!(Dataset::parse(OsStr::new("athyg")).unwrap(), Dataset::Athyg);
@@ -194,14 +182,14 @@ mod tests {
             .iter()
             .map(|b| format!("{b:02x}"))
             .collect::<String>();
-        install_verified(fs::File::open(&source).unwrap(), &target, 13, &hash, &mut Vec::new()).unwrap();
+        install_verified(fs::File::open(&source).unwrap(), &target, 13, &hash, &mut NoProgress(Vec::new())).unwrap();
         assert_eq!(fs::read(&target).unwrap(), b"catalog bytes");
         for (bytes, size, hash) in [
             (&b"wrong"[..], 5, "bad"),
             (&b"short"[..], 13, &hash),
             (&b"long"[..], 1, &hash),
         ] {
-            assert!(install_verified(bytes, &target, size, hash, &mut Vec::new()).is_err());
+            assert!(install_verified(bytes, &target, size, hash, &mut NoProgress(Vec::new())).is_err());
             assert_eq!(fs::read(&target).unwrap(), b"catalog bytes");
             assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 2);
         }
@@ -215,7 +203,7 @@ mod tests {
             }
         }
         let dir = tempfile::tempdir().unwrap();
-        assert!(install_verified(Broken, &dir.path().join("data"), 10, ATHYG_SHA256, &mut Vec::new()).is_err());
+        assert!(install_verified(Broken, &dir.path().join("data"), 10, ATHYG_SHA256, &mut NoProgress(Vec::new())).is_err());
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
     }
 
@@ -229,10 +217,10 @@ mod tests {
             cache: None,
         };
         assert_eq!(
-            resolve_dataset(&Dataset::Athyg, &directories, &mut Vec::new()).unwrap(),
+            resolve_dataset(&Dataset::Athyg, &directories, &mut NoProgress(Vec::new())).unwrap(),
             path
         );
-        let error = resolve_dataset(&Dataset::Athyg, &DatasetDirectories::default(), &mut Vec::new()).unwrap_err();
+        let error = resolve_dataset(&Dataset::Athyg, &DatasetDirectories::default(), &mut NoProgress(Vec::new())).unwrap_err();
         assert!(error.to_string().contains(ATHYG_URL) && error.to_string().contains("--dataset <path>"));
     }
 }

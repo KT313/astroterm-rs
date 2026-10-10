@@ -153,7 +153,7 @@ mod tests {
             "persistent.catalog.stars", "persistent.catalog.star_exceptions", "persistent.catalog.names.boundaries", "persistent.catalog.names.ascii_alternatives",
             "persistent.catalog.stars.precise_motions", "persistent.catalog.grid.offsets",
             "persistent.catalog.grid.coarse_caps", "persistent.catalog.grid.fine_caps",
-            "persistent.catalog.endpoint_indices", "preparation", "persistent.catalog.names",
+            "persistent.catalog.endpoint_indices", "preparation", "star_counts", "persistent.catalog.names",
             "persistent.catalog.constellations",
             "cache.sky.stars", "cache.sky.planets", "cache.sky.moon", "cache.sky.candidate_indices",
             "cache.simulation.solar_system.planets.sun", "cache.simulation.solar_system.planets.earth", "cache.simulation.solar_system.planets.neptune",

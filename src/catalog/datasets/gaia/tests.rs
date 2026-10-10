@@ -1,4 +1,5 @@
 use super::*;
+use crate::progress::NoProgress;
 use std::io::Cursor;
 
 fn entry(index: u32, bytes: &[u8]) -> GaiaEntry {
@@ -30,11 +31,11 @@ fn increasing_count_fetches_only_missing_files_and_smaller_prefix_is_offline() {
         requests.push(entry.first_cell);
         Ok((Box::new(Cursor::new(vec![entry.first_cell as u8])) as Box<dyn Read>, Some(1)))
     };
-    resolve_entries(&entries[..5], dir.path(), &mut Vec::new(), &mut StepTimes::default(), &mut fetch).unwrap();
-    let all = resolve_entries(&entries, dir.path(), &mut Vec::new(), &mut StepTimes::default(), &mut fetch).unwrap();
+    resolve_entries(&entries[..5], dir.path(), &mut NoProgress(Vec::new()), &mut StepTimes::default(), &mut fetch).unwrap();
+    let all = resolve_entries(&entries, dir.path(), &mut NoProgress(Vec::new()), &mut StepTimes::default(), &mut fetch).unwrap();
     assert_eq!(requests, (0..8).collect::<Vec<_>>());
     assert_eq!(all.len(), 8);
-    let smaller = resolve_entries(&entries[..3], dir.path(), &mut Vec::new(), &mut StepTimes::default(), |_| panic!("offline")).unwrap();
+    let smaller = resolve_entries(&entries[..3], dir.path(), &mut NoProgress(Vec::new()), &mut StepTimes::default(), |_| panic!("offline")).unwrap();
     assert_eq!(smaller.len(), 3);
     assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 8);
 }
@@ -45,10 +46,10 @@ fn corrupted_existing_file_is_replaced_only_by_verified_complete_data() {
     let entry = entry(0, b"good");
     let path = dir.path().join(&entry.name);
     fs::write(&path, b"bad").unwrap();
-    assert!(install_verified(&b"short"[..], &path, entry.checksum, Some(10), &mut Vec::new()).is_err());
+    assert!(install_verified(&b"short"[..], &path, entry.checksum, Some(10), &mut NoProgress(Vec::new())).is_err());
     assert_eq!(fs::read(&path).unwrap(), b"bad");
     assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
-    resolve_entries(&[entry], dir.path(), &mut Vec::new(), &mut StepTimes::default(), |_| Ok((Box::new(Cursor::new(b"good")), Some(4)))).unwrap();
+    resolve_entries(&[entry], dir.path(), &mut NoProgress(Vec::new()), &mut StepTimes::default(), |_| Ok((Box::new(Cursor::new(b"good")), Some(4)))).unwrap();
     assert_eq!(fs::read(&path).unwrap(), b"good");
 }
 
@@ -59,9 +60,9 @@ fn interrupted_and_oversized_downloads_leave_no_final_file() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("data.gz");
     let checksum = Md5::digest(b"good").into();
-    assert!(install_verified(Broken, &path, checksum, None, &mut Vec::new()).is_err());
-    assert!(install_verified(&b"good"[..], &path, checksum, Some(2), &mut Vec::new()).is_err());
-    assert!(install_verified(&b"good"[..], &path, checksum, Some(GAIA_DOWNLOAD_MAX_BYTES + 1), &mut Vec::new()).is_err());
+    assert!(install_verified(Broken, &path, checksum, None, &mut NoProgress(Vec::new())).is_err());
+    assert!(install_verified(&b"good"[..], &path, checksum, Some(2), &mut NoProgress(Vec::new())).is_err());
+    assert!(install_verified(&b"good"[..], &path, checksum, Some(GAIA_DOWNLOAD_MAX_BYTES + 1), &mut NoProgress(Vec::new())).is_err());
     assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
 }
 
@@ -72,18 +73,18 @@ fn concurrent_complete_installations_preserve_valid_bytes() {
     let bytes = vec![42; 1000];
     let checksum = Md5::digest(&bytes).into();
     std::thread::scope(|scope| {
-        let first = scope.spawn(|| install_verified(bytes.as_slice(), &path, checksum, None, &mut Vec::new()));
-        let second = scope.spawn(|| install_verified(bytes.as_slice(), &path, checksum, None, &mut Vec::new()));
+        let first = scope.spawn(|| install_verified(bytes.as_slice(), &path, checksum, None, &mut NoProgress(Vec::new())));
+        let second = scope.spawn(|| install_verified(bytes.as_slice(), &path, checksum, None, &mut NoProgress(Vec::new())));
         first.join().unwrap().unwrap(); second.join().unwrap().unwrap();
     });
-    assert!(verify_file(&path, checksum).unwrap().is_some());
+    assert!(verify_file(&path, checksum, &mut NoProgress(io::sink())).unwrap().is_some());
     assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
 }
 
 #[test]
 fn zero_requires_neither_data_directory_nor_network() {
-    assert!(resolve_gaia_files(0, &DatasetDirectories::default(), &mut Vec::new(), &mut StepTimes::default()).unwrap().is_empty());
-    assert!(resolve_gaia_files(3387, &DatasetDirectories::default(), &mut Vec::new(), &mut StepTimes::default()).is_err());
+    assert!(resolve_gaia_files(0, &DatasetDirectories::default(), &mut NoProgress(Vec::new()), &mut StepTimes::default()).unwrap().is_empty());
+    assert!(resolve_gaia_files(3387, &DatasetDirectories::default(), &mut NoProgress(Vec::new()), &mut StepTimes::default()).is_err());
 }
 
 #[test]
@@ -103,16 +104,16 @@ fn transfer_progress_handles_unknown_lengths_and_marks_only_verified_success() {
     let checksum = Md5::digest(b"test").into();
     let path = dir.path().join("test.gz");
     let mut recorder = Recorder::default();
-    install_verified_with_progress(&b"test"[..], &path, checksum, None, &mut recorder).unwrap();
+    install_verified(&b"test"[..], &path, checksum, None, &mut recorder).unwrap();
     assert!(recorder.stages.contains(&(Stage::Download, None)));
     assert_eq!(recorder.positions.last(), Some(&4));
     assert_eq!(recorder.outcomes.last(), Some(&Outcome::Complete));
     recorder = Recorder::default();
-    assert!(verify_file_with_progress(&path, checksum, &mut recorder).unwrap().is_some());
+    assert!(verify_file(&path, checksum, &mut recorder).unwrap().is_some());
     assert_eq!(recorder.stages, [(Stage::Verify, Some(4))]);
     assert_eq!(recorder.positions.last(), Some(&4));
     recorder = Recorder::default();
-    assert!(install_verified_with_progress(&b"wrong"[..], &path, checksum, Some(5), &mut recorder).is_err());
+    assert!(install_verified(&b"wrong"[..], &path, checksum, Some(5), &mut recorder).is_err());
     assert!(!recorder.outcomes.contains(&Outcome::Complete));
     assert_eq!(fs::read(&path).unwrap(), b"test");
 }

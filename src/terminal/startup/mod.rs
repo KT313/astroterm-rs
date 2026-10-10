@@ -11,10 +11,13 @@ pub struct StartupProgress<W: Write> {
     files: Option<ProgressBar>,
     pending: Vec<u8>,
     plain_updates: bool,
-    last_plain: Option<Instant>,
+    plain: Option<PlainStage>,
     active: Option<Stage>,
     finished: bool,
 }
+
+/// The stage last announced on a plain writer; count lines repeat its label at most once per second.
+struct PlainStage { stage: Stage, unit: Unit, total: Option<u64>, last_line: Instant }
 
 pub fn open_startup_progress(disabled: bool) -> StartupProgress<io::Stderr> {
     let writer = io::stderr(); // never hold stderr.lock() while the animation thread draws
@@ -25,7 +28,7 @@ pub fn open_startup_progress(disabled: bool) -> StartupProgress<io::Stderr> {
 impl<W: Write> StartupProgress<W> {
     fn new(writer: W, visible: bool, plain_updates: bool) -> Self {
         let display = visible.then(|| MultiProgress::with_draw_target(ProgressDrawTarget::stderr_with_hz(STARTUP_PROGRESS_HZ)));
-        Self { writer, display, task: None, files: None, pending: Vec::new(), plain_updates, last_plain: None, active: None, finished: false }
+        Self { writer, display, task: None, files: None, pending: Vec::new(), plain_updates, plain: None, active: None, finished: false }
     }
     pub fn finish(&mut self, success: bool) {
         if self.finished { return; }
@@ -79,9 +82,13 @@ impl<W: Write> DatasetProgress for StartupProgress<W> {
     fn begin_stage(&mut self, stage: Stage, detail: &str, unit: Unit, total: Option<u64>) {
         self.active = Some(stage);
         let Some(display) = &self.display else {
-            if self.plain_updates && self.last_plain.is_none_or(|last| last.elapsed() >= Duration::from_secs(1)) {
-                let _ = writeln!(self.writer, "{}...", stage.label());
-                self.last_plain = Some(Instant::now());
+            if self.plain_updates {
+                let recent = self.plain.as_ref().filter(|plain| plain.stage == stage && plain.last_line.elapsed() < Duration::from_secs(1));
+                let last_line = match recent {
+                    Some(plain) => plain.last_line, // thousands of quick file checks print one line per second, not one each
+                    None => { let _ = writeln!(self.writer, "{}...", stage.label()); Instant::now() }
+                };
+                self.plain = Some(PlainStage { stage, unit, total, last_line });
             }
             return;
         };
@@ -100,7 +107,20 @@ impl<W: Write> DatasetProgress for StartupProgress<W> {
         bar.set_prefix(if detail.is_empty() { stage.label().to_owned() } else { format!("{} ({detail})", stage.label()) }); bar.set_message("");
         bar.enable_steady_tick(Duration::from_millis(1000 / u64::from(STARTUP_PROGRESS_HZ.max(1))));
     }
-    fn set_position(&mut self, completed: u64) { if let Some(bar) = &self.task { bar.set_position(completed); } }
+    fn set_position(&mut self, completed: u64) {
+        if let Some(bar) = &self.task { bar.set_position(completed); return; }
+        let Some(plain) = &mut self.plain else { return; };
+        if self.display.is_some() || plain.last_line.elapsed() < Duration::from_secs(1) { return; }
+        let count = match (plain.unit, plain.total) {
+            (Unit::Work, _) => return,
+            (Unit::Bytes, Some(total)) => format!("{} MB of {} MB", completed / 1_000_000, total / 1_000_000),
+            (Unit::Bytes, None) => format!("{} MB", completed / 1_000_000),
+            (Unit::Rows, total) => describe_count(completed, total, "rows"),
+            (Unit::Stars, total) => describe_count(completed, total, "stars"),
+        };
+        let _ = writeln!(self.writer, "{}: {count}", plain.stage.label());
+        plain.last_line = Instant::now();
+    }
     fn set_retained(&mut self, retained: u64) {
         if let Some(bar) = &self.task { bar.set_message(format!("{retained} sources retained")); }
     }
@@ -122,6 +142,9 @@ impl<W: Write> DatasetProgress for StartupProgress<W> {
             match outcome { Outcome::Complete => bar.finish_and_clear(), Outcome::Failed => bar.abandon_with_message("failed") }
         }
     }
+}
+fn describe_count(completed: u64, total: Option<u64>, unit: &str) -> String {
+    match total { Some(total) => format!("{completed} of {total} {unit}"), None => format!("{completed} {unit}") }
 }
 impl<W: Write> Drop for StartupProgress<W> {
     fn drop(&mut self) { self.stop_display(); let _ = self.flush(); } // cleanup never claims that unfinished work succeeded

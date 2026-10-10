@@ -37,7 +37,7 @@ pub(crate) fn load_catalog(state: &mut ApplicationState, directories: &DatasetDi
     let catalog = {
         let mut progress = astroterm::terminal::open_startup_progress(state.config.no_progress);
         let result = state.timings.measure_steps("Dataset loading", |times| {
-            astroterm::sky::load_sky_catalog_with_progress(state.config.dataset.as_ref(), directories, &mut progress, times)
+            astroterm::sky::load_sky_catalog_with_times(state.config.dataset.as_ref(), directories, &mut progress, times)
         });
         progress.finish(result.is_ok()); // stop all startup drawing before terminal setup or error reporting
         result
@@ -58,7 +58,7 @@ pub(crate) fn load_catalog(state: &mut ApplicationState, directories: &DatasetDi
     }
     state.replace_catalog(catalog);                                          // the single catalog install point
     let catalog = &state.persistent.catalog;
-    eprintln!("Catalog: {} stars loaded.", state.star_counts.loaded);
+    if state.config.dataset.is_some() { eprintln!("Catalog: {} stars loaded.", state.star_counts.loaded); } // the embedded catalog loads silently, as before
 
     #[cfg(feature = "memory-diagnostics")]
     state.timings.record_memory(state.timings.last_memory_step(), || {

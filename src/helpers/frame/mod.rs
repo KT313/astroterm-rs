@@ -104,7 +104,7 @@ pub(crate) fn render_projected_frame(renderer: &mut Renderer, rendering: &mut Re
     clock: &SimulationClock, observer: &Observer, counts: &astroterm::model::StarCounts, times: &mut StepTimes) -> io::Result<astroterm::model::RenderOutcome> {
     renderer.set_cache_diagnostics(rendering, observation_stats, projection.stats()); // update the debug display's reuse counts
     let projected = borrow_frame_projection(sky, view, viewport, projection, times); // read completed geometry without copying it
-    renderer.render_prepared_frame_with_counts(rendering, &projected, view, utc, clock, observer, counts, times)   // assemble the image and text, then present them
+    renderer.render_prepared_frame(rendering, &projected, view, utc, clock, observer, counts, times)   // assemble the image and text, then present them
 }
 
 /// Borrow the completed projection once, then describe that same view outside the assembly timer.

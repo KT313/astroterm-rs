@@ -10,7 +10,7 @@ The display runs on stderr before terminal setup and ends before the sky rendere
 - Multiple source files use one readiness bar and one current-task bar, not one bar per file.
 
 `--no-progress` disables progress updates; warnings, errors and final loading notices remain. Redirecting
-stderr, or using `TERM=dumb`, produces plain text. An unusually long or explicitly flushed partial notice switches to plain output so redraws
+stderr, or using `TERM=dumb`, produces plain text: one line per stage change and at most one count line per second. An unusually long or explicitly flushed partial notice switches to plain output so redraws
 cannot overwrite its text. Progress does not change download verification, cache
 validity, numerical calculations or the simulation frame loop. No overall startup percentage is estimated.
 
