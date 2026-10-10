@@ -49,6 +49,7 @@ pub fn catalog_fingerprint() -> [u8; 32] {
     for source in [
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/catalog/athyg.rs")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/catalog/magnitude.rs")).as_slice(),
+        include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/catalog/gaia/validation.rs")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/catalog/space_motion.rs")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/catalog/bsc5.rs")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/catalog/tables.rs")).as_slice(),

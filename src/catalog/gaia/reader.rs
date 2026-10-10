@@ -1,7 +1,7 @@
 //! Stream one verified compressed ECSV file, retaining just one CSV record and one converted input row.
 use super::{GaiaSource, GaiaReadStats};
 use crate::progress::{DatasetProgress, Stage, Unit, Outcome};
-use crate::catalog::{datasets::GaiaFile, StarId, validate_magnitude};
+use crate::catalog::{datasets::GaiaFile, StarId};
 use csv::{ByteRecord, ReaderBuilder};
 use flate2::read::MultiGzDecoder;
 use std::{collections::HashSet, fs::File, io::{self, BufReader, Read}};
@@ -42,15 +42,11 @@ fn read_sources(reader: impl Read, first_cell: u32, last_cell: u32, stats: &mut 
                     text.parse::<f64>().ok().filter(|value| value.is_finite()).ok_or_else(|| invalid(format!("invalid {} for Gaia DR3 {source_id}", FIELDS[i])))
                 }).transpose()?;
             }
-            let [ra, dec, epoch, pmra, pmdec, parallax, parallax_signal, radial_velocity, magnitude, bp, rp] = values;
-            if ra.is_some_and(|v| !(0.0..360.0).contains(&v)) || dec.is_some_and(|v| !(-90.0..=90.0).contains(&v)) { return Err(invalid("RA/Dec outside valid range")); }
-            let Some(epoch) = epoch else { return Err(invalid("missing ref_epoch")); };
-            if epoch != 2016.0 { return Err(invalid("expected Gaia DR3 ref_epoch 2016.0")); }
-            let (Some(ra), Some(dec), Some(magnitude)) = (ra, dec, magnitude) else { stats.missing_required += 1; return Ok(()); };
-            validate_magnitude(magnitude).map_err(io::Error::other)?;
-            consume(GaiaSource { id, source_id, ra: ra.to_radians(), dec: dec.to_radians(), epoch, pmra, pmdec,
-                parallax, parallax_signal, radial_velocity, magnitude, bp, rp })
-                .map_err(|error| io::Error::new(error.kind(), format!("Gaia DR3 {source_id}: {error}")))
+            match crate::catalog::validate_gaia_input(id, source_id, values)? {
+                Some(source) => consume(source).map_err(|error| io::Error::new(error.kind(), format!("Gaia DR3 {source_id}: {error}")))?,
+                None => stats.missing_required += 1,
+            }
+            Ok(())
         })();
         result.map_err(|error| io::Error::new(error.kind(), format!("row {row}: {error}")))?;
         if (stats.rows - start).is_multiple_of(crate::constants::STARTUP_PROGRESS_ROWS) {

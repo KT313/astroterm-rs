@@ -85,3 +85,13 @@ fn failed_input_reports_failure_and_cache_write_failure_stays_recoverable() {
     assert_eq!(reporter.outcomes.last(), Some(&Outcome::Complete));
     assert!(String::from_utf8_lossy(&reporter.text).contains("Could not write cache"));
 }
+
+#[test]
+fn zero_mast_does_not_need_storage_or_network_and_reports_gaia_policy() {
+    let mut reporter=Recording::default();
+    let catalog=load_sky_catalog_with_times(Some(&Dataset::GaiaGdr3Stars{stars:0}),&DatasetDirectories::default(),&mut reporter,&mut StepTimes::default()).unwrap();
+    assert!(catalog.catalog.stars.is_empty());
+    assert!(!reporter.stages.contains(&Stage::Connect));
+    assert!(!reporter.stages.contains(&Stage::Download));
+    assert_eq!(String::from_utf8(reporter.text).unwrap().matches("no G-to-V conversion").count(),1);
+}

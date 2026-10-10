@@ -29,6 +29,8 @@ required-features = ["memory-diagnostics"]
 
 [dependencies]
 base64-simd = "0.8"
+bincode = { version = "2", features = ["serde"] }
+bytes = "1"
 bytemuck = "1.25.2"
 chrono = "0.4.45"
 clap = { version = "4.6.7", features = ["derive", "wrap_help"] }
@@ -42,6 +44,7 @@ indicatif = { version = "0.18", default-features = false }
 image = { version = "0.25", default-features = false }
 md-5 = "0.11"
 ndarray = "0.17"
+parquet = { version = "60", default-features = false, features = ["zstd"] }
 ratatui = { version = "0.30", default-features = false, features = ["crossterm_0_29"] }
 ratatui-image = { version = "11.1", default-features = false, features = ["crossterm"] }
 serde = { version = "1.0.229", features = ["derive"] }

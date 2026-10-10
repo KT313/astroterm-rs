@@ -1,5 +1,7 @@
 //! Convert Gaia inputs once, then use the same compact storage, sorting and grid preparation as other catalogs.
 mod conversion;
+mod mast;
+pub(super) use mast::load_mast_catalog;
 use crate::catalog::{datasets::GaiaFile, read_gaia_file, GaiaReadStats, StarNames};
 use crate::model::{PreparedCatalog, StarStorage};
 use crate::timing::StepTimes;

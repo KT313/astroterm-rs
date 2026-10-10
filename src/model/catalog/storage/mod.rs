@@ -215,6 +215,19 @@ impl StarStorage {
     }
 
     pub(crate) fn push(&mut self, star: Star) -> io::Result<f32> {
+        let (row, bound, clipping) = Self::prepare_row(star)?;
+        self.push_prepared(row, clipping);
+        Ok(bound)
+    }
+
+    /// Append a previously qualified compact record without repeating astronomical calculations.
+    pub(crate) fn push_prepared(&mut self, row: StarRow, clipping: [u64; 2]) {
+        self.clipping.lower += clipping[0];
+        self.clipping.upper += clipping[1];
+        self.rows_mut().push(row);
+    }
+
+    pub(crate) fn prepare_row(star: Star) -> io::Result<(StarRow, f32, [u64; 2])> {
         let magnitude = encode_magnitude(star.magnitude).map_err(|error| invalid(format!("Star {}: {error}", star.id.0)))?;
         // decide singular handling on quantized inputs, then certify compact direction accuracy
         let original = star.motion;
@@ -244,9 +257,7 @@ impl StarStorage {
 
         // derive conservative keys and bounds from exactly the values observation will use
         let (brightness_key, clipping) = encode_brightness_bound(motion.brightest_magnitude(decode_magnitude(magnitude)));
-        self.clipping.lower += clipping.lower;
-        self.clipping.upper += clipping.upper;
-        self.rows_mut().push(StarRow {
+        let row = StarRow {
             u0: pack(compact.u0),
             w: pack(compact.w),
             magnitude,
@@ -255,8 +266,8 @@ impl StarStorage {
             id: star.id.0,
             name,
             display_color: star.display_color.index(),
-        });
-        Ok(((motion.motion_bound() + QUANTIZATION_MARGIN) as f32).next_up())
+        };
+        Ok((row, ((motion.motion_bound() + QUANTIZATION_MARGIN) as f32).next_up(), [clipping.lower, clipping.upper]))
     }
 
     /// Reorder in place using a permutation, without an expanded or second compact catalog.

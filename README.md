@@ -38,10 +38,11 @@ The built-in Bright Star Catalog works offline without downloads. For about 2.5 
 For a larger, partial-sky Gaia subset:
 
 ```sh
-./target/release/astroterm -i Tokyo --dataset gaia-gdr3 --dataset-files 1 -t 10 -c
+./target/release/astroterm -i Tokyo --dataset gaia-gdr3 --dataset-stars 1000000 -t 10 -c
 ```
 
-Each file is about 230 MB. Only missing files are downloaded. See [Gaia loading and limitations](docs/gaia-dataset.md).
+MAST downloads only needed columns and reuses converted blocks when you increase the count.
+Use `--dataset-files 1` instead for ESA bulk files. See [Gaia loading and limitations](docs/gaia-dataset.md).
 
 Dataset loading shows progress before the sky opens. Use `--no-progress` to hide progress updates.
 With `-m`, the panel shows stars loaded, in candidate regions, passed filtering and passed projection.
@@ -136,7 +137,8 @@ source <(./target/release/astroterm --bash-completions)
 
 ## Differences from the C version
 
-Gaia DR3 file subsets are also supported, using Gaia G brightness in the existing magnitude field.
+Gaia DR3 subsets are supported through ESA bulk files or selective MAST Parquet downloads, using G brightness
+in the existing magnitude field. The MAST path removes identical adjacent copies from a known provider duplication.
 
 Solar-system results refresh when simulated time or observer location changes; paused frames reuse completed results.
 A cache TTL of `0` permits same-time reuse; `--disable-cache` disables it.

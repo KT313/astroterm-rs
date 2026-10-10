@@ -50,7 +50,7 @@ pub(super) fn fingerprint_source(path: &Option<PathBuf>) -> [u8; 32] {
     fingerprint
 }
 
-pub(super) fn try_load_prepared_catalog(path: &Option<PathBuf>, fingerprint: &[u8; 32], notices: &mut dyn crate::progress::DatasetProgress, times: &mut StepTimes) -> io::Result<Option<PreparedCatalog>> {
+pub(crate) fn try_load_prepared_catalog(path: &Option<PathBuf>, fingerprint: &[u8; 32], notices: &mut dyn crate::progress::DatasetProgress, times: &mut StepTimes) -> io::Result<Option<PreparedCatalog>> {
     if let Some(path) = path {
         let cached = times.measure("Prepared catalog lookup", || super::format::load_cached_catalog_with_progress(path, fingerprint, notices));
         times.describe("Prepared catalog lookup", || match &cached {

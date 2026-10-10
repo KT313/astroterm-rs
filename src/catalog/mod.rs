@@ -3,7 +3,9 @@
 
 mod athyg;
 mod gaia;
-pub(crate) use gaia::{GaiaSource, GaiaReadStats, read_gaia_file};
+mod mast;
+pub(crate) use mast::{BlobStore, digest as mast_digest, encode as encode_mast, decode as decode_mast, MastRow, MastBlock, MastSelection, resolve_mast, read_block as read_mast_block};
+pub(crate) use gaia::{GaiaSource, GaiaReadStats, read_gaia_file, validate_gaia_input};
 mod bsc5;
 pub mod cache;
 mod cities;

@@ -22,6 +22,7 @@ const ATHYG_FILE: &str = "athyg_40.csv.gz";
 pub enum Dataset {
     Athyg,
     GaiaGdr3 { files: u16 },
+    GaiaGdr3Stars { stars: u32 },
     Path(PathBuf),
 }
 impl Dataset {
@@ -29,13 +30,20 @@ impl Dataset {
     pub fn parse(value: &OsStr) -> Result<Self, String> { Self::parse_with_files(value, None) }
 
     pub fn parse_with_files(value: &OsStr, files: Option<u16>) -> Result<Self, String> {
+        Self::parse_selection(value, files, None)
+    }
+
+    pub fn parse_selection(value: &OsStr, files: Option<u16>, stars: Option<u32>) -> Result<Self, String> {
+        if files.is_some() && stars.is_some() { return Err("choose either --dataset-files or --dataset-stars".into()); }
         let path = Path::new(value);
         let has_separator = value.as_encoded_bytes().iter().any(|&b| b == b'/' || b == b'\\');
         if !path.is_file() && !has_separator && value == "gaia-gdr3" {
-            let files = files.ok_or("--dataset gaia-gdr3 requires --dataset-files (0..=3386)")?;
+            if let Some(stars) = stars { return Ok(Self::GaiaGdr3Stars { stars }); }
+            let files = files.ok_or("--dataset gaia-gdr3 requires --dataset-files or --dataset-stars")?;
             if files > GAIA_DR3_FILE_COUNT { return Err("--dataset-files must be between 0 and 3386".into()); }
             return Ok(Self::GaiaGdr3 { files });
         }
+        if stars.is_some() { return Err("--dataset-stars is only valid with --dataset gaia-gdr3".into()); }
         if files.is_some() { return Err("--dataset-files is only valid with --dataset gaia-gdr3".into()); }
         if path.is_file() || has_separator { return Ok(Self::Path(path.to_owned())); }
         if value == "athyg" { return Ok(Self::Athyg); }
@@ -62,7 +70,7 @@ pub fn resolve_dataset(dataset: &Dataset, directories: &DatasetDirectories, noti
     notices.begin_stage(Stage::Resolve, "", Unit::Work, None);
     match dataset {
         Dataset::Path(path) => Ok(path.clone()),
-        Dataset::GaiaGdr3 { .. } => Err(io::Error::other("Gaia uses the multi-file catalog loader")),
+        Dataset::GaiaGdr3 { .. } | Dataset::GaiaGdr3Stars { .. } => Err(io::Error::other("Gaia uses the multi-file catalog loader")),
         Dataset::Athyg => {
             let directory = directories.data.as_ref().ok_or_else(|| {
                 io::Error::other(format!(

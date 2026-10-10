@@ -3,7 +3,7 @@
 use soa_derive::StructOfArray;
 
 /// One prepared star. Every field is plain old data, so each column is a castable cache section.
-#[derive(Clone, Copy, Debug, PartialEq, StructOfArray)]
+#[derive(Clone, Copy, Debug, PartialEq, StructOfArray, serde::Serialize, serde::Deserialize)]
 #[soa_derive(Clone, Debug, PartialEq)]
 pub struct StarRow {
     pub u0: [f32; 3],          // stored J2000 unit direction

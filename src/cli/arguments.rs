@@ -128,7 +128,7 @@ pub struct Arguments {
     #[arg(short = 'R', long)]
     pub refraction: bool,
 
-    /// Load athyg (~200 MB), gaia-gdr3 (requires --dataset-files), or an AT-HYG CSV (.csv or .csv.gz), instead of
+    /// Load athyg (~200 MB), gaia-gdr3 (requires --dataset-files or --dataset-stars), or an AT-HYG CSV (.csv or .csv.gz), instead of
     /// the built-in Yale Bright Star Catalog. Existing files and values containing a path separator are paths.
     /// Constellation figures are matched by HR number for AT-HYG; Gaia subsets have no figures
     #[arg(long, value_name = "name|path")]
@@ -137,6 +137,11 @@ pub struct Arguments {
     /// Number of Gaia DR3 files to load, in fixed sky order (0 means no catalog stars). Only for gaia-gdr3
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(u16).range(0..=i64::from(crate::catalog::datasets::GAIA_DR3_FILE_COUNT)))]
     pub dataset_files: Option<u16>,
+
+    /// Select the first N physical Gaia DR3 rows from MAST Parquet (whole blocks may be downloaded).
+    /// Missing measurements and duplicate copies reduce the loaded count. Only for gaia-gdr3; 0 means no stars
+    #[arg(long, value_name = "N", conflicts_with = "dataset_files")]
+    pub dataset_stars: Option<u32>,
 
     /// Hide dataset progress updates; warnings, errors and final loading notices remain visible
     #[arg(long)]

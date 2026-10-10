@@ -46,8 +46,8 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
         }
     }
 
-    if arguments.dataset.is_none() && arguments.dataset_files.is_some() {
-        return Err(ConfigError("--dataset-files is only valid with --dataset gaia-gdr3".into()));
+    if arguments.dataset.is_none() && (arguments.dataset_files.is_some() || arguments.dataset_stars.is_some()) {
+        return Err(ConfigError("--dataset-files / --dataset-stars are only valid with --dataset gaia-gdr3".into()));
     }
     // observer location (a city overrides latitude and longitude) and time
     let observer = match &arguments.city {
@@ -110,7 +110,7 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
         dataset: arguments
             .dataset
             .as_ref()
-            .map(|p| Dataset::parse_with_files(p.as_os_str(), arguments.dataset_files))
+            .map(|p| Dataset::parse_selection(p.as_os_str(), arguments.dataset_files, arguments.dataset_stars))
             .transpose()
             .map_err(ConfigError)?,
     })
@@ -267,6 +267,17 @@ mod tests {
         assert!(disabled.no_progress);
         disabled.no_progress = false;
         assert_eq!(normal, disabled);
+    }
+
+    #[test]
+    fn gaia_star_selection_is_explicit_and_exclusive() {
+        for n in ["0", "1", "4294967295"] {
+            let config = config_from(&["--dataset", "gaia-gdr3", "--dataset-stars", n]).unwrap();
+            assert_eq!(config.dataset, Some(Dataset::GaiaGdr3Stars { stars: n.parse().unwrap() }));
+        }
+        for args in [&["--dataset-stars", "1"][..], &["--dataset", "athyg", "--dataset-stars", "1"], &["--dataset", "./gaia.csv", "--dataset-stars", "1"]] { assert!(config_from(args).is_err()); }
+        for n in ["-1", "1.5", "4294967296"] { assert!(Arguments::try_parse_from(["astroterm", "--dataset", "gaia-gdr3", "--dataset-stars", n]).is_err()); }
+        assert!(Arguments::try_parse_from(["astroterm", "--dataset", "gaia-gdr3", "--dataset-stars", "1", "--dataset-files", "1"]).is_err());
     }
 
     #[test]
