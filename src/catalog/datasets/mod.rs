@@ -86,6 +86,7 @@ pub fn resolve_dataset(dataset: &Dataset, directories: &DatasetDirectories, noti
                     .timeout_recv_response(Some(Duration::from_secs(30)))
                     .build()
                     .new_agent();
+                notices.begin_stage(Stage::Connect, "AT-HYG", Unit::Work, None); // show activity before the server starts sending data
                 let mut response = agent
                     .get(ATHYG_URL)
                     .header("Accept-Encoding", "identity")

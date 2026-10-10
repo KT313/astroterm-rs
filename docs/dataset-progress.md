@@ -3,7 +3,7 @@
 BSC, AT-HYG, local AT-HYG CSV/gzip and Gaia use the same startup progress display. Each keeps its own parser.
 The display runs on stderr before terminal setup and ends before the sky renderer opens.
 
-- Downloads and existing Gaia checksum checks show bytes processed.
+- A spinner shows activity while waiting for the download server. Downloads and existing Gaia checksum checks then show bytes processed.
 - Parsing shows rows processed and retained sources where available; it does not scan the file first to count rows.
 - Compact preparation shows a known entry total. Sorting and indexing use spinners.
 - Prepared-cache hits show reading and validation, without pretending to parse the source again.

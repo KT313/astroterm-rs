@@ -117,3 +117,42 @@ fn transfer_progress_handles_unknown_lengths_and_marks_only_verified_success() {
     assert!(!recorder.outcomes.contains(&Outcome::Complete));
     assert_eq!(fs::read(&path).unwrap(), b"test");
 }
+
+#[test]
+fn connecting_stage_is_active_before_fetch_and_switches_only_after_response() {
+    use std::cell::Cell;
+    struct Recorder<'a> { active: &'a Cell<Option<Stage>>, stages: Vec<Stage> }
+    impl Write for Recorder<'_> {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> { Ok(bytes.len()) }
+        fn flush(&mut self) -> io::Result<()> { Ok(()) }
+    }
+    impl DatasetProgress for Recorder<'_> {
+        fn begin_stage(&mut self, stage: Stage, _: &str, unit: Unit, total: Option<u64>) {
+            if stage == Stage::Connect { assert_eq!((unit, total), (Unit::Work, None)); }
+            self.active.set(Some(stage));
+            self.stages.push(stage);
+        }
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let entries = [entry(0, b"test")];
+    let active = Cell::new(None);
+    let mut recorder = Recorder { active: &active, stages: Vec::new() };
+    let error = resolve_entries(&entries, directory.path(), &mut recorder, &mut StepTimes::default(), |_| {
+        assert_eq!(active.get(), Some(Stage::Connect));
+        Err(io::Error::new(io::ErrorKind::TimedOut, "server did not respond"))
+    }).unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+    assert_eq!(recorder.stages, [Stage::Connect]);
+    assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
+
+    recorder.stages.clear();
+    resolve_entries(&entries, directory.path(), &mut recorder, &mut StepTimes::default(), |_| {
+        assert_eq!(active.get(), Some(Stage::Connect));
+        Ok((Box::new(Cursor::new(b"test")), Some(4)))
+    }).unwrap();
+    assert_eq!(recorder.stages, [Stage::Connect, Stage::Download, Stage::Install]);
+
+    recorder.stages.clear();
+    resolve_entries(&entries, directory.path(), &mut recorder, &mut StepTimes::default(), |_| panic!("valid local data must not connect")).unwrap();
+    assert_eq!(recorder.stages, [Stage::Verify]);
+}

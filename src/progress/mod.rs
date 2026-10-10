@@ -2,11 +2,11 @@
 use std::io::{self, Read, Write};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Stage { Resolve, Verify, Download, Install, Parse, Convert, Sort, Index, ReadCache, ValidateCache, WriteCache, FinalizeCache }
+pub enum Stage { Resolve, Verify, Connect, Download, Install, Parse, Convert, Sort, Index, ReadCache, ValidateCache, WriteCache, FinalizeCache }
 impl Stage {
     pub fn label(self) -> &'static str {
         match self {
-            Self::Resolve => "Locating dataset", Self::Verify => "Verifying source", Self::Download => "Downloading",
+            Self::Resolve => "Locating dataset", Self::Verify => "Verifying source", Self::Connect => "Waiting for server", Self::Download => "Downloading",
             Self::Install => "Installing dataset", Self::Parse => "Loading stars", Self::Convert => "Preparing stars", Self::Sort => "Sorting stars by region",
             Self::Index => "Building sky index", Self::ReadCache => "Reading prepared catalog", Self::ValidateCache => "Validating prepared catalog",
             Self::WriteCache => "Saving prepared catalog", Self::FinalizeCache => "Finalizing prepared catalog",

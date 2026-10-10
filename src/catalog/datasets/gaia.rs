@@ -70,6 +70,7 @@ fn resolve_entries(entries: &[GaiaEntry], directory: &Path, notices: &mut dyn Da
                 stamp
             } else {
                 times.measure("Gaia file download", || {
+                    notices.begin_stage(Stage::Connect, &entry.name, Unit::Work, None); // animate while connecting and waiting for response headers
                     let (reader, length) = fetch(entry)?;
                     install_verified(reader, &path, entry.checksum, length, notices)
                 })?
