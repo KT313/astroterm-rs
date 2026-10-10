@@ -18,6 +18,7 @@ pub enum SkyRegion {
 pub struct SelectionStats {
     pub cells: usize,
     pub candidates: usize,
+    pub region_stars: usize,
     pub brute_force: bool,
 }
 
@@ -25,6 +26,7 @@ pub struct SelectionStats {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct SelectedRegion {
     pub(crate) cells: Vec<usize>,
+    pub(crate) star_count: usize,
     pub(crate) brute_force: bool,
 }
 

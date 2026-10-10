@@ -61,9 +61,11 @@ pub(crate) fn prepare_observer_frame(
 }
 
 /// Select only conservative candidates and the endpoints needed by constellation lines.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn select_stars_frame(storage: &mut astroterm::state::StarSelectionCache, catalog: &std::sync::Arc<astroterm::model::SkyCatalog>,
-    observer: &astroterm::model::ObserverState, view: &View, threshold: f64, refraction: bool, times: &mut StepTimes) {
+    observer: &astroterm::model::ObserverState, view: &View, threshold: f64, refraction: bool, count: &mut usize, times: &mut StepTimes) {
     times.measure_steps("Star selection", |times| astroterm::sky::select_cached_stars(storage, catalog, observer, threshold, refraction, astroterm::projection::select_view_region(view), times));
+    *count = storage.region_star_count();
 }
 
 /// Update intrinsic directions and brightness without access to observer or camera data.
@@ -75,19 +77,23 @@ pub(crate) fn simulate_stars_frame(stars: &mut astroterm::state::StellarSimulati
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn observe_frame<'a>(
     observation: &'a mut ObservationCache, stars: astroterm::state::StellarResults<'a>, bodies: astroterm::state::PreparedBodies<'_>,
-    observer: &astroterm::model::ObserverState, threshold: f64, refraction: bool, sky: &'a mut Sky, times: &mut StepTimes,
+    observer: &astroterm::model::ObserverState, threshold: f64, refraction: bool, sky: &'a mut Sky, count: &mut usize, times: &mut StepTimes,
 ) -> astroterm::state::RegionalObservation<'a> {
-    times.measure_steps("Observation", |times| astroterm::sky::observe_cached_regions(observation, stars, bodies, observer, threshold, refraction, sky, times))
+    let observed = times.measure_steps("Observation", |times| astroterm::sky::observe_cached_regions(observation, stars, bodies, observer, threshold, refraction, sky, times));
+    let stats = observed.sky().corrections;
+    *count = stats.evaluated - stats.skipped - stats.endpoint_only;
+    observed
 }
 
 /// Project the observed sky for the current viewport within the existing Projection timer.
 pub(crate) fn project_frame(
     sky: astroterm::state::RegionalObservation<'_>, view: &View, viewport: astroterm::model::ProjectionViewport, time: FrameTime,
-    projection_cache: &mut ProjectionCache, step_times: &mut StepTimes,
+    projection_cache: &mut ProjectionCache, count: &mut usize, step_times: &mut StepTimes,
 ) {
     step_times.measure_steps("Projection", |steps| {
         astroterm::projection::project_cached_regions(projection_cache, sky, view, viewport, time.tt, steps);
-    })
+    });
+    *count = projection_cache.visible_star_count();
 }
 
 /// Publish cache statistics, borrow the completed geometry and render it without copying the projected data.
@@ -95,10 +101,10 @@ pub(crate) fn project_frame(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn render_projected_frame(renderer: &mut Renderer, rendering: &mut RenderingState, sky: astroterm::state::RegionalObservation<'_>, view: &View,
     viewport: ProjectionViewport, projection: &ProjectionCache, observation_stats: CacheStats, utc: f64,
-    clock: &SimulationClock, observer: &Observer, times: &mut StepTimes) -> io::Result<astroterm::model::RenderOutcome> {
+    clock: &SimulationClock, observer: &Observer, counts: &astroterm::model::StarCounts, times: &mut StepTimes) -> io::Result<astroterm::model::RenderOutcome> {
     renderer.set_cache_diagnostics(rendering, observation_stats, projection.stats()); // update the debug display's reuse counts
     let projected = borrow_frame_projection(sky, view, viewport, projection, times); // read completed geometry without copying it
-    renderer.render_prepared_frame(rendering, &projected, view, utc, clock, observer, times)   // assemble the image and text, then present them
+    renderer.render_prepared_frame_with_counts(rendering, &projected, view, utc, clock, observer, counts, times)   // assemble the image and text, then present them
 }
 
 /// Borrow the completed projection once, then describe that same view outside the assembly timer.
@@ -116,3 +122,6 @@ pub(crate) fn stop_on_quit(input: &FrameInput, times: &mut StepTimes) -> bool {
     times.cancel_memory_frame();
     true
 }
+
+#[cfg(test)]
+mod tests;

@@ -4,7 +4,7 @@
 //! inputs, select stars, simulate those stars, apply observation corrections, project, then render through
 //! [`terminal::Renderer`]. Simulation and selection have separate owners and exchange read-only borrowed views.
 //!
-//! Pure foundations ([`astro`], [`canvas`], [`catalog`], [`cache`], [`rows`] and [`timing`]) support the shared records in
+//! Pure foundations ([`astro`], [`canvas`], [`catalog`], [`cache`], [`rows`], [`progress`] and [`timing`]) support the shared records in
 //! [`model`]. Catalog and observed data, view settings, projected geometry and validated configuration live there;
 //! representation accessors and constructors do not depend on higher processing modules. [`sky`], [`projection`]
 //! and [`scene`] contain preparation, correction, geometric and drawing algorithms over restricted borrowed inputs.
@@ -33,6 +33,7 @@ pub mod controls;
 pub mod metadata;
 pub mod model;
 pub mod projection;
+pub mod progress;
 pub mod rows;
 pub mod scene;
 pub mod sky;

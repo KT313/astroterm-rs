@@ -56,6 +56,10 @@ impl ProjectionCache {
         DrawOrderBuffers { cells: self.stars.value(), candidate: &mut self.order_candidate, order: &mut self.order, scratch: &mut self.draw_order_scratch }
     }
 
+    pub fn visible_star_count(&self) -> usize {
+        if self.regional_active { self.regional_spans.last().map_or(0, |span| span.end) }
+        else { self.stars.stored().map_or(0, Vec::len) }
+    }
     pub fn new(config: CacheConfig) -> Self {
         Self {
             config,

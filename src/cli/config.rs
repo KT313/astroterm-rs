@@ -94,6 +94,7 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
     };
     Ok(Config {
         debug_singleframe: arguments.debug_singleframe,
+        no_progress: arguments.no_progress,
         debug_log_data: arguments.debug_log_data,
         debug_memory: arguments.debug_memory,
         cache: crate::cache::CacheConfig::load(arguments.cache_config.as_deref(), arguments.disable_cache)
@@ -257,6 +258,15 @@ mod tests {
         );
         assert!(!config.terminal.metadata_panel && !config.simulation.refraction && !config.terminal.quit_on_any_key);
         assert!(!config.terminal.frame_times && config.render.dynamic_names);
+    }
+
+    #[test]
+    fn progress_switch_does_not_change_dataset_or_diagnostics() {
+        let normal = config_from(&["-d", "2025-03-01T11:00:00"]).unwrap();
+        let mut disabled = config_from(&["-d", "2025-03-01T11:00:00", "--no-progress"]).unwrap();
+        assert!(disabled.no_progress);
+        disabled.no_progress = false;
+        assert_eq!(normal, disabled);
     }
 
     #[test]

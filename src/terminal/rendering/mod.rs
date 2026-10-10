@@ -85,19 +85,27 @@ impl Renderer {
     }
     #[allow(clippy::too_many_arguments)]
     pub fn render_prepared_frame(&mut self, state: &mut RenderingState, projected: &crate::model::RenderProjection<'_>, view: &View, date: f64, clock: &SimulationClock, observer: &Observer, times: &mut StepTimes) -> io::Result<crate::model::RenderOutcome> {
+        self.render_prepared_frame_with_counts(state, projected, view, date, clock, observer, &projected.sky().star_counts(), times)
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_prepared_frame_with_counts(&mut self, state: &mut RenderingState, projected: &crate::model::RenderProjection<'_>, view: &View, date: f64, clock: &SimulationClock, observer: &Observer, counts: &crate::model::StarCounts, times: &mut StepTimes) -> io::Result<crate::model::RenderOutcome> {
         if let RenderingState::Pixels(state) = state {
-            let outcome = render_pixel_frame(state, &mut self.session, projected.sky(), Some(projected), view, date, clock, observer, times)?;
+            let outcome = render_pixel_frame(state, &mut self.session, projected.sky(), Some(projected), view, date, clock, observer, counts, times)?;
             times.record_frame_presentation(outcome.was_presented());
             return Ok(outcome);
         }
-        self.render_frame(state, projected.sky(), view, date, clock, observer, times)?;
+        self.render_frame_with_counts(state, projected.sky(), view, date, clock, observer, counts, times)?;
         Ok(crate::model::RenderOutcome::Presented)
     }
     #[allow(clippy::too_many_arguments)]
     pub fn render_frame(&mut self, state: &mut RenderingState, sky: &ProjectedSky<'_>, view: &View, date: f64, clock: &SimulationClock, observer: &Observer, times: &mut StepTimes) -> io::Result<()> {
+        self.render_frame_with_counts(state, sky, view, date, clock, observer, &sky.star_counts(), times)
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn render_frame_with_counts(&mut self, state: &mut RenderingState, sky: &ProjectedSky<'_>, view: &View, date: f64, clock: &SimulationClock, observer: &Observer, counts: &crate::model::StarCounts, times: &mut StepTimes) -> io::Result<()> {
         let outcome = match state {
-            RenderingState::Chars(state) => { render_character_frame(state, &mut self.session, sky, view, date, clock, observer, times)?; crate::model::RenderOutcome::Presented }
-            RenderingState::Pixels(state) => render_pixel_frame(state, &mut self.session, sky, None, view, date, clock, observer, times)?,
+            RenderingState::Chars(state) => { render_character_frame(state, &mut self.session, sky, view, date, clock, observer, counts, times)?; crate::model::RenderOutcome::Presented }
+            RenderingState::Pixels(state) => render_pixel_frame(state, &mut self.session, sky, None, view, date, clock, observer, counts, times)?,
             RenderingState::Pending => panic!("rendering state is not initialized"),
         };
         times.record_frame_presentation(outcome.was_presented());

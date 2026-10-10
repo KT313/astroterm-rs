@@ -27,7 +27,7 @@ fn populated_regions(catalog: &SkyCatalog) -> [usize; 2] {
 fn select_cells(storage: &mut StarSelectionCache, catalog: &SkyCatalog, cells: &[usize], threshold: f64, epoch: f64, brute_force: bool) {
     let mut times = StepTimes::default();
     let observer = crate::sky::compose_observer_state(crate::model::FrameTime { utc: epoch, ut1: epoch, tt: epoch }, Default::default(), Default::default(), crate::astro::Matrix3::IDENTITY, Default::default(), false);
-    storage.region.store((SkyRegion::All, observer, false), epoch, 0.0, SelectedRegion { cells: cells.to_vec(), brute_force });
+    storage.region.store((SkyRegion::All, observer, false), epoch, 0.0, SelectedRegion { cells: cells.to_vec(), star_count: cells.iter().map(|&r| catalog.grid.offsets[r + 1] - catalog.grid.offsets[r]).sum(), brute_force });
     storage.statistics = update_brightness_bounds(&mut storage.region_candidates, &mut storage.candidate_region_stats, &storage.region, &storage.config, epoch, threshold, catalog, &mut times);
     update_candidate_validation(&mut storage.region_selected, &mut storage.selected_region_stats, &storage.region_candidates, &storage.region, &storage.config, epoch, &mut times);
     update_selection_request(&storage.region.value().cells, &storage.region_selected, &mut storage.requested_sources, &mut storage.selection_revision, &mut times);

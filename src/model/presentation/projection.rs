@@ -213,6 +213,12 @@ pub struct ProjectedSky<'a> {
 }
 
 impl ProjectedSky<'_> {
+    pub fn star_counts(&self) -> crate::model::StarCounts {
+        let stats = self.correction_stats;
+        crate::model::StarCounts { loaded: self.stars.observed.catalog().len(), candidate_regions: self.selection.region_stars,
+            filtered: stats.evaluated - stats.skipped - stats.endpoint_only, projected: self.stars.len() }
+    }
+
     pub fn magnitude_clipping(&self) -> crate::catalog::MagnitudeClipping {
         self.stars.observed.catalog().magnitude_clipping()
     }

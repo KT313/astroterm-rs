@@ -85,3 +85,34 @@ fn zero_requires_neither_data_directory_nor_network() {
     assert!(resolve_gaia_files(0, &DatasetDirectories::default(), &mut Vec::new(), &mut StepTimes::default()).unwrap().is_empty());
     assert!(resolve_gaia_files(3387, &DatasetDirectories::default(), &mut Vec::new(), &mut StepTimes::default()).is_err());
 }
+
+#[test]
+fn transfer_progress_handles_unknown_lengths_and_marks_only_verified_success() {
+    #[derive(Default)]
+    struct Recorder { bytes: Vec<u8>, stages: Vec<(Stage, Option<u64>)>, positions: Vec<u64>, outcomes: Vec<Outcome> }
+    impl Write for Recorder {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> { self.bytes.write(bytes) }
+        fn flush(&mut self) -> io::Result<()> { Ok(()) }
+    }
+    impl DatasetProgress for Recorder {
+        fn begin_stage(&mut self, stage: Stage, _: &str, _: Unit, total: Option<u64>) { self.stages.push((stage, total)); }
+        fn set_position(&mut self, value: u64) { self.positions.push(value); }
+        fn finish_stage(&mut self, outcome: Outcome) { self.outcomes.push(outcome); }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let checksum = Md5::digest(b"test").into();
+    let path = dir.path().join("test.gz");
+    let mut recorder = Recorder::default();
+    install_verified_with_progress(&b"test"[..], &path, checksum, None, &mut recorder).unwrap();
+    assert!(recorder.stages.contains(&(Stage::Download, None)));
+    assert_eq!(recorder.positions.last(), Some(&4));
+    assert_eq!(recorder.outcomes.last(), Some(&Outcome::Complete));
+    recorder = Recorder::default();
+    assert!(verify_file_with_progress(&path, checksum, &mut recorder).unwrap().is_some());
+    assert_eq!(recorder.stages, [(Stage::Verify, Some(4))]);
+    assert_eq!(recorder.positions.last(), Some(&4));
+    recorder = Recorder::default();
+    assert!(install_verified_with_progress(&b"wrong"[..], &path, checksum, Some(5), &mut recorder).is_err());
+    assert!(!recorder.outcomes.contains(&Outcome::Complete));
+    assert_eq!(fs::read(&path).unwrap(), b"test");
+}

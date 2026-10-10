@@ -26,7 +26,7 @@ pub use presentation::{
     ViewCenter, ProjectionKind, ArcPart, View, ScreenPoint, CartesianCamera, Polar, Cell, ProjectionViewport,
     ProjectedStar, ProjectedPlanet, ProjectedMoon, ProjectedArc, ProjectedConstellation, ProjectedSky,
     ProjectionData, ProjectedStars, RenderOptions, TerminalViewport, Frame, Appearance, ObserverTimeZone,
-    MetadataField, StarColor, RenderProjection, RenderOutcome,
+    MetadataField, StarCounts, StarColor, RenderProjection, RenderOutcome,
 };
 pub(crate) use presentation::{
     DrawnStar, DrawnSpan, RegionalProjectionKey, RegionalOrderKey, RegionalDrawRecord, DrawRecord, StarKey, ProjectionBodyKey, ConstellationKey, HorizonGeometry,
@@ -46,4 +46,4 @@ pub(crate) use catalog::CellCap;
 crate::rows::debug_preview!(Anchor, FrameTime, MoonIllumination, PlanetKind, ProjectionViewport, View, ProjectedMoon, CorrectionStats);
 
 // Scalar selection totals are reported without reconstructing candidate index lists.
-crate::rows::row_columns!(SelectionStats { cells, candidates, brute_force });
+crate::rows::row_columns!(SelectionStats { cells, candidates, region_stars, brute_force });

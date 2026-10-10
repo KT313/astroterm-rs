@@ -74,6 +74,14 @@ impl Table for View {
     fn preview(&self) -> Vec<(usize, Vec<String>)> { vec![(0, vec![preview(self)])] }
 }
 
+impl Table for crate::model::StarCounts {
+    fn shape(&self) -> Vec<usize> { vec![1] }
+    fn rows(&self) -> usize { 1 }
+    fn bytes(&self) -> TableBytes { TableBytes::known(size_of::<Self>(), size_of::<Self>()) }
+    fn columns(&self) -> Vec<Column> { <Self as Row>::columns() }
+    fn preview(&self) -> Vec<(usize, Vec<String>)> { vec![(0, self.cells())] }
+}
+
 /// Keep the original seven-value owner and its byte counts; only the debug preview gets named components.
 pub(crate) struct PreciseMotions<'a>(pub &'a CatalogArray<[f64; 7]>);
 impl Table for PreciseMotions<'_> {
@@ -263,18 +271,18 @@ macro_rules! vector_tuples {
 }
 vector_tuples!((A), (A, B), (A, B, C), (A, B, C, D));
 macro_rules! vector_with_record {
-    ($($ty:ty { $vector:ident, $record:ident }),+) => { $(
+    ($($ty:ty { $vector:ident, $($record:ident),+ }),+) => { $(
         impl Table for $ty {
             fn shape(&self) -> Vec<usize> { self.$vector.shape() }
             fn rows(&self) -> usize { self.$vector.rows() }
             fn bytes(&self) -> TableBytes { self.$vector.bytes() }
             fn columns(&self) -> Vec<Column> { self.$vector.columns() }
             fn preview(&self) -> Vec<(usize, Vec<String>)> { self.$vector.preview() }
-            fn note(&self) -> Option<String> { Some(format!("vector payload only; {}={}", stringify!($record), preview(&self.$record))) }
+            fn note(&self) -> Option<String> { Some(format!("vector payload only; {}", [$(format!("{}={}", stringify!($record), preview(&self.$record))),+].join("; "))) }
         }
     )+ };
 }
-vector_with_record!(BodySamples { planets, moon }, SelectedRegion { cells, brute_force });
+vector_with_record!(BodySamples { planets, moon }, SelectedRegion { cells, star_count, brute_force });
 
 impl Table for StarKeys {
     fn shape(&self) -> Vec<usize> { vec![self.rows()] }

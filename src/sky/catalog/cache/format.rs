@@ -5,9 +5,11 @@ use crate::model::{SkyCatalog, PreparedCatalog, CatalogPreparation, SkyGrid, Con
 use super::super::grid::stored_cell;
 use crate::catalog::{
     StarNames,
-    cache::{PreparedCatalogBytes, invalid, write_sections},
+    cache::{PreparedCatalogBytes, invalid},
     load_constellation_figures,
 };
+#[cfg(test)]
+use crate::catalog::cache::write_sections;
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashSet,
@@ -105,6 +107,11 @@ pub fn cache_path(source: &Path, directory: &Path) -> io::Result<PathBuf> {
 }
 
 pub fn write_cached_catalog(path: &Path, prepared: &PreparedCatalog, fingerprint: &[u8; 32]) -> io::Result<()> {
+    write_cached_catalog_with_progress(path, prepared, fingerprint, &mut crate::progress::NoProgress(io::sink()))
+}
+
+pub(super) fn write_cached_catalog_with_progress(path: &Path, prepared: &PreparedCatalog, fingerprint: &[u8; 32], progress: &mut dyn crate::progress::DatasetProgress) -> io::Result<()> {
+    progress.begin_stage(crate::progress::Stage::ValidateCache, "Checking prepared output", crate::progress::Unit::Work, None);
     let catalog = &prepared.catalog;
     validate_catalog(catalog, &prepared.preparation, true)?;
     let figures = encode_figures(catalog.constellations())?;
@@ -122,11 +129,15 @@ pub fn write_cached_catalog(path: &Path, prepared: &PreparedCatalog, fingerprint
         &[], // reserved exception payload: nonempty records are unsupported in this version
         bytemuck::cast_slice(&clipping),
     ]);
-    write_sections(path, fingerprint, &sections)
+    crate::catalog::cache::write_sections_with_progress(path, fingerprint, &sections, progress)
 }
 
 pub fn load_cached_catalog(path: &Path, fingerprint: &[u8; 32]) -> io::Result<PreparedCatalog> {
-    let data = PreparedCatalogBytes::open(path, fingerprint)?;
+    load_cached_catalog_with_progress(path, fingerprint, &mut crate::progress::NoProgress(io::sink()))
+}
+
+pub(super) fn load_cached_catalog_with_progress(path: &Path, fingerprint: &[u8; 32], progress: &mut dyn crate::progress::DatasetProgress) -> io::Result<PreparedCatalog> {
+    let data = PreparedCatalogBytes::open_with_progress(path, fingerprint, progress)?;
     if data.section_count() != SECTION_COUNT {
         return Err(invalid("catalog section count mismatch"));
     }
@@ -152,6 +163,7 @@ pub fn load_cached_catalog(path: &Path, fingerprint: &[u8; 32]) -> io::Result<Pr
     let preparation = CatalogPreparation { motion_bounds: data.decode(MOTION_BOUNDS)? };
     drop(data); // release the file snapshot; the catalog owns every decoded column
     validate_catalog(&catalog, &preparation, false)?;
+    progress.finish_stage(crate::progress::Outcome::Complete);
     Ok(PreparedCatalog { catalog, preparation })
 }
 

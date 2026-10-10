@@ -11,6 +11,7 @@ in those processing modules; this folder owns their stored inputs, results and d
 ```text
 ApplicationState
 ├── config                    validated settings and cache policy; view is the initial reset target
+├── star_counts               loaded once at installation; candidate-region, filtered and projected totals published by their stages
 ├── current_view              live camera changed by pan/zoom controls
 ├── persistent                data loaded once and never changed during the run
 │   └── catalog               Arc<SkyCatalog>: immutable catalog data, installed once by replace_catalog
@@ -592,3 +593,9 @@ OS overhead/residency stays explicitly unknown. Objects normally disappear durin
 before consumption can leave one named object; unconditional cleanup after process death is not claimed.
 When unavailable, a yellow "Shared memory unavailable; using streaming." notice appears independently of the
 metadata panel. Runtime fallback status and its notice appear on the next frame, including while paused. Panel separation and tiled output are not implemented.
+
+`star_counts` contains four plain integers and is shown as one debug-table row. Selection keeps its regional
+membership total with the selected-region cache; observation and projection publish their existing counts
+without star scans, including on cache hits. The loaded total changes only at catalog replacement. Metadata
+borrows these counters read-only and formats them with comma groups (e.g. `10,221,029 stars`). Their inline
+bytes are included in the root's memory inventory size; they own no heap buffers.

@@ -43,6 +43,9 @@ For a larger, partial-sky Gaia subset:
 
 Each file is about 230 MB. Only missing files are downloaded. See [Gaia loading and limitations](docs/gaia-dataset.md).
 
+Dataset loading shows progress before the sky opens. Use `--no-progress` to hide progress updates.
+With `-m`, the panel shows stars loaded, in candidate regions, passed filtering and passed projection.
+
 ## Views
 
 ```sh

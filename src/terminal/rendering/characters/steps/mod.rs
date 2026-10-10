@@ -57,7 +57,8 @@ pub(in crate::terminal) fn draw_character_notice(state: &mut CharacterState, sky
     }
 }
 
-pub(in crate::terminal) fn draw_character_panel(state: &mut CharacterState, sky: &ProjectedSky<'_>, view: &View, julian_date_utc: f64, clock: &SimulationClock, observer: &Observer, step_times: &mut StepTimes) {
+#[allow(clippy::too_many_arguments)]
+pub(in crate::terminal) fn draw_character_panel(state: &mut CharacterState, sky: &ProjectedSky<'_>, view: &View, julian_date_utc: f64, clock: &SimulationClock, observer: &Observer, counts: &crate::model::StarCounts, step_times: &mut StepTimes) {
     if let Some(panel) = &mut state.frame.panel {
         let fields_before = step_times.inspect_memory(|| BufferShape::vector(&state.fields, IndexDomain::Objects));
         let step_fields_filled = step_times.inspect_memory(|| BufferShape::vector(&state.step_fields, IndexDomain::Objects));
@@ -72,6 +73,7 @@ pub(in crate::terminal) fn draw_character_panel(state: &mut CharacterState, sky:
                 state.options.unicode,
                 &state.time_zone.as_ref().expect("panel zone initialized").1,
             );
+            crate::metadata::append_star_count_fields(&mut state.fields, counts);
             if state.settings.frame_times {
                 state.fields.push(crate::model::MetadataField {
                     label: "Obs cache".into(),

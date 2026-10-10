@@ -56,6 +56,7 @@ pub(crate) fn select_region(
     if !crate::astro::COMPUTATIONAL_INTERVAL.contains(observer.time.tt) {
         return SelectedRegion {
             cells: (0..SIMULATION_REGION_COUNT).collect(),
+            star_count: *grid.offsets.last().unwrap(),
             brute_force: true,
         };
     }
@@ -94,22 +95,15 @@ pub(crate) fn select_region(
     }
     cells.push(CONSTELLATION_REGION); // endpoint dots and lines share one always-requested group
     SelectedRegion {
+        star_count: cells.iter().map(|&cell| grid.offsets[cell + 1] - grid.offsets[cell]).sum(),
         cells,
         brute_force: false,
     }
 }
 
 /// Count region membership without expanding the sorted catalog ranges.
-pub(crate) fn count_region_stars(grid: &SkyGrid, region: &SelectedRegion, total: usize) -> (usize, usize) {
-    if region.brute_force {
-        return (CELL_COUNT, total);
-    }
-    let count = region
-        .cells
-        .iter()
-        .map(|&cell| grid.offsets[cell + 1] - grid.offsets[cell])
-        .sum::<usize>();
-    (region.cells.len() - 1, count)
+pub(crate) fn count_region_stars(_grid: &SkyGrid, region: &SelectedRegion, _total: usize) -> (usize, usize) {
+    (if region.brute_force { CELL_COUNT } else { region.cells.len() - 1 }, region.star_count)
 }
 
 /// Collect the brightness-qualified prefix from each selected region.
@@ -136,6 +130,7 @@ pub(crate) fn select_brightness(
             region.cells.len() - 1
         },
         candidates: indices.len(),
+        region_stars: region.star_count,
         brute_force: region.brute_force,
     }
 }

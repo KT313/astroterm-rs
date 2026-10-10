@@ -3,6 +3,7 @@
 //! The file is a 28 byte header followed by 32 byte little-endian entries, sorted by catalog number.
 
 use super::CatalogError;
+use crate::progress::{DatasetProgress, NoProgress, Stage, Unit, Outcome};
 
 const HEADER_BYTES: usize = 28;
 const ENTRY_BYTES: usize = 32;
@@ -30,6 +31,10 @@ impl Bsc5Entry {
 
 /// Parse all entries of a binary BSC5 file.
 pub fn parse_bsc5(data: &[u8]) -> Result<Vec<Bsc5Entry>, CatalogError> {
+    parse_bsc5_with_progress(data, &mut NoProgress(std::io::sink()))
+}
+
+pub(super) fn parse_bsc5_with_progress(data: &[u8], progress: &mut dyn DatasetProgress) -> Result<Vec<Bsc5Entry>, CatalogError> {
     // header: STARN (the entry count) is negative when coordinates are J2000, which they are in BSC5
     let header = data
         .get(..HEADER_BYTES)
@@ -38,13 +43,18 @@ pub fn parse_bsc5(data: &[u8]) -> Result<Vec<Bsc5Entry>, CatalogError> {
 
     // fixed size entries after the header
     let entries = &data[HEADER_BYTES..];
-    (0..star_count)
+    progress.begin_stage(Stage::Parse, "Embedded BSC", Unit::Rows, Some(star_count as u64));
+    let result = (0..star_count)
         .map(|index| {
             let bytes = entries.get(index * ENTRY_BYTES..(index + 1) * ENTRY_BYTES);
             let bytes = bytes.ok_or(CatalogError::TruncatedBsc5 { entry: Some(index) })?;
-            parse_entry(bytes)
+            let entry = parse_entry(bytes)?;
+            if (index as u64 + 1).is_multiple_of(crate::constants::STARTUP_PROGRESS_ROWS) { progress.set_position(index as u64 + 1); }
+            Ok(entry)
         })
-        .collect()
+        .collect::<Result<Vec<_>, _>>();
+    if result.is_ok() { progress.set_position(star_count as u64); progress.finish_stage(Outcome::Complete); }
+    result
 }
 
 fn parse_entry(bytes: &[u8]) -> Result<Bsc5Entry, CatalogError> {

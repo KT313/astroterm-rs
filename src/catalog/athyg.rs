@@ -7,6 +7,7 @@
 //! are empty fields. `dist` and `x0/y0/z0` are parsecs; `vx/vy/vz` and `rv` are km/s. Validated space-motion
 //! inputs feed the stellar family; precise RA/Dec define the initial direction rather than rounded x0/y0/z0.
 
+use crate::progress::{DatasetProgress, NoProgress, Stage, Unit, Outcome};
 use std::f64::consts::PI;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read};
@@ -67,6 +68,10 @@ pub(crate) fn load_athyg_catalog_with_times(
     path: &Path,
     times: &mut crate::timing::StepTimes,
 ) -> Result<Catalog, CatalogError> {
+    load_athyg_catalog_with_progress(path, times, &mut NoProgress(io::sink()))
+}
+
+pub(crate) fn load_athyg_catalog_with_progress(path: &Path, times: &mut crate::timing::StepTimes, progress: &mut dyn DatasetProgress) -> Result<Catalog, CatalogError> {
     let describe_error = |error: io::Error| CatalogError::Io(format!("cannot read {}: {error}", path.display()));
 
     // decompress if the file starts like a gzip file
@@ -78,7 +83,7 @@ pub(crate) fn load_athyg_catalog_with_times(
         Box::new(file)
     };
 
-    parse_athyg_with_times(reader, times).map_err(|error| match error {
+    parse_athyg_with_progress(reader, times, progress).map_err(|error| match error {
         CatalogError::Io(message) => CatalogError::Io(format!("cannot read {}: {message}", path.display())),
         other => other,
     })
@@ -90,7 +95,13 @@ fn parse_athyg(reader: impl Read) -> Result<Catalog, CatalogError> {
     parse_athyg_with_times(reader, &mut crate::timing::StepTimes::default())
 }
 
+#[cfg(test)]
 fn parse_athyg_with_times(reader: impl Read, times: &mut crate::timing::StepTimes) -> Result<Catalog, CatalogError> {
+    parse_athyg_with_progress(reader, times, &mut NoProgress(io::sink()))
+}
+
+fn parse_athyg_with_progress(reader: impl Read, times: &mut crate::timing::StepTimes, progress: &mut dyn DatasetProgress) -> Result<Catalog, CatalogError> {
+    progress.begin_stage(Stage::Parse, "AT-HYG", Unit::Rows, None);
     let (stars, names, row, missing, sun) =
         times.measure("CSV validation and parsing", || -> Result<_, CatalogError> {
             let mut csv = csv::Reader::from_reader(reader);
@@ -119,9 +130,13 @@ fn parse_athyg_with_times(reader: impl Read, times: &mut crate::timing::StepTime
                     sun += 1;
                 }
                 row += 1;
+                if row.is_multiple_of(crate::constants::STARTUP_PROGRESS_ROWS) {
+                    progress.set_position(row); progress.set_retained(stars.len() as u64);
+                }
             }
             Ok((stars, names, row, missing, sun))
         })?;
+    progress.set_position(row); progress.set_retained(stars.len() as u64); progress.finish_stage(Outcome::Complete);
     times.describe("CSV validation and parsing", || format!("input rows={row}; removed missing RA/Dec/magnitude={missing}; then removed Sun (mag < -20)={sun}; output stars={}; malformed/non-finite inputs abort loading", stars.len()));
     let mut catalog = times.measure("Catalog assembly", || -> Result<_, CatalogError> {
         Ok(Catalog::new(stars, names, load_constellation_figures()?))

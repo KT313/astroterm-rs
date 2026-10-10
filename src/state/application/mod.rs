@@ -18,6 +18,7 @@ pub struct ApplicationState {
     /// Camera changed by pan/zoom controls; config.view retains the original reset value.
     pub current_view: View,
     pub persistent: Persistent,
+    pub star_counts: crate::model::StarCounts,
     pub preparation: Option<CatalogPreparation>,
     pub cache: Caches,
     pub timings: StepTimes,
@@ -34,7 +35,7 @@ impl ApplicationState {
     pub fn new(config: Config, timings: StepTimes) -> Self {
         let catalog = Arc::new(SkyCatalog::empty());
         let cache = Caches::new(Sky::new(catalog.clone()), &config.cache);
-        Self { current_view: config.view, config, persistent: Persistent { catalog }, preparation: None, cache, timings }
+        Self { star_counts: Default::default(), current_view: config.view, config, persistent: Persistent { catalog }, preparation: None, cache, timings }
     }
 
     /// Free the exclusively owned startup payload; shared runtime inputs keep their allocation and identity.
@@ -46,6 +47,7 @@ impl ApplicationState {
     /// from shared inputs; dependent catalog caches are reset and `prepare_frame_data` runs later.
     /// The same `Arc` is shared by `persistent.catalog` and `cache.sky.catalog`, so no catalog buffers are copied.
     pub fn replace_catalog(&mut self, prepared: PreparedCatalog) {
+        self.star_counts = crate::model::StarCounts { loaded: prepared.catalog.stars.len(), ..Default::default() };
         let catalog = Arc::new(prepared.catalog);
         self.preparation = Some(prepared.preparation);
         self.persistent.catalog = catalog.clone();

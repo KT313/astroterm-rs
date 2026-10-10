@@ -16,27 +16,27 @@ use super::rendering::{
 
 /// Draw the projected sky and metadata as characters, then publish the changed terminal cells.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn render_character_frame(state: &mut CharacterState, session: &mut TerminalSession, sky: &ProjectedSky<'_>, view: &View, date: f64, clock: &SimulationClock, observer: &Observer, times: &mut StepTimes) -> io::Result<()> {
+pub(super) fn render_character_frame(state: &mut CharacterState, session: &mut TerminalSession, sky: &ProjectedSky<'_>, view: &View, date: f64, clock: &SimulationClock, observer: &Observer, counts: &crate::model::StarCounts, times: &mut StepTimes) -> io::Result<()> {
     prepare_character_timezone(state, observer);                                      // look up local time rules when the panel needs them
     prepare_character_timing_fields(state, times);                                    // retain timings from before this frame is drawn
-    times.measure_steps("Draw", |times| draw_character_layers(state, sky, view, date, clock, observer, times)); // assemble the sky and optional panel
+    times.measure_steps("Draw", |times| draw_character_layers(state, sky, view, date, clock, observer, counts, times)); // assemble the sky and optional panel
     present_character_frame(state, session, times)                                    // write changed cells and flush terminal output
 }
 
 #[allow(clippy::too_many_arguments)]
-fn draw_character_layers(state: &mut CharacterState, sky: &ProjectedSky<'_>, view: &View, date: f64, clock: &SimulationClock, observer: &Observer, times: &mut StepTimes) {
+fn draw_character_layers(state: &mut CharacterState, sky: &ProjectedSky<'_>, view: &View, date: f64, clock: &SimulationClock, observer: &Observer, counts: &crate::model::StarCounts, times: &mut StepTimes) {
     rasterize_character_sky(state, sky, date, times);                                  // draw objects and constellation lines onto the sky canvas
     draw_character_notice(state, sky);                                                    // explain any fallback from pixel rendering
-    draw_character_panel(state, sky, view, date, clock, observer, times);              // add local time, location and requested diagnostics
+    draw_character_panel(state, sky, view, date, clock, observer, counts, times);              // add local time, location and requested diagnostics
 }
 
 /// Blend sky and text before encoding a graphics image or composing native half-block cells.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn render_pixel_frame(state: &mut PixelState, session: &mut TerminalSession, sky: &ProjectedSky<'_>, prepared: Option<&crate::model::RenderProjection<'_>>, view: &View, date: f64, clock: &SimulationClock, observer: &Observer, times: &mut StepTimes) -> io::Result<crate::model::RenderOutcome> {
+pub(super) fn render_pixel_frame(state: &mut PixelState, session: &mut TerminalSession, sky: &ProjectedSky<'_>, prepared: Option<&crate::model::RenderProjection<'_>>, view: &View, date: f64, clock: &SimulationClock, observer: &Observer, counts: &crate::model::StarCounts, times: &mut StepTimes) -> io::Result<crate::model::RenderOutcome> {
     prepare_pixel_timezone(state, observer);                                          // look up local time rules when the panel needs them
     rasterize_pixel_sky(state, sky, prepared, date, times)?;                           // draw objects and constellation lines in the sky area
 
-    prepare_pixel_fields(state, sky, view, date, clock, observer, times);              // collect metadata and the available stage timings
+    prepare_pixel_fields(state, sky, view, date, clock, observer, counts, times);              // collect metadata and the available stage timings
     let text_cell = layout_pixel_text(state, sky, prepared, times);                   // position object names, metadata and notices
     if state.protocol == ProtocolType::Kitty {
         prepare_kitty_pixels(state, text_cell, times)?;                               // reuse completed RGB or compose changed sky and text

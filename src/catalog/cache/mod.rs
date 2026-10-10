@@ -1,4 +1,7 @@
 //! Aligned, checksummed cache container. The higher sky layer owns the catalog schema and semantic validation.
+use crate::progress::{DatasetProgress, Stage, Unit, Outcome, ProgressReader};
+#[cfg(test)]
+use crate::progress::NoProgress;
 mod array;
 pub use array::CatalogArray;
 use std::{
@@ -27,13 +30,20 @@ pub struct PreparedCatalogBytes {
     sections: Vec<Range<usize>>,
 }
 impl PreparedCatalogBytes {
+    #[cfg(test)]
     pub(crate) fn open(path: &Path, fingerprint: &[u8; 32]) -> io::Result<Self> {
+        Self::open_with_progress(path, fingerprint, &mut NoProgress(io::sink()))
+    }
+    pub(crate) fn open_with_progress(path: &Path, fingerprint: &[u8; 32], progress: &mut dyn DatasetProgress) -> io::Result<Self> {
         if !supported() {
             return Err(invalid("prepared cache requires a 64-bit little-endian target"));
         }
         let mut file = File::open(path)?;
         let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes)?;
+        progress.begin_stage(Stage::ReadCache, "", Unit::Bytes, file.metadata().ok().map(|m| m.len()));
+        ProgressReader::new(&mut file, progress).read_to_end(&mut bytes)?;
+        progress.finish_stage(Outcome::Complete);
+        progress.begin_stage(Stage::ValidateCache, "", Unit::Work, None);
         if bytes.len() < PREFIX { return Err(invalid("truncated cache header")); }
         if &bytes[..8] != MAGIC || read_u32(&bytes, 8)? != VERSION || &bytes[16..48] != fingerprint {
             return Err(invalid("cache magic/version/fingerprint mismatch"));
@@ -105,7 +115,12 @@ fn read_u64(bytes: &[u8], offset: usize) -> io::Result<u64> {
 }
 
 /// Write in the destination folder and atomically replace the final name only after the complete file is synced.
+#[cfg(test)]
 pub(crate) fn write_sections(path: &Path, fingerprint: &[u8; 32], sections: &[&[u8]]) -> io::Result<()> {
+    write_sections_with_progress(path, fingerprint, sections, &mut NoProgress(io::sink()))
+}
+
+pub(crate) fn write_sections_with_progress(path: &Path, fingerprint: &[u8; 32], sections: &[&[u8]], progress: &mut dyn DatasetProgress) -> io::Result<()> {
     if !supported() || sections.len() > MAX_SECTIONS {
         return Err(invalid("unsupported cache layout"));
     }
@@ -125,14 +140,22 @@ pub(crate) fn write_sections(path: &Path, fingerprint: &[u8; 32], sections: &[&[
         offset += section.len();
     }
     header[48..56].copy_from_slice(&(offset as u64).to_le_bytes());
+    progress.begin_stage(Stage::WriteCache, "", Unit::Bytes, Some(offset as u64));
     temporary.write_all(&header)?;
+    progress.set_position(header.len() as u64);
     let mut position = header.len();
     for section in sections {
         let padding = (8 - position % 8) % 8;
         temporary.write_all(&[0; 8][..padding])?;
-        temporary.write_all(section)?;
-        position += padding + section.len();
+        position += padding;
+        for chunk in section.chunks(64 * 1024) {
+            temporary.write_all(chunk)?;
+            position += chunk.len();
+            progress.set_position(position as u64);
+        }
     }
+    progress.finish_stage(Outcome::Complete);
+    progress.begin_stage(Stage::FinalizeCache, "Checksum and atomic installation", Unit::Work, None);
     temporary.rewind()?;
     let mut checksum = crc32fast::Hasher::new();
     checksum.update(&header[..56]);
@@ -150,6 +173,7 @@ pub(crate) fn write_sections(path: &Path, fingerprint: &[u8; 32], sections: &[&[
     temporary.write_all(&checksum.finalize().to_le_bytes())?;
     temporary.as_file().sync_all()?;
     temporary.persist(path).map_err(|error| error.error)?;
+    progress.finish_stage(Outcome::Complete);
     Ok(())
 }
 

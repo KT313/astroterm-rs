@@ -10,7 +10,7 @@ pub use projection::{
     ProjectionData, ProjectedStars,
 };
 pub use rendering::{RenderOutcome, RenderProjection, RenderOptions, TerminalViewport, Frame, Appearance};
-pub use metadata::{ObserverTimeZone, MetadataField};
+pub use metadata::{ObserverTimeZone, MetadataField, StarCounts};
 pub(crate) use projection::{
     DrawnStar, DrawnSpan, RegionalProjectionKey, RegionalOrderKey, RegionalDrawRecord, DrawRecord, StarKey, BodyKey as ProjectionBodyKey, ConstellationKey,
     HorizonGeometry,

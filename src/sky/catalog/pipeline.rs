@@ -3,6 +3,7 @@ use crate::model::{ObservedStar, ObservedSky, SkyCatalog, PreparedCatalog, Catal
 use super::{grid, preparation::{prepare_compact_stars, sort_stars_by_region_and_brightness, index_representative_ids, index_representative_positions, resolve_constellation_figures, collect_constellation_endpoints, collect_endpoint_ids}};
 use std::collections::HashMap;
 use std::sync::Arc;
+use crate::progress::{DatasetProgress, NoProgress, Stage, Unit, Outcome};
 
 use crate::catalog::{Catalog, ConstellationFigure, StarNames};
 
@@ -19,11 +20,16 @@ pub fn prepare_catalog(catalog: &Catalog) -> std::io::Result<PreparedCatalog> {
 
 /// Consume parsed catalog rows while preparing compact storage and constellation indices.
 pub fn prepare_owned_catalog(catalog: Catalog) -> std::io::Result<PreparedCatalog> {
-    build_catalog(
+    prepare_owned_catalog_with_progress(catalog, &mut NoProgress(std::io::sink()))
+}
+
+pub(super) fn prepare_owned_catalog_with_progress(catalog: Catalog, progress: &mut dyn DatasetProgress) -> std::io::Result<PreparedCatalog> {
+    build_catalog_with_progress(
         catalog.stars.into_iter(),
         catalog.names,
         &catalog.hr_representatives,
         &catalog.constellations,
+        progress,
     )
 }
 
@@ -33,16 +39,24 @@ fn build_catalog(
     representatives: &HashMap<u32, crate::catalog::StarId>,
     figures: &[ConstellationFigure],
 ) -> std::io::Result<PreparedCatalog> {
-    let (stars, bounds, names) = prepare_compact_stars(entries, &names)?; // convert this parser's rows into compact storage
-    finish_catalog(stars, bounds, names, representatives, figures)
+    build_catalog_with_progress(entries, names, representatives, figures, &mut NoProgress(std::io::sink()))
+}
+
+fn build_catalog_with_progress(entries: impl Iterator<Item = crate::catalog::CatalogStar>, names: StarNames,
+    representatives: &HashMap<u32, crate::catalog::StarId>, figures: &[ConstellationFigure], progress: &mut dyn DatasetProgress) -> std::io::Result<PreparedCatalog> {
+    let (stars, bounds, names) = prepare_compact_stars(entries, &names, progress)?; // convert this parser's rows into compact storage
+    finish_catalog(stars, bounds, names, representatives, figures, progress)
 }
 
 pub(super) fn finish_catalog(mut stars: crate::model::StarStorage, mut bounds: Vec<f32>, names: StarNames,
-    representatives: &HashMap<u32, crate::catalog::StarId>, figures: &[ConstellationFigure]) -> std::io::Result<PreparedCatalog> {
+    representatives: &HashMap<u32, crate::catalog::StarId>, figures: &[ConstellationFigure], progress: &mut dyn DatasetProgress) -> std::io::Result<PreparedCatalog> {
     let hr_by_id = index_representative_ids(representatives);       // retain the chosen star for each shared HR catalog number
     let endpoints = collect_endpoint_ids(&stars, &hr_by_id, figures);
+    progress.begin_stage(Stage::Sort, "", Unit::Work, None);
     sort_stars_by_region_and_brightness(&mut stars, &mut bounds, &endpoints); // each star belongs to one spatial or constellation region
     drop(endpoints);
+    progress.finish_stage(Outcome::Complete);
+    progress.begin_stage(Stage::Index, "", Unit::Work, None);
 
     let index_by_hr = index_representative_positions(&stars, &hr_by_id); // find those stars after sorting
     let constellations = resolve_constellation_figures(figures, &index_by_hr); // turn line endpoints into star-array indices
@@ -58,6 +72,7 @@ pub(super) fn finish_catalog(mut stars: crate::model::StarStorage, mut bounds: V
         figures: Arc::new(crate::model::ConstellationSet { figures: constellations, endpoints: endpoint_indices }),
     };
     catalog.validate_exception_support()?;
+    progress.finish_stage(Outcome::Complete);
     Ok(PreparedCatalog { catalog, preparation: CatalogPreparation { motion_bounds: bounds } })
 }
 

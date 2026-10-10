@@ -3,7 +3,7 @@
 
 mod athyg;
 mod gaia;
-pub(crate) use gaia::{GaiaSource, GaiaReadStats, read_gaia_file};
+pub(crate) use gaia::{GaiaSource, GaiaReadStats, read_gaia_file_with_progress};
 mod bsc5;
 pub mod cache;
 mod cities;
@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::fmt;
 
 pub use athyg::load_athyg_catalog;
-pub(crate) use athyg::load_athyg_catalog_with_times;
+pub(crate) use athyg::load_athyg_catalog_with_progress;
 pub use bsc5::{Bsc5Entry, parse_bsc5};
 pub use cities::{City, find_city, parse_cities, suggest_cities};
 pub use designation::Designation;
@@ -175,7 +175,11 @@ impl std::error::Error for CatalogError {}
 
 /// Parse the catalogs embedded in the binary: the Yale Bright Star Catalog with its star names.
 pub fn load_embedded_catalog() -> Result<Catalog, CatalogError> {
-    let entries = parse_bsc5(BSC5_DATA)?;
+    load_embedded_catalog_with_progress(&mut crate::progress::NoProgress(std::io::sink()))
+}
+
+pub(crate) fn load_embedded_catalog_with_progress(progress: &mut dyn crate::progress::DatasetProgress) -> Result<Catalog, CatalogError> {
+    let entries = bsc5::parse_bsc5_with_progress(BSC5_DATA, progress)?;
     let star_names = parse_star_names(STAR_NAMES_TEXT, entries.len())?;
     let mut names = StarNames::default();
     let stars = entries

@@ -57,7 +57,7 @@ pub(super) fn update_brightness_bounds(
         times.describe("Regional brightness decisions", || format!("requested regions={}; hits={}; refreshed={}; bypassed={}; keys contain threshold and interval status; cached output is one catalog prefix per region",
             request.cells.len(), regional_stats.hits - previous.hits, regional_stats.refreshes - previous.refreshes, regional_stats.bypasses - previous.bypasses));
         let count = request.cells.iter().map(|&region| { let (start, end) = regional[region].value(); end - start }).sum();
-        crate::model::SelectionStats { cells: request.cells.len() - 1, candidates: count, brute_force: request.brute_force }
+        crate::model::SelectionStats { cells: request.cells.len() - 1, candidates: count, region_stars: request.star_count, brute_force: request.brute_force }
     })
 }
 

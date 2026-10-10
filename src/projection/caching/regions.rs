@@ -200,6 +200,7 @@ mod tests {
 
     fn assert_regional_result(storage: &ProjectionCache, observed: RegionalObservation<'_>, view: &View, viewport: ProjectionViewport) {
         let actual = borrow_projected(storage, observed.sky(), view, viewport);
+        assert_eq!(storage.visible_star_count(), actual.stars.len());
         let reference = project_sky(observed.sky(), view, viewport);
         let mut expected = reference.view(observed.sky());
         let constellation = crate::constants::CONSTELLATION_REGION;

@@ -97,3 +97,8 @@ pub const MAX_PREVIEW_DEPTH: usize = 3;                                         
 // Gaia catalog import
 pub const GAIA_DISTANCE_MIN_SIGNAL: f64 = 10.0;                                         // require this parallax signal-to-error ratio before estimating distance
 pub const GAIA_DOWNLOAD_MAX_BYTES: u64 = 1024 * 1024 * 1024;                             // stop an unexpectedly large individual download
+
+// Dataset startup display
+pub const STARTUP_PROGRESS_HZ: u8 = 10;                                                  // redraw loading information at most this often per second
+pub const STARTUP_PROGRESS_ROWS: u64 = 4096;                                             // update row counts in batches, not for each star
+pub const STARTUP_NOTICE_BYTES: usize = 4096;                                            // bound partial notice text while progress bars are visible

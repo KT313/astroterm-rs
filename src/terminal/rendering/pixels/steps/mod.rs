@@ -141,7 +141,8 @@ fn fill_background(bytes: &mut [u8]) {
     }
 }
 
-pub(in crate::terminal) fn prepare_pixel_fields(state: &mut PixelState, sky: &ProjectedSky<'_>, view: &View, date: f64, clock: &SimulationClock, observer: &Observer, times: &mut StepTimes) {
+#[allow(clippy::too_many_arguments)]
+pub(in crate::terminal) fn prepare_pixel_fields(state: &mut PixelState, sky: &ProjectedSky<'_>, view: &View, date: f64, clock: &SimulationClock, observer: &Observer, counts: &crate::model::StarCounts, times: &mut StepTimes) {
     let fields_before = times.inspect_memory(|| BufferShape::vector(&state.fields, IndexDomain::Objects));
     times.measure_memory_scope("Metadata fields", |times| {
         state.fields.clear();
@@ -156,6 +157,7 @@ pub(in crate::terminal) fn prepare_pixel_fields(state: &mut PixelState, sky: &Pr
                 true,
                 &state.time_zone.as_ref().unwrap().1,
             );
+            crate::metadata::append_star_count_fields(&mut state.fields, counts);
         }
         if state.settings.metadata_panel {
             let (width, height) = if state.protocol == ProtocolType::Halfblocks {
@@ -410,6 +412,36 @@ mod lifetime_tests {
                 Some(crate::scene::create_text_rasterizer().unwrap())
             },
         }
+    }
+
+    #[test]
+    fn both_metadata_paths_read_the_supplied_counters_even_without_timing_panel() {
+        let mut pixels = pixels(ProtocolType::Kitty);
+        pixels.settings.metadata_panel = true;
+        let sky = crate::model::Sky::new(std::sync::Arc::new(crate::model::SkyCatalog::empty()));
+        let view = View::default();
+        let projected = crate::projection::project_sky(&sky, &view, pixels.viewport);
+        let sky = projected.view(&sky);
+        let observer = Observer::default();
+        let clock = SimulationClock::start(crate::astro::J2000, 0.0);
+        let counts = crate::model::StarCounts { loaded: 10221029, candidate_regions: 1000000, filtered: 1000, projected: 5 };
+        prepare_pixel_timezone(&mut pixels, &observer);
+        prepare_pixel_fields(&mut pixels, &sky, &view, crate::astro::J2000, &clock, &observer, &counts, &mut StepTimes::default());
+        let mut expected = Vec::new();
+        crate::metadata::append_star_count_fields(&mut expected, &counts);
+        for field in &expected { assert!(pixels.fields.contains(field)); }
+        let mut characters = crate::state::CharacterState {
+            scene_cache: Default::default(), cache_diagnostics: Default::default(),
+            frame: crate::model::Frame { sky: crate::canvas::Canvas::new(40, 30), panel: Some(crate::canvas::Canvas::new(40, 30)) },
+            options: pixels.options, settings: pixels.settings, time_zone: None, startup_notice: None,
+            presenter: Default::default(), fields: Vec::new(), step_fields: Vec::new(),
+        };
+        crate::terminal::rendering::prepare_character_timezone(&mut characters, &observer);
+        crate::terminal::rendering::draw_character_panel(&mut characters, &sky, &view, crate::astro::J2000, &clock, &observer, &counts, &mut StepTimes::default());
+        for field in &expected { assert!(characters.fields.contains(field)); }
+        pixels.settings.metadata_panel = false;
+        prepare_pixel_fields(&mut pixels, &sky, &view, crate::astro::J2000, &clock, &observer, &counts, &mut StepTimes::default());
+        assert!(pixels.fields.is_empty());
     }
 
     #[test]

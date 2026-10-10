@@ -2,8 +2,11 @@
 use super::{DatasetDirectories, GAIA_DR3_FILE_COUNT};
 use crate::constants::GAIA_DOWNLOAD_MAX_BYTES;
 use crate::timing::StepTimes;
+use crate::progress::{DatasetProgress, Stage, Unit, Outcome};
+#[cfg(test)]
+use crate::progress::NoProgress;
 use md5::{Digest, Md5};
-use std::{fs::{self, File}, io::{self, Read, Write}, path::{Path, PathBuf}, time::{Duration, Instant, SystemTime}};
+use std::{fs::{self, File}, io::{self, Read, Write}, path::{Path, PathBuf}, time::{Duration, SystemTime}};
 
 const SOURCE_URL: &str = "https://cdn.gea.esac.esa.int/Gaia/gdr3/gaia_source/";
 const MANIFEST: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/data/gaia-dr3-source-md5.txt"));
@@ -37,14 +40,19 @@ impl GaiaFile {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn resolve_gaia_files(count: u16, directories: &DatasetDirectories, notices: &mut impl Write, times: &mut StepTimes) -> io::Result<Vec<GaiaFile>> {
+    resolve_gaia_files_with_progress(count, directories, &mut NoProgress(notices), times)
+}
+
+pub(crate) fn resolve_gaia_files_with_progress(count: u16, directories: &DatasetDirectories, notices: &mut dyn DatasetProgress, times: &mut StepTimes) -> io::Result<Vec<GaiaFile>> {
     if count > GAIA_DR3_FILE_COUNT { return Err(invalid("--dataset-files must be between 0 and 3386")); }
     if count == 0 { return Ok(Vec::new()); }
     let entries = parse_manifest(MANIFEST, GAIA_DR3_FILE_COUNT as usize)?;
     let directory = directories.data.as_ref().ok_or_else(|| invalid("Cannot find the per-user data directory for Gaia files"))?.join("gaia-gdr3/gaia_source");
     let agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(1800)))
         .timeout_connect(Some(Duration::from_secs(30))).timeout_recv_response(Some(Duration::from_secs(30))).build().new_agent();
-    resolve_entries(&entries[..count as usize], &directory, notices, times, |entry| {
+    resolve_entries_with_progress(&entries[..count as usize], &directory, notices, times, |entry| {
         let response = agent.get(format!("{SOURCE_URL}{}", entry.name)).header("Accept-Encoding", "identity").call().map_err(io::Error::other)?;
         if response.status() != 200 { return Err(invalid("expected a complete HTTP 200 Gaia file")); }
         let length = response.headers().get("Content-Length").map(|value| {
@@ -54,23 +62,30 @@ pub(crate) fn resolve_gaia_files(count: u16, directories: &DatasetDirectories, n
     })
 }
 
+#[cfg(test)]
 fn resolve_entries(entries: &[GaiaEntry], directory: &Path, notices: &mut impl Write, times: &mut StepTimes,
+    fetch: impl FnMut(&GaiaEntry) -> io::Result<(Box<dyn Read>, Option<u64>)>) -> io::Result<Vec<GaiaFile>> {
+    resolve_entries_with_progress(entries, directory, &mut NoProgress(notices), times, fetch)
+}
+
+fn resolve_entries_with_progress(entries: &[GaiaEntry], directory: &Path, notices: &mut dyn DatasetProgress, times: &mut StepTimes,
     mut fetch: impl FnMut(&GaiaEntry) -> io::Result<(Box<dyn Read>, Option<u64>)>) -> io::Result<Vec<GaiaFile>> {
     fs::create_dir_all(directory)?;
     writeln!(notices, "Gaia DR3: verifying {} selected files (~230 MB each if downloading); files cover only their sky regions.", entries.len())?;
     let mut files = Vec::with_capacity(entries.len());
     let mut reused = 0;
+    notices.set_files(0, entries.len() as u64);
     for (index, entry) in entries.iter().enumerate() {
         let path = directory.join(&entry.name);
         let result = (|| {
-            let (size, modified) = if let Some(stamp) = times.measure("Gaia file verification", || verify_file(&path, entry.checksum))? {
+            let (size, modified) = if let Some(stamp) = times.measure("Gaia file verification", || verify_file_with_progress(&path, entry.checksum, notices))? {
                 reused += 1;
                 stamp
             } else {
-                writeln!(notices, "Downloading Gaia file {}/{}: {}", index + 1, entries.len(), entry.name)?;
+                notices.begin_stage(Stage::Download, &entry.name, Unit::Bytes, None);
                 times.measure("Gaia file download", || {
                     let (reader, length) = fetch(entry)?;
-                    install_verified(reader, &path, entry.checksum, length, notices)
+                    install_verified_with_progress(reader, &path, entry.checksum, length, notices)
                 })?
             };
             let file = GaiaFile { entry: entry.clone(), path: path.clone(), size, modified };
@@ -78,13 +93,19 @@ fn resolve_entries(entries: &[GaiaEntry], directory: &Path, notices: &mut impl W
             Ok(file)
         })();
         files.push(result.map_err(|error: io::Error| io::Error::new(error.kind(), format!("Gaia file {}/{} ({}): {error}. A verified manual copy can be placed at {}. Completed files remain reusable.", index + 1, entries.len(), entry.name, path.display())))?);
+        notices.set_files((index + 1) as u64, entries.len() as u64);
     }
     writeln!(notices, "Gaia DR3: requested={} reused={} downloaded={}", entries.len(), reused, entries.len() - reused)?;
     times.describe("Dataset resolution", || format!("Gaia files requested={}; reused={reused}; downloaded={}", entries.len(), entries.len() - reused));
     Ok(files)
 }
 
+#[cfg(test)]
 fn verify_file(path: &Path, expected: [u8; 16]) -> io::Result<Option<(u64, SystemTime)>> {
+    verify_file_with_progress(path, expected, &mut NoProgress(io::sink()))
+}
+
+fn verify_file_with_progress(path: &Path, expected: [u8; 16], progress: &mut dyn DatasetProgress) -> io::Result<Option<(u64, SystemTime)>> {
     let mut file = match File::open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -92,25 +113,36 @@ fn verify_file(path: &Path, expected: [u8; 16]) -> io::Result<Option<(u64, Syste
     };
     let before = file.metadata()?;
     if !before.is_file() { return Err(invalid("Gaia source is not a regular file")); }
+    progress.begin_stage(Stage::Verify, &path.file_name().unwrap_or_default().to_string_lossy(), Unit::Bytes, Some(before.len()));
+    let mut completed = 0;
     let mut hash = Md5::new();
     let mut buffer = [0; 64 * 1024];
     loop {
         let read = file.read(&mut buffer)?;
         if read == 0 { break; }
         hash.update(&buffer[..read]);
+        completed += read as u64;
+        progress.set_position(completed);
     }
     let after = file.metadata()?;
     if before.len() != after.len() || before.modified()? != after.modified()? { return Err(invalid("source changed during verification")); }
-    Ok((<[u8; 16]>::from(hash.finalize()) == expected).then_some((after.len(), after.modified()?)))
+    let valid = <[u8; 16]>::from(hash.finalize()) == expected;
+    progress.finish_stage(if valid { Outcome::Complete } else { Outcome::Failed });
+    Ok(valid.then_some((after.len(), after.modified()?)))
 }
 
-fn install_verified(mut reader: impl Read, path: &Path, expected: [u8; 16], length: Option<u64>, notices: &mut impl Write) -> io::Result<(u64, SystemTime)> {
+#[cfg(test)]
+fn install_verified(reader: impl Read, path: &Path, expected: [u8; 16], length: Option<u64>, notices: &mut impl Write) -> io::Result<(u64, SystemTime)> {
+    install_verified_with_progress(reader, path, expected, length, &mut NoProgress(notices))
+}
+
+fn install_verified_with_progress(mut reader: impl Read, path: &Path, expected: [u8; 16], length: Option<u64>, notices: &mut dyn DatasetProgress) -> io::Result<(u64, SystemTime)> {
     if length.is_some_and(|length| length > GAIA_DOWNLOAD_MAX_BYTES) { return Err(invalid("Gaia download exceeds the per-file limit")); }
     let mut temporary = tempfile::NamedTempFile::new_in(path.parent().ok_or_else(|| invalid("missing parent directory"))?)?;
     let mut hash = Md5::new();
     let mut bytes = 0_u64;
     let mut buffer = [0; 64 * 1024];
-    let mut progress = Instant::now();
+    notices.begin_stage(Stage::Download, &path.file_name().unwrap_or_default().to_string_lossy(), Unit::Bytes, length);
     loop {
         let read = reader.read(&mut buffer)?;
         if read == 0 { break; }
@@ -118,19 +150,18 @@ fn install_verified(mut reader: impl Read, path: &Path, expected: [u8; 16], leng
         if bytes > GAIA_DOWNLOAD_MAX_BYTES || length.is_some_and(|length| bytes > length) { return Err(invalid("Gaia download larger than expected")); }
         hash.update(&buffer[..read]);
         temporary.write_all(&buffer[..read])?;
-        if progress.elapsed() >= Duration::from_secs(1) {
-            writeln!(notices, "Downloaded {} MB", bytes / 1_000_000)?;
-            progress = Instant::now();
-        }
+        notices.set_position(bytes);
     }
     if length.is_some_and(|length| bytes != length) || <[u8; 16]>::from(hash.finalize()) != expected {
         return Err(invalid("Gaia download size or MD5 mismatch"));
     }
+    notices.begin_stage(Stage::Install, "Gaia", Unit::Work, None);
     temporary.as_file().sync_all()?;
-    if let Some(stamp) = verify_file(path, expected)? { return Ok(stamp); } // another invocation may already have installed the same valid file
+    if let Some(stamp) = verify_file_with_progress(path, expected, notices)? { return Ok(stamp); } // another invocation may already have installed the same valid file
     let metadata = temporary.as_file().metadata()?;
     let stamp = (metadata.len(), metadata.modified()?);
     temporary.persist(path).map_err(|error| error.error)?;
+    notices.finish_stage(Outcome::Complete);
     Ok(stamp)
 }
 

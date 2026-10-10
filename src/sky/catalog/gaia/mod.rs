@@ -1,12 +1,12 @@
 //! Convert Gaia inputs once, then use the same compact storage, sorting and grid preparation as other catalogs.
 mod conversion;
-use crate::catalog::{datasets::GaiaFile, read_gaia_file, GaiaReadStats, StarNames};
+use crate::catalog::{datasets::GaiaFile, read_gaia_file_with_progress, GaiaReadStats, StarNames};
 use crate::model::{PreparedCatalog, StarStorage};
 use crate::timing::StepTimes;
-use std::{collections::HashMap, io::{self, Write}};
+use std::{collections::HashMap, io};
 use conversion::{convert_source, ConversionStats};
 
-pub(super) fn prepare_gaia_catalog(files: &[GaiaFile], notices: &mut impl Write, times: &mut StepTimes) -> io::Result<PreparedCatalog> {
+pub(super) fn prepare_gaia_catalog(files: &[GaiaFile], notices: &mut dyn crate::progress::DatasetProgress, times: &mut StepTimes) -> io::Result<PreparedCatalog> {
     let mut stars = StarStorage::default();
     let mut bounds = Vec::new();
     let mut names = StarNames::default();
@@ -14,7 +14,7 @@ pub(super) fn prepare_gaia_catalog(files: &[GaiaFile], notices: &mut impl Write,
     let mut converted = ConversionStats::default();
     times.measure("Gaia parsing and conversion", || {
         for file in files {
-            read_gaia_file(file, &mut parsed, |source| {
+            read_gaia_file_with_progress(file, &mut parsed, notices, |source| {
                 crate::catalog::Catalog::check_star_count(stars.len() as u64 + 1).map_err(io::Error::other)?;
                 let mut star = convert_source(source, &mut converted)?;
                 star.name = Some(names.insert(&format!("Gaia DR3 {}", source.source_id))?); // IDs are unique; no label deduplication map is needed
@@ -34,5 +34,5 @@ pub(super) fn prepare_gaia_catalog(files: &[GaiaFile], notices: &mut impl Write,
     times.describe("Gaia parsing and conversion", || summary);
     stars.shrink_to_fit();
     bounds.shrink_to_fit();
-    times.measure("Catalog preparation", || super::pipeline::finish_catalog(stars, bounds, names, &HashMap::new(), &[]))
+    times.measure("Catalog preparation", || super::pipeline::finish_catalog(stars, bounds, names, &HashMap::new(), &[], notices))
 }

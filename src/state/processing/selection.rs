@@ -21,6 +21,7 @@ pub struct StarSelectionCache {
     pub(crate) region_selected: Vec<Cache<u64, (usize, usize)>>,          // validated prefix; versions survive changes in requested regions
 }
 impl StarSelectionCache {
+    pub fn region_star_count(&self) -> usize { self.statistics.region_stars }
     pub fn new(config: CacheConfig) -> Self { Self { config, ..Self::default() } }
     pub fn invalidate_view(&mut self) { self.region.invalidate(); self.requested_epoch = None; }
     pub fn invalidate_region(&mut self, region: usize) {

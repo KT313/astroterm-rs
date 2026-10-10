@@ -1,8 +1,9 @@
 //! Resolve the selected dataset, reuse validated prepared data, or prepare the source catalog.
-use crate::catalog::{datasets::{Dataset, DatasetDirectories, resolve_dataset}, load_athyg_catalog_with_times};
+use crate::catalog::datasets::{Dataset, DatasetDirectories};
 use crate::model::PreparedCatalog;
 use crate::timing::StepTimes;
 use std::io::{self, Write};
+use crate::progress::{DatasetProgress, NoProgress};
 use super::loading::{
     load_embedded_sky, resolve_cache_path, fingerprint_source, try_load_prepared_catalog, prepare_catalog,
     write_prepared_catalog_if_stable,
@@ -12,7 +13,7 @@ use super::loading::{
 pub fn load_sky_catalog(
     dataset: Option<&Dataset>,
     directories: &DatasetDirectories,
-    notices: &mut impl Write,
+    notices: &mut (impl Write + ?Sized),
 ) -> io::Result<PreparedCatalog> {
     load_sky_catalog_with_times(dataset, directories, notices, &mut StepTimes::default())
 }
@@ -21,26 +22,38 @@ pub fn load_sky_catalog(
 pub fn load_sky_catalog_with_times(
     dataset: Option<&Dataset>,
     directories: &DatasetDirectories,
-    notices: &mut impl Write,
+    notices: &mut (impl Write + ?Sized),
     times: &mut StepTimes,
 ) -> io::Result<PreparedCatalog> {
-    let Some(dataset) = dataset else { return report_clipping(load_embedded_sky(times)?, notices); }; // use the built-in catalog unless another dataset was selected
+    load_sky_catalog_with_progress(dataset, directories, &mut NoProgress(notices), times)
+}
+
+pub fn load_sky_catalog_with_progress(dataset: Option<&Dataset>, directories: &DatasetDirectories,
+    notices: &mut dyn DatasetProgress, times: &mut StepTimes) -> io::Result<PreparedCatalog> {
+    let result = load_reported_catalog(dataset, directories, notices, times);
+    notices.finish_stage(if result.is_ok() { crate::progress::Outcome::Complete } else { crate::progress::Outcome::Failed });
+    result
+}
+
+fn load_reported_catalog(dataset: Option<&Dataset>, directories: &DatasetDirectories,
+    notices: &mut dyn DatasetProgress, times: &mut StepTimes) -> io::Result<PreparedCatalog> {
+    let Some(dataset) = dataset else { return report_clipping(load_embedded_sky(times, notices)?, notices); }; // use the built-in catalog unless another dataset was selected
     if let Dataset::GaiaGdr3 { files } = dataset {
         return report_clipping(super::gaia::load_gaia_catalog(*files, directories, notices, times)?, notices);
     }
-    let source = times.measure("Dataset resolution", || resolve_dataset(dataset, directories, notices))?;
+    let source = times.measure("Dataset resolution", || crate::catalog::datasets::resolve_dataset_with_progress(dataset, directories, notices))?;
     times.describe("Dataset resolution", || format!("source={}", source.display()));
     let path = resolve_cache_path(&source, directories, notices); // find an optional prepared-cache location
     let fingerprint = fingerprint_source(&path);                // identify the source and all preparation rules
     if let Some(catalog) = try_load_prepared_catalog(&path, &fingerprint, notices, times)? { return report_clipping(catalog, notices); }
 
-    let parsed = times.measure_steps("AT-HYG loading", |times| load_athyg_catalog_with_times(&source, times)).map_err(io::Error::other)?;
-    let catalog = prepare_catalog(parsed, times)?;               // compact and index the parsed stars
+    let parsed = times.measure_steps("AT-HYG loading", |times| crate::catalog::load_athyg_catalog_with_progress(&source, times, notices)).map_err(io::Error::other)?;
+    let catalog = prepare_catalog(parsed, times, notices)?;               // compact and index the parsed stars
     write_prepared_catalog_if_stable(path, &source, &catalog, &fingerprint, notices, times)?; // save only if the source stayed unchanged
     report_clipping(catalog, notices)
 }
 
-fn report_clipping(catalog: PreparedCatalog, notices: &mut impl Write) -> io::Result<PreparedCatalog> {
+fn report_clipping(catalog: PreparedCatalog, notices: &mut (impl Write + ?Sized)) -> io::Result<PreparedCatalog> {
     let counts = catalog.catalog.stars.magnitude_clipping();
     if counts.any() {
         writeln!(notices, "Warning: {} Lower clips: {}; upper clips: {}.", crate::catalog::MAGNITUDE_CLIPPING_WARNING, counts.lower, counts.upper)?;

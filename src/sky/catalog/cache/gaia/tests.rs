@@ -31,7 +31,7 @@ fn multiple_files_prepare_owned_rows_and_hit_cache_without_reparsing() {
     let fingerprint = fingerprint_files(&files).unwrap();
     let path = Some(dir.path().join("result.catalog"));
     let mut notices = Vec::new();
-    let prepared = load_prepared_gaia(&files, path.clone(), &fingerprint, &mut notices, &mut StepTimes::default()).unwrap();
+    let prepared = load_prepared_gaia(&files, path.clone(), &fingerprint, &mut crate::progress::NoProgress(&mut notices), &mut StepTimes::default()).unwrap();
     assert_eq!(prepared.catalog.stars.len(), 2);
     assert!(prepared.catalog.constellations().is_empty());
     let mut ids: Vec<_> = prepared.catalog.stars.iter().map(|star| star.id.0).collect();
@@ -39,14 +39,14 @@ fn multiple_files_prepare_owned_rows_and_hit_cache_without_reparsing() {
     assert!(prepared.catalog.stars.iter().all(|star| prepared.catalog.star_name(&star).unwrap().starts_with("Gaia DR3 ")));
     assert!(String::from_utf8_lossy(&notices).contains("output sources=2"));
     notices.clear();
-    let cached = load_prepared_gaia(&files, path.clone(), &fingerprint, &mut notices, &mut StepTimes::default()).unwrap();
+    let cached = load_prepared_gaia(&files, path.clone(), &fingerprint, &mut crate::progress::NoProgress(&mut notices), &mut StepTimes::default()).unwrap();
     assert_eq!(cached, prepared);
     assert!(!String::from_utf8_lossy(&notices).contains("output sources="));
     fs::write(path.as_ref().unwrap(), b"broken prepared cache").unwrap();
-    let rebuilt = load_prepared_gaia(&files, path.clone(), &fingerprint, &mut notices, &mut StepTimes::default()).unwrap();
+    let rebuilt = load_prepared_gaia(&files, path.clone(), &fingerprint, &mut crate::progress::NoProgress(&mut notices), &mut StepTimes::default()).unwrap();
     assert_eq!(rebuilt, prepared);
     fs::write(&files[0].path, b"corrupt").unwrap();
-    assert!(load_prepared_gaia(&files, path, &fingerprint, &mut notices, &mut StepTimes::default()).is_err());
+    assert!(load_prepared_gaia(&files, path, &fingerprint, &mut crate::progress::NoProgress(&mut notices), &mut StepTimes::default()).is_err());
 }
 
 #[test]
@@ -55,7 +55,7 @@ fn zero_catalog_and_cache_hits_always_explain_g_magnitude() {
     let directories = DatasetDirectories { data: None, cache: Some(dir.path().into()) };
     for _ in 0..2 {
         let mut notices = Vec::new();
-        let prepared = load_gaia_catalog(0, &directories, &mut notices, &mut StepTimes::default()).unwrap();
+        let prepared = load_gaia_catalog(0, &directories, &mut crate::progress::NoProgress(&mut notices), &mut StepTimes::default()).unwrap();
         assert!(prepared.catalog.stars.is_empty());
         let text = String::from_utf8(notices).unwrap();
         assert_eq!(text.matches("no G-to-V conversion").count(), 1);
@@ -68,7 +68,7 @@ fn previous_label_boundary_format_is_rejected() {
     let files = vec![source(dir.path(), 0)];
     let fingerprint = fingerprint_files(&files).unwrap();
     let path = dir.path().join("old.catalog");
-    load_prepared_gaia(&files, Some(path.clone()), &fingerprint, &mut Vec::new(), &mut StepTimes::default()).unwrap();
+    load_prepared_gaia(&files, Some(path.clone()), &fingerprint, &mut crate::progress::NoProgress(Vec::new()), &mut StepTimes::default()).unwrap();
     let mut bytes = fs::read(&path).unwrap();
     bytes[8..12].copy_from_slice(&7_u32.to_le_bytes());
     fs::write(&path, bytes).unwrap();

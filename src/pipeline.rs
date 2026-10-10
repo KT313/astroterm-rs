@@ -51,23 +51,23 @@ pub(super) fn run_render_loop(state: &mut ApplicationState, renderer: &mut Rende
         let observer = prepare_observer_frame(state.config.simulation.observer, &mut state.cache.simulation.solar_system, &mut state.cache.observer, time, &mut state.timings)?;
 
         // 3. filter stars based on observed regions
-        select_stars_frame(&mut state.cache.selection, &state.persistent.catalog, &observer, &state.current_view, state.config.render.magnitude_threshold, state.config.simulation.refraction, &mut state.timings);
+        select_stars_frame(&mut state.cache.selection, &state.persistent.catalog, &observer, &state.current_view, state.config.render.magnitude_threshold, state.config.simulation.refraction, &mut state.star_counts.candidate_regions, &mut state.timings);
 
         // 4. simulate stars
         simulate_stars_frame(&mut state.cache.simulation.stars, state.cache.selection.stars(), time, &mut state.timings); // refresh requested regions' motion and brightness
 
         // 5. calculate how prepared objects appear to the viewer
-        let observed = observe_frame(&mut state.cache.observation, state.cache.simulation.stars.results(state.cache.selection.stars()), state.cache.observer.bodies(&observer), &observer, state.config.render.magnitude_threshold, state.config.simulation.refraction, &mut state.cache.sky, &mut state.timings);
+        let observed = observe_frame(&mut state.cache.observation, state.cache.simulation.stars.results(state.cache.selection.stars()), state.cache.observer.bodies(&observer), &observer, state.config.render.magnitude_threshold, state.config.simulation.refraction, &mut state.cache.sky, &mut state.star_counts.filtered, &mut state.timings);
 
         // 6. convert visible sky positions into positions on the screen
         let viewport = renderer.viewport(&state.cache.rendering); // use the current terminal size after any resize was handled
-        project_frame(observed, &state.current_view, viewport, time, &mut state.cache.projection, &mut state.timings);
+        project_frame(observed, &state.current_view, viewport, time, &mut state.cache.projection, &mut state.star_counts.projected, &mut state.timings);
         log_pipeline_data_if_requested(state, "tmp/after-projection.md", "after-projection")?;
         let sky_processing_stats = state.cache.sky_processing_stats(); // summarize all sky-processing caches for the metadata
 
         // 7. render screen positions to RGB frame
         let observed = state.cache.observation.regional_view(state.cache.simulation.stars.results(state.cache.selection.stars()), &state.cache.sky); // borrow final cached values for rendering
-        let outcome = render_projected_frame(renderer, &mut state.cache.rendering, observed, &state.current_view, viewport, &state.cache.projection, sky_processing_stats, time.utc, &clock, &state.config.simulation.observer, &mut state.timings)?; // draw and present the projected sky and text
+        let outcome = render_projected_frame(renderer, &mut state.cache.rendering, observed, &state.current_view, viewport, &state.cache.projection, sky_processing_stats, time.utc, &clock, &state.config.simulation.observer, &state.star_counts, &mut state.timings)?; // draw and present the projected sky and text
         log_pipeline_data_if_requested(state, "tmp/after-rendering.md", "after-rendering")?;
 
         finish_frame_diagnostics(&state.config, &state.persistent.catalog, &state.cache, state.preparation.as_ref(), renderer, frame_start, time, outcome, &mut state.timings); // save frame timings and requested memory diagnostics

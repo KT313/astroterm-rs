@@ -1,6 +1,8 @@
 //! Terminal entry points: input, renderer lifetime, and completed-frame presentation.
 //! The frame sequence is in `pipeline.rs`; supporting rendering and transport modules stay private.
 mod pipeline;
+mod startup;
+pub use startup::{open_startup_progress, StartupProgress};
 mod rendering;
 mod transport;
 mod input;

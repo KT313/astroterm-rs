@@ -7,6 +7,7 @@ use crate::model::{View, RenderOptions};
 #[derive(Clone, Debug, PartialEq)]
 pub struct Config {
     pub debug_singleframe: bool,
+    pub no_progress: bool,
     /// Enable explicitly placed table dumps; independent of timing and memory tracing.
     pub debug_log_data: bool,
     pub debug_memory: bool,

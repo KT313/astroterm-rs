@@ -4,13 +4,19 @@ use crate::model::{StarStorage, Constellation};
 use std::collections::{HashMap, HashSet};
 use super::{grid, prepare_star};
 
-pub(super) fn prepare_compact_stars(entries: impl Iterator<Item = CatalogStar>, source_names: &crate::catalog::StarNames) -> std::io::Result<(StarStorage, Vec<f32>, crate::catalog::StarNames)> {
+pub(super) fn prepare_compact_stars(entries: impl Iterator<Item = CatalogStar>, source_names: &crate::catalog::StarNames, progress: &mut dyn crate::progress::DatasetProgress) -> std::io::Result<(StarStorage, Vec<f32>, crate::catalog::StarNames)> {
     let mut stars = StarStorage::default();
     let capacity = entries.size_hint().0;
+    let total = entries.size_hint().1.filter(|&upper| upper == capacity).map(|n| n as u64);
+    progress.begin_stage(crate::progress::Stage::Convert, "", crate::progress::Unit::Stars, total);
     if capacity as u64 <= u64::from(u32::MAX) { stars.reserve(capacity); }
     let mut bounds = Vec::new();
     let mut labels = crate::catalog::LabelBuilder::default();
-    for entry in entries.filter(|s| s.has_data) {
+    let mut processed = 0_u64;
+    for entry in entries {
+        processed += 1;
+        if processed.is_multiple_of(crate::constants::STARTUP_PROGRESS_ROWS) { progress.set_position(processed); }
+        if !entry.has_data { continue; }
         crate::catalog::Catalog::check_star_count(stars.len() as u64 + 1).map_err(std::io::Error::other)?;
         let mut star = prepare_star(&entry);
         star.name = if let Some(name) = entry.name {
@@ -21,6 +27,8 @@ pub(super) fn prepare_compact_stars(entries: impl Iterator<Item = CatalogStar>, 
         } else { None };
         bounds.push(stars.push(star)?);
     }
+    progress.set_position(processed);
+    progress.finish_stage(crate::progress::Outcome::Complete);
     stars.shrink_to_fit();
     bounds.shrink_to_fit();
     Ok((stars, bounds, labels.finish()))

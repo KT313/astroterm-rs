@@ -34,14 +34,14 @@ pub(crate) fn validate_arguments(arguments: Arguments, cities: &[City]) -> Resul
 
 /// Load the selected catalog into the state and record its startup diagnostics.
 pub(crate) fn load_catalog(state: &mut ApplicationState, directories: &DatasetDirectories) -> Result<(), ExitCode> {
-    let catalog = state.timings.measure_steps("Dataset loading", |times| {
-        astroterm::sky::load_sky_catalog_with_times(
-            state.config.dataset.as_ref(),
-            directories,
-            &mut io::stderr().lock(),
-            times,
-        )
-    });
+    let catalog = {
+        let mut progress = astroterm::terminal::open_startup_progress(state.config.no_progress);
+        let result = state.timings.measure_steps("Dataset loading", |times| {
+            astroterm::sky::load_sky_catalog_with_progress(state.config.dataset.as_ref(), directories, &mut progress, times)
+        });
+        progress.finish(result.is_ok()); // stop all startup drawing before terminal setup or error reporting
+        result
+    };
     let allow_empty = state.config.dataset == Some(astroterm::catalog::datasets::Dataset::GaiaGdr3 { files: 0 }); // zero files explicitly requests no stars
     let catalog = match catalog {
         Ok(catalog) if catalog.catalog.stars.is_empty() && !allow_empty => Err(io::Error::other("dataset contains no stars")),
@@ -58,6 +58,7 @@ pub(crate) fn load_catalog(state: &mut ApplicationState, directories: &DatasetDi
     }
     state.replace_catalog(catalog);                                          // the single catalog install point
     let catalog = &state.persistent.catalog;
+    eprintln!("Catalog: {} stars loaded.", state.star_counts.loaded);
 
     #[cfg(feature = "memory-diagnostics")]
     state.timings.record_memory(state.timings.last_memory_step(), || {

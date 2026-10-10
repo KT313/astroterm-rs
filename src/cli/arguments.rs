@@ -138,6 +138,10 @@ pub struct Arguments {
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(u16).range(0..=i64::from(crate::catalog::datasets::GAIA_DR3_FILE_COUNT)))]
     pub dataset_files: Option<u16>,
 
+    /// Hide dataset progress updates; warnings, errors and final loading notices remain visible
+    #[arg(long)]
+    pub no_progress: bool,
+
     /// Hide star labels. By default, label the five brightest visible stars, using catalog identifiers when
     /// proper names are unavailable. Sun, planet and Moon labels are independent
     #[arg(long = "disable-dynamic-names")]

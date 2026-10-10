@@ -1,14 +1,15 @@
 //! Dataset names, per-user locations and verified streaming downloads. No terminal state is active here.
 mod gaia;
-pub(crate) use gaia::{GaiaFile, resolve_gaia_files};
+pub(crate) use gaia::{GaiaFile, resolve_gaia_files_with_progress};
 
+use crate::progress::{DatasetProgress, NoProgress, Stage, Unit, Outcome};
 use sha2::{Digest, Sha256};
 use std::{
     ffi::OsStr,
     fs,
     io::{self, Read, Write},
     path::{Path, PathBuf},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 pub const ATHYG_URL: &str = "https://codeberg.org/astronexus/athyg/media/branch/main/data/athyg_40.csv.gz";
@@ -62,6 +63,11 @@ pub fn resolve_dataset(
     directories: &DatasetDirectories,
     notices: &mut impl Write,
 ) -> io::Result<PathBuf> {
+    resolve_dataset_with_progress(dataset, directories, &mut NoProgress(notices))
+}
+
+pub(crate) fn resolve_dataset_with_progress(dataset: &Dataset, directories: &DatasetDirectories, notices: &mut dyn DatasetProgress) -> io::Result<PathBuf> {
+    notices.begin_stage(Stage::Resolve, "", Unit::Work, None);
     match dataset {
         Dataset::Path(path) => Ok(path.clone()),
         Dataset::GaiaGdr3 { .. } => Err(io::Error::other("Gaia uses the multi-file catalog loader")),
@@ -93,7 +99,7 @@ pub fn resolve_dataset(
                     .header("Accept-Encoding", "identity")
                     .call()
                     .map_err(io::Error::other)?;
-                install_verified(
+                install_verified_with_progress(
                     response.body_mut().as_reader(),
                     &target,
                     ATHYG_BYTES,
@@ -109,12 +115,17 @@ pub fn resolve_dataset(
 }
 
 /// Verify the exact compressed bytes, bounded by the pinned size. RAII removes the temporary on every error.
-fn install_verified(
+#[cfg(test)]
+fn install_verified(source: impl Read, target: &Path, expected_size: u64, expected_hash: &str, notices: &mut impl Write) -> io::Result<()> {
+    install_verified_with_progress(source, target, expected_size, expected_hash, &mut NoProgress(notices))
+}
+
+fn install_verified_with_progress(
     mut source: impl Read,
     target: &Path,
     expected_size: u64,
     expected_hash: &str,
-    notices: &mut impl Write,
+    notices: &mut dyn DatasetProgress,
 ) -> io::Result<()> {
     let directory = target
         .parent()
@@ -122,7 +133,7 @@ fn install_verified(
     let mut temporary = tempfile::NamedTempFile::new_in(directory)?;
     let mut hash = Sha256::new();
     let mut count = 0_u64;
-    let mut last = Instant::now();
+    notices.begin_stage(Stage::Download, "AT-HYG", Unit::Bytes, Some(expected_size));
     let mut buffer = [0_u8; 64 * 1024];
     loop {
         let read = source.read(&mut buffer)?;
@@ -135,21 +146,16 @@ fn install_verified(
         }
         hash.update(&buffer[..read]);
         temporary.write_all(&buffer[..read])?;
-        if last.elapsed() >= Duration::from_secs(1) {
-            writeln!(
-                notices,
-                "Downloaded {count}/{expected_size} bytes ({:.0}%)",
-                100.0 * count as f64 / expected_size as f64
-            )?;
-            last = Instant::now();
-        }
+        notices.set_position(count);
     }
     if count != expected_size || hash.finalize().iter().map(|b| format!("{b:02x}")).collect::<String>() != expected_hash
     {
         return Err(io::Error::other("dataset size or SHA-256 mismatch"));
     }
+    notices.begin_stage(Stage::Install, "AT-HYG", Unit::Work, None);
     temporary.as_file().sync_all()?;
     temporary.persist(target).map_err(|error| error.error)?;
+    notices.finish_stage(Outcome::Complete);
     writeln!(notices, "Downloaded and verified {count} bytes.")?;
     Ok(())
 }

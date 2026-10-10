@@ -41,6 +41,11 @@ reference-distance changes when a usable distance exists. Stellar variability is
 
 ## Download and prepared-cache storage
 
+All datasets share the startup progress display, which finishes before the sky renderer opens.
+Use `--no-progress` to hide updates while keeping warnings and loading summaries. Redirected stderr gets
+plain text. See [dataset progress and star counts](dataset-progress.md).
+
+
 On Linux, default locations are:
 
 - Raw inputs: `~/.local/share/astroterm/gaia-gdr3/gaia_source/`
