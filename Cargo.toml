@@ -73,6 +73,12 @@ harness = false
 name = "spatial"
 harness = false
 
+# Debug builds keep file and line information (backtraces, perf) but not variable-level debug info: full debuginfo
+# made every test and example binary over 100 MB (101 MB of 121 MB for one integration test). For stepping through
+# variables in a debugger, build once with CARGO_PROFILE_DEV_DEBUG=full.
+[profile.dev]
+debug = "line-tables-only"
+
 # `make build-aggressive`: the release profile plus whole-program optimization and `-C target-cpu=native`.
 # `make build-aggressive-pgo` additionally trains/applies PGO and BOLT. Panics abort, but the panic hook still
 # restores the terminal first.

@@ -7,6 +7,7 @@
 #   make build-run -- -i Tokyo -m       rebuild if needed, then run with arguments
 #   make test                           run correctness tests and compile benchmark targets
 #   make test-benchmarks                execute benchmark smoke checks (includes 2.5M stars)
+#   make clean-stale                    delete build artefacts no build has touched for three days
 #
 # The `--` stops make from reading the arguments as its own options. For values with spaces or `=`, use ARGS:
 #   make run ARGS='-i "Rio de Janeiro" --fov=90'
@@ -33,7 +34,7 @@ RUN_ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
 	@:
 endif
 
-.PHONY: build build-aggressive build-aggressive-pgo check-aggressive-pgo-tools run build-run test test-benchmarks
+.PHONY: build build-aggressive build-aggressive-pgo check-aggressive-pgo-tools run build-run test test-benchmarks clean-stale check-sweep
 
 build:
 	cargo build --release
@@ -75,3 +76,17 @@ test:
 
 test-benchmarks:
 	cargo test --bench frame --bench spatial
+
+# cargo never deletes artefacts whose hash changed (feature sets, dependency updates, superseded test binaries), so
+# target/ grows without bound. This removes what no build has used for three days. The compile-fail tests build a
+# private copy of the crate under target/tests/trybuild (host build scripts in debug/, the crate itself under the
+# host triple) that sweep does not see; `cargo clean --profile dev` removes only the `debug` directory of the
+# tree it is given, nothing else, and the next `cargo test` rebuilds it.
+TRYBUILD_DIR := target/tests/trybuild
+clean-stale: check-sweep
+	cargo sweep --time 3
+	cargo clean --profile dev --target-dir $(TRYBUILD_DIR)
+	cargo clean --profile dev --target-dir $(TRYBUILD_DIR)/$(HOST)
+
+check-sweep:
+	@command -v cargo-sweep >/dev/null || { echo "cargo-sweep not found: cargo install cargo-sweep"; exit 1; }
