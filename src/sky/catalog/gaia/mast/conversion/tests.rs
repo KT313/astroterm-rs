@@ -1,0 +1,232 @@
+use super::*;
+use crate::{catalog::StarNames, progress::NoProgress};
+
+fn row(id: u64) -> MastRow {
+    MastRow { source_id: id, designation: Some(format!("supplied label {id}")),
+        values: [45., 0., 2016., 1., 2., 1., 20., 0., 12., 13., 11.].map(|value| Some(f64::to_bits(value))) }
+}
+fn selection(dir: &std::path::Path, groups: &[Vec<MastRow>], count: usize) -> (MastSelection, BlobStore, Vec<String>) {
+    let raw = BlobStore::new(dir.join("raw"));
+    let converted = BlobStore::new(dir.join("converted"));
+    let policy = fingerprint();
+    let mut base = 0u64;
+    let mut blocks = Vec::new();
+    let mut keys = Vec::new();
+    for (i, rows) in groups.iter().enumerate() {
+        if base >= count as u64 { break; }
+        let key = format!("block{i}");
+        let blob = raw.publish(&key, &[i as u8], false).unwrap();                                 // intentionally not Parquet: reuse must not decode these source blobs
+        let block = MastBlock { key, hash: blob.hash, rows: rows.len(), selected: rows.len().min(count - base as usize), base, stamp: blob.stamp };
+        let key = block_key(&block, &policy);
+        converted.publish(&key, &encode_mast(&convert_block(rows).unwrap()).unwrap(), false).unwrap();
+        base += rows.len() as u64;
+        blocks.push(block);
+        keys.push(key);
+    }
+    (MastSelection { store: raw, blocks, discovery: "test".into(), requested: count as u32, available: base }, converted, keys)
+}
+
+#[test]
+fn mast_converted_prefix_reuses_results_and_deduplicates_across_blocks() {
+    let dir = tempfile::tempdir().unwrap();
+    let (a, b, c) = (row(10), row(20), row(30));
+    let groups = vec![vec![a, b.clone()], vec![b.clone(), b, c]];
+    for (count, expected) in [(1, vec![0]), (2, vec![0, 1]), (3, vec![0, 1]), (4, vec![0, 1]), (5, vec![0, 1, 4])] {
+        let (selection, store, keys) = selection(dir.path(), &groups, count);
+        let mut progress = NoProgress(Vec::new());
+        let catalog = super::super::assembly::assemble_selected_catalog(&selection, &store, &keys, &mut progress, &mut StepTimes::default()).unwrap();
+        let mut ids: Vec<_> = catalog.catalog.stars.iter().map(|star| star.id.0).collect();
+        ids.sort_unstable();
+        assert_eq!(ids, expected);
+        for star in catalog.catalog.stars.iter() { assert!(catalog.catalog.names.get(star.name).unwrap().starts_with("supplied label")); }
+        if count == 5 { assert!(String::from_utf8(progress.0).unwrap().contains("duplicate copies removed=2")); }
+    }
+}
+
+#[test]
+fn mast_overfetched_error_is_deferred_until_selected_and_conflicts_fail() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut bad = row(20);
+    bad.values[0] = Some(f64::NAN.to_bits());
+    let groups = vec![vec![row(10), bad]];
+    for count in [1, 2] {
+        let (selection, store, keys) = selection(dir.path(), &groups, count);
+        let result = super::super::assembly::assemble_selected_catalog(&selection, &store, &keys, &mut NoProgress(Vec::new()), &mut StepTimes::default());
+        assert_eq!(result.is_ok(), count == 1);
+        if count == 2 { assert!(result.unwrap_err().to_string().contains("nonfinite")); }
+    }
+    let mut conflict = row(10);
+    conflict.designation = Some("different".into());
+    let data = convert_block(&[row(10), conflict]).unwrap();
+    assert!(matches!(data.entries[1].result, ConvertedRow::Error { .. }));
+    let (selection, store, keys) = selection(dir.path(), &[vec![row(10), row(20), row(10)]], 3);
+    let error = super::super::assembly::assemble_selected_catalog(&selection, &store, &keys, &mut NoProgress(Vec::new()), &mut StepTimes::default()).unwrap_err();
+    assert!(error.to_string().contains("nonadjacent"));
+}
+
+#[test]
+fn mast_duplicate_float_comparison_uses_bits_but_nan_still_fails_validation() {
+    let mut nan = row(1);
+    nan.values[0] = Some(0x7ff8_0000_0000_0042);
+    let converted = convert_block(&[nan.clone(), nan]).unwrap();
+    assert!(matches!(converted.entries[0].result, ConvertedRow::Error { .. }));
+    assert!(matches!(converted.entries[1].result, ConvertedRow::Duplicate));
+    let a = row(1);
+    let mut b = a.clone();
+    b.values[1] = Some((-0.0f64).to_bits());
+    assert!(matches!(convert_block(&[a, b]).unwrap().entries[1].result, ConvertedRow::Error { .. }));
+}
+
+#[test]
+fn mast_packed_append_matches_existing_storage_preparation() {
+    let source = validate_gaia_input(StarId(0), 10, row(10).numbers()).unwrap().unwrap();
+    let mut star = convert_source(source, &mut ConversionStats::default()).unwrap();
+    let mut names = StarNames::default();
+    star.name = Some(names.insert("label").unwrap());
+    let mut old = StarStorage::default();
+    let bound = old.push(star.clone()).unwrap();
+    let (packed, new_bound, clipping) = StarStorage::prepare_row(star).unwrap();
+    let mut reused = StarStorage::default();
+    reused.push_prepared(packed, clipping);
+    assert_eq!(bound.to_bits(), new_bound.to_bits());
+    assert_eq!(old, reused);
+}
+
+#[test]
+fn mast_diagnostic_bits_preserve_each_independent_flag_and_reject_unknown_bits() {
+    for bits in 0u8..32 {
+        let stats = ConversionStats {
+            missing_motion: u64::from(bits & 1 != 0), angular_only: u64::from(bits & 2 != 0),
+            missing_rv: u64::from(bits & 4 != 0), missing_color: u64::from(bits & 8 != 0), saturated_color: u64::from(bits & 16 != 0),
+        };
+        assert_eq!(pack_stats(&stats), bits);
+    }
+    let mut data = convert_block(&[row(10)]).unwrap();
+    if let ConvertedRow::Ready { stats, .. } = &mut data.entries[0].result { *stats = 0x80; } else { panic!("expected prepared row"); }
+    assert!(validate_block(&data, 1).is_err());
+}
+
+#[test]
+#[ignore = "local sample microbenchmark; requires ASTROTERM_MAST_SAMPLE, no network"]
+fn mast_measure_compact_preparation_and_labels() {
+    use std::{time::Instant, hint::black_box};
+    let path = std::env::var_os("ASTROTERM_MAST_SAMPLE").expect("set a normalized 13-column Parquet sample");
+    let rows = read_mast_block(std::fs::read(path).unwrap()).unwrap();
+    let mut stats = ConversionStats::default();
+    let mut stars = Vec::new();
+    let mut labels = Vec::new();
+    for (i, row) in rows.iter().enumerate() {
+        if let Some(source) = validate_gaia_input(StarId(i as u32), row.source_id, row.numbers()).unwrap() {
+            stars.push(convert_source(source, &mut stats).unwrap());
+            labels.push(row.designation.as_ref().unwrap());
+        }
+    }
+    let started = Instant::now();
+    for star in &stars { black_box(StarStorage::prepare_row(star.clone()).unwrap()); }
+    let prepare = started.elapsed();
+    let started = Instant::now();
+    let mut names = StarNames::default();
+    for label in &labels { black_box(names.insert(label).unwrap()); }
+    eprintln!("usable={}; compact preparation={prepare:?}; label insertion={:?}", stars.len(), started.elapsed());
+}
+
+#[derive(Default)]
+struct LoadingProgress {
+    text: Vec<u8>,
+    stages: Vec<crate::progress::Stage>,
+    active: Option<crate::progress::Stage>,
+    totals: Vec<u64>,
+    positions: Vec<u64>,
+    completed: usize,
+}
+impl std::io::Write for LoadingProgress {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> { self.text.extend_from_slice(bytes); Ok(bytes.len()) }
+    fn flush(&mut self) -> io::Result<()> { Ok(()) }
+}
+impl DatasetProgress for LoadingProgress {
+    fn begin_stage(&mut self, stage: crate::progress::Stage, _: &str, unit: crate::progress::Unit, total: Option<u64>) {
+        self.stages.push(stage);
+        self.active = Some(stage);
+        if stage == crate::progress::Stage::Convert {
+            assert_eq!(unit, crate::progress::Unit::Blocks);
+            self.totals.push(total.unwrap());
+        }
+    }
+    fn set_position(&mut self, position: u64) {
+        if self.active == Some(crate::progress::Stage::Convert) { self.positions.push(position); }
+    }
+    fn finish_stage(&mut self, outcome: crate::progress::Outcome) {
+        if self.active == Some(crate::progress::Stage::Convert) && outcome == crate::progress::Outcome::Complete { self.completed += 1; }
+        self.active = None;
+    }
+}
+
+/// Small real Parquet input lets cold and cached loading exercise the same progress contract without downloads.
+fn write_raw_block(rows: &[MastRow]) -> Vec<u8> {
+    use parquet::{data_type::{Int64Type, ByteArrayType, ByteArray, DoubleType}, file::writer::SerializedFileWriter, schema::parser::parse_message_type};
+    use std::sync::Arc;
+    let schema = parse_message_type("message gaia {
+        REQUIRED INT64 source_id; REQUIRED BYTE_ARRAY designation (UTF8);
+        REQUIRED DOUBLE ra; REQUIRED DOUBLE dec; REQUIRED DOUBLE ref_epoch;
+        REQUIRED DOUBLE pmra; REQUIRED DOUBLE pmdec; REQUIRED DOUBLE parallax;
+        REQUIRED DOUBLE parallax_over_error; REQUIRED DOUBLE radial_velocity;
+        REQUIRED DOUBLE phot_g_mean_mag; REQUIRED DOUBLE phot_bp_mean_mag; REQUIRED DOUBLE phot_rp_mean_mag;
+    }").unwrap();
+    let mut writer = SerializedFileWriter::new(Vec::new(), Arc::new(schema), Default::default()).unwrap();
+    let mut group = writer.next_row_group().unwrap();
+    for index in 0..13 {
+        let mut column = group.next_column().unwrap().unwrap();
+        match index {
+            0 => { column.typed::<Int64Type>().write_batch(&rows.iter().map(|row| row.source_id as i64).collect::<Vec<_>>(), None, None).unwrap(); },
+            1 => { column.typed::<ByteArrayType>().write_batch(&rows.iter().map(|row| ByteArray::from(row.designation.as_ref().unwrap().as_str())).collect::<Vec<_>>(), None, None).unwrap(); },
+            _ => { column.typed::<DoubleType>().write_batch(&rows.iter().map(|row| f64::from_bits(row.values[index - 2].unwrap())).collect::<Vec<_>>(), None, None).unwrap(); },
+        }
+        column.close().unwrap();
+    }
+    group.close().unwrap();
+    writer.into_inner().unwrap()
+}
+
+#[test]
+fn mast_loading_uses_one_bar_for_cold_cached_and_mixed_blocks() {
+    let groups = [vec![row(10), row(20)], vec![row(20), row(30), row(40)]];
+    let mut expected = None;
+    for cached in [[false, false], [true, false], [false, true], [true, true]] {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut selected, _, _) = selection(directory.path(), &groups, 4);
+        let store = BlobStore::new(directory.path().join("loading-cache"));
+        let mut keys = Vec::new();
+        for ((block, rows), cached) in selected.blocks.iter_mut().zip(&groups).zip(cached) {
+            let blob = selected.store.publish(&block.key, &write_raw_block(rows), false).unwrap();
+            block.hash = blob.hash;
+            block.stamp = blob.stamp;
+            let key = block_key(block, &fingerprint());
+            if cached { store.publish(&key, &encode_mast(&convert_block(rows).unwrap()).unwrap(), false).unwrap(); }
+            keys.push(key);
+        }
+        let mut progress = LoadingProgress::default();
+        let mut times = StepTimes::with_trace(true);
+        let catalog = super::super::assembly::assemble_selected_catalog(&selected, &store, &keys, &mut progress, &mut times).unwrap();
+        assert_eq!(progress.totals, vec![2]);
+        assert_eq!(progress.positions, vec![0, 1, 2]);                                           // a partial final block still counts once, including skipped duplicate rows
+        assert_eq!(progress.completed, 1);
+        assert_eq!(progress.stages, [crate::progress::Stage::Convert, crate::progress::Stage::Sort, crate::progress::Stage::Index]);
+        let conversions = times.trace().unwrap().steps.iter().filter(|step| step.name == "MAST block conversion").count();
+        assert_eq!(conversions, cached.iter().filter(|&&hit| !hit).count());
+        if let Some(expected) = &expected { assert_eq!(&catalog, expected); } else { expected = Some(catalog); }
+    }
+}
+
+#[test]
+fn mast_loading_does_not_count_a_block_that_fails_during_assembly() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut invalid = row(30);
+    invalid.values[0] = Some(f64::NAN.to_bits());
+    let groups = [vec![row(10), row(20)], vec![invalid]];
+    let (selected, store, keys) = selection(directory.path(), &groups, 3);
+    let mut progress = LoadingProgress::default();
+    assert!(super::super::assembly::assemble_selected_catalog(&selected, &store, &keys, &mut progress, &mut StepTimes::default()).is_err());
+    assert_eq!(progress.totals, vec![2]);
+    assert_eq!(progress.positions, vec![0, 1]);
+    assert_eq!(progress.completed, 0);
+}

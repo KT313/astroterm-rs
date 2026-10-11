@@ -24,7 +24,12 @@ pub fn compute_barycentric_position(body: BodyId, tt: f64) -> Vector3 {
     ecliptic_to_equatorial(Vector3 { x: p.x, y: p.y, z: p.z })
 }
 
+/// One body's barycentric state at one TT epoch: three position evaluations for the finite-difference velocity.
+pub fn evaluate_planet(body: BodyId, tt: f64) -> BodyState {
+    super::state::evaluate_with_velocity(tt, |t| compute_barycentric_position(body, t))
+}
+
 /// Planetary batch, including the moving Sun and Earth, at one TT epoch.
 pub fn evaluate_planets(tt: f64) -> [BodyState; 9] {
-    BodyId::PLANETS.map(|body| super::state::evaluate_with_velocity(tt, |t| compute_barycentric_position(body, t)))
+    BodyId::PLANETS.map(|body| evaluate_planet(body, tt))
 }

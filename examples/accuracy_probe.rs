@@ -1,14 +1,16 @@
 //! Phase-6 model/correction probe. Reads TT/UT1 epochs from stdin; never an independent reference.
+use astroterm::state::{SimulationState};
 use astroterm::astro::{
     Observer,
     models::{BodyId, moons::evaluate_moon, orientation::*, planets::evaluate_planets},
 };
-use astroterm::sky::{FrameTime, SimulationState, Sky, SkyRegion, observe_sky, prepare_observation, update_simulation};
+use astroterm::model::{SkyRegion, FrameTime};
+use astroterm::sky::{observe_sky, prepare_observation, update_solar_system};
 use astroterm::timing::StepTimes;
 use std::io::{self, BufRead};
 fn main() {
     let cat = astroterm::catalog::load_embedded_catalog().unwrap();
-    let mut sky = Sky::from_catalog(&cat);
+    let mut sky = astroterm::sky::create_sky_from_catalog(&cat).unwrap();
     for line in io::stdin().lock().lines() {
         let line = line.unwrap();
         let fields: Vec<f64> = line.split_whitespace().map(|v| v.parse().unwrap()).collect();
@@ -17,7 +19,7 @@ fn main() {
         let time = FrameTime { utc: ut1, ut1, tt };
         let mut simulation = SimulationState::default();
         let mut times = StepTimes::default();
-        update_simulation(&mut simulation, time, &[], &mut times).unwrap();
+        update_solar_system(&mut simulation, time, &[], &mut times).unwrap();
         let site = Observer {
             latitude: 42.3601_f64.to_radians(),
             longitude: -71.0589_f64.to_radians(),
@@ -28,7 +30,7 @@ fn main() {
             ut1: ut1 + 59.0 / 86400.0,
             tt: tt + 59.0 / 86400.0,
         };
-        update_simulation(&mut simulation, frame, &[], &mut times).unwrap();
+        update_solar_system(&mut simulation, frame, &[], &mut times).unwrap();
         let observer = prepare_observation(&mut simulation, frame, site).unwrap();
         observe_sky(
             &simulation,

@@ -1,4 +1,5 @@
 //! Common geometric states and stable identity, independent of the selected ephemeris.
+use crate::rows::row_columns;
 use crate::astro::Vector3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -27,6 +28,13 @@ impl BodyId {
         Self::Uranus,
         Self::Neptune,
     ];
+    /// Lowercase name, used for per-body table paths.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Sun => "sun", Self::Mercury => "mercury", Self::Venus => "venus", Self::Earth => "earth", Self::Mars => "mars",
+            Self::Jupiter => "jupiter", Self::Saturn => "saturn", Self::Uranus => "uranus", Self::Neptune => "neptune", Self::Moon => "moon",
+        }
+    }
 }
 
 /// Geometric J2000 equatorial state, AU and AU/day. The common origin is the solar-system barycenter. Lunar samples are explicitly parent-relative until composition.
@@ -35,6 +43,7 @@ pub struct BodyState {
     pub position: Vector3,
     pub velocity: Vector3,
 }
+row_columns!(BodyState { position, velocity });
 
 impl BodyState {
     pub fn evaluate(self, days: f64) -> Self {

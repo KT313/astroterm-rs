@@ -1,0 +1,9 @@
+error[E0499]: cannot borrow `run.sky.stars` as mutable more than once at a time
+ --> tests/ui/state_views/overlapping_mutable_views.rs:5:18
+  |
+4 |     let first = run.sky.stars.as_mut_slice();
+  |                 ------------- first mutable borrow occurs here
+5 |     let second = run.sky.stars.as_mut_slice(); // the first writable view still covers these same rows
+  |                  ^^^^^^^^^^^^^ second mutable borrow occurs here
+6 |     first[0].drawable = false;
+  |     -------- first borrow later used here

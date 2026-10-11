@@ -20,16 +20,16 @@ pub struct Arguments {
 
     /// Renderer: characters (default) or true-color pixels. Constellations, grid, thresholds, labels,
     /// refraction and metadata apply to both; --color, --unicode and --braille affect characters only.
-    #[arg(long, value_enum, default_value_t = crate::terminal::RendererKind::Chars)]
-    pub renderer: crate::terminal::RendererKind,
+    #[arg(long, value_enum, default_value_t = crate::model::RendererKind::Chars)]
+    pub renderer: crate::model::RendererKind,
 
     /// Pixel protocol (normally detected). Force one to test terminal support; halfblocks needs no graphics protocol.
-    #[arg(long, value_enum, default_value_t = crate::terminal::GraphicsProtocol::Auto)]
-    pub graphics_protocol: crate::terminal::GraphicsProtocol,
+    #[arg(long, value_enum, default_value_t = crate::model::GraphicsProtocol::Auto)]
+    pub graphics_protocol: crate::model::GraphicsProtocol,
 
     /// Raster text scale relative to terminal cells [0.25–4], for Sixel/Kitty/iTerm2 only. 1 restores the
     /// terminal-cell-sized layout; characters and native half-block text are unaffected.
-    #[arg(long, default_value_t = 0.85, value_name = "factor", allow_negative_numbers = true)]
+    #[arg(long, default_value_t = crate::constants::DEFAULT_PIXEL_TEXT_SCALE, value_name = "factor", allow_negative_numbers = true)]
     pub text_scale: f64,
 
     /// Observer latitude [-90°, 90°] (default: 0.0)
@@ -65,21 +65,10 @@ pub struct Arguments {
         long,
         value_name = "float",
         allow_negative_numbers = true,
-        default_value_t = 5.0,
+        default_value_t = crate::constants::DEFAULT_MAGNITUDE_THRESHOLD,
         hide_default_value = true
     )]
     pub threshold: f32,
-
-    /// Label stars brighter than this magnitude (default: 0.25)
-    #[arg(
-        short = 'l',
-        long = "label-thresh",
-        value_name = "float",
-        allow_negative_numbers = true,
-        default_value_t = 0.25,
-        hide_default_value = true
-    )]
-    pub label_threshold: f32,
 
     /// Frames per second (default: 24 for characters, 12 for pixels)
     #[arg(short = 'f', long, value_name = "int", allow_negative_numbers = true)]
@@ -91,7 +80,7 @@ pub struct Arguments {
         long,
         value_name = "float",
         allow_negative_numbers = true,
-        default_value_t = 1.0,
+        default_value_t = crate::constants::DEFAULT_SIMULATION_SPEED,
         hide_default_value = true
     )]
     pub speed: f64,
@@ -139,14 +128,31 @@ pub struct Arguments {
     #[arg(short = 'R', long)]
     pub refraction: bool,
 
-    /// Load athyg (downloads about 200 MB on first use), or an AT-HYG CSV file (.csv or .csv.gz), instead of
+    /// Load athyg (~200 MB), gaia-gdr3 (requires --dataset-files or --dataset-stars), or an AT-HYG CSV (.csv or .csv.gz), instead of
     /// the built-in Yale Bright Star Catalog. Existing files and values containing a path separator are paths.
-    /// Constellation figures are matched by HR number
+    /// Constellation figures are matched by HR number for AT-HYG; Gaia subsets have no figures
     #[arg(long, value_name = "name|path")]
     pub dataset: Option<PathBuf>,
 
-    /// Don't name extra stars when zooming in. By default, if fewer than 5 objects in view have names, the brightest
-    /// visible stars are named too (with their catalog number if they have no proper name)
+    /// Number of Gaia DR3 files to load, in fixed sky order (0 means no catalog stars). Only for gaia-gdr3
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u16).range(0..=i64::from(crate::catalog::datasets::GAIA_DR3_FILE_COUNT)))]
+    pub dataset_files: Option<u16>,
+
+    /// Select the first N physical Gaia DR3 rows from MAST Parquet (whole blocks may be downloaded).
+    /// Missing measurements and duplicate copies reduce the loaded count. Only for gaia-gdr3; 0 means no stars
+    #[arg(long, value_name = "N", conflicts_with = "dataset_files")]
+    pub dataset_stars: Option<u32>,
+
+    /// Concurrent MAST blocks [1–16] (default: 4); all 13 column requests each, reduced by the memory budget. Requires --dataset-stars.
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u8).range(1..=i64::from(crate::constants::MAST_MAX_PARALLEL_BLOCKS)))]
+    pub dataset_parallel_blocks: Option<u8>,
+
+    /// Hide dataset progress updates; warnings, errors and final loading notices remain visible
+    #[arg(long)]
+    pub no_progress: bool,
+
+    /// Hide star labels. By default, label the five brightest visible stars, using catalog identifiers when
+    /// proper names are unavailable. Sun, planet and Moon labels are independent
     #[arg(long = "disable-dynamic-names")]
     pub disable_dynamic_names: bool,
 
@@ -158,6 +164,15 @@ pub struct Arguments {
     /// Present one frame, restore the terminal, then print ordered pipeline timings and data counts
     #[arg(long)]
     pub debug_singleframe: bool,
+
+    /// Append Markdown table dumps in tmp/ at startup, after preparation, and after each projection and rendering. Available in every build
+    #[arg(long)]
+    pub debug_log_data: bool,
+
+    /// Report bounded memory inventories and instrumented operations after quitting; combine with --debug-singleframe for one frame.
+    /// Requires: cargo build --features memory-diagnostics --bin astroterm. Does not enable the on-screen timing panel
+    #[arg(long)]
+    pub debug_memory: bool,
 
     /// Print this help message
     #[arg(short = 'h', long, action = ArgAction::Help)]

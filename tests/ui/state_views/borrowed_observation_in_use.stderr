@@ -1,0 +1,9 @@
+error[E0502]: cannot borrow `*cache` as mutable because it is also borrowed as immutable
+ --> tests/ui/state_views/borrowed_observation_in_use.rs:4:5
+  |
+3 |     let observed = cache.observed_view(stars, summary);
+  |                    ----- immutable borrow occurs here
+4 |     cache.invalidate_region(0);
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^ mutable borrow occurs here
+5 |     let _ = observed.stars.get(0);
+  |             -------------- immutable borrow later used here

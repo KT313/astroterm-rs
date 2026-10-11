@@ -7,6 +7,7 @@
 //! are empty fields. `dist` and `x0/y0/z0` are parsecs; `vx/vy/vz` and `rv` are km/s. Validated space-motion
 //! inputs feed the stellar family; precise RA/Dec define the initial direction rather than rounded x0/y0/z0.
 
+use crate::progress::{DatasetProgress, NoProgress, Stage, Unit, Outcome};
 use std::f64::consts::PI;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read};
@@ -29,7 +30,7 @@ const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
 const MILLIARCSECONDS_TO_RADIANS: f64 = PI / 180.0 / 3600.0 / 1000.0;
 
 /// Stars brighter than this are the Sun, which AT-HYG lists too but the sky draws as a planet.
-const SUN_MAGNITUDE_LIMIT: f32 = -20.0;
+const SUN_MAGNITUDE_LIMIT: f64 = -20.0;
 
 /// Positions of the columns used, if present. Only position and magnitude are required.
 struct Columns {
@@ -60,13 +61,10 @@ struct Columns {
 
 /// Load an AT-HYG CSV file (`.csv` or gzip-compressed `.csv.gz`), with the embedded constellation figures.
 pub fn load_athyg_catalog(path: &Path) -> Result<Catalog, CatalogError> {
-    load_athyg_catalog_with_times(path, &mut crate::timing::StepTimes::default())
+    load_athyg_catalog_with_times(path, &mut crate::timing::StepTimes::default(), &mut NoProgress(io::sink()))
 }
 
-pub(crate) fn load_athyg_catalog_with_times(
-    path: &Path,
-    times: &mut crate::timing::StepTimes,
-) -> Result<Catalog, CatalogError> {
+pub(crate) fn load_athyg_catalog_with_times(path: &Path, times: &mut crate::timing::StepTimes, progress: &mut dyn DatasetProgress) -> Result<Catalog, CatalogError> {
     let describe_error = |error: io::Error| CatalogError::Io(format!("cannot read {}: {error}", path.display()));
 
     // decompress if the file starts like a gzip file
@@ -78,7 +76,7 @@ pub(crate) fn load_athyg_catalog_with_times(
         Box::new(file)
     };
 
-    parse_athyg_with_times(reader, times).map_err(|error| match error {
+    parse_athyg_with_times(reader, times, progress).map_err(|error| match error {
         CatalogError::Io(message) => CatalogError::Io(format!("cannot read {}: {message}", path.display())),
         other => other,
     })
@@ -87,10 +85,11 @@ pub(crate) fn load_athyg_catalog_with_times(
 /// Parse the stars of AT-HYG CSV data.
 #[cfg(test)]
 fn parse_athyg(reader: impl Read) -> Result<Catalog, CatalogError> {
-    parse_athyg_with_times(reader, &mut crate::timing::StepTimes::default())
+    parse_athyg_with_times(reader, &mut crate::timing::StepTimes::default(), &mut NoProgress(io::sink()))
 }
 
-fn parse_athyg_with_times(reader: impl Read, times: &mut crate::timing::StepTimes) -> Result<Catalog, CatalogError> {
+fn parse_athyg_with_times(reader: impl Read, times: &mut crate::timing::StepTimes, progress: &mut dyn DatasetProgress) -> Result<Catalog, CatalogError> {
+    progress.begin_stage(Stage::Parse, "AT-HYG", Unit::Rows, None);
     let (stars, names, row, missing, sun) =
         times.measure("CSV validation and parsing", || -> Result<_, CatalogError> {
             let mut csv = csv::Reader::from_reader(reader);
@@ -98,7 +97,7 @@ fn parse_athyg_with_times(reader: impl Read, times: &mut crate::timing::StepTime
 
             let mut stars = Vec::new();
             let mut names = StarNames::default();
-            let mut row = 0;
+            let mut row = 0_u64;
             let mut missing = 0;
             let mut sun = 0;
             let mut record = ByteRecord::new();
@@ -107,7 +106,8 @@ fn parse_athyg_with_times(reader: impl Read, times: &mut crate::timing::StepTime
                 .map_err(|error| CatalogError::Io(error.to_string()))?
             {
                 let line = record.position().map_or(0, |position| position.line());
-                if let Some(star) = parse_star(&record, &columns, line, StarId(row), &mut names)? {
+                if let Some(star) = parse_star(&record, &columns, line, StarId::try_from_index(row)?, &mut names)? {
+                    Catalog::check_star_count(stars.len() as u64 + 1)?;
                     stars.push(star);
                 } else if [columns.ra, columns.dec, columns.mag]
                     .into_iter()
@@ -118,9 +118,13 @@ fn parse_athyg_with_times(reader: impl Read, times: &mut crate::timing::StepTime
                     sun += 1;
                 }
                 row += 1;
+                if row.is_multiple_of(crate::constants::STARTUP_PROGRESS_ROWS) {
+                    progress.set_position(row); progress.set_retained(stars.len() as u64);
+                }
             }
             Ok((stars, names, row, missing, sun))
         })?;
+    progress.set_position(row); progress.set_retained(stars.len() as u64); progress.finish_stage(Outcome::Complete);
     times.describe("CSV validation and parsing", || format!("input rows={row}; removed missing RA/Dec/magnitude={missing}; then removed Sun (mag < -20)={sun}; output stars={}; malformed/non-finite inputs abort loading", stars.len()));
     let mut catalog = times.measure("Catalog assembly", || -> Result<_, CatalogError> {
         Ok(Catalog::new(stars, names, load_constellation_figures()?))
@@ -188,7 +192,7 @@ fn parse_star(
     // validate every numeric input even in skipped rows and incomplete triples
     let ra = number(Some(columns.ra), "ra")?;
     let dec = number(Some(columns.dec), "dec")?;
-    let magnitude = parse_finite_f32(record, Some(columns.mag), "mag", line)?;
+    let magnitude = number(Some(columns.mag), "mag")?;
     let color_index = parse_finite_f32(record, columns.ci, "ci", line)?;
     let pm_ra = number(columns.pmra, "pmra")?.unwrap_or(0.0) * MILLIARCSECONDS_TO_RADIANS;
     let pm_dec = number(columns.pmdec, "pmdec")?.unwrap_or(0.0) * MILLIARCSECONDS_TO_RADIANS;
@@ -222,6 +226,7 @@ fn parse_star(
     if magnitude < SUN_MAGNITUDE_LIMIT {
         return Ok(None);
     }
+    crate::catalog::validate_magnitude(magnitude).map_err(|error| CatalogError::Io(format!("Dataset line {line}, star {}: {error}", id.0)))?;
     let declination = dec_degrees.to_radians();
 
     // proper motion; pmra is the motion on the sky, so divide by cos(dec) to get the change of the right ascension
@@ -234,7 +239,7 @@ fn parse_star(
         Some([class]) => [*class, b' '],
         _ => *b"  ",
     };
-    let name = text(columns.proper).map(|name| names.insert(name));
+    let name = text(columns.proper).map(|name| names.insert(name)).transpose().map_err(|e| CatalogError::Io(e.to_string()))?;
     let designation = select_designation(record, columns, hr, hip, gaia);
 
     let space_motion = prepare_space_motion(
@@ -515,20 +520,20 @@ mod tests {
             abbreviation: "Test",
             segments: vec![[2491, 99999]],
         }];
-        let sky = crate::sky::Sky::from_catalog(&catalog);
+        let sky = crate::sky::create_sky_from_catalog(&catalog).unwrap();
         drop(catalog);
         let bright = sky.star_views().find(|star| star.id() == StarId(1)).unwrap();
         assert_eq!(sky.star_name(&bright), Some("Bright"));
         assert_eq!(sky.star_view(0).id(), StarId(2)); // override made the original representative dimmer than its companion
-        assert_eq!(sky.constellations.len(), 1);
-        let [a, b] = sky.constellations[0].segments[0];
+        assert_eq!(sky.constellations().len(), 1);
+        let [a, b] = sky.constellations()[0].segments[0];
         assert_eq!((sky.star_view(a).id(), sky.star_view(b).id()), (StarId(1), StarId(5)));
     }
 
     #[test]
     fn distance_unknown_polar_star_preserves_tangential_ra_motion() {
         let source = parse_motion_row("12,90,1,,,,,,,,1000,,");
-        let star = crate::sky::Star::from_catalog_star(&source);
+        let star = crate::sky::prepare_star(&source);
         assert!(star.motion.distance_pc.is_none());
         assert!((star.motion.w.y + 1000.0 * MILLIARCSECONDS_TO_RADIANS).abs() < 1e-15);
         assert!(star.motion.evaluate(10.0, star.magnitude).direction.y < 0.0);
@@ -554,7 +559,7 @@ mod tests {
         );
         let source = star.space_motion.unwrap();
         assert!((source.velocity.y - 117.51 * (365.25 * 86400.0 / 3.085677581491367e13)).abs() < 1e-15);
-        let prepared = crate::sky::Star::from_catalog_star(&star);
+        let prepared = crate::sky::prepare_star(&star);
         let expected = Equatorial {
             right_ascension: star.right_ascension,
             declination: star.declination,
@@ -565,7 +570,7 @@ mod tests {
         let (start, end) = crate::astro::models::stars::computational_years();
         let (closest, ratio) = prepared.motion.closest_approach(start, end);
         assert!(closest > 0.0 && closest < end && ratio < 1.0);
-        assert!(prepared.motion.evaluate(closest, prepared.magnitude).magnitude < prepared.magnitude - 0.5);
+        assert!(prepared.motion.evaluate(closest, prepared.magnitude).magnitude_value() < prepared.magnitude - 0.5);
     }
 
     /// A few rows in the AT-HYG v4 layout (shortened to the columns used plus a few others).

@@ -7,42 +7,11 @@ use crate::astro::{
     Observer, compass_point_to_azimuth, current_julian_date, datetime_to_julian_date, parse_utc_datetime,
 };
 use crate::catalog::{City, find_city, suggest_cities};
-use crate::projection::{ProjectionKind, View, ViewCenter};
-use crate::scene::RenderOptions;
-use crate::terminal::TerminalSettings;
+use crate::model::{ProjectionKind, View, ViewCenter, RenderOptions, TerminalSettings};
 
 use super::Arguments;
 
-/// Everything the application needs to run.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Config {
-    pub debug_singleframe: bool,
-    pub cache: crate::cache::CacheConfig,
-    /// Raster text size and spacing relative to terminal cells; ignored by native text renderers.
-    pub text_scale: f64,
-    pub renderer: crate::terminal::RendererKind,
-    pub graphics_protocol: crate::terminal::GraphicsProtocol,
-    pub simulation: SimulationSettings,
-    /// The view to start with, and to reset to.
-    pub view: View,
-    pub render: RenderOptions,
-    pub terminal: TerminalSettings,
-    /// Frames per second.
-    pub fps: u32,
-    /// Star dataset to load instead of the embedded catalog.
-    pub dataset: Option<Dataset>,
-}
-
-/// What is simulated: where, from when, how fast, and with which corrections.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct SimulationSettings {
-    pub observer: Observer,
-    pub start_julian_date: f64,
-    /// Simulated days per real day.
-    pub speed: f64,
-    /// Lift objects by atmospheric refraction.
-    pub refraction: bool,
-}
+use crate::model::{Config, SimulationSettings};
 
 /// An invalid argument, with a message for the user.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -58,6 +27,10 @@ impl std::error::Error for ConfigError {}
 
 /// Validate the arguments and convert them to a [`Config`]. `cities` resolves `--city`.
 pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, ConfigError> {
+    #[cfg(not(feature = "memory-diagnostics"))]
+    if arguments.debug_memory {
+        return Err(ConfigError("--debug-memory requires rebuilding with cargo build --features memory-diagnostics".into()));
+    }
     if !arguments.text_scale.is_finite() || !(0.25..=4.0).contains(&arguments.text_scale) {
         return Err(ConfigError("Text scale must be finite and between 0.25 and 4".into()));
     }
@@ -65,7 +38,6 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
     for (value, name) in [
         (arguments.speed, "Speed"),
         (f64::from(arguments.threshold), "Magnitude threshold"),
-        (f64::from(arguments.label_threshold), "Label threshold"),
         (arguments.latitude, "Latitude"),
         (arguments.longitude, "Longitude"),
     ] {
@@ -74,6 +46,15 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
         }
     }
 
+    if arguments.dataset.is_none() && (arguments.dataset_files.is_some() || arguments.dataset_stars.is_some()) {
+        return Err(ConfigError("--dataset-files / --dataset-stars are only valid with --dataset gaia-gdr3".into()));
+    }
+    let dataset = arguments.dataset.as_ref()
+        .map(|path| Dataset::parse_selection(path.as_os_str(), arguments.dataset_files, arguments.dataset_stars))
+        .transpose().map_err(ConfigError)?;
+    if arguments.dataset_parallel_blocks.is_some() && !matches!(dataset, Some(Dataset::GaiaGdr3Stars { .. })) {
+        return Err(ConfigError("--dataset-parallel-blocks requires --dataset gaia-gdr3 --dataset-stars N".into()));
+    }
     // observer location (a city overrides latitude and longitude) and time
     let observer = match &arguments.city {
         Some(name) => locate_city(cities, name)?,
@@ -86,8 +67,8 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
 
     // frame rate and view
     let default_fps = match arguments.renderer {
-        crate::terminal::RendererKind::Chars => 24,
-        crate::terminal::RendererKind::Pixels => 12,
+        crate::model::RendererKind::Chars => crate::constants::DEFAULT_CHARACTER_FPS,
+        crate::model::RendererKind::Pixels => crate::constants::DEFAULT_PIXEL_FPS,
     };
     let fps = u32::try_from(arguments.fps.unwrap_or(default_fps))
         .ok()
@@ -103,7 +84,6 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
         constellations: arguments.constellations,
         grid: arguments.grid,
         magnitude_threshold: f64::from(arguments.threshold),
-        label_threshold: f64::from(arguments.label_threshold),
         dynamic_names: !arguments.disable_dynamic_names,
     };
     let simulation = SimulationSettings {
@@ -120,6 +100,9 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
     };
     Ok(Config {
         debug_singleframe: arguments.debug_singleframe,
+        no_progress: arguments.no_progress,
+        debug_log_data: arguments.debug_log_data,
+        debug_memory: arguments.debug_memory,
         cache: crate::cache::CacheConfig::load(arguments.cache_config.as_deref(), arguments.disable_cache)
             .map_err(|e| ConfigError(e.to_string()))?,
         text_scale: arguments.text_scale,
@@ -130,12 +113,8 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
         render,
         terminal,
         fps,
-        dataset: arguments
-            .dataset
-            .as_ref()
-            .map(|p| Dataset::parse(p.as_os_str()))
-            .transpose()
-            .map_err(ConfigError)?,
+        dataset,
+        dataset_parallel_blocks: arguments.dataset_parallel_blocks.unwrap_or(crate::constants::MAST_PARALLEL_BLOCKS),
     })
 }
 
@@ -274,16 +253,73 @@ mod tests {
         );
         assert_eq!(config.simulation.start_julian_date, 2451545.0);
         assert_eq!(config.view, View::default());
-        assert_eq!(
-            (config.render.magnitude_threshold, config.render.label_threshold),
-            (5.0, 0.25)
-        );
+        assert_eq!(config.render.magnitude_threshold, 5.0);
         assert_eq!(
             (config.fps, config.simulation.speed, config.terminal.aspect_ratio),
             (24, 1.0, None)
         );
         assert!(!config.terminal.metadata_panel && !config.simulation.refraction && !config.terminal.quit_on_any_key);
         assert!(!config.terminal.frame_times && config.render.dynamic_names);
+    }
+
+    #[test]
+    fn progress_switch_does_not_change_dataset_or_diagnostics() {
+        let normal = config_from(&["-d", "2025-03-01T11:00:00"]).unwrap();
+        let mut disabled = config_from(&["-d", "2025-03-01T11:00:00", "--no-progress"]).unwrap();
+        assert!(disabled.no_progress);
+        disabled.no_progress = false;
+        assert_eq!(normal, disabled);
+    }
+
+    #[test]
+    fn gaia_star_selection_is_explicit_and_exclusive() {
+        for n in ["0", "1", "4294967295"] {
+            let config = config_from(&["--dataset", "gaia-gdr3", "--dataset-stars", n]).unwrap();
+            assert_eq!(config.dataset, Some(Dataset::GaiaGdr3Stars { stars: n.parse().unwrap() }));
+        }
+        for args in [&["--dataset-stars", "1"][..], &["--dataset", "athyg", "--dataset-stars", "1"], &["--dataset", "./gaia.csv", "--dataset-stars", "1"]] { assert!(config_from(args).is_err()); }
+        for n in ["-1", "1.5", "4294967296"] { assert!(Arguments::try_parse_from(["astroterm", "--dataset", "gaia-gdr3", "--dataset-stars", n]).is_err()); }
+        assert!(Arguments::try_parse_from(["astroterm", "--dataset", "gaia-gdr3", "--dataset-stars", "1", "--dataset-files", "1"]).is_err());
+    }
+
+    #[test]
+    fn mast_parallel_blocks_require_the_star_selector_and_a_bounded_count() {
+        assert_eq!(config_from(&[]).unwrap().dataset_parallel_blocks, crate::constants::MAST_PARALLEL_BLOCKS);
+        for value in ["1", "2", "4", "8", "16"] {
+            let config = config_from(&["--dataset", "gaia-gdr3", "--dataset-stars", "0", "--dataset-parallel-blocks", value]).unwrap();
+            assert_eq!(config.dataset_parallel_blocks, value.parse::<u8>().unwrap());
+        }
+        for value in ["0", "17", "256", "-1", "1.5"] {
+            assert!(Arguments::try_parse_from(["astroterm", "--dataset", "gaia-gdr3", "--dataset-stars", "1", "--dataset-parallel-blocks", value]).is_err());
+        }
+        for args in [&["--dataset-parallel-blocks", "2"][..], &["--dataset", "athyg", "--dataset-parallel-blocks", "2"],
+            &["--dataset", "gaia-gdr3", "--dataset-files", "1", "--dataset-parallel-blocks", "2"],
+            &["--dataset", "./stars.csv", "--dataset-parallel-blocks", "2"]] {
+            assert!(config_from(args).is_err());
+        }
+    }
+
+    #[test]
+    fn gaia_requires_a_bounded_file_count_and_other_datasets_reject_it() {
+        for count in ["0", "1", "3386"] {
+            let config = config_from(&["--dataset", "gaia-gdr3", "--dataset-files", count]).unwrap();
+            assert_eq!(config.dataset, Some(Dataset::GaiaGdr3 { files: count.parse().unwrap() }));
+        }
+        for args in [&["--dataset", "gaia-gdr3"][..], &["--dataset-files", "1"],
+            &["--dataset", "athyg", "--dataset-files", "1"], &["--dataset", "./gaia.csv", "--dataset-files", "1"]] {
+            assert!(config_from(args).is_err());
+        }
+        for count in ["-1", "1.5", "3387", "65536"] {
+            assert!(Arguments::try_parse_from(["astroterm", "--dataset", "gaia-gdr3", "--dataset-files", count]).is_err());
+        }
+    }
+
+    #[test]
+    fn star_labels_have_one_switch_and_no_magnitude_threshold_option() {
+        assert!(config_from(&[]).unwrap().render.dynamic_names);
+        assert!(!config_from(&["--disable-dynamic-names"]).unwrap().render.dynamic_names);
+        assert!(Arguments::try_parse_from(["astroterm", "--label-thresh", "1"]).is_err());
+        assert!(Arguments::try_parse_from(["astroterm", "-l", "1"]).is_err());
     }
 
     #[test]
@@ -331,7 +367,6 @@ mod tests {
         for flag in [
             "--speed",
             "--threshold",
-            "--label-thresh",
             "--latitude",
             "--longitude",
             "--aspect-ratio",
@@ -385,6 +420,16 @@ mod tests {
     fn debug_frametimes_turns_on_the_metadata_panel() {
         let config = config_from(&["--debug-frametimes"]).unwrap();
         assert!(config.terminal.frame_times && config.terminal.metadata_panel);
+    }
+
+    #[test]
+    fn debug_log_data_is_opt_in_and_independent_of_other_diagnostics() {
+        assert!(!config_from(&[]).unwrap().debug_log_data);
+        let config = config_from(&["--debug-log-data"]).unwrap();
+        assert!(config.debug_log_data);
+        assert!(!config.debug_singleframe && !config.debug_memory);
+        assert!(!config.terminal.frame_times && !config.terminal.metadata_panel);
+        assert!(config_from(&["--debug-log-data", "--debug-singleframe"]).unwrap().debug_singleframe);
     }
 
     #[test]

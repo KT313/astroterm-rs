@@ -1,19 +1,22 @@
 //! Processing-cache reuse, invalidation and exact-reference comparisons through the production coordinators.
-use astroterm::{
-    astro::{J2000, Observer, Vector3},
-    cache::{CacheConfig, Group, GroupPolicy},
-    canvas::Canvas,
-    catalog::load_embedded_catalog,
-    projection::{ProjectionCache, View, ViewCenter, Viewport, project_sky},
-    scene::{RenderOptions, cached::SceneCache, draw_sky_scene, pixels::draw_pixel_sky},
-    sky::{FrameTime, ModelFamily, ObservationCache, ObservedSky, SimulationState, SkyCatalog, update_simulation},
-    timing::StepTimes,
+#[path = "support/cached.rs"] mod cached;
+use cached::PipelineCache;
+use astroterm::state::{ProjectionCache, SceneCache, SimulationState};
+use astroterm::astro::{J2000, Observer, Vector3};
+use astroterm::cache::{CacheConfig, Group, GroupPolicy};
+use astroterm::canvas::Canvas;
+use astroterm::catalog::load_embedded_catalog;
+use astroterm::model::{
+    ObservedSky, SkyCatalog, ProjectionViewport as Viewport, View, ViewCenter, RenderOptions, FrameTime, ModelFamily,
 };
+use astroterm::projection::project_sky;
+use astroterm::scene::{draw_sky_scene, draw_pixel_sky};
+use astroterm::timing::StepTimes;
 use std::sync::Arc;
 
 struct Pipeline {
     simulation: SimulationState,
-    observation: ObservationCache,
+    observation: PipelineCache,
     sky: ObservedSky,
     times: StepTimes,
 }
@@ -21,9 +24,9 @@ impl Pipeline {
     fn new(catalog: Arc<SkyCatalog>, config: CacheConfig) -> Self {
         let mut simulation = SimulationState::default();
         simulation.configure_cache(&config);
-        let mut observation = ObservationCache::new(config.clone());
+        let mut observation = PipelineCache::new(config.clone());
         if config.enabled {
-            observation.prepare_catalog(catalog.clone(), &mut StepTimes::default());
+            cached::prepare_stellar_catalog(&mut observation, catalog.clone(), &mut StepTimes::default());
         }
         Self {
             simulation,
@@ -35,27 +38,19 @@ impl Pipeline {
     fn frame(&mut self, tt: f64, view: View, threshold: f64, refract: bool, site: Observer) {
         let time = FrameTime { tt, ut1: tt, utc: tt };
         self.times.begin_frame();
-        self.simulation.begin_frame();
-        update_simulation(&mut self.simulation, time, &[], &mut self.times).unwrap();
-        let mut observer = self.observation.prepare_observer(&self.simulation, time, site).unwrap();
-        self.observation
-            .prepare_light_time(&mut self.simulation, &mut observer, &mut self.times)
-            .unwrap();
-        self.observation
-            .observe(
-                &self.simulation,
+        let observer = cached::prepare_frame(&mut self.observation, &mut self.simulation, time, site, &mut self.times).unwrap();
+        cached::observe_cached_sky(&mut self.observation, &self.simulation,
                 &observer,
                 threshold,
                 refract,
-                view.sky_region(),
+                astroterm::projection::select_view_region(&view),
                 &mut self.sky,
-                &mut self.times,
-            )
+                &mut self.times)
             .unwrap();
     }
 }
 fn catalog() -> Arc<SkyCatalog> {
-    Arc::new(SkyCatalog::from_catalog(&load_embedded_catalog().unwrap()))
+    Arc::new(astroterm::sky::prepare_catalog(&load_embedded_catalog().unwrap()).unwrap().catalog)
 }
 fn options() -> RenderOptions {
     RenderOptions {
@@ -65,7 +60,6 @@ fn options() -> RenderOptions {
         constellations: true,
         grid: false,
         magnitude_threshold: 6.0,
-        label_threshold: 0.5,
         dynamic_names: true,
     }
 }
@@ -89,7 +83,7 @@ fn paused_frames_reuse_emission_samples_and_never_double_correct() {
     p.simulation.set_model_version(ModelFamily::Moon, 1);
     p.frame(J2000, view, 6.0, true, Observer::default());
     assert!(p.simulation.refresh_counts.moon > counts.moon);
-    assert_eq!(p.simulation.refresh_counts.planets, counts.planets);
+    assert!(p.simulation.refresh_counts.planets > counts.planets); // a model change invalidates the complete solar group
 }
 
 #[test]
@@ -112,9 +106,7 @@ fn cached_pipeline_matches_reference_through_camera_time_and_site_changes() {
     let mut cached = Pipeline::new(cat.clone(), CacheConfig::default());
     let mut direct = Pipeline::new(cat, CacheConfig::disabled());
     let mut projection = ProjectionCache::new(CacheConfig::default());
-    projection.prepare_catalog(&cached.sky.catalog, &mut StepTimes::default());
     let mut raster = SceneCache::default();
-    raster.prepare_catalog(cached.sky.catalog.clone(), &mut StepTimes::default());
     let mut canvas = Canvas::new(45, 90);
     let mut maxima = [0.0_f64; 3];
     for (n, seconds) in [0.0, 1.0, 10.0, 31.0, 361.0, 5.0, -500.0, 86400.0, 0.0]
@@ -156,22 +148,21 @@ fn cached_pipeline_matches_reference_through_camera_time_and_site_changes() {
         maxima[2] = maxima[2].max(angle(cached.sky.moon.position, direct.sky.moon.position));
         assert!(maxima[2] < 0.6);
         let viewport = Viewport { height: 45, width: 90 };
-        let projected = projection.project(&cached.sky, &view, viewport, tt, &mut cached.times);
-        assert_eq!(projected, project_sky(&cached.sky, &view, viewport));
+        astroterm::projection::project_cached_sky(&mut projection, &cached.sky, &view, viewport, tt, &mut cached.times);
+        let projected = astroterm::projection::borrow_projected(&projection, &cached.sky, &view, viewport);
+        assert_eq!(projected, project_sky(&cached.sky, &view, viewport).view(&cached.sky));
         let mut expected = Canvas::new(45, 90);
         draw_sky_scene(&mut expected, &options(), &projected);
-        raster.draw_characters(&mut canvas, &projected, &options(), tt);
+        astroterm::scene::draw_characters(&mut raster, &mut canvas, &projected, &options(), tt);
         assert_eq!(canvas, expected);
-        raster.draw_characters(&mut canvas, &projected, &options(), tt);
+        astroterm::scene::draw_characters(&mut raster, &mut canvas, &projected, &options(), tt);
         assert_eq!(canvas, expected);
-        let actual = raster
-            .draw_pixels(&projected, &options(), tt, &mut cached.times)
+        let actual = astroterm::scene::draw_pixels(&mut raster, &projected, &options(), tt, &mut cached.times).cloned()
             .unwrap();
         let expected = draw_pixel_sky(&projected, &options(), &mut StepTimes::default()).unwrap();
         assert_eq!(actual, expected);
         assert_eq!(
-            raster
-                .draw_pixels(&projected, &options(), tt, &mut cached.times)
+            astroterm::scene::draw_pixels(&mut raster, &projected, &options(), tt, &mut cached.times).cloned()
                 .unwrap(),
             expected
         );
@@ -187,31 +178,33 @@ fn paused_projection_and_raster_reuse_but_resize_and_options_invalidate() {
     let mut projection = ProjectionCache::new(CacheConfig::default());
     let mut raster = SceneCache::default();
     let viewport = Viewport { height: 70, width: 70 };
-    let first = projection.project(&p.sky, &view, viewport, J2000, &mut p.times);
-    let image = raster.draw_pixels(&first, &options(), J2000, &mut p.times).unwrap();
+    astroterm::projection::project_cached_sky(&mut projection, &p.sky, &view, viewport, J2000, &mut p.times);
+    let first = astroterm::projection::borrow_projected(&projection, &p.sky, &view, viewport);
+    let image = astroterm::scene::draw_pixels(&mut raster, &first, &options(), J2000, &mut p.times).cloned().unwrap();
     let runs = projection.stats().refreshes;
-    let second = projection.project(&p.sky, &view, viewport, J2000, &mut p.times);
-    assert_eq!(projection.stats().refreshes, runs);
+    astroterm::projection::project_cached_sky(&mut projection, &p.sky, &view, viewport, J2000, &mut p.times);
+    let second = astroterm::projection::borrow_projected(&projection, &p.sky, &view, viewport);
     assert_eq!(
-        raster.draw_pixels(&second, &options(), J2000, &mut p.times).unwrap(),
+        astroterm::scene::draw_pixels(&mut raster, &second, &options(), J2000, &mut p.times).cloned().unwrap(),
         image
     );
+    assert_eq!(projection.stats().refreshes, runs);
     assert_eq!(raster.stats().hits, 1);
-    let resized = projection.project(&p.sky, &view, Viewport { height: 90, width: 90 }, J2000, &mut p.times);
+    astroterm::projection::project_cached_sky(&mut projection, &p.sky, &view, Viewport { height: 90, width: 90 }, J2000, &mut p.times);
+    let resized = astroterm::projection::borrow_projected(&projection, &p.sky, &view, Viewport { height: 90, width: 90 });
     assert_eq!(
-        raster
-            .draw_pixels(&resized, &options(), J2000, &mut p.times)
+        astroterm::scene::draw_pixels(&mut raster, &resized, &options(), J2000, &mut p.times).cloned()
             .unwrap()
             .width(),
         90
     );
     let mut changed = options();
     changed.grid = true;
-    raster.draw_pixels(&resized, &changed, J2000, &mut p.times).unwrap();
+    astroterm::scene::draw_pixels(&mut raster, &resized, &changed, J2000, &mut p.times).cloned().unwrap();
     assert_eq!(raster.stats().refreshes, 3);
     raster.configure(&CacheConfig::disabled());
     for _ in 0..2 {
-        raster.draw_pixels(&resized, &changed, J2000, &mut p.times).unwrap();
+        astroterm::scene::draw_pixels(&mut raster, &resized, &changed, J2000, &mut p.times).cloned().unwrap();
     }
     assert_eq!(raster.stats().bypasses, 2);
 }
@@ -234,7 +227,7 @@ fn disabling_a_model_group_still_prepares_emission_coverage_each_frame() {
 }
 
 #[test]
-fn moving_distance_stars_preserve_magnitude_thresholds_and_order_within_ttl() {
+fn moving_distance_stars_hold_magnitudes_until_regional_expiry() {
     use astroterm::catalog::{Catalog, SpaceMotion};
     let mut source = load_embedded_catalog().unwrap();
     let mut a = source.stars.remove(0);
@@ -257,41 +250,37 @@ fn moving_distance_stars_preserve_magnitude_thresholds_and_order_within_ttl() {
             },
         });
     }
-    let cat = Arc::new(SkyCatalog::from_owned_catalog(Catalog::new(
+    let cat = Arc::new(astroterm::sky::prepare_owned_catalog(Catalog::new(
         vec![a, b],
         Default::default(),
         vec![],
-    )));
+    )).unwrap().catalog);
     let mut cached = Pipeline::new(cat.clone(), CacheConfig::default());
     let mut direct = Pipeline::new(cat, CacheConfig::disabled());
     let view = View {
         fov_degrees: 360.0,
-        projection: astroterm::projection::ProjectionKind::Equidistant,
+        projection: astroterm::model::ProjectionKind::Equidistant,
         ..View::default()
     };
-    for seconds in [0.0, 10.0, -10.0, 100.0] {
+    for seconds in [0.0, 36000.0, -36000.0, 360000.0] {                                   // hours apart: the receding star's magnitude code changes by whole thousandths
         let tt = J2000 + seconds / 86400.0;
         cached.frame(tt, view, 5.0, false, Observer::default());
         direct.frame(tt, view, 5.0, false, Observer::default());
         assert_eq!(cached.sky.corrections.evaluated, 2);
-        assert_eq!(cached.sky.stars.len(), if seconds == 0.0 { 2 } else { 1 });
-        assert_eq!(cached.sky.corrections, direct.sky.corrections);
-        for (a, b) in cached.sky.stars.iter().zip(&direct.sky.stars) {
-            assert_eq!(
-                (a.source_index, a.magnitude, a.drawable),
-                (b.source_index, b.magnitude, b.drawable)
-            );
-            assert_eq!(
-                cached.observation.stellar_report(a.source_index).unwrap().valid_seconds,
-                0.0
-            );
-        }
+        assert_eq!(cached.sky.stars.len(), 2); // held at the first regional evaluation
+        assert_eq!(direct.sky.stars.len(), if seconds == 0.0 { 2 } else { 1 });
+        for star in &cached.sky.stars { assert_eq!(star.magnitude, 5.0); }
+        if seconds != 0.0 { assert_ne!(cached.sky.corrections, direct.sky.corrections); }
     }
+    let expired = J2000 + 11.0;
+    cached.frame(expired, view, 5.0, false, Observer::default());
+    direct.frame(expired, view, 5.0, false, Observer::default());
+    assert_eq!(cached.sky.stars, direct.sky.stars); // exact again at the refresh epoch
     // anchor both pipelines at the same epoch to isolate membership invalidation from sample-holding error
     let cat = cached.sky.catalog.clone();
     let mut cached = Pipeline::new(cat.clone(), CacheConfig::default());
     let mut direct = Pipeline::new(cat, CacheConfig::disabled());
-    let tt = J2000 + 10.0 / 86400.0;
+    let tt = J2000 + 36000.0 / 86400.0;
     for threshold in [5.0, 6.0, 5.0, 6.0] {
         cached.frame(tt, view, threshold, true, Observer::default());
         direct.frame(tt, view, threshold, true, Observer::default());

@@ -1,10 +1,12 @@
 //! Independent phase-6 fixtures. References use DE441/ERFA components with matched TT and UT1;
 //! empirical coverage is deliberately narrower than the computational/indexing interval.
+use astroterm::state::{SimulationState};
 use astroterm::astro::{
     self, Horizontal, Observer, Vector3,
     models::{BodyId, orientation::*},
 };
-use astroterm::sky::{FrameTime, SimulationState, Sky, SkyRegion, observe_sky, prepare_observation, update_simulation};
+use astroterm::model::{Sky, SkyRegion, FrameTime};
+use astroterm::sky::{observe_sky, prepare_observation, update_solar_system};
 use astroterm::timing::StepTimes;
 use serde_json::Value;
 
@@ -27,15 +29,15 @@ fn observe(tt: f64, ut1: f64) -> Sky {
         ut1: ut1 - 59.0 / 86400.0,
         tt: tt - 59.0 / 86400.0,
     };
-    update_simulation(&mut state, seed, &[], &mut times).unwrap();
+    update_solar_system(&mut state, seed, &[], &mut times).unwrap();
     let time = FrameTime { utc: ut1, ut1, tt };
-    update_simulation(&mut state, time, &[], &mut times).unwrap();
+    update_solar_system(&mut state, time, &[], &mut times).unwrap();
     let site = Observer {
         latitude: 42.3601_f64.to_radians(),
         longitude: -71.0589_f64.to_radians(),
     };
     let observer = prepare_observation(&mut state, time, site).unwrap();
-    let mut sky = Sky::from_catalog(&astroterm::catalog::load_embedded_catalog().unwrap());
+    let mut sky = astroterm::sky::create_sky_from_catalog(&astroterm::catalog::load_embedded_catalog().unwrap()).unwrap();
     observe_sky(&state, &observer, 5.0, false, SkyRegion::All, &mut sky, &mut times).unwrap();
     sky
 }

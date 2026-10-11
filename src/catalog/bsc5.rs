@@ -3,6 +3,7 @@
 //! The file is a 28 byte header followed by 32 byte little-endian entries, sorted by catalog number.
 
 use super::CatalogError;
+use crate::progress::{DatasetProgress, Stage, Unit, Outcome};
 
 const HEADER_BYTES: usize = 28;
 const ENTRY_BYTES: usize = 32;
@@ -15,7 +16,7 @@ pub struct Bsc5Entry {
     pub declination: f64,
     /// Two character spectral type, e.g. `b"A0"`. Blank for entries without data.
     pub spectral_type: [u8; 2],
-    pub magnitude: f32,
+    pub magnitude: f64,
     pub ra_motion: f64,
     pub dec_motion: f64,
 }
@@ -29,7 +30,7 @@ impl Bsc5Entry {
 }
 
 /// Parse all entries of a binary BSC5 file.
-pub fn parse_bsc5(data: &[u8]) -> Result<Vec<Bsc5Entry>, CatalogError> {
+pub fn parse_bsc5(data: &[u8], progress: &mut dyn DatasetProgress) -> Result<Vec<Bsc5Entry>, CatalogError> {
     // header: STARN (the entry count) is negative when coordinates are J2000, which they are in BSC5
     let header = data
         .get(..HEADER_BYTES)
@@ -38,26 +39,34 @@ pub fn parse_bsc5(data: &[u8]) -> Result<Vec<Bsc5Entry>, CatalogError> {
 
     // fixed size entries after the header
     let entries = &data[HEADER_BYTES..];
-    (0..star_count)
+    progress.begin_stage(Stage::Parse, "Embedded BSC", Unit::Rows, Some(star_count as u64));
+    let result = (0..star_count)
         .map(|index| {
             let bytes = entries.get(index * ENTRY_BYTES..(index + 1) * ENTRY_BYTES);
-            bytes
-                .map(parse_entry)
-                .ok_or(CatalogError::TruncatedBsc5 { entry: Some(index) })
+            let bytes = bytes.ok_or(CatalogError::TruncatedBsc5 { entry: Some(index) })?;
+            let entry = parse_entry(bytes)?;
+            if (index as u64 + 1).is_multiple_of(crate::constants::STARTUP_PROGRESS_ROWS) { progress.set_position(index as u64 + 1); }
+            Ok(entry)
         })
-        .collect()
+        .collect::<Result<Vec<_>, _>>();
+    if result.is_ok() { progress.set_position(star_count as u64); progress.finish_stage(Outcome::Complete); }
+    result
 }
 
-fn parse_entry(bytes: &[u8]) -> Bsc5Entry {
-    Bsc5Entry {
-        catalog_number: read_f32(bytes, 0) as u32, // XNO is stored as a float
+fn parse_entry(bytes: &[u8]) -> Result<Bsc5Entry, CatalogError> {
+    let number = f64::from(read_f32(bytes, 0)); // XNO is stored as a float; reject overflow instead of saturating
+    if !number.is_finite() || number < 0.0 || number.fract() != 0.0 || number > f64::from(u32::MAX) {
+        return Err(CatalogError::Io(format!("invalid BSC5 star ID {number}: expected an integer from 0 to {}", u32::MAX)));
+    }
+    Ok(Bsc5Entry {
+        catalog_number: number as u32,
         right_ascension: read_f64(bytes, 4),
         declination: read_f64(bytes, 12),
         spectral_type: [bytes[20], bytes[21]],
-        magnitude: f32::from(read_i16(bytes, 22)) / 100.0, // stored as magnitude * 100
+        magnitude: f64::from(read_i16(bytes, 22)) / 100.0, // stored as magnitude * 100
         ra_motion: f64::from(read_f32(bytes, 24)),
         dec_motion: f64::from(read_f32(bytes, 28)),
-    }
+    })
 }
 
 fn read_i16(bytes: &[u8], offset: usize) -> i16 {
@@ -80,13 +89,25 @@ fn read_f64(bytes: &[u8], offset: usize) -> f64 {
 mod tests {
     use super::*;
     use crate::catalog::BSC5_DATA;
+    use crate::progress::NoProgress;
 
     const EPSILON: f64 = 0.01;
     const MOTION_EPSILON: f64 = 1e-20;
 
     #[test]
+    fn binary_ids_reject_overflow_and_invalid_numbers() {
+        let mut row = [0; ENTRY_BYTES];
+        for value in [f32::NAN, f32::INFINITY, -1.0, 1.5, 4_294_967_296.0] {
+            row[..4].copy_from_slice(&value.to_le_bytes());
+            assert!(parse_entry(&row).is_err());
+        }
+        row[..4].copy_from_slice(&4_294_967_040_f32.to_le_bytes());
+        assert_eq!(parse_entry(&row).unwrap().catalog_number, 4_294_967_040);
+    }
+
+    #[test]
     fn parses_every_entry_in_catalog_order() {
-        let entries = parse_bsc5(BSC5_DATA).expect("embedded catalog parses");
+        let entries = parse_bsc5(BSC5_DATA, &mut NoProgress(std::io::sink())).expect("embedded catalog parses");
         assert_eq!(entries.len(), 9110);
         assert!(
             entries
@@ -98,7 +119,7 @@ mod tests {
 
     #[test]
     fn parses_reference_entries() {
-        let entries = parse_bsc5(BSC5_DATA).expect("embedded catalog parses");
+        let entries = parse_bsc5(BSC5_DATA, &mut NoProgress(std::io::sink())).expect("embedded catalog parses");
 
         let first = entries[0];
         assert!((first.right_ascension - 0.023).abs() < EPSILON && (first.declination - 0.789).abs() < EPSILON);
@@ -120,7 +141,7 @@ mod tests {
 
     #[test]
     fn identifies_placeholder_entries() {
-        let entries = parse_bsc5(BSC5_DATA).expect("embedded catalog parses");
+        let entries = parse_bsc5(BSC5_DATA, &mut NoProgress(std::io::sink())).expect("embedded catalog parses");
         let placeholders: Vec<u32> = entries
             .iter()
             .filter(|e| !e.has_data())
@@ -137,12 +158,12 @@ mod tests {
     #[test]
     fn rejects_truncated_data() {
         assert!(matches!(
-            parse_bsc5(&BSC5_DATA[..10]),
+            parse_bsc5(&BSC5_DATA[..10], &mut NoProgress(std::io::sink())),
             Err(CatalogError::TruncatedBsc5 { entry: None })
         ));
         let cut = &BSC5_DATA[..HEADER_BYTES + ENTRY_BYTES * 3 + 5];
         assert!(matches!(
-            parse_bsc5(cut),
+            parse_bsc5(cut, &mut NoProgress(std::io::sink())),
             Err(CatalogError::TruncatedBsc5 { entry: Some(3) })
         ));
     }

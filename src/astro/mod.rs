@@ -31,6 +31,7 @@ mod notation;
 mod orbital;
 mod time;
 
+use crate::rows::row_columns;
 use std::f64::consts::TAU;
 
 pub use accuracy::{
@@ -81,6 +82,7 @@ pub struct Vector3 {
     pub y: f64,
     pub z: f64,
 }
+row_columns!(Vector3 { x, y, z });
 
 impl Horizontal {
     /// Unit vector pointing at this position, with x East, y North and z up.
@@ -199,6 +201,11 @@ pub fn map_float_to_int_range(min_float: f64, max_float: f64, min_int: i32, max_
     min_int + (f64::from(max_int - min_int) * percent).round() as i32
 }
 
+crate::rows::debug_preview!(Matrix3);
+
+/// Speed of light in AU/day (IAU exact metre definitions).
+pub const LIGHT_SPEED_AU_DAY: f64 = 299792458.0 * 86400.0 / 149597870700.0;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -227,3 +234,5 @@ mod tests {
         assert_eq!(map_float_to_int_range(0.0, 10.0, 0, 100, 7.5), 75);
     }
 }
+
+crate::rows::debug_preview!(Observer, MoonPhase);

@@ -1,0 +1,8 @@
+error[E0515]: cannot return value referencing function parameter `backing`
+ --> tests/ui/state_views/escaping_projection.rs:4:5
+  |
+4 |     backing.view(observed) // the returned view would outlive this function's owned geometry
+  |     -------^^^^^^^^^^^^^^^
+  |     |
+  |     returns a value referencing data owned by the current function
+  |     `backing` is borrowed here

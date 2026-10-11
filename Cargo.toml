@@ -13,8 +13,24 @@ path = "src/lib.rs"
 name = "astroterm"
 path = "src/main.rs"
 
+[features]
+default = []
+memory-diagnostics = []
+
+[[test]]
+name = "memory_inventory"
+path = "tests/memory_inventory.rs"
+required-features = ["memory-diagnostics"]
+
+[[test]]
+name = "memory_trace"
+path = "tests/memory_trace.rs"
+required-features = ["memory-diagnostics"]
+
 [dependencies]
 base64-simd = "0.8"
+bincode = { version = "2", features = ["serde"] }
+bytes = "1"
 bytemuck = "1.25.2"
 chrono = "0.4.45"
 clap = { version = "4.6.7", features = ["derive", "wrap_help"] }
@@ -24,12 +40,16 @@ csv = "1.4.0"
 dirs = "7.0.0"
 flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs"] }
 fontdue = "0.9.4"
+indicatif = { version = "0.18", default-features = false }
 image = { version = "0.25", default-features = false }
-memmap2 = "0.9.11"
+md-5 = "0.11"
+ndarray = "0.17"
+parquet = { version = "60", default-features = false, features = ["zstd"] }
 ratatui = { version = "0.30", default-features = false, features = ["crossterm_0_29"] }
 ratatui-image = { version = "11.1", default-features = false, features = ["crossterm"] }
 serde = { version = "1.0.229", features = ["derive"] }
 sha2 = "0.11.0"
+soa_derive = "0.14"
 strsim = "0.11.1"
 tempfile = "3.27.0"
 tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd"] }
@@ -40,10 +60,11 @@ ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
 vsop87 = "3.0.0"
 
 [target.'cfg(unix)'.dependencies]
-rustix = { version = "1.1.5", features = ["event"] }
+rustix = { version = "1.1.5", features = ["event", "shm"] }
 tz-rs = "0.7.3"
 
 [dev-dependencies]
+trybuild = "1"
 insta = "1"
 proptest = "1"
 criterion = "0.7"
@@ -56,6 +77,12 @@ harness = false
 [[bench]]
 name = "spatial"
 harness = false
+
+# Debug builds keep file and line information (backtraces, perf) but not variable-level debug info: full debuginfo
+# made every test and example binary over 100 MB (101 MB of 121 MB for one integration test). For stepping through
+# variables in a debugger, build once with CARGO_PROFILE_DEV_DEBUG=full.
+[profile.dev]
+debug = "line-tables-only"
 
 # `make build-aggressive`: the release profile plus whole-program optimization and `-C target-cpu=native`.
 # `make build-aggressive-pgo` additionally trains/applies PGO and BOLT. Panics abort, but the panic hook still

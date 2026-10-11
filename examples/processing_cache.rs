@@ -1,13 +1,11 @@
 //! Controlled headless cache comparison. Optional dataset path; JSON lines exclude terminal encoding/presentation.
-use astroterm::{
-    astro::Observer,
-    cache::CacheConfig,
-    catalog::datasets::{Dataset, DatasetDirectories},
-    projection::{ProjectionCache, View, Viewport},
-    scene::{RenderOptions, cached::SceneCache},
-    sky::{FrameTime, ObservationCache, ObservedSky, SimulationState, cache::load_sky_catalog, update_simulation},
-    timing::StepTimes,
-};
+use astroterm::state::{ObservationCache, ProjectionCache, SceneCache, SimulationState};
+use astroterm::astro::Observer;
+use astroterm::cache::CacheConfig;
+use astroterm::catalog::datasets::{Dataset, DatasetDirectories};
+use astroterm::model::{ObservedSky, ProjectionViewport as Viewport, View, RenderOptions, FrameTime};
+use astroterm::sky::{update_solar_system, load_sky_catalog};
+use astroterm::timing::StepTimes;
 use std::{hint::black_box, sync::Arc, time::Instant};
 fn main() {
     let dataset = std::env::args_os().nth(1).map(|p| Dataset::Path(p.into()));
@@ -15,7 +13,7 @@ fn main() {
         data: None,
         cache: Some(std::env::temp_dir().join("astroterm-processing-probe")),
     };
-    let catalog = Arc::new(load_sky_catalog(dataset.as_ref(), &directories, &mut std::io::stderr()).unwrap());
+    let catalog = Arc::new(load_sky_catalog(dataset.as_ref(), &directories, &mut std::io::stderr()).unwrap().catalog);
     for fov in [225.0, 115.2, 12.4] {
         for speed in [0.0, 1.0, 100.0, -100.0, 100000.0] {
             for enabled in [true, false] {
@@ -26,6 +24,9 @@ fn main() {
                 let mut simulation = SimulationState::default();
                 simulation.configure_cache(&config);
                 let mut observation = ObservationCache::new(config.clone());
+                let mut observer_cache = astroterm::state::ObserverPreparationCache::new(config.clone());
+                let mut selection = astroterm::state::StarSelectionCache::new(config.clone());
+                let mut stars = astroterm::state::StellarSimulationState::new(config.clone());
                 let mut projection = ProjectionCache::new(config.clone());
                 let mut raster = SceneCache::default();
                 raster.configure(&config);
@@ -50,7 +51,6 @@ fn main() {
                     constellations: true,
                     grid: false,
                     magnitude_threshold: 10.0,
-                    label_threshold: 0.25,
                     dynamic_names: true,
                 };
                 let mut totals = [0.0; 4];
@@ -64,43 +64,36 @@ fn main() {
                         simulation.refresh_counts.planets
                             + simulation.refresh_counts.moon
                             + simulation.refresh_counts.orientation,
-                        observation.stats().refreshes,
+                        observation.stats().refreshes + observer_cache.stats().refreshes + selection.stats().refreshes + stars.stats().refreshes,
                         projection.stats().refreshes,
                         raster.stats().refreshes,
                     ];
                     let start = Instant::now();
                     simulation.begin_frame();
-                    update_simulation(&mut simulation, time, &[], &mut times).unwrap();
+                    update_solar_system(&mut simulation, time, &[], &mut times).unwrap();
                     elapsed[0] = start.elapsed().as_secs_f64();
                     let simulation_after = simulation.refresh_counts.planets
                         + simulation.refresh_counts.moon
                         + simulation.refresh_counts.orientation;
                     let start = Instant::now();
-                    let mut observer = observation.prepare_observer(&simulation, time, site).unwrap();
-                    observation
-                        .prepare_light_time(&mut simulation, &mut observer, &mut times)
+                    let mut observer = astroterm::sky::prepare_cached_observer(&mut observer_cache, &simulation, time, site).unwrap();
+                    astroterm::sky::prepare_cached_light_time(&mut observer_cache, &mut simulation, &mut observer, &mut times)
                         .unwrap();
-                    observation
-                        .observe(
-                            &simulation,
-                            &observer,
-                            10.0,
-                            false,
-                            view.sky_region(),
-                            &mut sky,
-                            &mut times,
-                        )
-                        .unwrap();
+                    astroterm::sky::prepare_cached_bodies(&mut observer_cache, &simulation, &observer, &mut times).unwrap();
+                    astroterm::sky::select_cached_stars(&mut selection, &sky.catalog, &observer, 10.0, false, astroterm::projection::select_view_region(&view), &mut times);
+                    astroterm::sky::simulate_stars(&mut stars, selection.stars(), time.tt, &mut times);
+                    astroterm::sky::observe_cached_sky(&mut observation, stars.results(selection.stars()), observer_cache.bodies(&observer), &observer, 10.0, false, &mut sky, &mut times);
                     elapsed[1] = start.elapsed().as_secs_f64();
                     let start = Instant::now();
-                    let projected = projection.project(&sky, &view, viewport, time.tt, &mut times);
+                    astroterm::projection::project_cached_sky(&mut projection, &sky, &view, viewport, time.tt, &mut times);
+                    let projected = astroterm::projection::borrow_projected(&projection, &sky, &view, viewport);
                     elapsed[2] = start.elapsed().as_secs_f64();
                     let start = Instant::now();
-                    black_box(raster.draw_pixels(&projected, &options, time.tt, &mut times).unwrap());
+                    black_box(astroterm::scene::draw_pixels(&mut raster, &projected, &options, time.tt, &mut times).unwrap());
                     elapsed[3] = start.elapsed().as_secs_f64();
                     let current = [
                         simulation_after,
-                        observation.stats().refreshes,
+                        observation.stats().refreshes + observer_cache.stats().refreshes + selection.stats().refreshes + stars.stats().refreshes,
                         projection.stats().refreshes,
                         raster.stats().refreshes,
                     ];

@@ -1,23 +1,22 @@
 //! 3D motion, conservative selection, current-magnitude ordering and endpoint independence.
-use astroterm::{
-    astro::{Horizontal, J2000, JULIAN_YEAR_DAYS, Matrix3, Observer},
-    canvas::Canvas,
-    catalog::{Catalog, CatalogStar, ConstellationFigure, SpaceMotion, StarId, StarNames},
-    projection::{View, ViewCenter, Viewport, project_sky},
-    scene::{RenderOptions, draw_sky_scene},
-    sky::{
-        FrameTime, ObservedSky, SimulationState, SkyCatalog, observe_sky, observe_sky_candidates, prepare_observation,
-        update_simulation,
-    },
-    timing::StepTimes,
+use astroterm::state::SimulationState;
+use astroterm::astro::{Horizontal, J2000, JULIAN_YEAR_DAYS, Matrix3, Observer};
+use astroterm::canvas::Canvas;
+use astroterm::catalog::{Catalog, CatalogStar, ConstellationFigure, SpaceMotion, StarId, StarNames};
+use astroterm::model::{
+    ObservedSky, SkyCatalog, ProjectionViewport as Viewport, View, ViewCenter, RenderOptions, FrameTime,
 };
+use astroterm::projection::project_sky;
+use astroterm::scene::draw_sky_scene;
+use astroterm::sky::{observe_sky, observe_sky_candidates, prepare_observation, update_solar_system};
+use astroterm::timing::StepTimes;
 use std::sync::Arc;
 
-fn star(id: u64, mag: f32, h: Horizontal, radial: f64) -> CatalogStar {
+fn star(id: u32, mag: f32, h: Horizontal, radial: f64) -> CatalogStar {
     let u = h.to_unit_vector();
     CatalogStar {
         id: StarId(id),
-        hr: Some(id as u32),
+        hr: Some(id),
         name: None,
         designation: None,
         right_ascension: u.y.atan2(u.x),
@@ -25,7 +24,7 @@ fn star(id: u64, mag: f32, h: Horizontal, radial: f64) -> CatalogStar {
         ra_motion: 0.0,
         ra_motion_cos_dec: 0.0,
         dec_motion: 0.0,
-        magnitude: mag,
+        magnitude: f64::from(mag),
         spectral_type: *b"A0",
         color_index: None,
         has_data: true,
@@ -37,20 +36,20 @@ fn star(id: u64, mag: f32, h: Horizontal, radial: f64) -> CatalogStar {
     }
 }
 fn catalog(stars: Vec<CatalogStar>, segments: Vec<[u32; 2]>) -> Arc<SkyCatalog> {
-    Arc::new(SkyCatalog::from_catalog(&Catalog::new(
+    Arc::new(astroterm::sky::prepare_catalog(&Catalog::new(
         stars,
         StarNames::default(),
         vec![ConstellationFigure {
             abbreviation: "Test",
             segments,
         }],
-    )))
+    )).unwrap().catalog)
 }
-fn setup(years: f64) -> (SimulationState, astroterm::sky::ObserverState) {
+fn setup(years: f64) -> (SimulationState, astroterm::model::ObserverState) {
     let tt = J2000 + years * JULIAN_YEAR_DAYS;
     let time = FrameTime { utc: tt, ut1: tt, tt };
     let mut simulation = SimulationState::exact();
-    update_simulation(&mut simulation, time, &[], &mut StepTimes::default()).unwrap();
+    update_solar_system(&mut simulation, time, &[], &mut StepTimes::default()).unwrap();
     let mut observer = prepare_observation(&mut simulation, time, Observer::default()).unwrap();
     observer.inertial_to_horizon = Matrix3::IDENTITY;
     observer.state.velocity = astroterm::astro::Vector3::default(); // known synthetic directions, independent of sidereal rotation
@@ -64,7 +63,6 @@ fn options(threshold: f64) -> RenderOptions {
         constellations: true,
         grid: false,
         magnitude_threshold: threshold,
-        label_threshold: 0.25,
         dynamic_names: true,
     }
 }
@@ -93,18 +91,19 @@ fn threshold_crossing_uses_interval_key_then_current_magnitude() {
             &observer,
             5.0,
             false,
-            astroterm::sky::SkyRegion::All,
+            astroterm::model::SkyRegion::All,
             &mut sky,
             &mut StepTimes::default(),
         )
         .unwrap();
-        let projected = project_sky(&sky, &View::default(), Viewport { height: 41, width: 81 });
+        let projected_data = project_sky(&sky, &View::default(), Viewport { height: 41, width: 81 });
+        let projected = projected_data.view(&sky);
         assert_eq!(!projected.stars.is_empty(), drawn, "year offset {years}");
         if years == 20000.0 {
             assert_eq!(sky.runtime_singular_count, 1);
             assert!(sky.stars.is_empty());
             assert_eq!(sky.corrections.skipped, 1);
-            assert_eq!(sky.catalog.stars.motion(0).evaluate(years, 5.5).magnitude, 5.5);
+            assert_eq!(sky.catalog.stars.motion(0).evaluate(years, 5.5).magnitude_value(), 5.5);
         }
     }
 }
@@ -147,12 +146,13 @@ fn visible_drawing_order_is_current_magnitude_then_stable_id() {
             &observer,
             6.0,
             false,
-            astroterm::sky::SkyRegion::All,
+            astroterm::model::SkyRegion::All,
             &mut sky,
             &mut StepTimes::default(),
         )
         .unwrap();
-        let projected = project_sky(&sky, &View::default(), Viewport { height: 41, width: 81 });
+        let projected_data = project_sky(&sky, &View::default(), Viewport { height: 41, width: 81 });
+        let projected = projected_data.view(&sky);
         assert_eq!(
             projected.stars.iter().map(|p| p.star.id().0).collect::<Vec<_>>(),
             expected
@@ -178,7 +178,7 @@ fn refracted_constellation_endpoint_outside_selection_matches_full_observation()
         &observer,
         5.0,
         true,
-        astroterm::sky::SkyRegion::All,
+        astroterm::model::SkyRegion::All,
         &mut full,
         &mut StepTimes::default(),
     )
@@ -215,28 +215,27 @@ fn refracted_constellation_endpoint_outside_selection_matches_full_observation()
     };
     let viewport = Viewport { height: 41, width: 81 };
     let (mut a, mut b) = (Canvas::new(41, 81), Canvas::new(41, 81));
-    draw_sky_scene(&mut a, &options(5.0), &project_sky(&full, &view, viewport));
-    draw_sky_scene(&mut b, &options(5.0), &project_sky(&restricted, &view, viewport));
+    draw_sky_scene(&mut a, &options(5.0), &project_sky(&full, &view, viewport).view(&full));
+    draw_sky_scene(&mut b, &options(5.0), &project_sky(&restricted, &view, viewport).view(&restricted));
     assert_eq!(a.to_lines(), b.to_lines());
 }
 
 #[test]
-fn singular_trajectories_and_fast_motion_are_reported_in_prepared_state() {
+fn singular_trajectories_are_rejected_and_supported_fast_motion_stays_indexed() {
     let mut fast = star(2, 4.0, horizontal(0.0, 60.0), 0.0);
     fast.space_motion = None;
     fast.dec_motion = 0.0001;
-    let cat = catalog(vec![star(1, 4.0, horizontal(0.0, 60.0), -0.001), fast], vec![]);
-    assert_eq!(cat.singular_count, 1);
-    assert!(
-        cat.stars
-            .iter()
-            .find(|star| star.id == StarId(1))
-            .unwrap()
-            .motion
-            .distance_pc
-            .is_none()
-    );
-    assert!(cat.always_checked.iter().any(|&i| cat.stars.get(i).id == StarId(2)));
+    let source = Catalog::new(vec![star(1, 4.0, horizontal(0.0, 60.0), -0.001), fast.clone()], StarNames::default(), vec![]);
+    let error = astroterm::sky::prepare_catalog(&source).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::Unsupported);
+    assert!(error.to_string().contains("Star 1 requires tangential-motion fallback"));
+    let cat = catalog(vec![fast], vec![]);
+    assert!(cat.star_exceptions.is_empty());
+    assert_eq!(cat.singular_count, 0);
+    assert_eq!(cat.grid.offsets[astroterm::constants::CELL_COUNT], cat.stars.len());
+    let index = cat.stars.iter().position(|star| star.id == StarId(2)).unwrap();
+    let cell = astroterm::model::hash_direction(astroterm::constants::GRID_DEPTH, cat.stars.stored_direction(index));
+    assert!((cat.grid.offsets[cell]..cat.grid.offsets[cell + 1]).contains(&index));
     let mut sky = ObservedSky::new(cat);
     let (simulation, observer) = setup(1000.0);
     observe_sky(
@@ -244,13 +243,14 @@ fn singular_trajectories_and_fast_motion_are_reported_in_prepared_state() {
         &observer,
         5.0,
         false,
-        astroterm::sky::SkyRegion::All,
+        astroterm::model::SkyRegion::All,
         &mut sky,
         &mut StepTimes::default(),
     )
     .unwrap();
-    let projected = project_sky(&sky, &View::default(), Viewport { height: 41, width: 81 });
-    assert_eq!(projected.catalog_singular_count, 1);
+    let projected_data = project_sky(&sky, &View::default(), Viewport { height: 41, width: 81 });
+    let projected = projected_data.view(&sky);
+    assert_eq!(projected.catalog_singular_count, 0);
     assert_eq!(projected.runtime_singular_count, 0);
     assert!(sky.stars.iter().all(|star| star.position.x.is_finite()));
 }

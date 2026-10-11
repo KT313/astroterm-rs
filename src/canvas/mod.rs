@@ -65,6 +65,8 @@ impl Canvas {
         }
     }
 
+    pub(crate) fn allocated_cells(&self) -> usize { self.cells.capacity() }
+
     pub fn height(&self) -> usize {
         self.height
     }
@@ -201,6 +203,11 @@ fn braille_dots(symbol: char) -> Option<u8> {
     let offset = u32::from(symbol).checked_sub(BRAILLE_BASE)?;
     u8::try_from(offset).ok()
 }
+
+#[cfg(feature = "memory-diagnostics")]
+crate::cache::report_fields!(Canvas { cells });
+
+crate::rows::debug_preview!(Color);
 
 #[cfg(test)]
 mod tests {

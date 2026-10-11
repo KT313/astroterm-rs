@@ -1,16 +1,18 @@
 //! Fixed-seed catalogs and fixed observer/date/view. Setup and sorting are outside timed loops.
 
+use astroterm::state::{SimulationState};
 use std::hint::black_box;
 use std::time::Duration;
 
 use astroterm::astro::{J2000, Observer};
 use astroterm::canvas::Canvas;
 use astroterm::catalog::{Catalog, CatalogStar, load_embedded_catalog};
-use astroterm::projection::{View, ViewCenter, Viewport, project_sky};
-use astroterm::scene::{RenderOptions, draw_sky_scene};
-use astroterm::sky::{
-    FrameTime, SimulationState, Sky, observe_sky, prepare_observation, update_simulation, update_sky_positions,
-};
+use astroterm::model::{ProjectionViewport as Viewport, View, ViewCenter};
+use astroterm::projection::project_sky;
+use astroterm::model::RenderOptions;
+use astroterm::scene::draw_sky_scene;
+use astroterm::model::{Sky, FrameTime};
+use astroterm::sky::{observe_sky, update_solar_system, update_sky_positions};
 use astroterm::timing::StepTimes;
 use criterion::{Criterion, SamplingMode, criterion_group, criterion_main};
 
@@ -40,7 +42,7 @@ fn build_catalog(count: usize) -> Catalog {
         let ra_motion = (uniform() - 0.5) * 1e-6;
         let dec_motion = (uniform() - 0.5) * 1e-6;
         catalog.stars.push(CatalogStar {
-            id: astroterm::catalog::StarId(catalog.stars.len() as u64 + 1),
+            id: astroterm::catalog::StarId(catalog.stars.len() as u32 + 1),
             space_motion: None,
             hr: None,
             name: None,
@@ -50,7 +52,7 @@ fn build_catalog(count: usize) -> Catalog {
             ra_motion,
             ra_motion_cos_dec: ra_motion * dec.cos(),
             dec_motion,
-            magnitude: magnitude as f32,
+            magnitude,
             spectral_type: *b"G2",
             color_index: None,
             has_data: true,
@@ -70,9 +72,9 @@ fn benchmark_frames(criterion: &mut Criterion) {
         ("synthetic_100k", 100_000),
         ("synthetic_2500k", 2_500_000),
     ] {
-        let mut sky = Sky::new(std::sync::Arc::new(astroterm::sky::SkyCatalog::from_owned_catalog(
+        let mut sky = Sky::new(std::sync::Arc::new(astroterm::sky::prepare_owned_catalog(
             build_catalog(count),
-        )));
+        ).unwrap().catalog));
         let mut timing = StepTimes::default();
         let mut group = criterion.benchmark_group(name);
         group
@@ -84,19 +86,20 @@ fn benchmark_frames(criterion: &mut Criterion) {
             for refracted in [false, true] {
                 let correction = if refracted { "refracted" } else { "geometric" };
                 let mut simulation = SimulationState::default();
+                let mut observer_cache = astroterm::state::ObserverPreparationCache::default();
                 let mut frame = 0_u64;
                 group.bench_function(format!("update_{correction}_t{threshold}"), |bencher| {
                     bencher.iter(|| {
                         let time = FrameTime::from_utc(date + frame as f64 / (24.0 * 86400.0));
                         frame += 1;
-                        update_simulation(&mut simulation, time, &[], &mut timing).unwrap();
-                        let observer_state = prepare_observation(&mut simulation, time, observer).unwrap();
+                        astroterm::sky::begin_solar_system_frame(&mut simulation, &mut observer_cache, time, observer, &mut timing).unwrap();
+                        let observer_state = astroterm::sky::prepare_observer_inputs(&mut observer_cache, &mut simulation, time, observer, &mut timing).unwrap();
                         observe_sky(
                             &simulation,
                             &observer_state,
                             threshold,
                             refracted,
-                            astroterm::sky::SkyRegion::All,
+                            astroterm::model::SkyRegion::All,
                             black_box(&mut sky),
                             &mut timing,
                         )
@@ -126,7 +129,6 @@ fn benchmark_frames(criterion: &mut Criterion) {
                         constellations,
                         grid: false,
                         magnitude_threshold: threshold,
-                        label_threshold: 0.25,
                         dynamic_names: true,
                     };
                     update_sky_positions(&mut sky, date, &observer, threshold, &mut timing);
@@ -134,7 +136,7 @@ fn benchmark_frames(criterion: &mut Criterion) {
                         format!("project_draw_{view_name}_t{threshold}_constellations_{constellations}"),
                         |bencher| {
                             bencher.iter(|| {
-                                let projected = project_sky(
+                                let projected_data = project_sky(
                                     black_box(&sky),
                                     &view,
                                     Viewport {
@@ -142,6 +144,7 @@ fn benchmark_frames(criterion: &mut Criterion) {
                                         width: canvas.width(),
                                     },
                                 );
+                                let projected = projected_data.view(black_box(&sky));
                                 draw_sky_scene(&mut canvas, &options, &projected);
                                 black_box(&canvas);
                             });
@@ -174,13 +177,12 @@ fn benchmark_model_families(criterion: &mut Criterion) {
     });
     let mut simulation = SimulationState::default();
     let time = FrameTime::from_utc(J2000);
-    update_simulation(&mut simulation, time, &[], &mut StepTimes::default()).unwrap();
+    update_solar_system(&mut simulation, time, &[], &mut StepTimes::default()).unwrap();
     group.bench_function("cached_bodies", |b| {
         b.iter(|| {
             for body in BodyId::PLANETS.into_iter().chain([BodyId::Moon]) {
                 black_box(
-                    simulation
-                        .evaluate_body(body, black_box(time.tt + 1.0 / 86400.0))
+                    astroterm::sky::evaluate_body(&simulation, body, black_box(time.tt + 1.0 / 86400.0))
                         .unwrap(),
                 );
             }

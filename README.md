@@ -1,7 +1,7 @@
 # astroterm-rs
 
 A Rust port of astroterm with some extra stuff. 
-A terminal star map showing stars, planets, the Moon, and constellations,
+A terminal star map showing stars, planets, the Moon, and constellations.
 
 > [NOTE]  
 > This code is ported from [astroterm](https://github.com/da-luce/astroterm) by  
@@ -34,6 +34,18 @@ The built-in Bright Star Catalog works offline without downloads. For about 2.5 
 ```sh
 ./target/release/astroterm -i Tokyo --dataset athyg -t 8 -cCu
 ```
+
+For a larger, partial-sky Gaia subset:
+
+```sh
+./target/release/astroterm -i Tokyo --dataset gaia-gdr3 --dataset-stars 1000000 -t 10 -c
+```
+
+MAST downloads only needed columns and reuses converted blocks when you increase the count.
+Use `--dataset-files 1` instead for ESA bulk files. See [Gaia loading and limitations](docs/gaia-dataset.md).
+
+Dataset loading shows progress before the sky opens. Use `--no-progress` to hide progress updates.
+With `-m`, the panel shows stars loaded, in candidate regions, passed filtering and passed projection.
 
 ## Views
 
@@ -95,6 +107,8 @@ A yellow warning marks dates outside tested accuracy ranges. Drawn object sizes 
 
 The first run downloads about **200 MB**; later runs reuse the file offline.
 You can also supply a local AT-HYG CSV or compressed CSV: `--dataset ./athyg_40.csv.gz`.
+Catalogs requiring special high-precision trajectories or near-zero-distance handling during preparation currently
+stop with an explicit “not implemented” error; support for sparse star exceptions is pending.
 
 On Linux, the default locations are:
 
@@ -115,6 +129,7 @@ source <(./target/release/astroterm --bash-completions)
 
 - `--debug-frametimes`: show the time spent calculating and drawing each frame.
 - `--debug-singleframe`: display one frame, then exit and print a detailed timing report.
+- Memory inspection: see [memory diagnostics](docs/memory-diagnostics.md) for the optional build feature and reports.
 - `--disable-cache`: recalculate runtime results every frame; keeps downloaded files and the catalog cache.
 - `--cache-config <path>`: use custom reuse settings; see [examples/cache.toml](examples/cache.toml).
 
@@ -122,10 +137,29 @@ source <(./target/release/astroterm --bash-completions)
 
 ## Differences from the C version
 
-This port adds pixel graphics, interactive pan/zoom/time controls, optional AT-HYG downloads, and extra labels
-when zoomed in. It also improves astronomical calculations, curved constellation lines, date handling and
-observer-local time display. Independent accuracy checks are documented in
+Gaia DR3 subsets are supported through ESA bulk files or selective MAST Parquet downloads, using G brightness
+in the existing magnitude field. The MAST path removes identical adjacent copies from a known provider duplication.
+
+Solar-system results refresh when simulated time or observer location changes; paused frames reuse completed results.
+A cache TTL of `0` permits same-time reuse; `--disable-cache` disables it.
+
+Catalog brightness is stored in steps of 0.001 magnitude; values very close to a display threshold may round across it.
+Stars are filtered by their catalog-epoch sky regions with a fixed motion allowance. At distant dates, fast-moving
+stars may be missing from a view; special handling for them is currently deferred.
+Stellar direction and brightness are cached by region for up to 10 simulated days by default. Use
+`--disable-cache` for fresh calculations every frame, or shorten `stellar_state` in the [cache configuration](examples/cache.toml).
+
+This port adds pixel graphics, interactive pan/zoom/time controls and optional AT-HYG downloads. It also improves
+astronomical calculations, curved constellation lines, date handling and observer-local time display.
+The five brightest visible stars get labels, using a proper name or catalog identifier. Sun, planet and Moon
+labels are independent. Use `--disable-dynamic-names` to hide star labels; the former `--label-thresh` option has
+been removed. Independent accuracy checks are documented in
 [scripts/reference/README.md](scripts/reference/README.md).
+
+In pixel mode, stars use equal-size four-pixel dots; overlapping stars blend and zooming in boosts their brightness.
+Stars whose complete dot would cross the image boundary are omitted. The Sun, planets and Moon retain their sizes.
+The interactive renderer draws stars dimmest-first within each sky region, with constellation stars last;
+cross-region overlaps follow that region order. The five brightest star labels are still chosen across the whole view.
 
 <details>
 <summary>Credits, citations and data sources</summary>
@@ -187,6 +221,10 @@ Optional, not distributed with this repository:
   [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). `--dataset athyg` downloads the pinned v4.0 file
   from its [Git LFS media URL](https://codeberg.org/astronexus/athyg/media/branch/main/data/athyg_40.csv.gz) into the
   per-user data folder. Manual copies can be placed anywhere, including the gitignored `datasets/` folder.
+
+- Gaia DR3 main-source subsets: [ESA/Gaia/DPAC](https://www.cosmos.esa.int/web/gaia/dr3).
+  Only the checksum manifest is bundled; selected star files are downloaded separately.
+  See [conversion details and acknowledgements](docs/gaia-dataset.md).
 
 </details>
 

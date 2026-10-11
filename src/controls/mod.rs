@@ -1,20 +1,10 @@
 //! Interactive controls and their effect on the view and the simulation clock. Which keys or other input trigger
 //! them is up to the backend (see `terminal::keys`).
 
+use crate::constants::{MAX_INTERACTIVE_SPEED, PAN_STEP_FRACTION, SPEED_FACTOR, ZOOM_FACTOR};
 use crate::astro::SimulationClock;
-use crate::projection::View;
+use crate::model::View;
 
-/// Fraction of the field of view that one pan step turns the view.
-const PAN_STEP_FRACTION: f64 = 1.0 / 20.0;
-
-/// Field of view change of one zoom step.
-const ZOOM_FACTOR: f64 = 1.25;
-
-/// Speed change of one speed step.
-const SPEED_FACTOR: f64 = 10.0;
-
-/// Interactive speed changes saturate here, preventing overflow after repeated key presses.
-pub const MAX_INTERACTIVE_SPEED: f64 = 1e12;
 
 /// An action the user can trigger while the sky is shown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -37,12 +27,12 @@ pub enum Control {
 pub fn apply_control(control: Control, view: &mut View, clock: &mut SimulationClock, initial_view: &View) {
     let pan_step = (view.fov_degrees * PAN_STEP_FRACTION).to_radians();
     match control {
-        Control::PanLeft => view.pan(-pan_step, 0.0),
-        Control::PanRight => view.pan(pan_step, 0.0),
-        Control::PanUp => view.pan(0.0, pan_step),
-        Control::PanDown => view.pan(0.0, -pan_step),
-        Control::ZoomIn => view.zoom(ZOOM_FACTOR),
-        Control::ZoomOut => view.zoom(1.0 / ZOOM_FACTOR),
+        Control::PanLeft => crate::projection::pan_view(view, -pan_step, 0.0),
+        Control::PanRight => crate::projection::pan_view(view, pan_step, 0.0),
+        Control::PanUp => crate::projection::pan_view(view, 0.0, pan_step),
+        Control::PanDown => crate::projection::pan_view(view, 0.0, -pan_step),
+        Control::ZoomIn => crate::projection::zoom_view(view, ZOOM_FACTOR),
+        Control::ZoomOut => crate::projection::zoom_view(view, 1.0 / ZOOM_FACTOR),
         Control::TogglePause => clock.toggle_pause(),
         Control::SpeedUp => {
             clock.set_speed((clock.speed() * SPEED_FACTOR).clamp(-MAX_INTERACTIVE_SPEED, MAX_INTERACTIVE_SPEED))
@@ -60,7 +50,7 @@ pub fn apply_control(control: Control, view: &mut View, clock: &mut SimulationCl
 mod tests {
     use super::*;
     use crate::astro::J2000;
-    use crate::projection::ViewCenter;
+    use crate::model::ViewCenter;
 
     #[test]
     fn controls_change_view_and_clock() {

@@ -1,14 +1,15 @@
 //! Single-frame diagnostics must describe production results without changing them.
-use astroterm::{
-    astro::{J2000, Observer},
-    cache::CacheConfig,
-    catalog::datasets::{Dataset, DatasetDirectories},
-    cli::{Arguments, build_config},
-    projection::{ProjectionCache, View, Viewport},
-    scene::{RenderOptions, pixels::draw_pixel_sky},
-    sky::{FrameTime, ObservationCache, SimulationState, Sky, cache::load_sky_catalog_with_times, update_simulation},
-    timing::StepTimes,
-};
+#[path = "support/cached.rs"] mod cached;
+use cached::PipelineCache;
+use astroterm::state::{ProjectionCache, SimulationState};
+use astroterm::astro::{J2000, Observer};
+use astroterm::cache::CacheConfig;
+use astroterm::catalog::datasets::{Dataset, DatasetDirectories};
+use astroterm::cli::{Arguments, build_config};
+use astroterm::model::{Sky, ProjectionViewport as Viewport, View, RenderOptions, FrameTime};
+use astroterm::scene::draw_pixel_sky;
+use astroterm::sky::{update_solar_system, load_sky_catalog_with_times};
+use astroterm::timing::StepTimes;
 use clap::Parser;
 use std::sync::Arc;
 
@@ -22,7 +23,7 @@ fn singleframe_is_independent_of_the_metadata_panel_and_cache_bypass() {
 }
 
 #[test]
-fn source_and_mapped_loads_report_actual_work_and_ordered_skip_reasons() {
+fn source_and_cached_loads_report_actual_work_and_ordered_skip_reasons() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("small.csv");
     std::fs::write(&path, "ra,dec,mag\n0,0,4\n1,2,5\n,0,-26\n1,,4\n1,2,\n0,0,-26\n").unwrap();
@@ -33,14 +34,14 @@ fn source_and_mapped_loads_report_actual_work_and_ordered_skip_reasons() {
     for warm in [false, true] {
         let mut times = StepTimes::with_trace(true);
         let catalog =
-            load_sky_catalog_with_times(Some(&Dataset::Path(path.clone())), &dirs, &mut Vec::new(), &mut times)
+            load_sky_catalog_with_times(Some(&Dataset::Path(path.clone())), astroterm::constants::MAST_PARALLEL_BLOCKS, &dirs, &mut astroterm::progress::NoProgress(Vec::new()), &mut times)
                 .unwrap();
-        assert_eq!(catalog.stars.len(), 2);
-        assert_eq!(catalog.stars.is_mapped(), warm);
+        assert_eq!(catalog.catalog.stars.len(), 2);
         let mut report = Vec::new();
         times.trace().unwrap().write_report(&mut report).unwrap();
         let report = String::from_utf8(report).unwrap();
         if warm {
+            assert!(report.contains("hit: validated owned stars=2"));
             assert!(report.contains("source CSV not read; original skipped-row counts unavailable"));
             assert!(!report.contains("CSV validation and parsing:"));
         } else {
@@ -54,9 +55,9 @@ fn source_and_mapped_loads_report_actual_work_and_ordered_skip_reasons() {
 
 #[test]
 fn tracing_preserves_observation_projection_and_raster_with_cache_or_bypass() {
-    let catalog = Arc::new(astroterm::sky::SkyCatalog::from_owned_catalog(
+    let catalog = Arc::new(astroterm::sky::prepare_owned_catalog(
         astroterm::catalog::load_embedded_catalog().unwrap(),
-    ));
+    ).unwrap().catalog);
     let options = RenderOptions {
         unicode: true,
         braille: false,
@@ -64,7 +65,6 @@ fn tracing_preserves_observation_projection_and_raster_with_cache_or_bypass() {
         constellations: true,
         grid: false,
         magnitude_threshold: 5.0,
-        label_threshold: 0.25,
         dynamic_names: true,
     };
     for config in [CacheConfig::default(), CacheConfig::disabled()] {
@@ -74,39 +74,27 @@ fn tracing_preserves_observation_projection_and_raster_with_cache_or_bypass() {
             times.begin_frame();
             let mut simulation = SimulationState::default();
             simulation.configure_cache(&config);
-            let mut observation = ObservationCache::new(config.clone());
+            let mut observation = PipelineCache::new(config.clone());
             let mut projection = ProjectionCache::new(config.clone());
             let mut sky = Sky::new(catalog.clone());
             let time = FrameTime::from_utc(J2000);
             let view = View::default();
-            update_simulation(&mut simulation, time, &[], &mut times).unwrap();
-            let mut observer = observation
-                .prepare_observer(&simulation, time, Observer::default())
+            update_solar_system(&mut simulation, time, &[], &mut times).unwrap();
+            let mut observer = cached::prepare_cached_observer(&mut observation, &simulation, time, Observer::default())
                 .unwrap();
-            observation
-                .prepare_light_time(&mut simulation, &mut observer, &mut times)
+            cached::prepare_cached_light_time(&mut observation, &mut simulation, &mut observer, &mut times)
                 .unwrap();
-            observation
-                .observe(
-                    &simulation,
+            cached::observe_cached_sky(&mut observation, &simulation,
                     &observer,
                     5.0,
                     true,
-                    view.sky_region(),
+                    astroterm::projection::select_view_region(&view),
                     &mut sky,
-                    &mut times,
-                )
+                    &mut times)
                 .unwrap();
-            let projected = projection.project(
-                &sky,
-                &view,
-                Viewport {
-                    width: 160,
-                    height: 160,
-                },
-                time.tt,
-                &mut times,
-            );
+            let viewport = Viewport { width: 160, height: 160 };
+            astroterm::projection::project_cached_sky(&mut projection, &sky, &view, viewport, time.tt, &mut times);
+            let projected = astroterm::projection::borrow_projected(&projection, &sky, &view, viewport);
             let image = draw_pixel_sky(&projected, &options, &mut times).unwrap();
             let ids = projected
                 .stars
@@ -122,13 +110,17 @@ fn tracing_preserves_observation_projection_and_raster_with_cache_or_bypass() {
             if let Some(trace) = times.trace() {
                 let step = |name| trace.steps.iter().find(|s| s.name == name).unwrap();
                 assert!(step("Region filtering").details[0].contains(&format!("input stars={}", catalog.stars.len())));
+                let drawable_stars = sky.stars.iter().filter(|star| star.drawable).count();
+                assert!(step("Current brightness").details[0].contains(&format!("drawable={drawable_stars};")));
                 assert!(
                     step("Correction selection").details[0]
                         .contains(&format!("output corrected stars={}", sky.stars.len()))
                 );
-                assert!(
-                    step("Raster stars").details[0].contains(&format!("submitted stars={}", projected.stars.len()))
-                );
+                let drawable = projected.stars.iter().filter(|entry| entry.cell.is_some_and(|(y, x)| {
+                    x > 0 && y > 0 && (x as usize) < viewport.width && (y as usize) < viewport.height
+                })).count();
+                assert!(step("Raster stars").details[0].contains(&format!("submitted stars={drawable}")));
+                assert!(step("Raster stars").details[0].contains(&format!("omitted edge stars={}", projected.stars.len()-drawable)));
                 assert!(step("Refraction").details[0].contains("no membership filtering"));
                 let names = trace.steps.iter().map(|s| s.name).collect::<Vec<_>>();
                 for (before, after) in [

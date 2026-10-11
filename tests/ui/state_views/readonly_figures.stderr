@@ -1,0 +1,5 @@
+error[E0596]: cannot borrow data in a `&` reference as mutable
+ --> tests/ui/state_views/readonly_figures.rs:4:5
+  |
+4 |     set.figures()[0].segments.clear();
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^ cannot borrow as mutable

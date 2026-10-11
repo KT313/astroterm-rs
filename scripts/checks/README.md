@@ -71,7 +71,7 @@ Unicode/braille/color with constellations and dynamic names), run:
 cargo run --release --locked --example catalog_probe -- datasets/athyg_40.csv.gz
 ```
 
-The probe reports CSV loading and trajectory preparation separately, including singular/always-checked/endpoint counts and precision exceptions. Frame output distinguishes evaluated stars, interval-brightness candidates and currently drawable stars. It
+The probe reports CSV loading and trajectory preparation separately, including singular/endpoint counts and precision exceptions. Frame output distinguishes evaluated stars, interval-brightness candidates and currently drawable stars. It
 excludes setup from per-frame measurements and does
 not include terminal presentation or drop the filesystem cache. Run it on an otherwise idle machine.
 
@@ -116,10 +116,11 @@ XDG_DATA_HOME=/tmp/astroterm-data XDG_CACHE_HOME=/tmp/astroterm-cache target/rel
 XDG_DATA_HOME=/tmp/astroterm-data XDG_CACHE_HOME=/tmp/astroterm-cache target/release/examples/dataset_probe athyg
 ```
 
-The first run verifies and installs the download, prepares the catalog and writes the cache. The second reports
-`mapped=true`. A file path can be used instead of `athyg` to skip the download. To measure cold preprocessing,
+The first run verifies and installs the download, prepares the catalog and writes the cache. Both runs report
+`storage=owned`; the second reads the prepared cache rather than parsing the CSV. The single-frame trace
+identifies a prepared-cache hit explicitly. A file path can be used instead of `athyg` to skip the download. To measure cold preprocessing,
 use a fresh cache folder with an existing data file; record separately whether the OS page cache was dropped.
-Unit tests cover checksum/semantic corruption, atomic concurrent writes, read-only folders, mapped lifetimes,
+Unit tests cover checksum/semantic corruption, atomic concurrent writes, read-only folders, loaded-data independence from the file,
 name/path selection, verified streams and download cleanup. Cached and uncached frames must remain identical.
 
 
@@ -159,7 +160,7 @@ cadence test's boundary offsets have been updated accordingly. The full 12,000-e
 Minimum-star rasterizer qualification (O1):
 
 ```sh
-cargo test --locked --lib scene::pixels
+cargo test --locked --lib scene::raster::pixels
 ASTROTERM_DATASET=/path/to/athyg_40.csv.gz ASTROTERM_RASTER_OUTPUT=/tmp/astroterm-raster \
   cargo test --release --locked --lib compare_minimum_star_rasterizers -- --ignored --nocapture
 ```
