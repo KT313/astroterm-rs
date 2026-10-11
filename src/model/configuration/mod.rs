@@ -25,6 +25,7 @@ pub struct Config {
     pub fps: u32,
     /// Star dataset to load instead of the embedded catalog.
     pub dataset: Option<Dataset>,
+    pub dataset_parallel_blocks: u8,                                                     // maximum simultaneous MAST block downloads
 }
 
 /// What is simulated: where, from when, how fast, and with which corrections.

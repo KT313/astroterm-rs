@@ -143,6 +143,10 @@ pub struct Arguments {
     #[arg(long, value_name = "N", conflicts_with = "dataset_files")]
     pub dataset_stars: Option<u32>,
 
+    /// Concurrent MAST blocks [1–16] (default: 4); all 13 column requests each, reduced by the memory budget. Requires --dataset-stars.
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u8).range(1..=i64::from(crate::constants::MAST_MAX_PARALLEL_BLOCKS)))]
+    pub dataset_parallel_blocks: Option<u8>,
+
     /// Hide dataset progress updates; warnings, errors and final loading notices remain visible
     #[arg(long)]
     pub no_progress: bool,

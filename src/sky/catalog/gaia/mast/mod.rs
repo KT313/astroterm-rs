@@ -6,11 +6,12 @@ use crate::{catalog::{datasets::DatasetDirectories, resolve_mast, mast_digest, e
     progress::DatasetProgress, timing::StepTimes};
 use std::io;
 
-pub(crate) fn load_mast_catalog(count: u32, directories: &DatasetDirectories, progress: &mut dyn DatasetProgress, times: &mut StepTimes) -> io::Result<PreparedCatalog> {
+pub(crate) fn load_mast_catalog(count: u32, parallel_blocks: u8, directories: &DatasetDirectories, progress: &mut dyn DatasetProgress, times: &mut StepTimes) -> io::Result<PreparedCatalog> {
+    if !(1..=crate::constants::MAST_MAX_PARALLEL_BLOCKS).contains(&parallel_blocks) { return Err(io::Error::other(format!("MAST parallel block count must be between 1 and {}", crate::constants::MAST_MAX_PARALLEL_BLOCKS))); }
     writeln!(progress, "Gaia DR3: using G magnitude in the existing V-magnitude field; no G-to-V conversion. The star threshold uses G.")?;
     if count == 0 { return super::prepare_gaia_catalog(&[], progress, times); }                     // zero needs neither storage nor network
     let cache_root = directories.cache.as_ref().ok_or_else(|| io::Error::other("Cannot find the cache directory for reusable MAST conversions"))?;
-    let selected = times.measure_steps("Dataset resolution", |times| resolve_mast(count, directories, progress, times))?;
+    let selected = times.measure_steps("Dataset resolution", |times| resolve_mast(count, parallel_blocks, directories, progress, times))?;
     let converted = BlobStore::new(cache_root.join("gaia-gdr3/mast-converted-v1"));
 
     // identify the whole selection: pinned discovery, requested and effective counts, policy and every selected block

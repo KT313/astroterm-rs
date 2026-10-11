@@ -104,12 +104,14 @@ pub const STARTUP_PROGRESS_ROWS: u64 = 4096;                                    
 pub const STARTUP_NOTICE_BYTES: usize = 4096;                                            // bound partial notice text while progress bars are visible
 
 // Selective MAST Parquet downloads
-pub const MAST_RANGE_REQUESTS: usize = 4;                                               // fetch at most four selected column chunks together
+pub const MAST_PARALLEL_BLOCKS: u8 = 4;                                                 // download four blocks at once by default
+pub const MAST_MAX_PARALLEL_BLOCKS: u8 = 16;                                             // cap simultaneous block downloads per process
+pub const MAST_PENDING_COMPRESSED_MAX_BYTES: usize = 512 * 1024 * 1024;                  // guard unusually large groups; sixteen 256 MiB groups could otherwise retain 4 GiB
 pub const MAST_FOOTER_TAIL_BYTES: u64 = 256 * 1024;                                     // usually fetch footer and length in one request
 pub const MAST_FOOTER_MAX_BYTES: usize = 16 * 1024 * 1024;                               // reject unexpectedly large Parquet metadata
 pub const MAST_BLOCK_MAX_BYTES: usize = 256 * 1024 * 1024;                              // total compressed column bytes allowed per group
 pub const MAST_DECODED_MAX_BYTES: usize = 512 * 1024 * 1024;                             // cap decoded data and converted-cache payloads
 pub const MAST_DECODE_BATCH_ROWS: usize = 65_536;                                       // bound each column decoder's working batch
-pub const MAST_REQUEST_SECONDS: u64 = 60;                                              // limit an individual metadata or range request
+pub const MAST_RESPONSE_HEADER_SECONDS: u64 = 60;                                      // stop waiting for response headers; the body uses the block deadline
 pub const MAST_BLOCK_SECONDS: u64 = 600;                                               // include retries in the total group download deadline
 pub const MAST_REQUEST_RETRIES: usize = 3;                                             // retry transient reads without changing source identity

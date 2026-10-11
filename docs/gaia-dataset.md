@@ -33,6 +33,32 @@ group is fetched in full (200,000 rows in the first groups); unselected rows sta
 A request for one star can therefore download a whole group's selected columns. Loaded stars may be fewer
 than requested because required measurements are missing or the provider contains duplicate copies.
 
+Downloads run **four blocks at once** by default, with all 13 column requests started together per block. Set
+`--dataset-parallel-blocks 1..16` to change this (only with `--dataset-stars`):
+
+```sh
+astroterm --dataset gaia-gdr3 --dataset-stars 2000000 --dataset-parallel-blocks 4
+```
+
+One progress bar counts ready blocks out of the full required selection, starting with cached blocks and
+advancing only after each new block is validated and saved. ETA uses only blocks completed in the current
+run; cached blocks do not count as download speed. It shows `--` until the first new block finishes.
+It also shows the combined average payload
+download rate in MiB/s, updated while requests are running. The rate includes retransmitted body bytes,
+excludes HTTP headers and cached data, and averages over the block-download phase (including local
+normalization/publication). Metadata discovery happens first. Completed blocks are loaded in their original
+order, regardless of which download finishes first.
+
+The limit is per process, with at most `13 × parallel blocks` active requests. A 512 MiB budget for pending
+compressed column bytes can reduce concurrency for unusually large blocks; this is not a total RAM limit.
+Typical 10–15 MiB blocks do not reach this budget, but each group may contain up to 256 MiB of selected
+compressed data, so sixteen unusually large groups could otherwise retain 4 GiB.
+Decoding and saving remain sequential. On failure, new work stops and running workers finish before the
+error returns; an active HTTP read may still wait for its timeout. Connections have a 30-second limit,
+response headers have a 60-second limit, and body transfers use the remaining 600-second block deadline.
+Retries share that deadline instead of restarting it. A body that stalls after headers may therefore wait
+until the block deadline. Already saved blocks remain reusable on restart. Changing the concurrency setting does not change selected stars or invalidate caches.
+
 The mirror has a known triplicated region. Astroterm removes adjacent copies only when all 13 consumed
 values/nulls match (numeric comparison uses bit patterns), including across group boundaries. Conflicting
 copies or unexpected nonadjacent duplicates cause an error. Copies still count toward the raw requested

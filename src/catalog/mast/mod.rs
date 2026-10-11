@@ -3,6 +3,7 @@ mod storage;
 mod transport;
 mod parquet;
 mod pipeline;
+mod downloading;
 
 pub(crate) use storage::{BlobStore, digest, encode, decode};
 pub(crate) use parquet::{MastRow, read_block};

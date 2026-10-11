@@ -15,22 +15,22 @@ pub fn load_sky_catalog(
     directories: &DatasetDirectories,
     notices: &mut (impl Write + ?Sized),
 ) -> io::Result<PreparedCatalog> {
-    load_sky_catalog_with_times(dataset, directories, &mut NoProgress(notices), &mut StepTimes::default())
+    load_sky_catalog_with_times(dataset, crate::constants::MAST_PARALLEL_BLOCKS, directories, &mut NoProgress(notices), &mut StepTimes::default())
 }
 
 /// The production loader with optional startup diagnostics; cache-loaded catalogs are not reparsed for statistics.
-pub fn load_sky_catalog_with_times(dataset: Option<&Dataset>, directories: &DatasetDirectories,
+pub fn load_sky_catalog_with_times(dataset: Option<&Dataset>, parallel_blocks: u8, directories: &DatasetDirectories,
     notices: &mut dyn DatasetProgress, times: &mut StepTimes) -> io::Result<PreparedCatalog> {
-    let result = load_reported_catalog(dataset, directories, notices, times);
+    let result = load_reported_catalog(dataset, parallel_blocks, directories, notices, times);
     notices.finish_stage(if result.is_ok() { crate::progress::Outcome::Complete } else { crate::progress::Outcome::Failed });
     result
 }
 
-fn load_reported_catalog(dataset: Option<&Dataset>, directories: &DatasetDirectories,
+fn load_reported_catalog(dataset: Option<&Dataset>, parallel_blocks: u8, directories: &DatasetDirectories,
     notices: &mut dyn DatasetProgress, times: &mut StepTimes) -> io::Result<PreparedCatalog> {
     let Some(dataset) = dataset else { return report_clipping(load_embedded_sky(times, notices)?, notices); }; // use the built-in catalog unless another dataset was selected
     if let Dataset::GaiaGdr3Stars { stars } = dataset {
-        return report_clipping(super::super::gaia::load_mast_catalog(*stars, directories, notices, times)?, notices);
+        return report_clipping(super::super::gaia::load_mast_catalog(*stars, parallel_blocks, directories, notices, times)?, notices);
     }
     if let Dataset::GaiaGdr3 { files } = dataset {
         return report_clipping(super::gaia::load_gaia_catalog(*files, directories, notices, times)?, notices);

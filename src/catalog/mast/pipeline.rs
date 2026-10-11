@@ -1,17 +1,17 @@
 //! Resolve one stable physical prefix; completed groups remain independently reusable when N changes.
-use super::{storage::{BlobStore, BlobStamp, VerifiedBlob, digest, encode, decode, invalid}, transport::{Fetch, Http, Identity}, parquet::{self, Ranges}};
-use crate::{catalog::datasets::DatasetDirectories, constants::{MAST_BLOCK_SECONDS, MAST_FOOTER_TAIL_BYTES, MAST_FOOTER_MAX_BYTES, MAST_RANGE_REQUESTS}, progress::{DatasetProgress, Stage, Unit, Outcome}, timing::StepTimes};
+use super::{storage::{BlobStore, BlobStamp, VerifiedBlob, digest, encode, decode, invalid}, transport::{Fetch, Http, Identity}, parquet};
+use crate::{catalog::datasets::DatasetDirectories, constants::{MAST_BLOCK_SECONDS, MAST_FOOTER_TAIL_BYTES, MAST_FOOTER_MAX_BYTES}, progress::{DatasetProgress, Stage, Unit}, timing::StepTimes};
 use serde::{Serialize, Deserialize};
 use std::{io, time::{Instant, Duration}};
-use bytes::Bytes;
+use super::downloading::{plan_blocks, download_missing};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-struct Leaf { order: u8, pixel: u64 }
-impl Leaf { fn path(&self) -> String { format!("dataset/Norder={}/Dir={}/Npix={}.parquet",self.order, self.pixel / 10000 * 10000, self.pixel) } }
+pub(super) struct Leaf { order: u8, pixel: u64 }
+impl Leaf { pub(super) fn path(&self) -> String { format!("dataset/Norder={}/Dir={}/Npix={}.parquet",self.order, self.pixel / 10000 * 10000, self.pixel) } }
 #[derive(Serialize, Deserialize)]
 struct Discovery { version: u8, properties: String, partitions: String }
 #[derive(Serialize, Deserialize)]
-struct Footer { identity: Identity, bytes: Vec<u8> }
+pub(super) struct Footer { pub identity: Identity, pub bytes: Vec<u8> }
 #[derive(Clone, Debug)]
 pub(crate) struct MastBlock { pub key: String, pub hash: String, pub rows: usize, pub selected: usize, pub base: u64, pub stamp: BlobStamp }
 pub(crate) struct MastSelection { pub store: BlobStore, pub blocks: Vec<MastBlock>, pub discovery: String, pub requested: u32, pub available: u64 }
@@ -24,37 +24,23 @@ impl MastSelection {
         Ok(())
     }
 }
-pub(crate) fn resolve_mast(count: u32, directories: &DatasetDirectories, progress: &mut dyn DatasetProgress, times: &mut StepTimes) -> io::Result<MastSelection> {
+/// The public catalog loader validates the block limit, including zero-row selections, before calling here.
+pub(crate) fn resolve_mast(count: u32, parallel_blocks: u8, directories: &DatasetDirectories, progress: &mut dyn DatasetProgress, times: &mut StepTimes) -> io::Result<MastSelection> {
     let root = directories.data.as_ref().ok_or_else(|| invalid("Cannot find the data directory for MAST"))?.join("gaia-gdr3/mast-parquet-v1");
-    resolve_selection(count, BlobStore::new(root), &Http::new(), progress, times)
+    resolve_selection(count, parallel_blocks, BlobStore::new(root), &Http::new(), progress, times)
 }
-fn resolve_selection(count: u32, store: BlobStore, fetch: &impl Fetch, progress: &mut dyn DatasetProgress, times: &mut StepTimes) -> io::Result<MastSelection> {
+fn resolve_selection(count: u32, parallel_blocks: u8, store: BlobStore, fetch: &impl Fetch, progress: &mut dyn DatasetProgress, times: &mut StepTimes) -> io::Result<MastSelection> {
+    if count == 0 { return Ok(MastSelection { store, blocks: Vec::new(), discovery: String::new(), requested: 0, available: 0 }); }
     progress.begin_stage(Stage::Resolve, "MAST partition list", Unit::Work, None);
-    let discovery = load_discovery(&store, fetch, progress)?;                                    // reuse the fixed list of sky partitions
+    let discovery = load_discovery(&store, fetch, progress)?;                                    // pin the list before planning the requested prefix
     let leaves = parse_leaves(&discovery.partitions)?;
     let key = digest(&encode(&discovery)?);
     let mut selection = MastSelection { store, blocks: Vec::new(), discovery: key, requested: count, available: 0 };
-    let (mut reused, mut downloaded) = (0, 0);
-
-    for leaf in leaves {
-        if selection.available >= u64::from(count) { break; }
-        let path = leaf.path();
-        let footer = times.measure("MAST file metadata", || load_footer(&selection.store, &selection.discovery, &path, fetch, progress))?;
-        let metadata = parquet::parse_footer(&footer.bytes)?;
-        for group in 0..metadata.num_row_groups() {
-            if selection.available >= u64::from(count) { break; }
-            let rows = usize::try_from(metadata.row_group(group).num_rows()).map_err(io::Error::other)?;
-            if rows == 0 { continue; }
-            parquet::selected_ranges(&metadata, group, footer.identity.size)?;                   // check the whole group's byte budget before fetching any column
-            let raw_key = format!("raw-v1:{}:{}:{}:{}:{}", selection.discovery, path, footer.identity.etag, footer.identity.size, group);
-            let (raw, was_reused) = load_raw_block(&selection.store, &raw_key, &path, &footer, group, fetch, progress, times)?;
-            validate_raw_block(&raw.bytes, rows)?;
-            if was_reused { reused += 1; } else { downloaded += 1; }
-            let selected = rows.min((u64::from(count) - selection.available) as usize);
-            selection.blocks.push(MastBlock { key: raw_key, hash: raw.hash, rows, selected, base: selection.available, stamp: raw.stamp });
-            selection.available = selection.available.checked_add(rows as u64).ok_or_else(|| invalid("MAST row count overflow"))?;
-        }
-    }
+    let mut plan = plan_blocks(&mut selection, leaves, fetch, progress, times)?;                  // check metadata and cached blocks without keeping their star payloads
+    let downloaded = plan.jobs.len();
+    let reused = plan.ready.len() - downloaded;
+    times.measure_steps("MAST block downloads", |times| download_missing(&selection.store, &mut plan, parallel_blocks, fetch, progress, times))?;
+    selection.blocks = plan.ready.into_iter().map(|block| block.ok_or_else(|| invalid("missing MAST block result"))).collect::<io::Result<_>>()?;
 
     if selection.available < u64::from(count) {
         writeln!(progress, "Gaia DR3: requested {count} raw rows; catalog contains only {}. Loading available rows.", selection.available)?;
@@ -63,14 +49,7 @@ fn resolve_selection(count: u32, store: BlobStore, fetch: &impl Fetch, progress:
     Ok(selection)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn load_raw_block(store: &BlobStore, key: &str, path: &str, footer: &Footer, group: usize, fetch: &impl Fetch, progress: &mut dyn DatasetProgress, times: &mut StepTimes) -> io::Result<(VerifiedBlob, bool)> {
-    if let Some(blob) = recoverable_read(store, key, progress)? { return Ok((blob, true)); }
-    let raw = times.measure("MAST column download", || download_block(path, footer, group, fetch, progress))?;
-    Ok((store.publish(key, &raw, false)?, false))
-}
-
-fn validate_raw_block(raw: &[u8], rows: usize) -> io::Result<()> {
+pub(super) fn validate_raw_block(raw: &[u8], rows: usize) -> io::Result<()> {
     let metadata = parquet::parse_footer(raw)?;                                                  // metadata checks do not decompress cached star columns
     parquet::projected_schema(&metadata)?;
     if metadata.num_row_groups() != 1 || metadata.row_group(0).num_rows() != rows as i64 {
@@ -79,7 +58,7 @@ fn validate_raw_block(raw: &[u8], rows: usize) -> io::Result<()> {
     Ok(())
 }
 
-fn recoverable_read(store: &BlobStore, key: &str, progress: &mut dyn DatasetProgress) -> io::Result<Option<VerifiedBlob>> {
+pub(super) fn recoverable_read(store: &BlobStore, key: &str, progress: &mut dyn DatasetProgress) -> io::Result<Option<VerifiedBlob>> {
     match store.read_verified(key) {
         Ok(value) => Ok(value),
         Err(error) => {
@@ -147,7 +126,7 @@ fn parse_leaves(text: &str) -> io::Result<Vec<Leaf>> {
     Ok(leaves)
 }
 
-fn load_footer(store: &BlobStore, discovery: &str, path: &str, fetch: &impl Fetch, progress: &mut dyn DatasetProgress) -> io::Result<Footer> {
+pub(super) fn load_footer(store: &BlobStore, discovery: &str, path: &str, fetch: &impl Fetch, progress: &mut dyn DatasetProgress) -> io::Result<Footer> {
     let key = format!("footer-v1:{discovery}:{path}");
     if let Some(blob) = recoverable_read(store, &key, progress)? {
         let footer: Footer = decode(&blob.bytes)?;
@@ -169,40 +148,6 @@ fn load_footer(store: &BlobStore, discovery: &str, path: &str, fetch: &impl Fetc
     parquet::parse_footer(&bytes)?;
     let footer = Footer { identity, bytes };
     decode(&store.publish(&key, &encode(&footer)?, true)?.bytes)
-}
-
-fn download_block(path: &str, footer: &Footer, group: usize, fetch: &impl Fetch, progress: &mut dyn DatasetProgress) -> io::Result<Vec<u8>> {
-    let metadata = parquet::parse_footer(&footer.bytes)?;
-    let ranges = parquet::selected_ranges(&metadata, group, footer.identity.size)?;
-    let total = ranges.iter().map(|(_, length)| *length as u64).sum();
-    progress.begin_stage(Stage::Download, &format!("{path} group {group}"), Unit::Bytes, Some(total));
-    let deadline = Instant::now() + Duration::from_secs(MAST_BLOCK_SECONDS);
-    let mut input = Ranges {
-        size: footer.identity.size,
-        parts: vec![(footer.identity.size - footer.bytes.len() as u64, Bytes::copy_from_slice(&footer.bytes))],
-    };
-    let mut completed = 0;
-    for batch in ranges.chunks(MAST_RANGE_REQUESTS.max(1)) {
-        let fetched = std::thread::scope(|scope| {
-            let handles: Vec<_> = batch.iter().map(|&(start, length)| scope.spawn(move || {
-                let response = fetch.fetch(path, Some(&format!("bytes={start}-{}", start + length as u64 - 1)), Some(&footer.identity), length, deadline)?;
-                if response.start != start || response.bytes.len() != length { return Err(invalid("invalid selected range length")); }
-                Ok::<_, io::Error>((start, Bytes::from(response.bytes)))
-            })).collect();
-            handles.into_iter().map(|handle| handle.join().map_err(|_| io::Error::other("range worker panicked"))?).collect::<io::Result<Vec<_>>>()
-        })?;
-        for part in fetched {
-            completed += part.1.len() as u64;
-            input.parts.push(part);
-        }
-        progress.set_position(completed);
-    }
-    progress.begin_stage(Stage::Parse, "MAST selected columns", Unit::Rows, Some(metadata.row_group(group).num_rows() as u64));
-    let rows = parquet::read_group(input, group)?;
-    let raw = parquet::write_block(&rows, parquet::projected_schema(&metadata)?)?;
-    progress.set_position(rows.len() as u64);
-    progress.finish_stage(Outcome::Complete);
-    Ok(raw)
 }
 
 #[cfg(test)]

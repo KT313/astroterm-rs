@@ -49,6 +49,12 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
     if arguments.dataset.is_none() && (arguments.dataset_files.is_some() || arguments.dataset_stars.is_some()) {
         return Err(ConfigError("--dataset-files / --dataset-stars are only valid with --dataset gaia-gdr3".into()));
     }
+    let dataset = arguments.dataset.as_ref()
+        .map(|path| Dataset::parse_selection(path.as_os_str(), arguments.dataset_files, arguments.dataset_stars))
+        .transpose().map_err(ConfigError)?;
+    if arguments.dataset_parallel_blocks.is_some() && !matches!(dataset, Some(Dataset::GaiaGdr3Stars { .. })) {
+        return Err(ConfigError("--dataset-parallel-blocks requires --dataset gaia-gdr3 --dataset-stars N".into()));
+    }
     // observer location (a city overrides latitude and longitude) and time
     let observer = match &arguments.city {
         Some(name) => locate_city(cities, name)?,
@@ -107,12 +113,8 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
         render,
         terminal,
         fps,
-        dataset: arguments
-            .dataset
-            .as_ref()
-            .map(|p| Dataset::parse_selection(p.as_os_str(), arguments.dataset_files, arguments.dataset_stars))
-            .transpose()
-            .map_err(ConfigError)?,
+        dataset,
+        dataset_parallel_blocks: arguments.dataset_parallel_blocks.unwrap_or(crate::constants::MAST_PARALLEL_BLOCKS),
     })
 }
 
@@ -278,6 +280,23 @@ mod tests {
         for args in [&["--dataset-stars", "1"][..], &["--dataset", "athyg", "--dataset-stars", "1"], &["--dataset", "./gaia.csv", "--dataset-stars", "1"]] { assert!(config_from(args).is_err()); }
         for n in ["-1", "1.5", "4294967296"] { assert!(Arguments::try_parse_from(["astroterm", "--dataset", "gaia-gdr3", "--dataset-stars", n]).is_err()); }
         assert!(Arguments::try_parse_from(["astroterm", "--dataset", "gaia-gdr3", "--dataset-stars", "1", "--dataset-files", "1"]).is_err());
+    }
+
+    #[test]
+    fn mast_parallel_blocks_require_the_star_selector_and_a_bounded_count() {
+        assert_eq!(config_from(&[]).unwrap().dataset_parallel_blocks, crate::constants::MAST_PARALLEL_BLOCKS);
+        for value in ["1", "2", "4", "8", "16"] {
+            let config = config_from(&["--dataset", "gaia-gdr3", "--dataset-stars", "0", "--dataset-parallel-blocks", value]).unwrap();
+            assert_eq!(config.dataset_parallel_blocks, value.parse::<u8>().unwrap());
+        }
+        for value in ["0", "17", "256", "-1", "1.5"] {
+            assert!(Arguments::try_parse_from(["astroterm", "--dataset", "gaia-gdr3", "--dataset-stars", "1", "--dataset-parallel-blocks", value]).is_err());
+        }
+        for args in [&["--dataset-parallel-blocks", "2"][..], &["--dataset", "athyg", "--dataset-parallel-blocks", "2"],
+            &["--dataset", "gaia-gdr3", "--dataset-files", "1", "--dataset-parallel-blocks", "2"],
+            &["--dataset", "./stars.csv", "--dataset-parallel-blocks", "2"]] {
+            assert!(config_from(args).is_err());
+        }
     }
 
     #[test]

@@ -1,5 +1,5 @@
 //! Scoped startup display; it stops before raw mode, terminal probes or the alternate screen open.
-use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
+use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle, ProgressState, HumanDuration};
 use crate::progress::{DatasetProgress, Stage, Unit, Outcome};
 use crate::constants::{STARTUP_PROGRESS_HZ, STARTUP_NOTICE_BYTES};
 use std::{io::{self, IsTerminal, Write}, time::{Duration, Instant}};
@@ -12,12 +12,13 @@ pub struct StartupProgress<W: Write> {
     pending: Vec<u8>,
     plain_updates: bool,
     plain: Option<PlainStage>,
+    download_rate: Option<String>,
     active: Option<Stage>,
     finished: bool,
 }
 
 /// The stage last announced on a plain writer; count lines repeat its label at most once per second.
-struct PlainStage { stage: Stage, unit: Unit, total: Option<u64>, last_line: Instant }
+struct PlainStage { stage: Stage, unit: Unit, total: Option<u64>, last_line: Instant, position: u64 }
 
 pub fn open_startup_progress(disabled: bool) -> StartupProgress<io::Stderr> {
     let writer = io::stderr(); // never hold stderr.lock() while the animation thread draws
@@ -28,7 +29,7 @@ pub fn open_startup_progress(disabled: bool) -> StartupProgress<io::Stderr> {
 impl<W: Write> StartupProgress<W> {
     fn new(writer: W, visible: bool, plain_updates: bool) -> Self {
         let display = visible.then(|| MultiProgress::with_draw_target(ProgressDrawTarget::stderr_with_hz(STARTUP_PROGRESS_HZ)));
-        Self { writer, display, task: None, files: None, pending: Vec::new(), plain_updates, plain: None, active: None, finished: false }
+        Self { writer, display, task: None, files: None, pending: Vec::new(), plain_updates, plain: None, download_rate: None, active: None, finished: false }
     }
     pub fn finish(&mut self, success: bool) {
         if self.finished { return; }
@@ -81,6 +82,7 @@ impl<W: Write> Write for StartupProgress<W> {
 impl<W: Write> DatasetProgress for StartupProgress<W> {
     fn begin_stage(&mut self, stage: Stage, detail: &str, unit: Unit, total: Option<u64>) {
         self.active = Some(stage);
+        self.download_rate = None;
         let Some(display) = &self.display else {
             if self.plain_updates {
                 let recent = self.plain.as_ref().filter(|plain| plain.stage == stage && plain.last_line.elapsed() < Duration::from_secs(1));
@@ -88,7 +90,7 @@ impl<W: Write> DatasetProgress for StartupProgress<W> {
                     Some(plain) => plain.last_line, // thousands of quick file checks print one line per second, not one each
                     None => { let _ = writeln!(self.writer, "{}...", stage.label()); Instant::now() }
                 };
-                self.plain = Some(PlainStage { stage, unit, total, last_line });
+                self.plain = Some(PlainStage { stage, unit, total, last_line, position: 0 });
             }
             return;
         };
@@ -99,17 +101,21 @@ impl<W: Write> DatasetProgress for StartupProgress<W> {
         let template = match (unit, total.is_some()) {
             (Unit::Bytes, true) => "{prefix} {wide_bar} {bytes}/{total_bytes} {bytes_per_sec} ETA {eta} {msg}",
             (Unit::Bytes, false) => "{spinner} {prefix} {bytes} {bytes_per_sec} {elapsed} {msg}",
+            (Unit::Blocks, true) => "{prefix} {wide_bar} {pos}/{len} blocks {msg} ETA {block_eta}",
             (Unit::Work, _) => "{spinner} {prefix} {elapsed} {msg}",
             (_, true) => "{prefix} {wide_bar} {pos}/{len} {elapsed} {msg}",
             (_, false) => "{spinner} {prefix} {pos} rows {elapsed} {msg}",
         };
-        if let Ok(style) = ProgressStyle::with_template(template) { bar.set_style(style); }
+        if let Ok(style) = ProgressStyle::with_template(template) {
+            bar.set_style(if unit == Unit::Blocks { with_block_eta(style, 0) } else { style });
+        }
         bar.set_prefix(if detail.is_empty() { stage.label().to_owned() } else { format!("{} ({detail})", stage.label()) }); bar.set_message("");
         bar.enable_steady_tick(Duration::from_millis(1000 / u64::from(STARTUP_PROGRESS_HZ.max(1))));
     }
     fn set_position(&mut self, completed: u64) {
         if let Some(bar) = &self.task { bar.set_position(completed); return; }
         let Some(plain) = &mut self.plain else { return; };
+        plain.position = completed;
         if self.display.is_some() || plain.last_line.elapsed() < Duration::from_secs(1) { return; }
         let count = match (plain.unit, plain.total) {
             (Unit::Work, _) => return,
@@ -117,9 +123,24 @@ impl<W: Write> DatasetProgress for StartupProgress<W> {
             (Unit::Bytes, None) => format!("{} MB", completed / 1_000_000),
             (Unit::Rows, total) => describe_count(completed, total, "rows"),
             (Unit::Stars, total) => describe_count(completed, total, "stars"),
+            (Unit::Blocks, total) => describe_count(completed, total, "blocks"),
         };
-        let _ = writeln!(self.writer, "{}: {count}", plain.stage.label());
+        let rate = self.download_rate.as_ref().map(|rate| format!("; {rate}")).unwrap_or_default();
+        let _ = writeln!(self.writer, "{}: {count}{rate}", plain.stage.label());
         plain.last_line = Instant::now();
+    }
+    fn set_cached_blocks(&mut self, ready: u64) {
+        if let Some(bar) = &self.task { bar.set_style(with_block_eta(bar.style(), ready)); }
+        self.set_position(ready);                                                              // keep the full ready count, but exclude its initial value from ETA
+    }
+    fn set_download_bytes(&mut self, received: u64, elapsed: Duration) {
+        if self.active != Some(Stage::Download) { return; }
+        let seconds = elapsed.as_secs_f64();
+        let rate = if seconds > 0.0 { received as f64 / seconds / 1_048_576.0 } else { 0.0 };
+        let message = format!("{rate:.2} MiB/s avg");
+        if let Some(bar) = &self.task { bar.set_message(message); return; }
+        self.download_rate = Some(message);
+        if let Some(plain) = &self.plain { self.set_position(plain.position); }                   // preserve the block count while refreshing plain-output speed
     }
     fn set_retained(&mut self, retained: u64) {
         if let Some(bar) = &self.task { bar.set_message(format!("{retained} sources retained")); }
@@ -143,6 +164,23 @@ impl<W: Write> DatasetProgress for StartupProgress<W> {
         }
     }
 }
+fn with_block_eta(style: ProgressStyle, cached: u64) -> ProgressStyle {
+    style.with_key("block_eta", move |state: &ProgressState, output: &mut dyn std::fmt::Write| {
+        match estimate_block_eta(state.len(), cached, state.pos(), state.elapsed()) {
+            Some(eta) => { let _ = write!(output, "{:#}", HumanDuration(eta)); },
+            None => { let _ = output.write_str("--"); },                                        // wait for a new completed block before estimating speed
+        }
+    })
+}
+
+fn estimate_block_eta(total: Option<u64>, cached: u64, ready: u64, elapsed: Duration) -> Option<Duration> {
+    let remaining = total?.saturating_sub(ready);
+    if remaining == 0 { return Some(Duration::ZERO); }
+    let completed_now = ready.saturating_sub(cached);
+    if completed_now == 0 || elapsed.is_zero() { return None; }
+    Duration::try_from_secs_f64(elapsed.as_secs_f64() * remaining as f64 / completed_now as f64).ok()
+}
+
 fn describe_count(completed: u64, total: Option<u64>, unit: &str) -> String {
     match total { Some(total) => format!("{completed} of {total} {unit}"), None => format!("{completed} {unit}") }
 }

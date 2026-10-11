@@ -14,13 +14,17 @@ impl Stage {
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Unit { Bytes, Rows, Stars, Work }
+pub enum Unit { Bytes, Rows, Stars, Blocks, Work }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Outcome { Complete, Failed }
 
 pub trait DatasetProgress: Write {
     fn begin_stage(&mut self, _stage: Stage, _detail: &str, _unit: Unit, _total: Option<u64>) {}
     fn set_position(&mut self, _completed: u64) {}
+    /// Count existing blocks as ready without treating them as work completed during this download.
+    fn set_cached_blocks(&mut self, ready: u64) { self.set_position(ready); }
+    /// Received download payload, including retries, and elapsed time for this download phase.
+    fn set_download_bytes(&mut self, _received: u64, _elapsed: std::time::Duration) {}
     fn set_retained(&mut self, _retained: u64) {}
     fn set_files(&mut self, _ready: u64, _total: u64) {}
     fn finish_stage(&mut self, _outcome: Outcome) {}

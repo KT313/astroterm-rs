@@ -37,7 +37,7 @@ pub(crate) fn load_catalog(state: &mut ApplicationState, directories: &DatasetDi
     let catalog = {
         let mut progress = astroterm::terminal::open_startup_progress(state.config.no_progress);
         let result = state.timings.measure_steps("Dataset loading", |times| {
-            astroterm::sky::load_sky_catalog_with_times(state.config.dataset.as_ref(), directories, &mut progress, times)
+            astroterm::sky::load_sky_catalog_with_times(state.config.dataset.as_ref(), state.config.dataset_parallel_blocks, directories, &mut progress, times)
         });
         progress.finish(result.is_ok()); // stop all startup drawing before terminal setup or error reporting
         result
