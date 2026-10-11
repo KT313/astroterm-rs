@@ -4,7 +4,7 @@ use astroterm::{catalog::datasets::{Dataset, DatasetDirectories}, sky::load_sky_
 use std::{io::{self, Write}, path::PathBuf, time::Duration};
 
 #[derive(Default)]
-struct Counts { downloaded: usize, converted: usize, text: Vec<u8>, downloading: bool, last_ready: Option<u64>, received: u64, transfer_elapsed: Duration }
+struct Counts { downloaded: usize, text: Vec<u8>, downloading: bool, last_ready: Option<u64>, received: u64, transfer_elapsed: Duration }
 impl Write for Counts {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> { self.text.write(bytes) }
     fn flush(&mut self) -> io::Result<()> { Ok(()) }
@@ -14,7 +14,6 @@ impl DatasetProgress for Counts {
         self.downloading = stage == Stage::Download;
         self.last_ready = None;
         if self.downloading { assert_eq!(unit, Unit::Blocks); }
-        if stage == Stage::Convert && detail == "MAST block" { self.converted += 1; }
         eprintln!("{}: {detail}", stage.label());
     }
     fn set_download_bytes(&mut self, received: u64, elapsed: Duration) {
@@ -38,8 +37,10 @@ fn mast_two_groups_extend_without_reconverting_old_rows() {
     for (count, parallel, expected_downloads, expected_conversions) in [(200001, 2, 2, 2), (100000, 1, 0, 0), (150000, 4, 0, 0), (200001, 8, 0, 0)] {
         let mut log = Counts::default();
         let started = std::time::Instant::now();
-        let catalog = load_sky_catalog_with_times(Some(&Dataset::GaiaGdr3Stars { stars: count }), parallel, &directories, &mut log, &mut StepTimes::default()).unwrap();
-        assert_eq!((log.downloaded, log.converted), (expected_downloads, expected_conversions));
+        let mut times = StepTimes::with_trace(true);
+        let catalog = load_sky_catalog_with_times(Some(&Dataset::GaiaGdr3Stars { stars: count }), parallel, &directories, &mut log, &mut times).unwrap();
+        let converted = times.trace().unwrap().steps.iter().filter(|step| step.name == "MAST block conversion").count();
+        assert_eq!((log.downloaded, converted), (expected_downloads, expected_conversions));
         assert_eq!(log.received > 0, expected_downloads > 0);
         let mut ids: Vec<_> = catalog.catalog.stars.iter().map(|star| star.id.0).collect();
         ids.sort_unstable();
@@ -51,6 +52,6 @@ fn mast_two_groups_extend_without_reconverting_old_rows() {
                 log.received as f64 / 1_048_576.0, log.transfer_elapsed.as_secs_f64(), log.received as f64 / 1_048_576.0 / log.transfer_elapsed.as_secs_f64());
         }
         eprintln!("N={count}; parallel={parallel}; loaded={}; download blocks={}; converted blocks={}; elapsed={:?}\n{}",
-            ids.len(), log.downloaded, log.converted, started.elapsed(), String::from_utf8_lossy(&log.text));
+            ids.len(), log.downloaded, converted, started.elapsed(), String::from_utf8_lossy(&log.text));
     }
 }

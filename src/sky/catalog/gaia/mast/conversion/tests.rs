@@ -129,3 +129,104 @@ fn mast_measure_compact_preparation_and_labels() {
     for label in &labels { black_box(names.insert(label).unwrap()); }
     eprintln!("usable={}; compact preparation={prepare:?}; label insertion={:?}", stars.len(), started.elapsed());
 }
+
+#[derive(Default)]
+struct LoadingProgress {
+    text: Vec<u8>,
+    stages: Vec<crate::progress::Stage>,
+    active: Option<crate::progress::Stage>,
+    totals: Vec<u64>,
+    positions: Vec<u64>,
+    completed: usize,
+}
+impl std::io::Write for LoadingProgress {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> { self.text.extend_from_slice(bytes); Ok(bytes.len()) }
+    fn flush(&mut self) -> io::Result<()> { Ok(()) }
+}
+impl DatasetProgress for LoadingProgress {
+    fn begin_stage(&mut self, stage: crate::progress::Stage, _: &str, unit: crate::progress::Unit, total: Option<u64>) {
+        self.stages.push(stage);
+        self.active = Some(stage);
+        if stage == crate::progress::Stage::Convert {
+            assert_eq!(unit, crate::progress::Unit::Blocks);
+            self.totals.push(total.unwrap());
+        }
+    }
+    fn set_position(&mut self, position: u64) {
+        if self.active == Some(crate::progress::Stage::Convert) { self.positions.push(position); }
+    }
+    fn finish_stage(&mut self, outcome: crate::progress::Outcome) {
+        if self.active == Some(crate::progress::Stage::Convert) && outcome == crate::progress::Outcome::Complete { self.completed += 1; }
+        self.active = None;
+    }
+}
+
+/// Small real Parquet input lets cold and cached loading exercise the same progress contract without downloads.
+fn write_raw_block(rows: &[MastRow]) -> Vec<u8> {
+    use parquet::{data_type::{Int64Type, ByteArrayType, ByteArray, DoubleType}, file::writer::SerializedFileWriter, schema::parser::parse_message_type};
+    use std::sync::Arc;
+    let schema = parse_message_type("message gaia {
+        REQUIRED INT64 source_id; REQUIRED BYTE_ARRAY designation (UTF8);
+        REQUIRED DOUBLE ra; REQUIRED DOUBLE dec; REQUIRED DOUBLE ref_epoch;
+        REQUIRED DOUBLE pmra; REQUIRED DOUBLE pmdec; REQUIRED DOUBLE parallax;
+        REQUIRED DOUBLE parallax_over_error; REQUIRED DOUBLE radial_velocity;
+        REQUIRED DOUBLE phot_g_mean_mag; REQUIRED DOUBLE phot_bp_mean_mag; REQUIRED DOUBLE phot_rp_mean_mag;
+    }").unwrap();
+    let mut writer = SerializedFileWriter::new(Vec::new(), Arc::new(schema), Default::default()).unwrap();
+    let mut group = writer.next_row_group().unwrap();
+    for index in 0..13 {
+        let mut column = group.next_column().unwrap().unwrap();
+        match index {
+            0 => { column.typed::<Int64Type>().write_batch(&rows.iter().map(|row| row.source_id as i64).collect::<Vec<_>>(), None, None).unwrap(); },
+            1 => { column.typed::<ByteArrayType>().write_batch(&rows.iter().map(|row| ByteArray::from(row.designation.as_ref().unwrap().as_str())).collect::<Vec<_>>(), None, None).unwrap(); },
+            _ => { column.typed::<DoubleType>().write_batch(&rows.iter().map(|row| f64::from_bits(row.values[index - 2].unwrap())).collect::<Vec<_>>(), None, None).unwrap(); },
+        }
+        column.close().unwrap();
+    }
+    group.close().unwrap();
+    writer.into_inner().unwrap()
+}
+
+#[test]
+fn mast_loading_uses_one_bar_for_cold_cached_and_mixed_blocks() {
+    let groups = [vec![row(10), row(20)], vec![row(20), row(30), row(40)]];
+    let mut expected = None;
+    for cached in [[false, false], [true, false], [false, true], [true, true]] {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut selected, _, _) = selection(directory.path(), &groups, 4);
+        let store = BlobStore::new(directory.path().join("loading-cache"));
+        let mut keys = Vec::new();
+        for ((block, rows), cached) in selected.blocks.iter_mut().zip(&groups).zip(cached) {
+            let blob = selected.store.publish(&block.key, &write_raw_block(rows), false).unwrap();
+            block.hash = blob.hash;
+            block.stamp = blob.stamp;
+            let key = block_key(block, &fingerprint());
+            if cached { store.publish(&key, &encode_mast(&convert_block(rows).unwrap()).unwrap(), false).unwrap(); }
+            keys.push(key);
+        }
+        let mut progress = LoadingProgress::default();
+        let mut times = StepTimes::with_trace(true);
+        let catalog = super::super::assembly::assemble_selected_catalog(&selected, &store, &keys, &mut progress, &mut times).unwrap();
+        assert_eq!(progress.totals, vec![2]);
+        assert_eq!(progress.positions, vec![0, 1, 2]);                                           // a partial final block still counts once, including skipped duplicate rows
+        assert_eq!(progress.completed, 1);
+        assert_eq!(progress.stages, [crate::progress::Stage::Convert, crate::progress::Stage::Sort, crate::progress::Stage::Index]);
+        let conversions = times.trace().unwrap().steps.iter().filter(|step| step.name == "MAST block conversion").count();
+        assert_eq!(conversions, cached.iter().filter(|&&hit| !hit).count());
+        if let Some(expected) = &expected { assert_eq!(&catalog, expected); } else { expected = Some(catalog); }
+    }
+}
+
+#[test]
+fn mast_loading_does_not_count_a_block_that_fails_during_assembly() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut invalid = row(30);
+    invalid.values[0] = Some(f64::NAN.to_bits());
+    let groups = [vec![row(10), row(20)], vec![invalid]];
+    let (selected, store, keys) = selection(directory.path(), &groups, 3);
+    let mut progress = LoadingProgress::default();
+    assert!(super::super::assembly::assemble_selected_catalog(&selected, &store, &keys, &mut progress, &mut StepTimes::default()).is_err());
+    assert_eq!(progress.totals, vec![2]);
+    assert_eq!(progress.positions, vec![0, 1]);
+    assert_eq!(progress.completed, 0);
+}

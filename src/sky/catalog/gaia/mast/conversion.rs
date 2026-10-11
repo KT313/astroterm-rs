@@ -1,6 +1,6 @@
 //! Block-local results preserve physical ordinals through missing fields, duplicates and deferred errors.
 use crate::{catalog::{MastRow, MastBlock, MastSelection, BlobStore, encode_mast, decode_mast, mast_digest, read_mast_block, validate_gaia_input, StarId},
-    model::{StarRow, StarStorage}, progress::{DatasetProgress, Stage, Unit}, timing::StepTimes};
+    model::{StarRow, StarStorage}, progress::DatasetProgress, timing::StepTimes};
 use super::super::conversion::{convert_source, ConversionStats};
 use serde::{Serialize, Deserialize};
 use std::io;
@@ -45,11 +45,9 @@ pub(super) fn load_converted_block(selection: &MastSelection, block: &MastBlock,
     }
 
     let rows = times.measure("MAST Parquet decode", || read_mast_block(selection.read(block)?))?;     // only decode source columns when conversion results are missing
-    progress.begin_stage(Stage::Convert, "MAST block", Unit::Rows, Some(rows.len() as u64));
     let data = times.measure("MAST block conversion", || convert_block(&rows))?;
     validate_block(&data, block.rows)?;
     store.publish(key, &encode_mast(&data)?, false)?;                                              // publish the complete block before claiming it can be reused
-    progress.set_position(rows.len() as u64);
     Ok(data)
 }
 

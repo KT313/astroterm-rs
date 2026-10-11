@@ -1,7 +1,7 @@
 //! Assemble only the requested physical prefix; cached numerical records are not recomputed here.
 use super::conversion::{self, ConvertedRow};
 use crate::{catalog::{MastSelection, BlobStore, MastRow, StarNames, StarId}, model::{StarStorage, PreparedCatalog},
-    progress::{DatasetProgress, Stage, Unit}, timing::StepTimes};
+    progress::{DatasetProgress, Stage, Unit, Outcome}, timing::StepTimes};
 use std::{io, collections::HashMap};
 
 pub(super) fn assemble_selected_catalog(selection: &MastSelection, store: &BlobStore, keys: &[String], progress: &mut dyn DatasetProgress, times: &mut StepTimes) -> io::Result<PreparedCatalog> {
@@ -13,13 +13,14 @@ pub(super) fn assemble_selected_catalog(selection: &MastSelection, store: &BlobS
     let (mut selected, mut duplicates, mut missing) = (0u64, 0u64, 0u64);
     let mut stats = [0u64; 5];
 
-    for (block, key) in selection.blocks.iter().zip(keys) {
+    progress.begin_stage(Stage::Convert, "Loading MAST blocks", Unit::Blocks, Some(selection.blocks.len() as u64));
+    progress.set_position(0);                                                                    // even cached conversions still need loading and assembly
+    for (completed, (block, key)) in selection.blocks.iter().zip(keys).enumerate() {
         let converted = conversion::load_converted_block(selection, block, store, key, progress, times)?;
         let repeats = compare_boundary(previous.as_ref(), &converted.first)?;                     // a duplicate run can start in the preceding file or group
         stars.try_reserve(block.selected)?;
         bounds.try_reserve(block.selected).map_err(io::Error::other)?;
         ids.try_reserve(block.selected).map_err(io::Error::other)?;
-        progress.begin_stage(Stage::Convert, "Assembling saved MAST results", Unit::Rows, Some(block.selected as u64));
 
         for (ordinal, entry) in converted.entries.into_iter().take(block.selected).enumerate() {
             selected += 1;
@@ -43,7 +44,7 @@ pub(super) fn assemble_selected_catalog(selection: &MastSelection, store: &BlobS
             }
         }
         previous = Some(converted.last);
-        progress.set_position(block.selected as u64);
+        progress.set_position(completed as u64 + 1);                                             // advance only after all selected rows in this block were accepted
     }
 
     ids.sort_unstable();
@@ -55,6 +56,7 @@ pub(super) fn assemble_selected_catalog(selection: &MastSelection, store: &BlobS
     times.describe("Gaia loading", || format!("selected raw={selected}; duplicate copies={duplicates}; missing required={missing}; loaded={}", stars.len()));
     stars.shrink_to_fit();
     bounds.shrink_to_fit();
+    progress.finish_stage(Outcome::Complete);
     times.measure("Catalog preparation", || super::super::super::pipeline::finish_catalog(stars, bounds, names, &HashMap::new(), &[], progress))
 }
 

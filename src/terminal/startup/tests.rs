@@ -184,3 +184,25 @@ fn cached_block_baseline_preserves_the_visible_count_and_resets_between_stages()
     visible.set_position(1);
     assert!(!draw_progress(&visible, &terminal).contains("ETA --"));                              // the previous selection's cached baseline must not leak
 }
+
+#[test]
+fn loading_blocks_start_one_fresh_bar_after_download_progress() {
+    let terminal = CapturedTerminal::default();
+    let mut visible = StartupProgress::new(Vec::new(), false, false);
+    visible.display = Some(MultiProgress::with_draw_target(ProgressDrawTarget::term_like(Box::new(terminal.clone()))));
+    visible.begin_stage(Stage::Download, "MAST blocks ready", Unit::Blocks, Some(500));
+    visible.set_cached_blocks(250);
+    visible.set_position(500);
+    visible.set_download_bytes(8 * 1024 * 1024, Duration::from_secs(2));
+    visible.finish_stage(Outcome::Complete);
+
+    visible.begin_stage(Stage::Convert, "Loading MAST blocks", Unit::Blocks, Some(500));
+    visible.set_position(0);
+    let initial = draw_progress(&visible, &terminal);
+    assert!(initial.contains("Preparing stars") && initial.contains("0/500 blocks") && initial.contains("ETA --"), "{initial}");
+    assert!(!initial.contains("MiB/s"), "{initial}");
+    visible.set_position(2);
+    let updated = draw_progress(&visible, &terminal);
+    assert!(updated.contains("2/500 blocks") && !updated.contains("ETA --"), "{updated}");
+    assert!(visible.files.is_none());
+}

@@ -64,6 +64,10 @@ values/nulls match (numeric comparison uses bit patterns), including across grou
 copies or unexpected nonadjacent duplicates cause an error. Copies still count toward the raw requested
 number and keep their physical ordinals; the loading report separates duplicates from missing measurements.
 
+After downloading, one loading/preparation bar covers all selected blocks. It advances after each block
+has been loaded, converted if needed, and added to the catalog. Cached conversions still count as loading
+work, so this bar starts at zero. Sorting and indexing then run once for the complete catalog.
+
 Increasing the count reuses existing raw and converted blocks. Only new blocks are downloaded and converted.
 A conversion-policy change rebuilds converted blocks from local Parquet, without redownloading it. Final
 catalog loading, copying, validation, sorting and indexing still run for a changed selection. A repeat of
