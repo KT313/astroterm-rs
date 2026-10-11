@@ -23,8 +23,8 @@ astroterm --dataset gaia-gdr3 --dataset-stars 1000000 -i Tokyo -t 10 -c
 ```
 
 `--dataset-stars` accepts **0–4,294,967,295** raw input rows from MAST's full DR3 main-source table.
-It downloads only 13 columns: source ID, designation, position/epoch/motion/distance inputs and G/BP/RP
-magnitudes. Labels use the supplied `designation` text. HTTP byte-range reads fetch compressed Parquet
+It downloads only 12 columns: source ID, position/epoch/motion/distance inputs and G/BP/RP
+magnitudes. Labels are generated as `Gaia DR3 <source_id>` only when displayed; designation is not fetched. HTTP byte-range reads fetch compressed Parquet
 column chunks directly; there is no TAP query queue. Building requires a C toolchain for Zstandard.
 
 Selection follows pinned HATS sky partitions, then Parquet row-group and physical row order. It is **not
@@ -33,7 +33,7 @@ group is fetched in full (200,000 rows in the first groups); unselected rows sta
 A request for one star can therefore download a whole group's selected columns. Loaded stars may be fewer
 than requested because required measurements are missing or the provider contains duplicate copies.
 
-Downloads run **four blocks at once** by default, with all 13 column requests started together per block. Set
+Downloads run **four blocks at once** by default, with all 12 column requests started together per block. Set
 `--dataset-parallel-blocks 1..16` to change this (only with `--dataset-stars`):
 
 ```sh
@@ -46,20 +46,22 @@ run; cached blocks do not count as download speed. It shows `--` until the first
 It also shows the combined average payload
 download rate in MiB/s, updated while requests are running. The rate includes retransmitted body bytes,
 excludes HTTP headers and cached data, and averages over the block-download phase (including local
-normalization/publication). Metadata discovery happens first. Completed blocks are loaded in their original
+normalization/publication). Metadata discovery and cached-block location checks happen first. Completed blocks are loaded in their original
 order, regardless of which download finishes first.
 
-The limit is per process, with at most `13 × parallel blocks` active requests. A 512 MiB budget for pending
+The limit is per process, with at most `12 × parallel blocks` active requests. A 512 MiB budget for pending
 compressed column bytes can reduce concurrency for unusually large blocks; this is not a total RAM limit.
 Typical 10–15 MiB blocks do not reach this budget, but each group may contain up to 256 MiB of selected
 compressed data, so sixteen unusually large groups could otherwise retain 4 GiB.
-Decoding and saving remain sequential. On failure, new work stops and running workers finish before the
+Loading uses one block bar with activity text for cached reads, checksum checks, decoding and assembly.
+The subsequent source-ID check, region assignment, sort, reordering, index building and prepared-cache
+validation/save/finalization all report activity. Decoding and saving remain sequential. On failure, new work stops and running workers finish before the
 error returns; an active HTTP read may still wait for its timeout. Connections have a 30-second limit,
 response headers have a 60-second limit, and body transfers use the remaining 600-second block deadline.
 Retries share that deadline instead of restarting it. A body that stalls after headers may therefore wait
 until the block deadline. Already saved blocks remain reusable on restart. Changing the concurrency setting does not change selected stars or invalidate caches.
 
-The mirror has a known triplicated region. Astroterm removes adjacent copies only when all 13 consumed
+The mirror has a known triplicated region. Astroterm removes adjacent copies only when all 12 consumed
 values/nulls match (numeric comparison uses bit patterns), including across group boundaries. Conflicting
 copies or unexpected nonadjacent duplicates cause an error. Copies still count toward the raw requested
 number and keep their physical ordinals; the loading report separates duplicates from missing measurements.
@@ -95,6 +97,26 @@ corruption; they are not independent publisher checksums. Metadata is pinned loc
 are pinned when first accessed. A changed pinned object fails explicitly rather than mixing revisions.
 Unvisited files are pinned lazily, so this is not a provider-guaranteed atomic historical snapshot. Complete
 local selections work offline. There is no automatic switch to ESA or another mirror on a network failure.
+
+Planning checks each raw block's small reference and filesystem metadata; it **does not read or hash the raw
+payload**. Missing/malformed references, missing objects and wrong sizes follow the normal recovery/download
+path during planning. Prepared and converted cache hits validate their own data and remain bound to the expected raw
+hash and conversion policy. When conversion actually consumes raw data, its SHA-256, Parquet schema and
+row count are checked before use. A same-size corruption can therefore remain unnoticed while that raw
+block is unused, even if its modification time is unchanged. The final size/time check compares observations
+within this startup; it is not proof that the raw bytes were previously verified or remain intact.
+
+If a consumed raw block is missing or corrupt, that block is refetched once under its captured ETag and
+normalized again. Earlier assembly remains intact and the loading bar retains its count and elapsed time.
+Scientific row errors are not repair requests. If the pinned source changed or repair fails, startup reports
+an error rather than changing the selection. Captured inputs are not replaced merely because another process
+changes a local reference.
+
+A repair producing identical normalized bytes refreshes the captured filesystem stamp. A different writer
+version can produce a different normalized hash for the same pinned source: the repaired block's converted
+key and the final prepared-selection fingerprint then use the new hash. The next startup reads the repaired
+reference and can hit the newly written prepared catalog. Older fingerprint-named prepared files and raw
+objects remain on disk; there is no eviction or whole-selection restart.
 
 Whole-group conversion also records per-row errors in an unselected suffix. An unsupported star is reported
 when the requested prefix actually reaches it; it is not silently removed. Storage or malformed-format
@@ -148,8 +170,20 @@ old prepared results. `--disable-cache` affects runtime calculation reuse, not s
 
 All runtime catalog data is loaded into RAM. Selecting all files can require hundreds of gigabytes including
 preparation and runtime buffers; the allowed file count is not a promise that any machine can load it.
-Label byte offsets use u64 to avoid a 4 GiB text-buffer limit; internal star/name IDs remain checked u32.
-Old prepared catalogs rebuild once because the label-boundary format changed.
+Gaia retains its original u64 source IDs (8 bytes per retained star) instead of storing label text, name
+entries or text boundaries. This is separate from the internal checked u32 star IDs. BSC, AT-HYG and custom
+catalogs retain their stored names and ASCII alternatives. Gaia designation-only differences, empty strings
+and missing designations are no longer checked; all consumed numeric fields keep their validation rules.
+
+Prepared catalogs now use format v9: independent 4 MiB zstd level-1 chunks and a CRC32 trailer. Compression
+and decompression are sequential and reuse codec buffers. Loading decompresses directly into owned columns,
+without a second whole-file copy. The write bar counts uncompressed bytes processed; the read bar counts
+compressed file bytes. Checksums and semantic validation must pass before the loaded data is used.
+
+Older prepared files are rejected and rebuilt. Converted MAST blocks rebuild once from raw blocks when those
+are still present; legacy 13-column raw blocks remain readable, and new downloads contain 12 columns. If raw
+files have been removed, they must be downloaded again. No cache eviction or cleanup sweep runs automatically.
+Obsolete fingerprint-named `.catalog` files can be removed manually when no longer needed.
 
 ## Sources and acknowledgement
 
@@ -164,3 +198,6 @@ This work uses data from the European Space Agency (ESA) mission Gaia, processed
 and Analysis Consortium (DPAC). Funding for DPAC has been provided by national institutions, in particular
 those participating in the Gaia Multilateral Agreement. See [Gaia data credits](https://www.cosmos.esa.int/web/gaia/credits).
 The repository includes the small publisher file/checksum manifest with provenance, not the Gaia star files.
+
+Startup progress/timing changes can invalidate derived caches because their fingerprints include preparation
+source files. Such rebuilds use existing valid raw blocks; this does not require downloading those blocks again.

@@ -13,22 +13,37 @@ pub(crate) fn stored_cell(stars: &StarStorage, index: usize) -> usize {
 }
 
 /// Build region boundaries covering every row of the prepared star order.
-pub(crate) fn build_grid(stars: &StarStorage, endpoints: &[usize]) -> SkyGrid {
+#[cfg(test)]
+pub(crate) fn build_grid(stars: &StarStorage, endpoints: &[usize], progress: &mut dyn crate::progress::DatasetProgress) -> SkyGrid {
     let mut offsets = vec![0; SIMULATION_REGION_COUNT + 1];
     let ordinary_count = stars.len() - endpoints.len();
     assert!(endpoints.iter().copied().eq(ordinary_count..stars.len()), "constellation region must contain exactly the endpoints");
     offsets[CONSTELLATION_REGION + 1] = endpoints.len();
     for index in 0..ordinary_count {
         offsets[stored_cell(stars, index) + 1] += 1;
+        if (index + 1).is_multiple_of(crate::constants::STARTUP_PROGRESS_ROWS as usize) { progress.set_position((index + 1) as u64); }
     }
     for i in 1..offsets.len() {
         offsets[i] += offsets[i - 1];
     }
-    SkyGrid {
-        offsets: offsets.into(),
-        coarse_caps: crate::model::build_caps(crate::constants::GRID_COARSE_DEPTH),
-        fine_caps: crate::model::build_caps(GRID_DEPTH),
+    progress.set_position(stars.len() as u64);
+    progress.set_detail("Preparing region coverage");
+    SkyGrid::from_offsets(offsets.into())
+}
+
+/// Reuse counts from region assignment; no second direction-hashing pass is needed.
+pub(super) fn build_grid_from_counts(stars: usize, mut counts: Vec<usize>, endpoints: &[usize], progress: &mut dyn crate::progress::DatasetProgress) -> std::io::Result<SkyGrid> {
+    use crate::catalog::cache::invalid;
+    if counts.len() != SIMULATION_REGION_COUNT + 1 || counts[0] != 0 || counts[CONSTELLATION_REGION + 1] != endpoints.len() {
+        return Err(invalid("invalid prepared region counts"));
     }
+    for i in 1..counts.len() { counts[i] = counts[i].checked_add(counts[i - 1]).ok_or_else(|| invalid("region count overflow"))?; }
+    if counts[SIMULATION_REGION_COUNT] != stars || !endpoints.iter().copied().eq(counts[CONSTELLATION_REGION]..stars) {
+        return Err(invalid("region counts differ from prepared rows/endpoints"));
+    }
+    progress.set_position(stars as u64);
+    progress.set_detail("Preparing region coverage");
+    Ok(SkyGrid::from_offsets(counts.into()))
 }
 
 /// Select conservative regions, then collect the brightness-sorted cell prefixes.

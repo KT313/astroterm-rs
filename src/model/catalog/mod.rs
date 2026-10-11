@@ -6,10 +6,10 @@ pub use records::{SkyCatalog, CatalogPreparation, PreparedCatalog, Constellation
 pub use grid::{SkyRegion, SelectionStats, SkyGrid, hash_direction};
 pub use storage::{STAR_SECTIONS, StarRow, StarRowSlice, StarRowVec, StarStorage};
 pub(crate) use storage::StellarFields;
-pub(crate) use grid::{SelectedRegion, build_caps};
+pub(crate) use grid::{SelectedRegion};
 
 #[cfg(test)]
-pub(crate) use grid::{interleave, direction};
+pub(crate) use grid::{interleave, direction, build_caps};
 
 #[cfg(feature = "memory-diagnostics")]
 pub(crate) use grid::CellCap;

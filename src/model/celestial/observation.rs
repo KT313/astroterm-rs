@@ -69,6 +69,10 @@ impl ObservedSky {
             .filter(|star| star.drawable && star.magnitude <= threshold)
             .count()
     }
+    pub fn write_star_label(&self, star: &ObservedStar, unicode: bool, output: &mut String) {
+        self.catalog.write_label(star.source_index, unicode, output);
+    }
+    /// Stored names only; write_star_label also handles Gaia's generated labels.
     pub fn star_name(&self, star: &ObservedStar) -> Option<&str> {
         self.catalog.names.get(self.catalog.stars.name(star.source_index))
     }

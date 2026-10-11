@@ -24,7 +24,7 @@ fn load_prepared_gaia(files: &[GaiaFile], path: Option<PathBuf>, fingerprint: &[
     let catalog = times.measure_steps("Gaia loading", |times| super::super::gaia::prepare_gaia_catalog(files, notices, times))?;
     check_sources(files)?;
     if let Some(path) = path
-        && let Err(error) = times.measure("Prepared catalog write", || super::format::write_cached_catalog_with_progress(&path, &catalog, fingerprint, notices)) {
+        && let Err(error) = super::format::write_cached_catalog_with_times(&path, &catalog, fingerprint, notices, times) {
         notices.finish_stage(crate::progress::Outcome::Failed);
         writeln!(notices, "Could not write cache {}: {error}; continuing without a cache.", path.display())?;
     }

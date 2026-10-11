@@ -9,4 +9,6 @@ pub(crate) use storage::{BlobStore, digest, encode, decode};
 pub(crate) use parquet::{MastRow, read_block};
 pub(crate) use pipeline::{MastBlock, MastSelection, resolve_mast};
 
-pub(crate) const COLUMNS: [&str; 13] = ["source_id", "designation", "ra", "dec", "ref_epoch", "pmra", "pmdec", "parallax", "parallax_over_error", "radial_velocity", "phot_g_mean_mag", "phot_bp_mean_mag", "phot_rp_mean_mag"];
+pub(crate) const COLUMNS: [&str; 12] = ["source_id", "ra", "dec", "ref_epoch", "pmra", "pmdec", "parallax", "parallax_over_error", "radial_velocity", "phot_g_mean_mag", "phot_bp_mean_mag", "phot_rp_mean_mag"];
+
+pub(crate) use downloading::read_or_repair_block;

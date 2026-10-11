@@ -13,12 +13,14 @@ struct Discovery { version: u8, properties: String, partitions: String }
 #[derive(Serialize, Deserialize)]
 pub(super) struct Footer { pub identity: Identity, pub bytes: Vec<u8> }
 #[derive(Clone, Debug)]
-pub(crate) struct MastBlock { pub key: String, pub hash: String, pub rows: usize, pub selected: usize, pub base: u64, pub stamp: BlobStamp }
+pub(crate) struct MastBlock {
+    pub key: String, pub hash: String, pub rows: usize, pub selected: usize, pub base: u64, pub stamp: BlobStamp,
+    pub source: Option<MastSource>,          // production blocks retain pinned provenance; synthetic converted-only fixtures may omit it
+}
+#[derive(Clone, Debug)]
+pub(crate) struct MastSource { pub path: String, pub footer_hash: String, pub group: usize }
 pub(crate) struct MastSelection { pub store: BlobStore, pub blocks: Vec<MastBlock>, pub discovery: String, pub requested: u32, pub available: u64 }
 impl MastSelection {
-    pub(crate) fn read(&self, block: &MastBlock) -> io::Result<Vec<u8>> {
-        self.store.read_object(&block.hash)
-    }
     pub(crate) fn check_unchanged(&self) -> io::Result<()> {
         for block in &self.blocks { self.store.check_unchanged(&block.hash, block.stamp)?; }
         Ok(())
@@ -36,7 +38,7 @@ fn resolve_selection(count: u32, parallel_blocks: u8, store: BlobStore, fetch: &
     let leaves = parse_leaves(&discovery.partitions)?;
     let key = digest(&encode(&discovery)?);
     let mut selection = MastSelection { store, blocks: Vec::new(), discovery: key, requested: count, available: 0 };
-    let mut plan = plan_blocks(&mut selection, leaves, fetch, progress, times)?;                  // check metadata and cached blocks without keeping their star payloads
+    let mut plan = plan_blocks(&mut selection, leaves, fetch, progress, times)?;                  // locate cached blocks without opening their star payloads
     let downloaded = plan.jobs.len();
     let reused = plan.ready.len() - downloaded;
     times.measure_steps("MAST block downloads", |times| download_missing(&selection.store, &mut plan, parallel_blocks, fetch, progress, times))?;
@@ -59,7 +61,7 @@ pub(super) fn validate_raw_block(raw: &[u8], rows: usize) -> io::Result<()> {
 }
 
 pub(super) fn recoverable_read(store: &BlobStore, key: &str, progress: &mut dyn DatasetProgress) -> io::Result<Option<VerifiedBlob>> {
-    match store.read_verified(key) {
+    match store.read_verified_with_progress(key, progress) {
         Ok(value) => Ok(value),
         Err(error) => {
             writeln!(progress, "Ignoring invalid cached MAST data: {error}; refetching the original input.")?;
@@ -127,13 +129,21 @@ fn parse_leaves(text: &str) -> io::Result<Vec<Leaf>> {
 }
 
 pub(super) fn load_footer(store: &BlobStore, discovery: &str, path: &str, fetch: &impl Fetch, progress: &mut dyn DatasetProgress) -> io::Result<Footer> {
+    if let Some(footer) = read_cached_footer(store, discovery, path, progress)? { return Ok(footer); }
+    fetch_footer(store, discovery, path, fetch, progress)
+}
+
+pub(super) fn read_cached_footer(store: &BlobStore, discovery: &str, path: &str, progress: &mut dyn DatasetProgress) -> io::Result<Option<Footer>> {
     let key = format!("footer-v1:{discovery}:{path}");
-    if let Some(blob) = recoverable_read(store, &key, progress)? {
-        let footer: Footer = decode(&blob.bytes)?;
-        parquet::parse_footer(&footer.bytes)?;
-        return Ok(footer);
-    }
-    progress.begin_stage(Stage::Connect, path, Unit::Work, None);
+    let Some(blob) = recoverable_read(store, &key, progress)? else { return Ok(None); };
+    let footer: Footer = decode(&blob.bytes)?;
+    parquet::parse_footer(&footer.bytes)?;
+    Ok(Some(footer))
+}
+
+pub(super) fn fetch_footer(store: &BlobStore, discovery: &str, path: &str, fetch: &impl Fetch, progress: &mut dyn DatasetProgress) -> io::Result<Footer> {
+    let key = format!("footer-v1:{discovery}:{path}");
+    progress.set_detail(&format!("Fetching file metadata: {path}")); // retain the planning stage while fetching a missing footer
     let deadline = Instant::now() + Duration::from_secs(MAST_BLOCK_SECONDS);
     let tail = fetch.fetch(path, Some(&format!("bytes=-{MAST_FOOTER_TAIL_BYTES}")), None, MAST_FOOTER_TAIL_BYTES as usize, deadline)?;
     let identity = tail.identity.ok_or_else(|| invalid("missing footer identity"))?;

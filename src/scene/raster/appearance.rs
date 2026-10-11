@@ -31,7 +31,10 @@ pub fn select_star_appearance<'a>(star: &Star, names: &'a StarNames) -> Appearan
 /// A star's label: its proper name, or else its catalog designation (e.g. "α Vir" or "HR 1713"), with Greek letters
 /// if `unicode`.
 pub fn format_star_label<'a>(star: &Star, names: &'a StarNames, unicode: bool) -> Cow<'a, str> {
-    Cow::Borrowed(names.get_for_mode(star.name(), unicode).unwrap_or(""))
+    if let Some(name) = names.get_for_mode(star.name(), unicode) { return Cow::Borrowed(name); }
+    let mut output = String::new();
+    star.write_label(names, unicode, &mut output);
+    Cow::Owned(output)
 }
 
 /// The look of the Sun or a planet: its astronomical symbol and name.

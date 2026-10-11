@@ -12,7 +12,7 @@ pub use catalog::{
     SkyCatalog, CatalogPreparation, PreparedCatalog, ConstellationSet, StarException, SkyRegion, SelectionStats, SkyGrid,
     hash_direction, STAR_SECTIONS, StarRow, StarRowSlice, StarRowVec, StarStorage,
 };
-pub(crate) use catalog::{SelectedRegion, StellarFields, build_caps, unsupported_star_data};
+pub(crate) use catalog::{SelectedRegion, StellarFields, unsupported_star_data};
 pub use celestial::{
     ObservedSkyView, ObservedPlanets, ObservedStars, RegionData, ApparentFrame, ObservedRegion, Star, SelectedStar, ObservedStar, ObservedStarState, ObservedStarView, PlanetKind, Planet, Moon, Constellation, create_planets, create_moon,
     CorrectionStats, ObservedSky, Sky, MoonIllumination, Anchor, ObserverState, FrameTime, ModelFamily, StateRequest,
@@ -37,7 +37,7 @@ pub(crate) use presentation::RasterRegion;
 pub use configuration::{Config, SimulationSettings, TerminalSettings, RendererKind, GraphicsProtocol};
 
 #[cfg(test)]
-pub(crate) use catalog::{interleave, direction};
+pub(crate) use catalog::{interleave, direction, build_caps};
 
 #[cfg(feature = "memory-diagnostics")]
 pub(crate) use catalog::CellCap;

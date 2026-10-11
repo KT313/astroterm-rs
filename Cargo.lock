@@ -149,6 +149,7 @@ dependencies = [
  "proptest",
  "ratatui",
  "ratatui-image",
+ "rayon",
  "rustix 1.1.5",
  "serde",
  "serde_json",
@@ -164,6 +165,7 @@ dependencies = [
  "unicode-width",
  "ureq",
  "vsop87",
+ "zstd",
 ]
 
 [[package]]

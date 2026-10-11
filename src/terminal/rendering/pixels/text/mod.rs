@@ -4,7 +4,7 @@ pub(super) use cache::refresh_text;
 use crate::model::{MetadataField, PixelLabel, ProjectedSky, RenderOptions};
 use crate::scene::planet_rgb;
 #[cfg(test)]
-use crate::scene::{format_star_label, select_pixel_star_labels};
+use crate::scene::{select_pixel_star_labels};
 use crate::timing::{Access, BufferId, BufferShape, IndexDomain, Operation};
 use ratatui::{
     buffer::Buffer,
@@ -103,10 +103,11 @@ fn draw_star_labels(
     let cell = |position| map_pixel_to_cell(sky, area, position);
     let candidates = select_pixel_star_labels(options, sky);
     let count = candidates.len();
+    let mut label = String::new();
     for index in candidates {
         let entry = sky.stars.get(index);
         let Some(position) = entry.cell else { continue; };
-        let label = format_star_label(&entry.star, sky.names, true);
+        entry.star.write_label(sky.names, true, &mut label);
         let (row, col) = cell(position);
         let [r, g, b] = crate::scene::star_rgb(&entry.star);
         eligible += 1;

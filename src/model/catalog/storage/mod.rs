@@ -4,8 +4,10 @@
 use crate::constants::{MAX_DIRECTION_ERROR, QUANTIZATION_MARGIN};
 mod columns;
 mod views;
+mod reordering;
 pub(crate) use views::StellarFields;
 pub use columns::{STAR_SECTIONS, StarRow, StarRowSlice, StarRowVec};
+#[cfg(test)]
 use columns::section;
 use crate::model::Star;
 use crate::astro::{
@@ -13,7 +15,7 @@ use crate::astro::{
     models::stars::{StellarMotion, computational_years},
 };
 use crate::catalog::cache::{
-    CatalogArray, PreparedCatalogBytes,
+    CatalogArray,
     invalid,
 };
 use crate::catalog::{NameId, StarId, MagnitudeClipping, decode_magnitude, encode_magnitude, encode_brightness_bound};
@@ -23,13 +25,27 @@ use std::io;
 #[derive(Clone, Debug, Default)]
 pub struct StarStorage {
     clipping: MagnitudeClipping,            // catalog-wide counts, no per-star clipping flags
+    labels: StarLabels,                     // one allocated label column, chosen once for the catalog
     rows: StarRowVec,                       // the declared columns; see columns.rs
     precise_motions: CatalogArray<[f64; 7]>, // reserved precise-motion payload; must remain empty until sparse exceptions are supported
 }
+#[derive(Clone, Debug, PartialEq)]
+enum StarLabels { Stored(Vec<u32>), Gaia(Vec<u64>) }
+impl Default for StarLabels { fn default() -> Self { Self::Stored(Vec::new()) } }
+#[cfg(feature = "memory-diagnostics")]
+impl crate::cache::ReportBuffers for StarLabels {
+    fn report_buffers(&self, collector: &mut dyn crate::cache::BufferSink) {
+        match self {
+            Self::Stored(entries) => entries.report_buffers(collector),
+            Self::Gaia(ids) => ids.report_buffers(collector),
+        }
+    }
+}
+
 impl PartialEq for StarStorage {
     fn eq(&self, other: &Self) -> bool {
         self.clipping == other.clipping && self.columns() == other.columns()
-            && self.precise_motions == other.precise_motions
+            && self.labels == other.labels && self.precise_motions == other.precise_motions
     }
 }
 
@@ -60,7 +76,33 @@ fn bound_quantization(original: StellarMotion, compact: StellarMotion) -> f64 {
 }
 
 impl StarStorage {
-    /// Borrow the prepared columns without copying their contents.
+    /// Gaia keeps one source ID per retained row and never allocates the name-entry column.
+    pub(crate) fn gaia() -> Self { Self { labels: StarLabels::Gaia(Vec::new()), ..Self::default() } }
+    pub(crate) fn owned_source_ids(&self) -> Option<&Vec<u64>> { if let StarLabels::Gaia(ids) = &self.labels { Some(ids) } else { None } }
+    pub fn source_ids(&self) -> Option<&[u64]> { self.owned_source_ids().map(Vec::as_slice) }
+    pub fn name_entries(&self) -> &[u32] { if let StarLabels::Stored(entries) = &self.labels { entries } else { &[] } }
+    pub(crate) fn label_capacity(&self) -> usize {
+        match &self.labels { StarLabels::Stored(entries) => entries.capacity() * 4, StarLabels::Gaia(ids) => ids.capacity() * 8 }
+    }
+    pub(crate) fn push_source_id(&mut self, id: u64) {
+        let StarLabels::Gaia(ids) = &mut self.labels else { panic!("Gaia label storage required") };
+        ids.push(id);
+    }
+    pub(crate) fn set_source_ids(&mut self, ids: Vec<u64>) -> io::Result<()> {
+        if !self.name_entries().is_empty() { return Err(invalid("Gaia name entries must be absent")); }
+        self.labels = StarLabels::Gaia(ids);
+        Ok(())
+    }
+    pub fn has_label(&self, index: usize) -> bool { self.source_ids().is_some() || self.name(index).is_some() }
+
+    /// Fill the caller's small reusable label buffer only after a star has been selected for labeling.
+    pub fn write_label(&self, index: usize, names: &crate::catalog::StarNames, unicode: bool, output: &mut String) {
+        use std::fmt::Write;
+        output.clear();
+        if let Some(name) = names.get_for_mode(self.name(index), unicode) { output.push_str(name); }
+        else if let StarLabels::Gaia(ids) = &self.labels { write!(output, "Gaia DR3 {}", ids[index]).expect("writing to String"); }
+    }
+    /// Borrow numerical/display columns; the separate label variant is exposed by name_entries/source_ids.
     pub fn columns(&self) -> StarRowSlice<'_> { self.rows.as_slice() }
     /// Inspect original owned columns, including their allocated capacities.
     pub(crate) fn owned_columns(&self) -> &StarRowVec { &self.rows }
@@ -85,33 +127,20 @@ impl StarStorage {
             bytemuck::cast_slice(c.brightness_key),
             bytemuck::cast_slice(c.distance),
             bytemuck::cast_slice(c.id),
-            bytemuck::cast_slice(c.name),
+            bytemuck::cast_slice(self.name_entries()),
             bytemuck::cast_slice(c.display_color),
             self.precise_motions.bytes(),
         ]
     }
-    /// Load packed columns verbatim; do not quantize or reorder prepared data again.
-    pub(crate) fn from_prepared(data: &PreparedCatalogBytes, clipping: MagnitudeClipping) -> io::Result<Self> {
-        Ok(Self {
-            clipping,
-            rows: StarRowVec {
-                u0: data.decode(section::U0)?,
-                w: data.decode(section::W)?,
-                magnitude: data.decode(section::MAGNITUDE)?,
-                brightness_key: data.decode(section::BRIGHTNESS_KEY)?,
-                distance: data.decode(section::DISTANCE)?,
-                id: data.decode(section::ID)?,
-                name: data.decode(section::NAME)?,
-                display_color: data.decode(section::DISPLAY_COLOR)?,
-            },
-            precise_motions: data.decode(section::PRECISE_MOTIONS)?.into(),
-        })
+    /// Accept owned representation columns; the schema adapter performs file I/O and length checks.
+    pub(crate) fn from_columns(rows: StarRowVec, name_entries: Vec<u32>, precise_motions: Vec<[f64; 7]>) -> Self {
+        Self { clipping: Default::default(), labels: StarLabels::Stored(name_entries), rows, precise_motions: precise_motions.into() }
     }
-    pub(crate) fn validate(&self, names: &crate::catalog::StarNames, bounds: &[f32], full: bool) -> io::Result<()> {
+    /// Validate star columns and their label references; the caller separately validates the label arrays.
+    pub(crate) fn validate_rows(&self, names: &crate::catalog::StarNames, bounds: &[f32], full: bool, progress: &mut dyn crate::progress::DatasetProgress) -> io::Result<()> {
         let c = self.columns();
         let n = c.id.len();
         crate::catalog::Catalog::check_star_count(n as u64).map_err(io::Error::other)?;
-        names.validate()?;
         self.validate_exception_storage()?;
         if [
             c.u0.len(),
@@ -120,7 +149,6 @@ impl StarStorage {
             c.brightness_key.len(),
             c.distance.len(),
             bounds.len(),
-            c.name.len(),
             c.display_color.len(),
         ]
         .iter()
@@ -128,9 +156,16 @@ impl StarStorage {
         {
             return Err(invalid("star-array length mismatch"));
         }
+        match self.source_ids() {
+            Some(ids) if ids.len() != n || !self.name_entries().is_empty() || !names.bytes().is_empty()
+                || !names.boundaries().is_empty() || !names.ascii_alternatives().is_empty()
+                || ids.iter().any(|&id| id > i64::MAX as u64) => return Err(invalid("invalid Gaia label storage")),
+            None if self.name_entries().len() != n => return Err(invalid("name-entry length mismatch")),
+            _ => {},
+        }
         let mut clipping = MagnitudeClipping::default();
         for (i, &bound) in bounds.iter().enumerate() {
-            if !names.contains(c.name[i])
+            if !names.contains(self.name_entries().get(i).copied().unwrap_or(0))
                 || crate::model::StarColor::from_index(c.display_color[i]).is_none()
             {
                 return Err(invalid("invalid star metadata/index"));
@@ -159,10 +194,13 @@ impl StarStorage {
                 || f64::from(bound) < motion.motion_bound() + QUANTIZATION_MARGIN) {
                 return Err(invalid("inconsistent trajectory policy/bounds"));
             }
+            if (i + 1).is_multiple_of(crate::constants::STARTUP_PROGRESS_ROWS as usize) { progress.set_position((i + 1) as u64); }
         }
+        progress.set_position(n as u64);
         if self.clipping != clipping { return Err(invalid("inconsistent brightness clipping counts")); }
         Ok(())
     }
+    pub(crate) fn set_clipping(&mut self, clipping: MagnitudeClipping) { self.clipping = clipping; }
     pub fn magnitude_clipping(&self) -> MagnitudeClipping { self.clipping }
 
     pub fn len(&self) -> usize {
@@ -205,7 +243,7 @@ impl StarStorage {
     fn star(&self, c: &StarRowSlice<'_>, i: usize) -> Star {
         Star {
             id: StarId(c.id[i]),
-            name: NameId::from_entry(c.name[i]),
+            name: NameId::from_entry(self.name_entries().get(i).copied().unwrap_or(0)),
             motion: self.motion(i),
             magnitude: decode_magnitude(c.magnitude[i]),
             brightness_key: decode_magnitude(c.brightness_key[i]),
@@ -224,7 +262,8 @@ impl StarStorage {
     pub(crate) fn push_prepared(&mut self, row: StarRow, clipping: [u64; 2]) {
         self.clipping.lower += clipping[0];
         self.clipping.upper += clipping[1];
-        self.rows_mut().push(row);
+        if let StarLabels::Stored(entries) = &mut self.labels { entries.push(row.name); }
+        self.rows_mut().push(row.into());
     }
 
     pub(crate) fn prepare_row(star: Star) -> io::Result<(StarRow, f32, [u64; 2])> {
@@ -271,12 +310,19 @@ impl StarStorage {
     }
 
     /// Reorder in place using a permutation, without an expanded or second compact catalog.
+    #[cfg(test)]
     pub(crate) fn reorder(&mut self, order: &[usize], bounds: &mut [f32]) {
+        self.reorder_with_progress(order, bounds, &mut crate::progress::NoProgress(io::sink()));
+    }
+    #[cfg(test)]
+    pub(crate) fn reorder_with_progress(&mut self, order: &[usize], bounds: &mut [f32], progress: &mut dyn crate::progress::DatasetProgress) {
+        progress.set_detail("Preparing row moves");
         let mut destination = vec![0; self.len()];
         for (new, &old) in order.iter().enumerate() {
             destination[old] = new;
         }
-        let rows = self.rows_mut();
+        progress.set_detail("Moving all fields into sorted order");
+        let rows = &mut self.rows;
         for i in 0..destination.len() {
             while destination[i] != i {
                 let j = destination[i];
@@ -287,13 +333,19 @@ impl StarStorage {
                 rows.distance.swap(i, j);
                 bounds.swap(i, j);
                 rows.id.swap(i, j);
-                rows.name.swap(i, j);
+                match &mut self.labels { StarLabels::Gaia(ids) => ids.swap(i, j), StarLabels::Stored(entries) => entries.swap(i, j) }
                 rows.display_color.swap(i, j);
                 destination.swap(i, j);
             }
+            if (i + 1).is_multiple_of(crate::constants::STARTUP_PROGRESS_ROWS as usize) { progress.set_position((i + 1) as u64); }
         }
+        progress.set_position(destination.len() as u64);
     }
     pub(crate) fn try_reserve(&mut self, additional: usize) -> io::Result<()> {
+        match &mut self.labels {
+            StarLabels::Gaia(ids) => ids.try_reserve(additional).map_err(io::Error::other)?,
+            StarLabels::Stored(entries) => entries.try_reserve(additional).map_err(io::Error::other)?,
+        }
         let rows = self.rows_mut();
         rows.u0.try_reserve(additional).map_err(io::Error::other)?;
         rows.w.try_reserve(additional).map_err(io::Error::other)?;
@@ -301,27 +353,57 @@ impl StarStorage {
         rows.brightness_key.try_reserve(additional).map_err(io::Error::other)?;
         rows.distance.try_reserve(additional).map_err(io::Error::other)?;
         rows.id.try_reserve(additional).map_err(io::Error::other)?;
-        rows.name.try_reserve(additional).map_err(io::Error::other)?;
         rows.display_color.try_reserve(additional).map_err(io::Error::other)
     }
-    pub(crate) fn reserve(&mut self, capacity: usize) {
-        self.rows_mut().reserve(capacity);
+    /// Reserve every active column without geometric growth; Gaia reserves source IDs instead of name entries.
+    pub(crate) fn try_reserve_exact(&mut self, additional: usize) -> io::Result<()> {
+        let count = self.len().checked_add(additional).ok_or_else(|| invalid("star capacity overflow"))?;
+        crate::catalog::Catalog::check_star_count(u64::try_from(count).map_err(io::Error::other)?).map_err(io::Error::other)?;
+        std::alloc::Layout::array::<[f32; 3]>(count).map_err(io::Error::other)?;               // check the largest column's byte range before allocating any column
+        match &mut self.labels {
+            StarLabels::Gaia(ids) => ids.try_reserve_exact(additional).map_err(io::Error::other)?,
+            StarLabels::Stored(entries) => entries.try_reserve_exact(additional).map_err(io::Error::other)?,
+        }
+        let rows = self.rows_mut();
+        rows.u0.try_reserve_exact(additional).map_err(io::Error::other)?;
+        rows.w.try_reserve_exact(additional).map_err(io::Error::other)?;
+        rows.magnitude.try_reserve_exact(additional).map_err(io::Error::other)?;
+        rows.brightness_key.try_reserve_exact(additional).map_err(io::Error::other)?;
+        rows.distance.try_reserve_exact(additional).map_err(io::Error::other)?;
+        rows.id.try_reserve_exact(additional).map_err(io::Error::other)?;
+        rows.display_color.try_reserve_exact(additional).map_err(io::Error::other)
     }
+    pub(crate) fn reserve(&mut self, capacity: usize) { self.try_reserve(capacity).expect("catalog allocation"); }
     pub(crate) fn shrink_to_fit(&mut self) {
         self.rows_mut().shrink_to_fit();
+        match &mut self.labels { StarLabels::Gaia(ids) => ids.shrink_to_fit(), StarLabels::Stored(entries) => entries.shrink_to_fit() }
     }
 }
 
 #[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(StarRowVec { u0, w, magnitude, brightness_key, distance, id, name, display_color });
+crate::cache::report_fields!(StarRowVec { u0, w, magnitude, brightness_key, distance, id, display_color });
 #[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(StarStorage { clipping, rows, precise_motions });
+crate::cache::report_fields!(StarStorage { clipping, rows, labels, precise_motions });
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::astro::Equatorial;
     use proptest::prelude::*;
+    #[test]
+    fn exact_reservation_rejects_oversize_before_allocating_columns() {
+        for mut storage in [StarStorage::default(), StarStorage::gaia()] {
+            assert!(storage.try_reserve_exact(usize::MAX).is_err());
+            assert_eq!(storage.label_capacity(), 0);
+            assert_eq!(storage.owned_columns().u0.capacity(), 0);
+            storage.try_reserve_exact(0).unwrap();
+            assert_eq!(storage.label_capacity(), 0);
+            storage.try_reserve_exact(5).unwrap();
+            assert_eq!(storage.owned_columns().u0.capacity(), 5);
+            assert_eq!(storage.label_capacity(), if storage.source_ids().is_some() { 40 } else { 20 });
+        }
+    }
+
     fn star(motion: StellarMotion, magnitude: f64) -> Star {
         Star {
             id: StarId(1),

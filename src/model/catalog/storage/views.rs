@@ -66,7 +66,7 @@ impl StarStorage {
         }
     }
     pub fn name(&self, index: usize) -> Option<NameId> {
-        let name = self.rows.name.as_slice()[index];
+        let name = self.name_entries().get(index).copied().unwrap_or(0);
         NameId::from_entry(name)
     }
     pub fn display_color(&self, index: usize) -> crate::model::StarColor {

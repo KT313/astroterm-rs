@@ -39,13 +39,17 @@ impl<T: Pod + Row> Table for CatalogArray<T> {
 impl Table for StarStorage {
     fn shape(&self) -> Vec<usize> { vec![self.len(), StarRow::columns().len()] }
     fn rows(&self) -> usize { self.len() }
-    fn columns(&self) -> Vec<Column> { StarRow::columns() }
+    fn columns(&self) -> Vec<Column> {
+        let mut columns = StarRow::columns();
+        if self.source_ids().is_some() { columns[6] = Column { name: super::GAIA_SOURCE_ID_COLUMN, dtype: "u64" }; }
+        columns
+    }
     fn bytes(&self) -> TableBytes {
-        let StarRowVec { u0, w, magnitude, brightness_key, distance, id, name,
+        let StarRowVec { u0, w, magnitude, brightness_key, distance, id,
             display_color } = self.owned_columns(); // adding a field requires accounting for it
         let sizes = [TableBytes::vector(u0), TableBytes::vector(w), TableBytes::vector(magnitude),
             TableBytes::vector(brightness_key), TableBytes::vector(distance),
-            TableBytes::vector(id), TableBytes::vector(name),
+            TableBytes::vector(id), TableBytes::known(self.source_ids().map_or(self.name_entries().len() * 4, |ids| ids.len() * 8), self.label_capacity()),
             TableBytes::vector(display_color)];
         TableBytes {
             used: sizes.iter().try_fold(0_usize, |sum, size| sum.checked_add(size.used?)),
@@ -55,14 +59,16 @@ impl Table for StarStorage {
     fn preview(&self) -> Vec<(usize, Vec<String>)> {
         let rows = self.owned_columns();
         preview_indices(self.len()).map(|i| {
-            let row = rows.get(i).expect("validated star row").to_owned();
+            let row = StarRow { u0: rows.u0[i], w: rows.w[i], magnitude: rows.magnitude[i], brightness_key: rows.brightness_key[i],
+                distance: rows.distance[i], id: rows.id[i], name: self.name_entries().get(i).copied().unwrap_or(0), display_color: rows.display_color[i] };
             let mut cells = row.cells();
+            if let Some(ids) = self.source_ids() { cells[6] = ids[i].to_string(); }
             cells[2] = format!("{} ({:.3} mag)", row.magnitude, crate::catalog::decode_magnitude(row.magnitude));
             cells[3] = format!("{} ({:.3} mag)", row.brightness_key, crate::catalog::decode_magnitude(row.brightness_key));
             (i, cells)
         }).collect()
     }
-    fn note(&self) -> Option<String> { Some("storage=owned; per-star columns only; side tables listed separately. Magnitudes are u16 codes: code / 1000 - 10; parentheses decode the same stored value, not another column. Brightness-bound code 0 always passes early pruning.".into()) }
+    fn note(&self) -> Option<String> { Some("storage=owned; per-star columns only; side tables listed separately. Gaia source IDs replace name entries; labels are generated on demand as Gaia DR3 <source ID>. Magnitudes are u16 codes: code / 1000 - 10; parentheses decode the same stored value, not another column. Brightness-bound code 0 always passes early pruning.".into()) }
 }
 
 /// The live camera is one inline value owned by the root, not a cached or copied table.

@@ -45,7 +45,12 @@ impl SkyCatalog {
         self.stars.brightness_keys().iter().filter(|&&key| crate::catalog::passes_brightness_bound(key, threshold)).count()
     }
 
-    /// Resolve a star's name from the original catalog-owned string block.
+    /// Format one label from its original row, including derived Gaia labels.
+    pub fn write_label(&self, row: usize, unicode: bool, output: &mut String) {
+        self.stars.write_label(row, &self.names, unicode, output);
+    }
+
+    /// Resolve stored text only; use write_label with a catalog row for derived Gaia labels.
     pub fn star_name(&self, star: &Star) -> Option<&str> {
         self.names.get(star.name)
     }

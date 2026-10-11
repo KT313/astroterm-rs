@@ -94,6 +94,9 @@ impl ObservedStarView<'_> {
     pub fn id(&self) -> StarId {
         self.catalog.id(self.source_index)
     }
+    pub fn write_label(&self, names: &crate::catalog::StarNames, unicode: bool, output: &mut String) {
+        self.catalog.write_label(self.source_index, names, unicode, output);
+    }
     pub fn name(&self) -> Option<NameId> {
         self.catalog.name(self.source_index)
     }

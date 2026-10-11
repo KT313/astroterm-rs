@@ -21,6 +21,8 @@ pub(crate) use regions::observation_nested_bytes as observation_region_bytes;
 mod log;
 mod labels;
 
+const GAIA_SOURCE_ID_COLUMN: &str = "gaia_source_id";
+
 pub(crate) use leaves::{Bytes, Opaque, ScalarCache, Single, TimingSteps, PreciseMotions};
 use crate::cache::Group;
 use crate::rows::Column;

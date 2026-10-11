@@ -6,7 +6,7 @@ pub(super) fn label_columns(path: &str, columns: &mut [Column]) {
     let names = table_labels(path);
     if !names.is_empty() {
         assert_eq!(names.len(), columns.len(), "debug column schema changed for {path}");
-        for (column, &name) in columns.iter_mut().zip(names) { column.name = name; }
+        for (column, &name) in columns.iter_mut().zip(names) { if column.name != super::GAIA_SOURCE_ID_COLUMN { column.name = name; } }
     } else {
         for column in columns { column.name = field_label(column.name); }
     }

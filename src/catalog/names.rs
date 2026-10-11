@@ -20,6 +20,7 @@ impl Default for StarNames {
     fn default() -> Self { Self { text: Default::default(), boundaries: vec![0].into(), ascii_alternatives: Default::default() } }
 }
 impl StarNames {
+    pub(crate) fn absent() -> Self { Self { text: Default::default(), boundaries: Default::default(), ascii_alternatives: Default::default() } }
     pub(crate) fn capacity(&self) -> usize { self.text.capacity() }
     pub(crate) fn bytes(&self) -> &[u8] { &self.text }
     pub(crate) fn boundaries(&self) -> &CatalogArray<u64> { &self.boundaries }

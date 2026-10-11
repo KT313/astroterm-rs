@@ -24,14 +24,16 @@ impl Tables for SkyCatalog {
         visit(&path("stars"), &self.stars, None);
         visit(&path("magnitude_clipping"), &Single(&self.stars.magnitude_clipping()), None);
         visit(&path("star_exceptions"), &self.star_exceptions, None);
-        visit(&path("names.boundaries"), self.names.boundaries(), None);
-        visit(&path("names.ascii_alternatives"), self.names.ascii_alternatives(), None);
+        if self.stars.source_ids().is_none() {
+            visit(&path("names.boundaries"), self.names.boundaries(), None);
+            visit(&path("names.ascii_alternatives"), self.names.ascii_alternatives(), None);
+            visit(&path("names"), &self.names, None);
+        }
         visit(&path("stars.precise_motions"), &super::PreciseMotions(self.stars.precise_motions()), None);
         visit(&path("grid.offsets"), &self.grid.offsets, None);
         visit(&path("grid.coarse_caps"), &self.grid.coarse_caps, None);
         visit(&path("grid.fine_caps"), &self.grid.fine_caps, None);
         visit(&path("endpoint_indices"), &self.figures.endpoints, None);
-        visit(&path("names"), &self.names, None);
         visit(&path("constellations"), &self.figures.figures, None);
     }
 }

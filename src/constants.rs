@@ -99,6 +99,8 @@ pub const GAIA_DISTANCE_MIN_SIGNAL: f64 = 10.0;                                 
 pub const GAIA_DOWNLOAD_MAX_BYTES: u64 = 1024 * 1024 * 1024;                             // stop an unexpectedly large individual download
 
 // Dataset startup display
+pub const STARTUP_SORT_THREADS: usize = 4;                                               // cap CPU workers used for catalog sorting
+pub const STARTUP_PARALLEL_SORT_ROWS: usize = 1_000_000;                                  // smaller catalogs sort on the calling thread
 pub const STARTUP_PROGRESS_HZ: u8 = 10;                                                  // redraw loading information at most this often per second
 pub const STARTUP_PROGRESS_ROWS: u64 = 4096;                                             // update row counts in batches, not for each star
 pub const STARTUP_NOTICE_BYTES: usize = 4096;                                            // bound partial notice text while progress bars are visible
@@ -107,6 +109,7 @@ pub const STARTUP_NOTICE_BYTES: usize = 4096;                                   
 pub const MAST_PARALLEL_BLOCKS: u8 = 4;                                                 // download four blocks at once by default
 pub const MAST_MAX_PARALLEL_BLOCKS: u8 = 16;                                             // cap simultaneous block downloads per process
 pub const MAST_PENDING_COMPRESSED_MAX_BYTES: usize = 512 * 1024 * 1024;                  // guard unusually large groups; sixteen 256 MiB groups could otherwise retain 4 GiB
+pub const MAST_METADATA_REQUESTS: usize = 4;                                            // overlap a bounded number of file-metadata requests
 pub const MAST_FOOTER_TAIL_BYTES: u64 = 256 * 1024;                                     // usually fetch footer and length in one request
 pub const MAST_FOOTER_MAX_BYTES: usize = 16 * 1024 * 1024;                               // reject unexpectedly large Parquet metadata
 pub const MAST_BLOCK_MAX_BYTES: usize = 256 * 1024 * 1024;                              // total compressed column bytes allowed per group
@@ -115,3 +118,5 @@ pub const MAST_DECODE_BATCH_ROWS: usize = 65_536;                               
 pub const MAST_RESPONSE_HEADER_SECONDS: u64 = 60;                                      // stop waiting for response headers; the body uses the block deadline
 pub const MAST_BLOCK_SECONDS: u64 = 600;                                               // include retries in the total group download deadline
 pub const MAST_REQUEST_RETRIES: usize = 3;                                             // retry transient reads without changing source identity
+
+pub const CACHE_CHUNK_BYTES: usize = 4 * 1024 * 1024;                                    // compress prepared data in bounded four-megabyte pieces

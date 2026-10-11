@@ -46,6 +46,7 @@ md-5 = "0.11"
 ndarray = "0.17"
 parquet = { version = "60", default-features = false, features = ["zstd"] }
 ratatui = { version = "0.30", default-features = false, features = ["crossterm_0_29"] }
+rayon = "1.12"
 ratatui-image = { version = "11.1", default-features = false, features = ["crossterm"] }
 serde = { version = "1.0.229", features = ["derive"] }
 sha2 = "0.11.0"
@@ -58,6 +59,7 @@ tzf-rs = { version = "2.1.2", default-features = false, features = ["bundled"] }
 unicode-width = "0.2.2"
 ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
 vsop87 = "3.0.0"
+zstd = { version = "0.14", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1.1.5", features = ["event", "shm"] }

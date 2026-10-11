@@ -5,7 +5,7 @@ use crate::canvas::{Canvas, draw_line_braille};
 use crate::model::{ProjectedArc, ProjectedPlanet, ProjectedSky};
 
 use crate::model::Appearance;
-use super::appearance::{format_star_label, select_moon_appearance, select_planet_appearance};
+use super::appearance::{ select_moon_appearance, select_planet_appearance};
 use crate::model::RenderOptions;
 use super::draw_line;
 
@@ -13,6 +13,7 @@ use super::draw_line;
 /// Draw stars in prepared order; optionally label the global brightest visible stars.
 pub fn draw_stars(canvas: &mut Canvas, options: &RenderOptions, sky: &ProjectedSky<'_>) {
     let dynamically_named = select_dynamically_named_stars(options, sky);
+    let mut label_text = String::new();
 
     for (index, entry) in sky.stars.iter().enumerate() {
         if entry.star.magnitude > options.magnitude_threshold {
@@ -20,7 +21,8 @@ pub fn draw_stars(canvas: &mut Canvas, options: &RenderOptions, sky: &ProjectedS
         }
         let star = entry.star;
         let label = if dynamically_named.contains(&index) {
-            Some(format_star_label(&star, sky.names, options.unicode))
+            star.write_label(sky.names, options.unicode, &mut label_text);
+            Some(label_text.as_str())
         } else {
             None
         };
@@ -29,7 +31,7 @@ pub fn draw_stars(canvas: &mut Canvas, options: &RenderOptions, sky: &ProjectedS
             options,
             &super::appearance::select_star_appearance(&star, sky.names),
             entry.cell,
-            label.as_deref(),
+            label,
         );
     }
 }

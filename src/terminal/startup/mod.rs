@@ -88,7 +88,7 @@ impl<W: Write> DatasetProgress for StartupProgress<W> {
                 let recent = self.plain.as_ref().filter(|plain| plain.stage == stage && plain.last_line.elapsed() < Duration::from_secs(1));
                 let last_line = match recent {
                     Some(plain) => plain.last_line, // thousands of quick file checks print one line per second, not one each
-                    None => { let _ = writeln!(self.writer, "{}...", stage.label()); Instant::now() }
+                    None => { let _ = writeln!(self.writer, "{}{}...", stage.label(), if detail.is_empty() { String::new() } else { format!(" ({detail})") }); Instant::now() }
                 };
                 self.plain = Some(PlainStage { stage, unit, total, last_line, position: 0 });
             }
@@ -98,17 +98,7 @@ impl<W: Write> DatasetProgress for StartupProgress<W> {
         bar.disable_steady_tick(); bar.reset();
         let total = total.filter(|&n| n != 0);
         if let Some(total) = total { bar.set_length(total); } else { bar.unset_length(); }
-        let template = match (unit, total.is_some()) {
-            (Unit::Bytes, true) => "{prefix} {wide_bar} {bytes}/{total_bytes} {bytes_per_sec} ETA {eta} {msg}",
-            (Unit::Bytes, false) => "{spinner} {prefix} {bytes} {bytes_per_sec} {elapsed} {msg}",
-            (Unit::Blocks, true) => "{prefix} {wide_bar} {pos}/{len} blocks {msg} ETA {block_eta}",
-            (Unit::Work, _) => "{spinner} {prefix} {elapsed} {msg}",
-            (_, true) => "{prefix} {wide_bar} {pos}/{len} {elapsed} {msg}",
-            (_, false) => "{spinner} {prefix} {pos} rows {elapsed} {msg}",
-        };
-        if let Ok(style) = ProgressStyle::with_template(template) {
-            bar.set_style(if unit == Unit::Blocks { with_block_eta(style, 0) } else { style });
-        }
+        if let Some(style) = build_work_style(unit, total) { bar.set_style(style); }
         bar.set_prefix(if detail.is_empty() { stage.label().to_owned() } else { format!("{} ({detail})", stage.label()) }); bar.set_message("");
         bar.enable_steady_tick(Duration::from_millis(1000 / u64::from(STARTUP_PROGRESS_HZ.max(1))));
     }
@@ -123,20 +113,44 @@ impl<W: Write> DatasetProgress for StartupProgress<W> {
             (Unit::Bytes, None) => format!("{} MB", completed / 1_000_000),
             (Unit::Rows, total) => describe_count(completed, total, "rows"),
             (Unit::Stars, total) => describe_count(completed, total, "stars"),
+            (Unit::Elements, total) => describe_count(completed, total, "field values"),
             (Unit::Blocks, total) => describe_count(completed, total, "blocks"),
         };
         let rate = self.download_rate.as_ref().map(|rate| format!("; {rate}")).unwrap_or_default();
         let _ = writeln!(self.writer, "{}: {count}{rate}", plain.stage.label());
         plain.last_line = Instant::now();
     }
+    fn set_detail(&mut self, detail: &str) {
+        if let Some(bar) = &self.task { bar.set_message(detail.to_owned()); return; }
+        let Some(plain) = &mut self.plain else { return; };
+        if self.plain_updates && plain.last_line.elapsed() >= Duration::from_secs(1) {
+            let _ = writeln!(self.writer, "{}: {detail}", plain.stage.label());
+            plain.last_line = Instant::now();
+        }
+    }
+    fn set_work(&mut self, unit: Unit, total: Option<u64>) {
+        if let Some(plain) = &mut self.plain { plain.unit = unit; plain.total = total; }
+        if let Some(bar) = &self.task {
+            if let Some(total) = total { bar.set_length(total); } else { bar.unset_length(); }
+            if let Some(style) = build_work_style(unit, total) { bar.set_style(style); }
+        }
+    }
+    fn set_read_progress(&mut self, bytes: u64, total: u64) {
+        if self.task.is_none() && !self.plain_updates { return; }
+        self.set_detail(&format!("Reading cached data: {:.1}/{:.1} MiB", bytes as f64 / 1_048_576.0, total as f64 / 1_048_576.0));
+    }
     fn set_cached_blocks(&mut self, ready: u64) {
         if let Some(bar) = &self.task { bar.set_style(with_block_eta(bar.style(), ready)); }
         self.set_position(ready);                                                              // keep the full ready count, but exclude its initial value from ETA
     }
     fn set_download_bytes(&mut self, received: u64, elapsed: Duration) {
-        if self.active != Some(Stage::Download) { return; }
+        if self.active.is_none() || (self.task.is_none() && !self.plain_updates) { return; }
         let seconds = elapsed.as_secs_f64();
         let rate = if seconds > 0.0 { received as f64 / seconds / 1_048_576.0 } else { 0.0 };
+        if self.active != Some(Stage::Download) {
+            self.set_detail(&format!("Repair download: {:.1} MiB received; {rate:.2} MiB/s avg", received as f64 / 1_048_576.0));
+            return;                                                                           // keep the loading count and elapsed time while showing repair traffic
+        }
         let message = format!("{rate:.2} MiB/s avg");
         if let Some(bar) = &self.task { bar.set_message(message); return; }
         self.download_rate = Some(message);
@@ -164,6 +178,18 @@ impl<W: Write> DatasetProgress for StartupProgress<W> {
         }
     }
 }
+fn build_work_style(unit: Unit, total: Option<u64>) -> Option<ProgressStyle> {
+    let template = match (unit, total.is_some()) {
+        (Unit::Bytes, true) => "{spinner} {prefix} {wide_bar} {bytes}/{total_bytes} {bytes_per_sec} ETA {eta} {msg}",
+        (Unit::Bytes, false) => "{spinner} {prefix} {bytes} {bytes_per_sec} {elapsed} {msg}",
+        (Unit::Blocks, true) => "{spinner} {prefix} {wide_bar}\n{pos}/{len} blocks ETA {block_eta} {wide_msg}", // changing activity text cannot resize the bar
+        (Unit::Work, _) => "{spinner} {prefix} {elapsed} {msg}",
+        (_, true) => "{spinner} {prefix} {wide_bar} {pos}/{len} {elapsed} {msg}",
+        (_, false) => "{spinner} {prefix} {pos} rows {elapsed} {msg}",
+    };
+    ProgressStyle::with_template(template).ok().map(|style| if unit == Unit::Blocks { with_block_eta(style, 0) } else { style })
+}
+
 fn with_block_eta(style: ProgressStyle, cached: u64) -> ProgressStyle {
     style.with_key("block_eta", move |state: &ProgressState, output: &mut dyn std::fmt::Write| {
         match estimate_block_eta(state.len(), cached, state.pos(), state.elapsed()) {

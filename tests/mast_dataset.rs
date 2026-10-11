@@ -34,7 +34,7 @@ fn mast_two_groups_extend_without_reconverting_old_rows() {
     let root = PathBuf::from(std::env::var_os("ASTROTERM_MAST_TEST_ROOT").expect("set an isolated empty test data directory"));
     let directories = DatasetDirectories { data: Some(root.join("data")), cache: Some(root.join("cache")) };
     let mut first_ids = Vec::new();
-    for (count, parallel, expected_downloads, expected_conversions) in [(200001, 2, 2, 2), (100000, 1, 0, 0), (150000, 4, 0, 0), (200001, 8, 0, 0)] {
+    for (count, parallel, expected_downloads, expected_conversions) in [(400000, 2, 2, 2), (100000, 1, 0, 0), (200001, 4, 0, 0), (400000, 8, 0, 0)] {
         let mut log = Counts::default();
         let started = std::time::Instant::now();
         let mut times = StepTimes::with_trace(true);
@@ -46,7 +46,12 @@ fn mast_two_groups_extend_without_reconverting_old_rows() {
         ids.sort_unstable();
         if first_ids.is_empty() { first_ids = ids.clone(); }
         else { assert!(ids.iter().all(|id| first_ids.binary_search(id).is_ok())); }
-        assert!(catalog.catalog.stars.iter().all(|star| catalog.catalog.names.get(star.name).unwrap().starts_with("Gaia DR3 ")));
+        assert!(catalog.catalog.stars.name_entries().is_empty());
+        let mut label = String::new();
+        for (index, &source_id) in catalog.catalog.stars.source_ids().unwrap().iter().enumerate() {
+            catalog.catalog.stars.write_label(index, &catalog.catalog.names, true, &mut label);
+            assert_eq!(label, format!("Gaia DR3 {source_id}"));
+        }
         if log.received > 0 {
             eprintln!("Received {:.2} MiB in {:.3}s of block downloading/normalization/publication ({:.2} MiB/s avg)",
                 log.received as f64 / 1_048_576.0, log.transfer_elapsed.as_secs_f64(), log.received as f64 / 1_048_576.0 / log.transfer_elapsed.as_secs_f64());
