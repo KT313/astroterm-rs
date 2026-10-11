@@ -39,7 +39,7 @@ pub(super) fn plan_in_order(selection: &mut MastSelection, leaves: Vec<Leaf>, fe
                     next += 1;
                 }
                 let path = &pending.front().expect("a missing footer starts at least one worker").0;
-                progress.set_detail(&format!("Waiting for file metadata: {path}; up to {} requests in parallel", MAST_METADATA_REQUESTS.max(1)));
+                progress.set_detail(&format!("Waiting for file metadata: {path}"));
                 let (path, worker) = pending.pop_front().unwrap();                              // retain ownership of every handle until progress callbacks have returned
                 let (footer, notices) = times.measure("MAST metadata wait", || worker.join())
                     .map_err(|_| io::Error::other(format!("metadata worker panicked for {path}")))?;
