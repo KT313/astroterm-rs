@@ -7,6 +7,7 @@ use crate::model::{View, RenderOptions};
 #[derive(Clone, Debug, PartialEq)]
 pub struct Config {
     pub debug_singleframe: bool,
+    pub frame_benchmark: Option<FrameBenchmarkConfig>,
     pub no_progress: bool,
     /// Enable explicitly placed table dumps; independent of timing and memory tracing.
     pub debug_log_data: bool,
@@ -26,6 +27,14 @@ pub struct Config {
     /// Star dataset to load instead of the embedded catalog.
     pub dataset: Option<Dataset>,
     pub dataset_parallel_blocks: u8,                                                     // maximum simultaneous MAST block downloads
+}
+
+/// Bounded, deterministic frame capture; the output writer remains outside the state tree.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FrameBenchmarkConfig {
+    pub frames: u32,
+    pub step_seconds: f64,
+    pub report: std::path::PathBuf,
 }
 
 /// What is simulated: where, from when, how fast, and with which corrections.

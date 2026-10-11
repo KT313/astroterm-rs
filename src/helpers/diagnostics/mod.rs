@@ -1,4 +1,7 @@
 //! Optional trace descriptions, table dumps, memory captures and reporting after terminal cleanup.
+mod benchmark;
+pub(crate) use benchmark::{BenchmarkSession, open_frame_benchmark, begin_benchmark_capture, prepare_benchmark_frame,
+    validate_benchmark_time, complete_benchmark_frame, finish_benchmark_report};
 use std::fmt::Display;
 use std::io;
 use std::process::ExitCode;
@@ -10,10 +13,10 @@ use astroterm::state::{ApplicationState};
 use astroterm::terminal::Renderer;
 use astroterm::timing::StepTimes;
 
-/// Capture startup timings for either diagnostic mode; memory collection still waits for validated options.
+/// Capture startup timings for the requested diagnostic mode; memory collection still waits for validated options.
 pub(crate) fn start_step_times(arguments: &Arguments) -> StepTimes {
     let memory_requested = cfg!(feature = "memory-diagnostics") && arguments.debug_memory;
-    StepTimes::with_trace(arguments.debug_singleframe || memory_requested)
+    StepTimes::with_trace(arguments.debug_singleframe || arguments.debug_frames.is_some() || memory_requested)
 }
 
 /// Enable bounded memory reports only after the user's options have been validated.
@@ -99,15 +102,16 @@ pub(crate) fn begin_frame_diagnostics(times: &mut StepTimes) -> Instant {
 /// outside the reported frame duration; keep the existing per-operation opt-in checks.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn finish_frame_diagnostics(config: &Config, catalog: &Arc<astroterm::model::SkyCatalog>, caches: &astroterm::state::Caches,
-    preparation: Option<&astroterm::model::CatalogPreparation>, renderer: &Renderer, frame_start: Instant, time: FrameTime, outcome: astroterm::model::RenderOutcome, times: &mut StepTimes) {
+    preparation: Option<&astroterm::model::CatalogPreparation>, renderer: &Renderer, frame_start: Instant, time: FrameTime, outcome: astroterm::model::RenderOutcome, times: &mut StepTimes) -> f64 {
     let elapsed = record_frame_duration(config, frame_start, time, outcome, times); // record duration before inspecting memory
     capture_memory(config, catalog, caches, preparation, renderer, times, if outcome.was_presented() { "After presented frame" } else { "After reused display" }, Some(time.tt));
     times.complete_memory_frame(elapsed);                                // retain diagnostics for this completed frame
+    elapsed
 }
 
 /// Sample duration through presentation before inspecting memory; ordinary single-frame output stays compatible.
 fn record_frame_duration(config: &Config, frame_start: Instant, time: FrameTime, outcome: astroterm::model::RenderOutcome, step_times: &mut StepTimes) -> f64 {
-    if !(config.debug_singleframe || (cfg!(feature = "memory-diagnostics") && config.debug_memory)) { return 0.0; }
+    if !(config.debug_singleframe || config.frame_benchmark.is_some() || (cfg!(feature = "memory-diagnostics") && config.debug_memory)) { return 0.0; }
     let elapsed = frame_start.elapsed().as_secs_f64();
     step_times.describe(if outcome.was_presented() { "Present" } else { "Presentation decision" }, || format!(
         "frame elapsed through presentation={:.3} ms; UTC JD={:.9}; includes in-frame diagnostics; final memory capture and sleep excluded",

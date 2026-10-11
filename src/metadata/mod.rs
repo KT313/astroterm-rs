@@ -102,7 +102,11 @@ fn append_metadata_fields(
     let pause_note = if clock.is_paused() { " (paused)" } else { "" };
     fields.push(create_field(
         "Speed",
-        format!("{}x{pause_note}", format_speed(clock.speed())),
+        match clock.frame_step_seconds() {
+            Some(0.0) => "paused".into(),
+            Some(step) => format!("{step:+} s/frame"),
+            None => format!("{}x{pause_note}", format_speed(clock.speed())),
+        },
     ));
 
     // view settings that differ from the default
@@ -204,6 +208,18 @@ mod tests {
         let mut fields = Vec::new();
         append_metadata_fields(&mut fields, local_time, date, clock, phase, observer, view, unicode);
         fields
+    }
+
+    #[test]
+    fn fixed_step_metadata_shows_paused_or_seconds_per_frame() {
+        let observer = Observer::default();
+        let zone = resolve_observer_timezone(&observer);
+        for (step, expected) in [(0.0, "paused"), (1.0, "+1 s/frame"), (-2.5, "-2.5 s/frame")] {
+            let mut clock = SimulationClock::start_fixed_step(crate::astro::J2000, step);
+            clock.set_frame_index(2).unwrap();
+            let fields = collect_metadata_fields(clock.julian_date(), &clock, MoonPhase::Full, &observer, &View::default(), true, &zone);
+            assert_eq!(fields.iter().find(|field| field.label == "Speed").unwrap().value, expected);
+        }
     }
 
     #[test]

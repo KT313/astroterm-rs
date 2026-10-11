@@ -98,8 +98,19 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
         quit_on_any_key: arguments.quit_on_any,
         frame_times: arguments.debug_frametimes,
     };
+    let frame_benchmark = arguments.debug_frames.map(|frames| {
+        let step_seconds = arguments.debug_frame_step_seconds.unwrap_or(0.0);
+        let last = frames.checked_sub(1).ok_or_else(|| ConfigError("Frame count must be positive".into()))?;
+        let mut clock = crate::astro::SimulationClock::start_fixed_step(start_julian_date, step_seconds);
+        if !step_seconds.is_finite() || clock.set_frame_index(last).is_err() {
+            return Err(ConfigError("Benchmark step and scheduled final date must be finite".into()));
+        }
+        Ok(crate::model::FrameBenchmarkConfig { frames, step_seconds,
+            report: arguments.debug_frame_report.clone().ok_or_else(|| ConfigError("--debug-frames requires --debug-frame-report".into()))? })
+    }).transpose()?;
     Ok(Config {
         debug_singleframe: arguments.debug_singleframe,
+        frame_benchmark,
         no_progress: arguments.no_progress,
         debug_log_data: arguments.debug_log_data,
         debug_memory: arguments.debug_memory,
@@ -455,6 +466,29 @@ mod tests {
         }
         for text in ["400", "-5", "foo", "12abc", "NNWW", "nan", ""] {
             assert_eq!(parse_azimuth(text), None, "{text}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod benchmark_tests {
+    use super::*;
+    use clap::Parser;
+    #[test]
+    fn bounded_capture_requires_a_new_report_and_rejects_conflicting_modes() {
+        let base = ["astroterm", "--debug-frames", "3", "--debug-frame-report", "report.jsonl"];
+        let config = build_config(Arguments::try_parse_from(base).unwrap(), &[]).unwrap();
+        assert_eq!(config.frame_benchmark.unwrap().step_seconds, 0.0);
+        for extra in [vec!["-s", "1"], vec!["--debug-singleframe"], vec!["--debug-memory"], vec!["--debug-log-data"]] {
+            assert!(Arguments::try_parse_from(base.into_iter().chain(extra)).is_err());
+        }
+        for args in [vec!["astroterm", "--debug-frames", "0", "--debug-frame-report", "x"],
+            vec!["astroterm", "--debug-frames", "1"], vec!["astroterm", "--debug-frame-report", "x"]] {
+            assert!(Arguments::try_parse_from(args).is_err());
+        }
+        for step in ["NaN", "inf", "1e308"] {
+            let args = Arguments::try_parse_from(base.into_iter().chain(["--debug-frame-step-seconds", step])).unwrap();
+            assert!(build_config(args, &[]).is_err());
         }
     }
 }

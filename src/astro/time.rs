@@ -118,6 +118,7 @@ pub struct SimulationClock {
     anchor_instant: Instant,
     speed: f64,
     paused: bool,
+    frame_step_seconds: Option<f64>,
 }
 
 impl SimulationClock {
@@ -129,12 +130,30 @@ impl SimulationClock {
             anchor_instant: Instant::now(),
             speed,
             paused: false,
+            frame_step_seconds: None,
         }
+    }
+
+    /// A clock advanced explicitly by frame index; wall time cannot change its simulated date.
+    pub fn start_fixed_step(start: f64, step_seconds: f64) -> Self {
+        Self { frame_step_seconds: Some(step_seconds), paused: step_seconds == 0.0, ..Self::start(start, 0.0) }
+    }
+
+    pub fn frame_step_seconds(&self) -> Option<f64> { self.frame_step_seconds }
+
+    /// Set a zero-based frame index directly from the original date, avoiding accumulated rounding drift.
+    pub fn set_frame_index(&mut self, index: u32) -> std::io::Result<()> {
+        if let Some(step) = self.frame_step_seconds {
+            let date = self.start_julian_date + (f64::from(index) * step) / SECONDS_PER_DAY;
+            if !date.is_finite() { return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "benchmark frame date is not finite")); }
+            self.anchor_julian_date = date;
+        }
+        Ok(())
     }
 
     /// The current simulation time.
     pub fn julian_date(&self) -> f64 {
-        if self.paused {
+        if self.paused || self.frame_step_seconds.is_some() {
             return self.anchor_julian_date;
         }
         self.anchor_julian_date + self.anchor_instant.elapsed().as_secs_f64() / SECONDS_PER_DAY * self.speed
@@ -386,5 +405,24 @@ mod delta_t_tests {
         assert!(
             ut1_to_tt(crate::astro::COMPUTATIONAL_INTERVAL.end_tt) > crate::astro::COMPUTATIONAL_INTERVAL.end_tt + 3.0
         );
+    }
+}
+
+#[cfg(test)]
+mod fixed_frame_tests {
+    use super::*;
+    #[test]
+    fn fixed_steps_use_the_original_epoch_and_do_not_read_wall_time() {
+        for step in [0.0, 1.0, -2.5] {
+            let mut clock = SimulationClock::start_fixed_step(J2000, step);
+            for index in [0, 1, 100_000, u32::MAX] {
+                clock.set_frame_index(index).unwrap();
+                let expected = J2000 + (f64::from(index) * step) / SECONDS_PER_DAY;
+                assert_eq!(clock.julian_date(), expected);
+                assert_eq!(clock.julian_date(), expected);
+                assert_eq!(clock.start_julian_date(), J2000);
+            }
+        }
+        assert!(SimulationClock::start_fixed_step(J2000, f64::MAX).set_frame_index(2).is_err());
     }
 }

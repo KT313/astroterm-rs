@@ -7,6 +7,7 @@ mod rendering;
 mod transport;
 mod input;
 mod diagnostics;
+pub use diagnostics::{CaptureDisplay, CaptureGeometry, capture_display};
 
 pub use rendering::{Renderer, open_terminal_renderer};
 pub use transport::{TerminalSession, open_terminal_session, detect_cell_aspect_ratio, fit_square_viewport};

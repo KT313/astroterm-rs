@@ -130,6 +130,7 @@ source <(./target/release/astroterm --bash-completions)
 - `--debug-frametimes`: show the time spent calculating and drawing each frame.
 - `--debug-singleframe`: display one frame, then exit and print a detailed timing report.
 - Memory inspection: see [memory diagnostics](docs/memory-diagnostics.md) for the optional build feature and reports.
+- Multi-frame timing: see [bounded frame captures](docs/frame-benchmarks.md) for reproducible per-frame reports.
 - `--disable-cache`: recalculate runtime results every frame; keeps downloaded files and the catalog cache.
 - `--cache-config <path>`: use custom reuse settings; see [examples/cache.toml](examples/cache.toml).
 
@@ -142,6 +143,8 @@ in the existing magnitude field. The MAST path removes identical adjacent copies
 
 Solar-system results refresh when simulated time or observer location changes; paused frames reuse completed results.
 A cache TTL of `0` permits same-time reuse; `--disable-cache` disables it.
+
+Optional [frame timing captures](docs/frame-benchmarks.md) run a fixed number of frames at reproducible simulated dates.
 
 Catalog brightness is stored in steps of 0.001 magnitude; values very close to a display threshold may round across it.
 Stars are filtered by their catalog-epoch sky regions with a fixed motion allowance. At distant dates, fast-moving

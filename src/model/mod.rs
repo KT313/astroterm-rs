@@ -34,7 +34,7 @@ pub(crate) use presentation::{
 };
 #[cfg(feature = "memory-diagnostics")]
 pub(crate) use presentation::RasterRegion;
-pub use configuration::{Config, SimulationSettings, TerminalSettings, RendererKind, GraphicsProtocol};
+pub use configuration::{FrameBenchmarkConfig, Config, SimulationSettings, TerminalSettings, RendererKind, GraphicsProtocol};
 
 #[cfg(test)]
 pub(crate) use catalog::{interleave, direction, build_caps};

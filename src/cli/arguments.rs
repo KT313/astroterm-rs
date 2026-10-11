@@ -165,6 +165,19 @@ pub struct Arguments {
     #[arg(long)]
     pub debug_singleframe: bool,
 
+    /// Capture N completed frames (including reused displays) to --debug-frame-report; no interactive controls
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(1..), requires = "debug_frame_report",
+        conflicts_with_all = ["debug_singleframe", "debug_memory", "debug_log_data", "speed"])]
+    pub debug_frames: Option<u32>,
+
+    /// New JSONL timing file for --debug-frames; existing files are never overwritten
+    #[arg(long, value_name = "FILE", requires = "debug_frames")]
+    pub debug_frame_report: Option<std::path::PathBuf>,
+
+    /// Simulated seconds per captured frame (default: 0, paused); negative values run backwards
+    #[arg(long, value_name = "SECONDS", allow_negative_numbers = true, requires = "debug_frames")]
+    pub debug_frame_step_seconds: Option<f64>,
+
     /// Append Markdown table dumps in tmp/ at startup, after preparation, and after each projection and rendering. Available in every build
     #[arg(long)]
     pub debug_log_data: bool,

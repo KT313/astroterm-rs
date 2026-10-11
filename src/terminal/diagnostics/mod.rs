@@ -1,4 +1,6 @@
 //! Rendering-boundary observations, separate from canvas assembly and terminal lifetime.
+mod capture;
+pub use capture::{CaptureDisplay, CaptureGeometry, capture_display};
 use crate::canvas::Canvas;
 use crate::model::MetadataField;
 use crate::scene::describe_canvas;

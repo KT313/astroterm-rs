@@ -16,6 +16,9 @@ mod memory;
 mod run;
 #[path = "reporting/formatting.rs"]
 mod formatting;
+#[path = "reporting/capture.rs"]
+mod capture;
+pub use capture::CaptureSteps;
 #[cfg(feature = "memory-diagnostics")]
 #[path = "reporting/run.rs"]
 mod reporting;

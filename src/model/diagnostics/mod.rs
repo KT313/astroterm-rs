@@ -47,6 +47,10 @@ impl crate::cache::ReportBuffers for Config {
     fn report_buffers(&self, sink: &mut dyn crate::cache::BufferSink) {
         use crate::cache::{report_field, Quality};
         report_field(sink, "cache", &self.cache);
+        if let Some(config) = &self.frame_benchmark && sink.enter("frame_report_path", std::mem::size_of_val(&config.report)) {
+            sink.payload(config.report.as_os_str().as_encoded_bytes().len(), config.report.capacity(), 1, Quality::ExactPayload, "platform path bytes");
+            sink.leave();
+        }
         if let Some(crate::catalog::datasets::Dataset::Path(path)) = &self.dataset
             && sink.enter("dataset_path", std::mem::size_of_val(path)) {
             sink.payload(path.as_os_str().as_encoded_bytes().len(), path.capacity(), 1, Quality::ExactPayload, "platform path bytes");
