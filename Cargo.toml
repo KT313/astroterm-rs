@@ -29,7 +29,6 @@ fontdue = "0.9.4"
 indicatif = { version = "0.18", default-features = false }
 image = { version = "0.25", default-features = false }
 md-5 = "0.11"
-ndarray = "0.17"
 parquet = { version = "60", default-features = false, features = ["zstd"] }
 ratatui = { version = "0.30", default-features = false, features = ["crossterm_0_29"] }
 rayon = "1.12"
@@ -53,18 +52,8 @@ rustix = { version = "1.1.5", features = ["event", "shm"] }
 tz-rs = "0.7.3"
 
 [dev-dependencies]
-trybuild = "1"
-insta = "1"
 proptest = "1"
 criterion = "0.7"
-
-[[bench]]
-name = "frame"
-harness = false
-
-[[bench]]
-name = "spatial"
-harness = false
 
 [[bench]]
 name = "warp"

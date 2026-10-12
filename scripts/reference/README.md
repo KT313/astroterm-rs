@@ -139,6 +139,6 @@ transformation. These are sampled model checks, not guarantees at every untested
 uncertainties and unknown future ΔT remain separate. Raw summary output lives in ignored development notes.
 
 Original C numerical fixtures/tolerances remain unchanged. `current_positions.rs` retains the phase-0 historical
-baseline; `phase6_positions.rs` is the explicitly regenerated production regression baseline. Four character
-snapshots change by a few cells as corrected star/endpoint positions cross rounding boundaries; the remaining
-scene snapshots are unchanged. A separate lossless snapshot covers the yellow coverage message and boundaries.
+baseline; `phase6_positions.rs` is the explicitly regenerated production regression baseline, checked through the
+frame loop's steps 1 and 2 in `tests/position_references.rs`. The character snapshots went with the character
+renderer (2026-10-12); the accuracy warning text and its boundary dates are checked in `src/points` and `src/astro`.

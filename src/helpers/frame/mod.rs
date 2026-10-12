@@ -1,8 +1,8 @@
 //! What the frame loop does around the seven steps: controls and the clock, and the metadata panel's lines.
-use astroterm::astro::{Observer, SimulationClock, name_moon_phase};
+use astroterm::astro::{FrameTime, Observer, SimulationClock, name_moon_phase};
 use astroterm::controls::{Control, apply_control};
-use astroterm::metadata::{ObserverTimeZone, append_step_time_fields, fill_metadata_fields, resolve_observer_timezone};
-use astroterm::model::{Config, FrameTime, MetadataField, SkyTables, View};
+use astroterm::metadata::{MetadataField, ObserverTimeZone, append_step_time_fields, fill_metadata_fields, format_star_count, resolve_observer_timezone};
+use astroterm::model::{Config, SkyTables, View};
 use astroterm::present::{DisplayInfo, describe_compression};
 use astroterm::regions::{RefreshReport, RegionCaches};
 use astroterm::selection::Selected;
@@ -69,8 +69,8 @@ impl Panel {
         // stars and regions
         let in_regions: usize = frame.selected.regions.iter().map(|&region| tables.stars.region(region).iter().map(|table| table.len()).sum::<usize>()).sum();
         let field = |label: &str, value: String| MetadataField { label: label.into(), value };
-        self.lines.push(field("Stars loaded", format!("{} stars", group_digits(self.stars_loaded))));
-        self.lines.push(field("In selected regions", format!("{} stars", group_digits(in_regions))));
+        self.lines.push(field("Stars loaded", format!("{} stars", format_star_count(self.stars_loaded))));
+        self.lines.push(field("In selected regions", format!("{} stars", format_star_count(in_regions))));
         self.lines.push(field("Regions selected", format!("{}{}", frame.selected.regions.len(), if frame.selected.whole_sky { " (whole sky)" } else { "" })));
         self.lines.push(field("Tile memory", format!("{:.1} MiB", frame.caches.tile_bytes() as f64 / (1024.0 * 1024.0))));
 
@@ -89,17 +89,6 @@ impl Panel {
         }
         &self.lines
     }
-}
-
-/// 1234567 → "1,234,567".
-fn group_digits(value: usize) -> String {
-    let digits = value.to_string();
-    let mut grouped = String::with_capacity(digits.len() + digits.len() / 3);
-    for (index, digit) in digits.chars().enumerate() {
-        if index != 0 && (digits.len() - index).is_multiple_of(3) { grouped.push(','); }
-        grouped.push(digit);
-    }
-    grouped
 }
 
 #[cfg(test)]

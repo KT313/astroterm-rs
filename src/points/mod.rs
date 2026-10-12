@@ -13,11 +13,12 @@ use crate::astro::Vector3;
 use crate::astro::accuracy::{ACCURACY_WARNING, needs_accuracy_warning};
 use crate::catalog::{MAGNITUDE_CLIPPING_WARNING, NameId, magnitude_code};
 use crate::constants::{DYNAMIC_NAME_COUNT, PIXEL_BACKGROUND_RGBA};
-use crate::model::{LabelColumn, MetadataField, ProjectedArc, RenderOptions, ScreenPoint, SkyTables, StarColor, View};
+use crate::metadata::MetadataField;
+use crate::model::{LabelColumn, RenderOptions, SkyTables, StarColor, View};
 use crate::observation::Observation;
-use crate::projection::{Frame, SkyArea, prepare_camera, project_camera, project_constellation_segment, project_horizon_labels, project_horizon_line, project_light_direction, project_to_cell};
+use crate::projection::{Frame, ProjectedArc, ScreenPoint, SkyArea, prepare_camera, project_camera, project_constellation_segment, project_horizon_labels, project_horizon_line, project_light_direction, project_to_cell};
 use crate::regions::{RegionCaches, UNPLACED, blend_star, premultiplied_color, rows_wanted, zoom_opacity_boost};
-use crate::scene::draw_text_over;
+use crate::text::draw_text_over;
 use crate::selection::Selected;
 use crate::solar_system::SolarSystem;
 use std::cmp::Ordering;
@@ -394,23 +395,21 @@ mod tests {
     use crate::catalog::{SpaceMotion, StarId, load_embedded_catalog};
     use crate::model::{ProjectionKind, ViewCenter};
     use crate::observation::observe;
-    use crate::progress::NoProgress;
     use crate::regions::refresh_regions;
     use crate::selection::select_regions;
     use crate::solar_system::simulate_solar_system;
-    use crate::timing::StepTimes;
 
     fn tables_of(catalog: crate::catalog::Catalog) -> SkyTables {
-        let prepared = crate::sky::prepare_owned_catalog(catalog).unwrap();
-        crate::sky::build_sky_tables(&prepared, &mut NoProgress(std::io::sink()), &mut StepTimes::default()).unwrap()
+        let prepared = crate::sky::prepare_owned_catalog(catalog, &mut crate::progress::Report::quiet()).unwrap();
+        crate::sky::build_sky_tables(&prepared, &mut crate::progress::Report::quiet()).unwrap()
     }
-    fn bsc5() -> SkyTables { tables_of(load_embedded_catalog().unwrap()) }
+    fn bsc5() -> SkyTables { tables_of(load_embedded_catalog(&mut crate::progress::Report::quiet()).unwrap()) }
     fn boston() -> Observer { Observer { latitude: 42.3601_f64.to_radians(), longitude: -71.0589_f64.to_radians() } }
     fn settings() -> RenderOptions { RenderOptions { unicode: true, braille: false, color: true, constellations: true, grid: false, magnitude_threshold: 6.5, dynamic_names: true } }
 
     /// A catalog of the given stars (unit direction, magnitude, id, optional name), nothing else.
     fn stars(entries: &[(Vector3, f64, u32, Option<&str>)]) -> SkyTables {
-        let mut parsed = load_embedded_catalog().unwrap();
+        let mut parsed = load_embedded_catalog(&mut crate::progress::Report::quiet()).unwrap();
         let template = parsed.stars[0].clone();
         parsed.stars.clear();
         parsed.constellations.clear();
@@ -485,7 +484,7 @@ mod tests {
 
     #[test]
     fn proper_names_follow_the_unicode_switch_and_gaia_labels_come_from_the_source_id() {
-        let mut parsed = load_embedded_catalog().unwrap();
+        let mut parsed = load_embedded_catalog(&mut crate::progress::Report::quiet()).unwrap();
         parsed.names = crate::catalog::StarNames::default();
         let template = parsed.stars[0].clone();
         parsed.stars.clear(); parsed.constellations.clear(); parsed.hr_representatives.clear();

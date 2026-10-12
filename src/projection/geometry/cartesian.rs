@@ -4,7 +4,7 @@ use crate::model::{ProjectionKind, View, ViewCenter};
 use crate::astro::{Matrix3, Vector3};
 use std::f64::consts::FRAC_PI_2;
 
-use crate::model::{CartesianCamera, ScreenPoint};
+use super::types::{CartesianCamera, ScreenPoint};
 
 /// Prepare the Cartesian camera basis and projection scale once for a view.
 pub fn prepare_camera(view: &View) -> CartesianCamera {

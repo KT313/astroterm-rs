@@ -1,25 +1,13 @@
 //! Measure frame steps and expose the opt-in execution trace.
-//! Use this module's exports; recording, history and event implementation remain private.
+//! Use this module's exports; recording and the trace implementation remain private.
 use crate::rows::row_columns;
 
 mod pipeline;
-#[path = "recording/averages.rs"]
 mod averages;
-#[path = "recording/batches.rs"]
-mod batches;
-#[path = "history/trace.rs"]
 mod trace;
-#[path = "events/mod.rs"]
-mod memory;
-#[path = "reporting/formatting.rs"]
-mod formatting;
-#[path = "reporting/capture.rs"]
 mod capture;
 pub use capture::CaptureSteps;
-
 pub use trace::{PipelineTrace, TraceStep};
-pub use memory::{Access, BufferId, BufferShape, IndexDomain, MemoryEvent, MemoryStepId, Operation};
-pub(crate) use formatting::format_bytes;
 
 
 /// The smoothed duration of one step.

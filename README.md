@@ -12,9 +12,9 @@ A terminal star map showing stars, planets, the Moon, and constellations.
 
 *Pixel rendering with the AT-HYG catalog in Kitty.*
 
-| Half-block graphics | Unicode characters | Unicode, zoomed in |
-|---|---|---|
-| ![A dense star field rendered with colored half-blocks](docs/images/halfblock_renderer.png) | ![Stars, planets and constellation lines rendered with Unicode characters](docs/images/unicode_renderer.png) | ![A zoomed Unicode view of the Moon, planets and constellation lines](docs/images/unicode_renderer_zoom.png) |
+![A dense star field rendered with colored half-blocks](docs/images/halfblock_renderer.png)
+
+*The same sky as colored half-blocks, for terminals without a graphics protocol.*
 
 ## Usage
 
@@ -22,7 +22,7 @@ With Rust and Cargo installed, run these commands from the project folder:
 
 ```sh
 cargo build --release
-./target/release/astroterm -i Tokyo -cCu -m
+./target/release/astroterm -i Tokyo -C -m
 ```
 
 **Arrow keys look around, `+` / `-` zoom, Space pauses, and `q` quits.**
@@ -32,20 +32,20 @@ cargo build --release
 The built-in Bright Star Catalog works offline without downloads. For about 2.5 million stars, use AT-HYG:
 
 ```sh
-./target/release/astroterm -i Tokyo --dataset athyg -t 8 -cCu
+./target/release/astroterm -i Tokyo --dataset athyg -t 8 -C
 ```
 
 For a larger, partial-sky Gaia subset:
 
 ```sh
-./target/release/astroterm -i Tokyo --dataset gaia-gdr3 --dataset-stars 1000000 -t 10 -c
+./target/release/astroterm -i Tokyo --dataset gaia-gdr3 --dataset-stars 1000000 -t 10
 ```
 
 MAST downloads only needed columns and reuses converted blocks when you increase the count.
 Use `--dataset-files 1` instead for ESA bulk files. See [Gaia loading and limitations](docs/gaia-dataset.md).
 
 Dataset loading shows progress before the sky opens. Use `--no-progress` to hide progress updates.
-With `-m`, the panel shows stars loaded, in candidate regions, passed filtering and passed projection.
+With `-m`, the panel shows the stars loaded, the stars and regions selected for the view and the tile memory held.
 
 ## Views
 
@@ -54,35 +54,35 @@ With `-m`, the panel shows stars loaded, in candidate regions, passed filtering 
 ./target/release/astroterm -i Tokyo -C -m
 
 # Look north-northwest, 20° above the horizon
-./target/release/astroterm -i Tokyo --facing NNW --tilt 20 --fov 120 -cCu
+./target/release/astroterm -i Tokyo --facing NNW --tilt 20 --fov 120 -C
 
 # Freeze the sky at a specific date and time (UTC)
-./target/release/astroterm -i Tokyo -d 2025-03-01T11:00:00 -s 0 -cCu -m
+./target/release/astroterm -i Tokyo -d 2025-03-01T11:00:00 -s 0 -C -m
 
 # Use coordinates instead of a city: latitude, then longitude
-./target/release/astroterm -a 1.29 -o 103.85 -cCu
+./target/release/astroterm -a 1.29 -o 103.85 -C
 ```
 
 Without `--facing`, the view is centered overhead. Looking around with the arrow keys switches to a facing view.
 
-Pixel mode detects Kitty, Sixel or iTerm2 support and falls back to colored half-blocks when needed.
+The sky is drawn as pixels: Kitty, Sixel or iTerm2 graphics are detected, with colored half-blocks as the fallback.
 If graphics look wrong, try `--graphics-protocol halfblocks`. To choose a supported protocol yourself,
 use `--graphics-protocol kitty`, `sixel` or `iterm2`.
 
 Use `--text-scale 0.7` for smaller pixel text or `--text-scale 1.2` for larger text
-(default: `0.85`). This affects Kitty/Sixel/iTerm2 only; characters and half-blocks use your terminal's font size.
+(default: `0.85`). This affects Kitty/Sixel/iTerm2 only; half-blocks use your terminal's font size.
 
 ## Useful options
 
 | Option | What it does |
 |---|---|
-| `-c`, `-u`, `-C` | Character colors, Unicode glyphs, constellation lines; combine as `-cCu` |
+| `-C` | Draw constellation lines |
+| `-u` | Unicode in labels and the panel (Greek letters in Bayer designations, zodiac symbols) |
 | `-m` | Show the date, location and simulation speed |
 | `-s 100` | Run time 100× faster; `-s 0` starts paused |
 | `-t 8` | Show fainter stars; default is `5`. Higher values show more stars and can be slower |
-| `-l 2` | Label more stars; default is `0.25` |
 | `--fov 60` | Zoom into a smaller patch of sky |
-| `--fps 24` | Set the frame-rate target; defaults are 24 for characters and 12 for pixels |
+| `--fps 24` | Set the frame-rate target; the default is 12 |
 | `-R` | Include atmospheric refraction near the horizon |
 
 For all options: `./target/release/astroterm --help`.
@@ -130,8 +130,6 @@ source <(./target/release/astroterm --bash-completions)
 - `--debug-frametimes`: show the time spent calculating and drawing each frame.
 - `--debug-singleframe`: display one frame, then exit and print a detailed timing report.
 - Multi-frame timing: see [bounded frame captures](docs/frame-benchmarks.md) for reproducible per-frame reports.
-- `--disable-cache`: recalculate runtime results every frame; keeps downloaded files and the catalog cache.
-- `--cache-config <path>`: use custom reuse settings; see [examples/cache.toml](examples/cache.toml).
 
 </details>
 
@@ -140,28 +138,29 @@ source <(./target/release/astroterm --bash-completions)
 Gaia DR3 subsets are supported through ESA bulk files or selective MAST Parquet downloads, using G brightness
 in the existing magnitude field. The MAST path removes identical adjacent copies from a known provider duplication.
 
-Solar-system results refresh when simulated time or observer location changes; paused frames reuse completed results.
-A cache TTL of `0` permits same-time reuse; `--disable-cache` disables it.
+The Sun, Moon and planets are evaluated every frame; an unchanged frame sends nothing to the terminal.
 
 Optional [frame timing captures](docs/frame-benchmarks.md) run a fixed number of frames at reproducible simulated dates.
 
 Catalog brightness is stored in steps of 0.001 magnitude; values very close to a display threshold may round across it.
-Stars are filtered by their catalog-epoch sky regions with a fixed motion allowance. At distant dates, fast-moving
-stars may be missing from a view; special handling for them is currently deferred.
-Stellar direction and brightness are cached by region for up to 10 simulated days by default. Use
-`--disable-cache` for fresh calculations every frame, or shorten `stellar_state` in the [cache configuration](examples/cache.toml).
+Stars are filed by their catalog-epoch sky regions with a fixed motion allowance of 0.25°. At distant dates,
+fast-moving stars may be missing from a view; special handling for them is currently deferred.
+Each region's stars are sorted into three speed groups and simulated per group with fixed holds (10 days for the
+fastest group, longer for the others); the drawn stars of a region are kept as a 64 × 64 sky-fixed tile that is
+re-rendered only when its simulation or the brightness threshold changes, and the screen is produced by mapping
+every pixel back to its tile. Tiles of regions that leave the view stay in memory for their return.
 
-This port adds pixel graphics, interactive pan/zoom/time controls and optional AT-HYG downloads. It also improves
-astronomical calculations, curved constellation lines, date handling and observer-local time display.
+This port draws pixel graphics instead of characters (the character renderer of the original was removed), adds
+interactive pan/zoom/time controls and optional AT-HYG downloads, and improves astronomical calculations, curved
+constellation lines, date handling and observer-local time display.
 The five brightest visible stars get labels, using a proper name or catalog identifier. Sun, planet and Moon
 labels are independent. Use `--disable-dynamic-names` to hide star labels; the former `--label-thresh` option has
 been removed. Independent accuracy checks are documented in
 [scripts/reference/README.md](scripts/reference/README.md).
 
-In pixel mode, stars use equal-size four-pixel dots; overlapping stars blend and zooming in boosts their brightness.
+Stars use equal-size four-pixel dots; overlapping stars add their light and zooming in boosts their brightness.
 Stars whose complete dot would cross the image boundary are omitted. The Sun, planets and Moon retain their sizes.
-The interactive renderer draws stars dimmest-first within each sky region, with constellation stars last;
-cross-region overlaps follow that region order. The five brightest star labels are still chosen across the whole view.
+With the azimuthal grid on, its angle labels replace the compass letters.
 
 <details>
 <summary>Credits, citations and data sources</summary>

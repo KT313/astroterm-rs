@@ -1,5 +1,6 @@
 use super::*;
-use astroterm::{cli::{Arguments, build_config}, terminal::CaptureGeometry};
+use astroterm::cli::{Arguments, build_config};
+use crate::helpers::diagnostics::CaptureGeometry;
 use clap::Parser;
 
 fn config() -> Config {

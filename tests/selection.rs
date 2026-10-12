@@ -7,24 +7,22 @@ use astroterm::catalog::{CatalogStar, SpaceMotion, StarId, decode_magnitude, loa
 use astroterm::constants::{GRID_DEPTH, STELLAR_DRIFT_MARGIN};
 use astroterm::model::{ProjectionKind, SkyTables, View, ViewCenter, hash_direction};
 use astroterm::observation::{Observation, observe};
-use astroterm::progress::NoProgress;
 use astroterm::projection::{prepare_camera, project_camera};
 use astroterm::selection::select_regions;
-use astroterm::timing::StepTimes;
 use proptest::prelude::*;
 use std::collections::BTreeSet;
 use std::sync::{Arc, OnceLock};
 
 fn build(catalog: astroterm::catalog::Catalog) -> SkyTables {
-    let prepared = astroterm::sky::prepare_owned_catalog(catalog).unwrap();
-    astroterm::sky::build_sky_tables(&prepared, &mut NoProgress(std::io::sink()), &mut StepTimes::default()).unwrap()
+    let prepared = astroterm::sky::prepare_owned_catalog(catalog, &mut astroterm::progress::Report::quiet()).unwrap();
+    astroterm::sky::build_sky_tables(&prepared, &mut astroterm::progress::Report::quiet()).unwrap()
 }
 
 /// BSC5 plus 4000 random stars, a tenth of them fast movers, as in the old fixture.
 fn tables() -> Arc<SkyTables> {
     static TABLES: OnceLock<Arc<SkyTables>> = OnceLock::new();
     TABLES.get_or_init(|| {
-        let mut catalog = load_embedded_catalog().unwrap();
+        let mut catalog = load_embedded_catalog(&mut astroterm::progress::Report::quiet()).unwrap();
         let mut seed = 17_u64;
         let mut uniform = || {
             seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
@@ -157,7 +155,7 @@ fn seam_threshold_horizon_and_view_edge_cases_are_not_culled() {
         (Horizontal { azimuth: 0.0, altitude: -1_f64.to_radians() }.to_unit_vector(), View { center: ViewCenter::Facing { azimuth: 0.0, tilt: 89.5_f64.to_radians() }, ..View::default() }, true),
         (Horizontal { azimuth: 0.0, altitude: 0.001_f64.to_radians() }.to_unit_vector(), View::default(), false),
     ] {
-        let mut parsed = load_embedded_catalog().unwrap();
+        let mut parsed = load_embedded_catalog(&mut astroterm::progress::Report::quiet()).unwrap();
         let template = parsed.stars[0].clone();
         parsed.stars.clear();
         parsed.constellations.clear();
@@ -192,7 +190,7 @@ fn seam_threshold_horizon_and_view_edge_cases_are_not_culled() {
 /// longer finds it (the documented limitation), while full-sky selection still offers both stars.
 #[test]
 fn fast_stars_use_ordinary_regions_and_large_drift_has_no_special_selection() {
-    let mut source = load_embedded_catalog().unwrap();
+    let mut source = load_embedded_catalog(&mut astroterm::progress::Report::quiet()).unwrap();
     let mut fast = source.stars[0].clone();
     fast.has_data = true;
     fast.id = StarId(1);

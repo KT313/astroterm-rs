@@ -115,18 +115,16 @@ mod tests {
     use crate::catalog::{SpaceMotion, StarId, load_embedded_catalog, magnitude_code};
     use crate::constants::GRID_DEPTH;
     use crate::model::{SkyTables, hash_direction};
-    use crate::progress::NoProgress;
-    use crate::timing::StepTimes;
 
     fn tables_of(catalog: crate::catalog::Catalog) -> SkyTables {
-        let prepared = crate::sky::prepare_owned_catalog(catalog).unwrap();
-        crate::sky::build_sky_tables(&prepared, &mut NoProgress(std::io::sink()), &mut StepTimes::default()).unwrap()
+        let prepared = crate::sky::prepare_owned_catalog(catalog, &mut crate::progress::Report::quiet()).unwrap();
+        crate::sky::build_sky_tables(&prepared, &mut crate::progress::Report::quiet()).unwrap()
     }
-    fn bsc5() -> SkyTables { tables_of(load_embedded_catalog().unwrap()) }
+    fn bsc5() -> SkyTables { tables_of(load_embedded_catalog(&mut crate::progress::Report::quiet()).unwrap()) }
 
     /// One star at `direction` (unit) with the given motion per year in units of its distance, as a catalog of its own.
     fn single_star(direction: Vector3, velocity: Vector3, magnitude: f64) -> SkyTables {
-        let mut parsed = load_embedded_catalog().unwrap();
+        let mut parsed = load_embedded_catalog(&mut crate::progress::Report::quiet()).unwrap();
         let mut star = parsed.stars[0].clone();
         parsed.stars.clear();
         parsed.constellations.clear();

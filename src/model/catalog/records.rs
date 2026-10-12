@@ -89,7 +89,7 @@ mod tests {
 
     #[test]
     fn empty_catalog_matches_preparing_no_rows() {
-        let prepared = crate::sky::prepare_owned_catalog(crate::catalog::Catalog::new(Vec::new(), StarNames::default(), Vec::new())).unwrap();
+        let prepared = crate::sky::prepare_owned_catalog(crate::catalog::Catalog::new(Vec::new(), StarNames::default(), Vec::new()), &mut crate::progress::Report::quiet()).unwrap();
         assert_eq!(SkyCatalog::empty(), prepared.catalog);
         assert!(SkyCatalog::empty().stars.is_empty());
     }

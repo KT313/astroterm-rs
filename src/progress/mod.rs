@@ -1,5 +1,6 @@
 //! Dataset startup reporting without terminal or catalog dependencies. Headless callers retain their writer.
 use std::io::{self, Read, Write};
+use crate::timing::StepTimes;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stage { Resolve, Verify, Connect, Download, Install, Parse, Convert, PlanDownloads, CheckIds, AssignRegions, Reorder, Sort, Index, Group, ReadCache, ValidateCache, WriteCache, FinalizeCache }
@@ -73,5 +74,24 @@ impl<R: Read> Read for ActivityReader<'_, R> {
         self.bytes += read as u64;
         self.progress.set_read_progress(self.bytes, self.total);
         Ok(read)
+    }
+}
+
+/// Where startup work reports: the progress display and the step timings, passed down as one value. `quiet`
+/// reports nowhere (tests, probes); `live` borrows the application's display and timings.
+pub enum Report<'a> {
+    Live { progress: &'a mut dyn DatasetProgress, times: &'a mut StepTimes },
+    Quiet { progress: NoProgress<io::Sink>, times: StepTimes },
+}
+
+impl<'a> Report<'a> {
+    pub fn live(progress: &'a mut dyn DatasetProgress, times: &'a mut StepTimes) -> Self { Self::Live { progress, times } }
+    pub fn quiet() -> Report<'static> { Report::Quiet { progress: NoProgress(io::sink()), times: StepTimes::default() } }
+    /// The display and the timings, borrowed together.
+    pub fn parts(&mut self) -> (&mut dyn DatasetProgress, &mut StepTimes) {
+        match self {
+            Self::Live { progress, times } => (&mut **progress, &mut **times),
+            Self::Quiet { progress, times } => (progress, times),
+        }
     }
 }

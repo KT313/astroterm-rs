@@ -12,7 +12,6 @@ pub struct Config {
     pub no_progress: bool,
     /// Enable explicitly placed table dumps; independent of timing tracing.
     pub debug_log_data: bool,
-    pub cache: crate::cache::CacheConfig,
     /// Raster text size and spacing relative to terminal cells; ignored by native text renderers.
     pub text_scale: f64,
     pub graphics_protocol: GraphicsProtocol,

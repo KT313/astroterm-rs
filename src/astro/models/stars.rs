@@ -17,9 +17,6 @@ impl StellarClass {
     pub fn has_distance(self) -> bool {
         self.0 & 2 != 0
     }
-    pub fn has_variable_brightness(self) -> bool {
-        self.has_distance() && !self.is_stationary()
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -312,3 +309,29 @@ mod tests {
 }
 
 crate::rows::debug_preview!(StellarClass, StellarMotion);
+
+#[cfg(test)]
+mod legacy_bound_tests {
+    use super::*;
+    use crate::astro::models::stars::compute_star_position;
+
+    #[test]
+    fn normalized_motion_change_stays_within_a_derived_legacy_bound() {
+        for dec in [-89.99_f64, -45.0, 0.0, 45.0, 89.99] {
+            let direction = Equatorial { right_ascension: 1.0, declination: dec.to_radians() };
+            let rates = Equatorial { right_ascension: 0.00001, declination: -0.00002 };
+            let star = StellarMotion::from_angles(direction, rates);
+            for years in [-10000.0, -1000.0, -25.0, 0.0, 25.0, 1000.0, 10000.0] {
+                let date = J2000 + years * JULIAN_YEAR_DAYS;
+                let old = compute_star_position(direction, rates, date).to_unit_vector();
+                let new = star.evaluate(years, 5.0).direction;
+                let angle = old.cross(new).length().atan2(old.dot(new));
+                let legacy_years = (date - J2000) / 365.2425;
+                let rate = rates.right_ascension.abs() + rates.declination.abs();
+                // Spherical Taylor remainder <= rate²t²/2; normalization doubles chord error, arc <= π/2 chord.
+                let bound = std::f64::consts::FRAC_PI_2 * (rate * legacy_years).powi(2) + rate * (legacy_years - years).abs();
+                assert!(angle <= bound + 1e-12, "dec {dec}, t {years}: {angle} > {bound}");
+            }
+        }
+    }
+}

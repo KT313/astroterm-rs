@@ -4,29 +4,20 @@ use super::{grid, preparation::{prepare_compact_stars, sort_stars_by_region_and_
 use std::collections::HashMap;
 use std::sync::Arc;
 use crate::timing::StepTimes;
-use crate::progress::{DatasetProgress, NoProgress, Stage, Unit, Outcome};
+use crate::progress::{DatasetProgress, Report, Stage, Unit, Outcome};
 
 use crate::catalog::{Catalog, ConstellationFigure, StarNames};
 
 
 /// Prepare and sort a borrowed catalog, retaining the caller's original rows.
-pub fn prepare_catalog(catalog: &Catalog) -> std::io::Result<PreparedCatalog> {
-    build_catalog(
-        catalog.stars.iter().cloned(),
-        catalog.names.clone(),
-        &catalog.hr_representatives,
-        &catalog.constellations,
-        &mut NoProgress(std::io::sink()),
-        &mut StepTimes::default(),
-    )
+pub fn prepare_catalog(catalog: &Catalog, report: &mut Report<'_>) -> std::io::Result<PreparedCatalog> {
+    let (progress, times) = report.parts();
+    build_catalog(catalog.stars.iter().cloned(), catalog.names.clone(), &catalog.hr_representatives, &catalog.constellations, progress, times)
 }
 
 /// Consume parsed catalog rows while preparing compact storage and constellation indices.
-pub fn prepare_owned_catalog(catalog: Catalog) -> std::io::Result<PreparedCatalog> {
-    prepare_owned_catalog_with_progress(catalog, &mut NoProgress(std::io::sink()), &mut StepTimes::default())
-}
-
-pub(super) fn prepare_owned_catalog_with_progress(catalog: Catalog, progress: &mut dyn DatasetProgress, times: &mut StepTimes) -> std::io::Result<PreparedCatalog> {
+pub fn prepare_owned_catalog(catalog: Catalog, report: &mut Report<'_>) -> std::io::Result<PreparedCatalog> {
+    let (progress, times) = report.parts();
     build_catalog(
         catalog.stars.into_iter(),
         catalog.names,

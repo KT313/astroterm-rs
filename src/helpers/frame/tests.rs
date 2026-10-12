@@ -4,7 +4,6 @@ use astroterm::cli::{Arguments, build_config};
 use astroterm::model::{ProjectionKind, ViewCenter};
 use astroterm::observation::observe;
 use astroterm::present::CompressionSupport;
-use astroterm::progress::NoProgress;
 use astroterm::regions::refresh_regions;
 use astroterm::selection::select_regions;
 use astroterm::solar_system::simulate_solar_system;
@@ -17,8 +16,8 @@ fn config(flags: &[&str]) -> Config {
 }
 
 fn tables() -> SkyTables {
-    let prepared = astroterm::sky::prepare_owned_catalog(astroterm::catalog::load_embedded_catalog().unwrap()).unwrap();
-    astroterm::sky::build_sky_tables(&prepared, &mut NoProgress(std::io::sink()), &mut StepTimes::default()).unwrap()
+    let prepared = astroterm::sky::prepare_owned_catalog(astroterm::catalog::load_embedded_catalog(&mut astroterm::progress::Report::quiet()).unwrap(), &mut astroterm::progress::Report::quiet()).unwrap();
+    astroterm::sky::build_sky_tables(&prepared, &mut astroterm::progress::Report::quiet()).unwrap()
 }
 
 #[test]
@@ -66,11 +65,9 @@ fn the_panel_is_empty_when_off_and_lists_time_counts_display_and_timings_when_on
         assert!(labels.contains(&label), "{label} missing from {labels:?}");
     }
     let value = |label: &str| lines.iter().find(|field| field.label == label).unwrap().value.clone();
-    assert_eq!(value("Stars loaded"), format!("{} stars", group_digits(tables.stars.len() + tables.constellations.len())));
+    assert_eq!(value("Stars loaded"), format!("{} stars", format_star_count(tables.stars.len() + tables.constellations.len())));
     assert!(value("Regions selected").ends_with("(whole sky)"));
     assert!(value("Graphics").contains("1000×800"));
     assert!(value("Groups refreshed").starts_with(&format!("{} simulated", refreshed.simulated)));
     assert!(labels.iter().any(|label| label.trim() == "Projection"));                                // the step timings follow the metadata
-    assert_eq!(group_digits(1234567), "1,234,567");
-    assert_eq!(group_digits(999), "999");
 }

@@ -39,11 +39,11 @@ pub(crate) fn load_catalog(config: &Config, directories: &DatasetDirectories, ti
     let loaded = {
         let mut progress = astroterm::terminal::open_startup_progress(config.no_progress);
         let result = times.measure_steps("Dataset loading", |times| {
-            astroterm::sky::load_sky_catalog_with_times(config.dataset.as_ref(), config.dataset_parallel_blocks, directories, &mut progress, times)
+            astroterm::sky::load_sky_catalog(config.dataset.as_ref(), config.dataset_parallel_blocks, directories, &mut astroterm::progress::Report::live(&mut progress, times))
         });
         let result = result.and_then(|catalog| {
             catalog.catalog.validate_exception_support()?;                                                // reject unsupported sparse data before the frame loop
-            times.measure_steps("Group tables", |times| astroterm::sky::build_sky_tables(&catalog, &mut progress, times)).map(|tables| (catalog, tables))
+            times.measure_steps("Group tables", |times| astroterm::sky::build_sky_tables(&catalog, &mut astroterm::progress::Report::live(&mut progress, times))).map(|tables| (catalog, tables))
         });
         progress.finish(result.is_ok()); // stop all startup drawing before terminal setup or error reporting
         result

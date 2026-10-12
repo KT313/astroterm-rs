@@ -1,6 +1,7 @@
 //! One report writer per process; timings stay in StepTimes and are released after each serialized segment.
-use astroterm::{astro::SimulationClock, model::{Config, FrameBenchmarkConfig, FrameTime}, present::Presented,
-    terminal::{CaptureDisplay, FrameInput}, timing::{CaptureSteps, StepTimes}};
+use astroterm::{astro::{FrameTime, SimulationClock}, model::{Config, FrameBenchmarkConfig}, present::Presented,
+    terminal::FrameInput, timing::{CaptureSteps, StepTimes}};
+use super::CaptureDisplay;
 use serde::Serialize;
 use std::{fs::File, io::{self, BufWriter, Write}, process::ExitCode};
 
@@ -43,8 +44,8 @@ impl<W: Write> BenchmarkSession<W> {
             "type": "run", "schema_version": 1, "requested_frames": self.settings.frames,
             "step_seconds": self.settings.step_seconds, "start_utc_jd": config.simulation.start_julian_date,
             "renderer": display.renderer, "graphics_protocol": display.graphics_protocol, "geometry": display.geometry,
-            "transport": display.transport, "compression_support": display.compression_support, "tmux": display.tmux, "cache_enabled": config.cache.enabled, "timing_panel_enabled": config.terminal.frame_times,
-            "effective_config": {"cache_policy": format!("{:?}", config.cache), "view": format!("{:?}", config.view),
+            "transport": display.transport, "compression_support": display.compression_support, "tmux": display.tmux, "timing_panel_enabled": config.terminal.frame_times,
+            "effective_config": {"view": format!("{:?}", config.view),
                 "render": format!("{:?}", config.render), "observer": format!("{:?}", config.simulation.observer),
                 "refraction": config.simulation.refraction, "metadata_panel": config.terminal.metadata_panel,
                 "fps": config.fps, "text_scale": config.text_scale, "dataset": format!("{:?}", config.dataset)}

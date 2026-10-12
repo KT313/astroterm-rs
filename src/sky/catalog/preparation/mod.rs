@@ -86,7 +86,7 @@ fn resolve_constellation_figure(
 
 #[cfg(test)]
 mod tests {
-    use crate::model::Sky;
+    use crate::model::SkyCatalog;
     use crate::catalog::{Catalog, StarNames, CatalogStar, ConstellationFigure, load_embedded_catalog};
 
     #[test]
@@ -103,27 +103,29 @@ mod tests {
         assert!(super::collect_endpoint_ids(&stars, &empty, &[figure]).is_empty());
     }
 
-    fn build_sky() -> Sky {
-        crate::sky::create_sky_from_catalog(&load_embedded_catalog().expect("embedded catalog loads")).unwrap()
+    fn build() -> SkyCatalog {
+        crate::sky::prepare_catalog(&load_embedded_catalog(&mut crate::progress::Report::quiet()).expect("embedded catalog loads"), &mut crate::progress::Report::quiet()).unwrap().catalog
+    }
+
+    /// The row of a catalog star by its HR number.
+    fn row(catalog: &SkyCatalog, id: u32) -> usize {
+        (0..catalog.stars.len()).find(|&index| catalog.stars.id(index).0 == id).unwrap_or_else(|| panic!("HR {id}"))
     }
 
     #[test]
     fn ids_survive_compaction_and_brightness_sorting() {
-        let sky = build_sky();
-        assert_eq!(sky.stars.len(), 9110 - 14);
-        assert_eq!(
-            sky.star_name(&sky.star_views().find(|star| star.id().0 == 7001).unwrap()),
-            Some("Vega")
-        );
-        let source = load_embedded_catalog().unwrap();
-        for star in sky.star_views() {
-            let original = &source.stars[star.id().0 as usize - 1];
+        let catalog = build();
+        assert_eq!(catalog.stars.len(), 9110 - 14);
+        assert_eq!(catalog.star_name(&catalog.stars.get(row(&catalog, 7001))), Some("Vega"));
+        let source = load_embedded_catalog(&mut crate::progress::Report::quiet()).unwrap();
+        for index in 0..catalog.stars.len() {
+            let original = &source.stars[catalog.stars.id(index).0 as usize - 1];
             let expected = source.names.get(original.name).map(str::to_owned)
                 .unwrap_or_else(|| original.designation.unwrap().format(true));
-            assert_eq!(sky.star_name(&star), Some(expected.as_str()));
+            assert_eq!(catalog.star_name(&catalog.stars.get(index)), Some(expected.as_str()));
         }
-        for range in sky.catalog.grid.offsets.windows(2) {
-            let stars = &sky.catalog.stars;
+        for range in catalog.grid.offsets.windows(2) {
+            let stars = &catalog.stars;
             for i in range[0] + 1..range[1] {
                 assert!(
                     stars.brightness_key(i - 1) < stars.brightness_key(i)
@@ -134,41 +136,18 @@ mod tests {
     }
 
     #[test]
-    fn stars_are_drawn_dimmest_first() {
-        let sky = build_sky();
-        let projected_data = crate::projection::project_sky(
-            &sky,
-            &crate::model::View::default(),
-            crate::model::ProjectionViewport { height: 41, width: 81 },
-        );
-        let projected = projected_data.view(&sky);
-        let drawn: Vec<_> = projected.stars.iter().map(|s| s.star.id().0).collect();
-        assert_eq!(&drawn[..3], &[1894, 365, 3313]);
-        assert_eq!(
-            drawn.iter().rev().take(3).copied().collect::<Vec<_>>(),
-            [2491, 2326, 5340]
-        );
-    }
-
-    #[test]
     fn stars_keep_their_names_and_prepared_colors() {
-        let sky = build_sky();
-        let star = |id| sky.star_views().find(|star| star.id().0 == id).unwrap();
-        assert_eq!(
-            (sky.star_name(&star(2061)), star(2061).display_color()),
-            (Some("Betelgeuse"), crate::model::StarColor::RedOrange)
-        );
-        assert_eq!(
-            (sky.star_name(&star(5340)), star(5340).display_color()),
-            (Some("Arcturus"), crate::model::StarColor::Orange)
-        );
+        let catalog = build();
+        let star = |id| { let index = row(&catalog, id); (catalog.star_name(&catalog.stars.get(index)), catalog.stars.display_color(index)) };
+        assert_eq!(star(2061), (Some("Betelgeuse"), crate::model::StarColor::RedOrange));
+        assert_eq!(star(5340), (Some("Arcturus"), crate::model::StarColor::Orange));
     }
 
     #[test]
-    fn placeholder_stars_are_never_drawn() {
-        let sky = build_sky();
-        assert_eq!(sky.stars.len(), 9110 - 14);
-        assert!(!sky.star_views().any(|star| star.id().0 == 92)); // HR 92 has no data
+    fn placeholder_stars_are_never_prepared() {
+        let catalog = build();
+        assert_eq!(catalog.stars.len(), 9110 - 14);
+        assert!(!(0..catalog.stars.len()).any(|index| catalog.stars.id(index).0 == 92)); // HR 92 has no data
     }
 
     #[test]
@@ -198,17 +177,17 @@ mod tests {
                 figure("Def", vec![[98, 99]]),
             ],
         );
-        let sky = crate::sky::create_sky_from_catalog(&catalog).unwrap();
-        assert_eq!(sky.constellations().len(), 1);
-        let [a, b] = sky.constellations()[0].segments[0];
-        assert_eq!((sky.star_view(a).id().0, sky.star_view(b).id().0), (10, 20));
+        let catalog = crate::sky::prepare_catalog(&catalog, &mut crate::progress::Report::quiet()).unwrap().catalog;
+        assert_eq!(catalog.constellations().len(), 1);
+        let [a, b] = catalog.constellations()[0].segments[0];
+        assert_eq!((catalog.stars.id(a).0, catalog.stars.id(b).0), (10, 20));
     }
 
     #[test]
     fn constellations_reference_star_indices() {
-        let sky = build_sky();
-        assert_eq!(sky.constellations().len(), 88);
-        let [a, b] = sky.constellations()[19].segments[0];
-        assert_eq!((sky.star_view(a).id().0, sky.star_view(b).id().0), (4785, 4915));
+        let catalog = build();
+        assert_eq!(catalog.constellations().len(), 88);
+        let [a, b] = catalog.constellations()[19].segments[0];
+        assert_eq!((catalog.stars.id(a).0, catalog.stars.id(b).0), (4785, 4915));
     }
 }

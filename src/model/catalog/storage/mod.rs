@@ -5,7 +5,6 @@ use crate::constants::{MAX_DIRECTION_ERROR, QUANTIZATION_MARGIN};
 mod columns;
 mod views;
 mod reordering;
-pub(crate) use views::StellarFields;
 pub use columns::{STAR_SECTIONS, StarRow, StarRowSlice, StarRowVec};
 #[cfg(test)]
 use columns::section;
@@ -98,10 +97,6 @@ impl StarStorage {
     /// Inspect original owned columns, including their allocated capacities.
     pub(crate) fn owned_columns(&self) -> &StarRowVec { &self.rows }
     fn rows_mut(&mut self) -> &mut StarRowVec { &mut self.rows }
-    /// Reserved full-precision side table; accepted catalogs always keep it empty.
-    pub(crate) fn precise_motions(&self) -> &CatalogArray<[f64; 7]> {
-        &self.precise_motions
-    }
     pub(crate) fn validate_exception_storage(&self) -> io::Result<()> {
         if !self.precise_motions.is_empty() {
             return Err(crate::model::unsupported_star_data("prepared catalog contains unsupported/orphaned precise-motion records"));
@@ -302,11 +297,7 @@ impl StarStorage {
 
     /// Reorder in place using a permutation, without an expanded or second compact catalog.
     #[cfg(test)]
-    pub(crate) fn reorder(&mut self, order: &[usize], bounds: &mut [f32]) {
-        self.reorder_with_progress(order, bounds, &mut crate::progress::NoProgress(io::sink()));
-    }
-    #[cfg(test)]
-    pub(crate) fn reorder_with_progress(&mut self, order: &[usize], bounds: &mut [f32], progress: &mut dyn crate::progress::DatasetProgress) {
+    pub(crate) fn reorder(&mut self, order: &[usize], bounds: &mut [f32], progress: &mut dyn crate::progress::DatasetProgress) {
         progress.set_detail("Preparing row moves");
         let mut destination = vec![0; self.len()];
         for (new, &old) in order.iter().enumerate() {
@@ -511,14 +502,12 @@ mod tests {
         assert_eq!(sections[section::ID].len(), c.id.len() * 4);
         assert_eq!(sections[section::DISPLAY_COLOR].len(), c.display_color.len());
         assert_eq!(c.id, &[0, 1, 2]);
-        assert_eq!(storage.directions().shape(), &[3, 3]);
         for i in 0..3 {
-            assert_eq!(storage.directions().row(i).to_vec(), c.u0[i]);
             assert_eq!(storage.get(i).id, storage.id(i));
         }
         let mut owned = storage.clone();
         let mut bounds = [0.1, 0.2, 0.3];
-        owned.reorder(&[2, 0, 1], &mut bounds);
+        owned.reorder(&[2, 0, 1], &mut bounds, &mut crate::progress::NoProgress(std::io::sink()));
         assert_eq!(bounds, [0.3, 0.1, 0.2]);
         assert_eq!(owned.columns().id, &[2, 0, 1]);
         assert_eq!(owned.get(0), storage.get(2));

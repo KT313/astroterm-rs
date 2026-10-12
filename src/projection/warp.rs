@@ -17,7 +17,7 @@ use crate::model::{ProjectionKind, View};
 use crate::observation::Observation;
 use crate::projection::prepare_camera;
 use crate::regions::{RegionCaches, STAR_GLYPH_RADIUS, Texel, TileFrame, TileGeometry, tile_frames, zoom_opacity_boost};
-use crate::scene::{TextRasterizer, create_text_rasterizer, set_text_cell_size};
+use crate::text::{TextRasterizer, create_text_rasterizer, set_text_cell_size};
 use crate::selection::Selected;
 use std::f64::consts::FRAC_PI_2;
 use std::sync::OnceLock;
@@ -486,21 +486,19 @@ mod tests {
     use crate::catalog::{SpaceMotion, StarId, load_embedded_catalog};
     use crate::model::{RenderOptions, SkyTables, ViewCenter, hash_direction, region_caps};
     use crate::observation::observe;
-    use crate::progress::NoProgress;
     use crate::projection::{project_camera, project_to_cell};
     use crate::regions::refresh_regions;
     use crate::selection::select_regions;
-    use crate::timing::StepTimes;
 
     fn tables_of(catalog: crate::catalog::Catalog) -> SkyTables {
-        let prepared = crate::sky::prepare_owned_catalog(catalog).unwrap();
-        crate::sky::build_sky_tables(&prepared, &mut NoProgress(std::io::sink()), &mut StepTimes::default()).unwrap()
+        let prepared = crate::sky::prepare_owned_catalog(catalog, &mut crate::progress::Report::quiet()).unwrap();
+        crate::sky::build_sky_tables(&prepared, &mut crate::progress::Report::quiet()).unwrap()
     }
-    fn bsc5() -> SkyTables { tables_of(load_embedded_catalog().unwrap()) }
+    fn bsc5() -> SkyTables { tables_of(load_embedded_catalog(&mut crate::progress::Report::quiet()).unwrap()) }
 
     /// One star at the unit catalog `direction`, as a catalog of its own.
     fn single_star(direction: Vector3, magnitude: f64) -> SkyTables {
-        let mut parsed = load_embedded_catalog().unwrap();
+        let mut parsed = load_embedded_catalog(&mut crate::progress::Report::quiet()).unwrap();
         let mut star = parsed.stars[0].clone();
         parsed.stars.clear();
         parsed.constellations.clear();

@@ -182,19 +182,6 @@ def check_panic(probe):
         terminal.close()
 
 
-def check_startup_fallback(binary):
-    terminal = TerminalProcess([str(binary), "--graphics-protocol", "sixel", "-s", "0"],
-                               pixels=(65535, 65535))
-    try:
-        terminal.until(lambda: b"Pixel startup failed; using characters" in terminal.raw, timeout=20)
-        terminal.send("q")
-        assert terminal.wait_exit() == 0
-        terminal.assert_restored()
-        return "oversized raster falls back to characters with notice"
-    finally:
-        terminal.close()
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=Path("target/release/astroterm"))
@@ -211,7 +198,6 @@ if __name__ == "__main__":
                                   ("rejected_forced", False, True), ("unanswered_forced", None, True)]:
         result["compression_" + name] = check_kitty_compression(args.binary.resolve(), support, forced)
     result["panic_restore"] = check_panic(args.probe.resolve())
-    result["startup_fallback"] = check_startup_fallback(args.binary.resolve())
     print(json.dumps(result, indent=2))
     if args.output:
         args.output.write_text(json.dumps(result, indent=2) + "\n")

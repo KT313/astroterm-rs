@@ -1,6 +1,6 @@
 //! Assemble only the requested physical prefix; cached numerical records are not recomputed here.
 use super::conversion::{self, ConvertedRow};
-use super::super::super::preparation::{create_sort_pool, sort_source_ids};
+use crate::sky::catalog::preparation::{create_sort_pool, sort_source_ids};
 use crate::{catalog::{MastSelection, BlobStore, MastRow, StarNames, StarId}, model::{StarStorage, PreparedCatalog},
     progress::{DatasetProgress, Stage, Unit, Outcome}, timing::StepTimes};
 use std::{io, collections::HashMap};
@@ -82,7 +82,7 @@ pub(super) fn assemble_selected_catalog(selection: &mut MastSelection, store: &B
     progress.finish_stage(Outcome::Complete);
     writeln!(progress, "MAST Gaia DR3: selected raw={selected}; identical duplicate copies removed={duplicates}; missing RA/Dec/G={missing}; loaded={}; missing motion={}; angular-only={}; assumed RV0={}; missing color={}; saturated color={}.", stars.len(), stats[0], stats[1], stats[2], stats[3], stats[4])?;
     times.describe("Gaia loading", || format!("selected raw={selected}; duplicate copies={duplicates}; missing required={missing}; loaded={}", stars.len()));
-    times.measure_steps("Catalog preparation", |times| super::super::super::pipeline::finish_catalog_with_pool(stars, bounds, names, &HashMap::new(), &[], progress, times, pool.as_ref()))
+    times.measure_steps("Catalog preparation", |times| crate::sky::catalog::pipeline::finish_catalog_with_pool(stars, bounds, names, &HashMap::new(), &[], progress, times, pool.as_ref()))
 }
 
 fn compare_boundary(previous: Option<&MastRow>, first: &MastRow) -> io::Result<bool> {

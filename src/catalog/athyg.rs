@@ -7,7 +7,7 @@
 //! are empty fields. `dist` and `x0/y0/z0` are parsecs; `vx/vy/vz` and `rv` are km/s. Validated space-motion
 //! inputs feed the stellar family; precise RA/Dec define the initial direction rather than rounded x0/y0/z0.
 
-use crate::progress::{DatasetProgress, NoProgress, Stage, Unit, Outcome};
+use crate::progress::{DatasetProgress, Stage, Unit, Outcome};
 use std::f64::consts::PI;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read};
@@ -60,11 +60,8 @@ struct Columns {
 }
 
 /// Load an AT-HYG CSV file (`.csv` or gzip-compressed `.csv.gz`), with the embedded constellation figures.
-pub fn load_athyg_catalog(path: &Path) -> Result<Catalog, CatalogError> {
-    load_athyg_catalog_with_times(path, &mut crate::timing::StepTimes::default(), &mut NoProgress(io::sink()))
-}
-
-pub(crate) fn load_athyg_catalog_with_times(path: &Path, times: &mut crate::timing::StepTimes, progress: &mut dyn DatasetProgress) -> Result<Catalog, CatalogError> {
+pub fn load_athyg_catalog(path: &Path, report: &mut crate::progress::Report<'_>) -> Result<Catalog, CatalogError> {
+    let (progress, times) = report.parts();
     let describe_error = |error: io::Error| CatalogError::Io(format!("cannot read {}: {error}", path.display()));
 
     // decompress if the file starts like a gzip file
@@ -76,19 +73,14 @@ pub(crate) fn load_athyg_catalog_with_times(path: &Path, times: &mut crate::timi
         Box::new(file)
     };
 
-    parse_athyg_with_times(reader, times, progress).map_err(|error| match error {
+    parse_athyg(reader, progress, times).map_err(|error| match error {
         CatalogError::Io(message) => CatalogError::Io(format!("cannot read {}: {message}", path.display())),
         other => other,
     })
 }
 
 /// Parse the stars of AT-HYG CSV data.
-#[cfg(test)]
-fn parse_athyg(reader: impl Read) -> Result<Catalog, CatalogError> {
-    parse_athyg_with_times(reader, &mut crate::timing::StepTimes::default(), &mut NoProgress(io::sink()))
-}
-
-fn parse_athyg_with_times(reader: impl Read, times: &mut crate::timing::StepTimes, progress: &mut dyn DatasetProgress) -> Result<Catalog, CatalogError> {
+fn parse_athyg(reader: impl Read, progress: &mut dyn DatasetProgress, times: &mut crate::timing::StepTimes) -> Result<Catalog, CatalogError> {
     progress.begin_stage(Stage::Parse, "AT-HYG", Unit::Rows, None);
     let (stars, names, row, missing, sun) =
         times.measure("CSV validation and parsing", || -> Result<_, CatalogError> {
@@ -325,7 +317,7 @@ fn select_designation(
 
 /// Override only the previously selected representative; BSC5 placeholders contribute nothing.
 fn apply_bsc5_magnitudes(catalog: &mut Catalog) -> Result<(), CatalogError> {
-    let bsc5 = load_embedded_catalog()?;
+    let bsc5 = load_embedded_catalog(&mut crate::progress::Report::quiet())?;
     for star in &mut catalog.stars {
         let Some(hr) = star.hr else {
             continue;
@@ -425,7 +417,7 @@ mod tests {
                     format!("ra,dec,mag,{column}\n1,2,3,{bad}\n")
                 };
                 assert_eq!(
-                    parse_athyg(csv.as_bytes()).unwrap_err(),
+                    parse_athyg(csv.as_bytes(), &mut crate::progress::NoProgress(std::io::sink()), &mut crate::timing::StepTimes::default()).unwrap_err(),
                     CatalogError::MalformedDatasetRow { line: 2, column }
                 );
             }
@@ -436,7 +428,7 @@ mod tests {
             } else {
                 "ra,dec,mag,ci\n1,2,3,1e100\n".to_owned()
             };
-            assert!(parse_athyg(csv.as_bytes()).is_err());
+            assert!(parse_athyg(csv.as_bytes(), &mut crate::progress::NoProgress(std::io::sink()), &mut crate::timing::StepTimes::default()).is_err());
         }
     }
 
@@ -450,11 +442,11 @@ mod tests {
         ] {
             let csv = format!("ra,dec,mag\n{ra},{dec},1\n");
             assert_eq!(
-                parse_athyg(csv.as_bytes()).unwrap_err(),
+                parse_athyg(csv.as_bytes(), &mut crate::progress::NoProgress(std::io::sink()), &mut crate::timing::StepTimes::default()).unwrap_err(),
                 CatalogError::MalformedDatasetRow { line: 2, column }
             );
         }
-        let catalog = parse_athyg(b"ra,dec,mag\n0,-90,1\n23.99,90,1\n,0,1\n0,,1\n0,0,\n".as_slice()).unwrap();
+        let catalog = parse_athyg(b"ra,dec,mag\n0,-90,1\n23.99,90,1\n,0,1\n0,,1\n0,0,\n".as_slice(), &mut crate::progress::NoProgress(std::io::sink()), &mut crate::timing::StepTimes::default()).unwrap();
         assert_eq!(catalog.stars.len(), 2);
         assert!(
             catalog
@@ -462,12 +454,12 @@ mod tests {
                 .iter()
                 .all(|star| star.ra_motion == 0.0 && star.dec_motion == 0.0)
         );
-        assert!(parse_athyg(b"ra,dec,mag,vx\n,,1,NaN\n".as_slice()).is_err());
+        assert!(parse_athyg(b"ra,dec,mag,vx\n,,1,NaN\n".as_slice(), &mut crate::progress::NoProgress(std::io::sink()), &mut crate::timing::StepTimes::default()).is_err());
     }
 
     fn parse_motion_row(row: &str) -> CatalogStar {
         let csv = format!("ra,dec,mag,dist,x0,y0,z0,vx,vy,vz,pmra,pmdec,rv\n{row}\n");
-        parse_athyg(csv.as_bytes()).unwrap().stars.remove(0)
+        parse_athyg(csv.as_bytes(), &mut crate::progress::NoProgress(std::io::sink()), &mut crate::timing::StepTimes::default()).unwrap().stars.remove(0)
     }
 
     #[test]
@@ -508,7 +500,7 @@ mod tests {
     #[test]
     fn hr_representatives_are_fixed_before_bsc5_overrides() {
         // Real AT-HYG duplicates can be separate components sharing an HR; keep every component.
-        let mut catalog = parse_athyg(b"ra,dec,mag,hr,proper\n0,0,1,2491,First\n0,0,-3,2491,Bright\n0,0,-3,2491,Tie\n0,0,5,92,Placeholder\n0,0,,7001,Skipped\n0,0,4,99999,Unknown\n".as_slice()).unwrap();
+        let mut catalog = parse_athyg(b"ra,dec,mag,hr,proper\n0,0,1,2491,First\n0,0,-3,2491,Bright\n0,0,-3,2491,Tie\n0,0,5,92,Placeholder\n0,0,,7001,Skipped\n0,0,4,99999,Unknown\n".as_slice(), &mut crate::progress::NoProgress(std::io::sink()), &mut crate::timing::StepTimes::default()).unwrap();
         assert_eq!(catalog.stars.len(), 5);
         assert_eq!(catalog.hr_representatives[&2491], StarId(1));
         assert_eq!(
@@ -520,14 +512,14 @@ mod tests {
             abbreviation: "Test",
             segments: vec![[2491, 99999]],
         }];
-        let sky = crate::sky::create_sky_from_catalog(&catalog).unwrap();
+        let prepared = crate::sky::prepare_catalog(&catalog, &mut crate::progress::Report::quiet()).unwrap().catalog;
         drop(catalog);
-        let bright = sky.star_views().find(|star| star.id() == StarId(1)).unwrap();
-        assert_eq!(sky.star_name(&bright), Some("Bright"));
-        assert_eq!(sky.star_view(0).id(), StarId(2)); // override made the original representative dimmer than its companion
-        assert_eq!(sky.constellations().len(), 1);
-        let [a, b] = sky.constellations()[0].segments[0];
-        assert_eq!((sky.star_view(a).id(), sky.star_view(b).id()), (StarId(1), StarId(5)));
+        let bright = (0..prepared.stars.len()).find(|&index| prepared.stars.id(index) == StarId(1)).unwrap();
+        assert_eq!(prepared.star_name(&prepared.stars.get(bright)), Some("Bright"));
+        assert_eq!(prepared.stars.id(0), StarId(2)); // override made the original representative dimmer than its companion
+        assert_eq!(prepared.constellations().len(), 1);
+        let [a, b] = prepared.constellations()[0].segments[0];
+        assert_eq!((prepared.stars.id(a), prepared.stars.id(b)), (StarId(1), StarId(5)));
     }
 
     #[test]
@@ -543,7 +535,7 @@ mod tests {
     fn finite_but_unrepresentable_scaled_velocity_is_rejected() {
         let csv = b"ra,dec,mag,dist,rv\n1,2,3,1e-300,1e308\n";
         assert_eq!(
-            parse_athyg(csv.as_slice()).unwrap_err(),
+            parse_athyg(csv.as_slice(), &mut crate::progress::NoProgress(std::io::sink()), &mut crate::timing::StepTimes::default()).unwrap_err(),
             CatalogError::MalformedDatasetRow {
                 line: 2,
                 column: "dist"
@@ -584,7 +576,7 @@ id,tyc,gaia,hip,hr,bayer,flam,con,proper,ra,dec,dist,mag,ci,pmra,pmdec,spect
 ";
 
     fn parse_sample() -> Catalog {
-        parse_athyg(SAMPLE.as_bytes()).expect("sample parses")
+        parse_athyg(SAMPLE.as_bytes(), &mut crate::progress::NoProgress(std::io::sink()), &mut crate::timing::StepTimes::default()).expect("sample parses")
     }
 
     #[test]
@@ -631,8 +623,8 @@ id,tyc,gaia,hip,hr,bayer,flam,con,proper,ra,dec,dist,mag,ci,pmra,pmdec,spect
         encoder.write_all(SAMPLE.as_bytes()).unwrap();
         std::fs::write(&gzipped, encoder.finish().unwrap()).unwrap();
 
-        let from_plain = load_athyg_catalog(&plain).unwrap();
-        let from_gzip = load_athyg_catalog(&gzipped).unwrap();
+        let from_plain = load_athyg_catalog(&plain, &mut crate::progress::Report::quiet()).unwrap();
+        let from_gzip = load_athyg_catalog(&gzipped, &mut crate::progress::Report::quiet()).unwrap();
         std::fs::remove_dir_all(&directory).unwrap();
         assert_eq!(from_plain.stars, from_gzip.stars);
         assert_eq!(from_gzip.constellations.len(), 88);
@@ -640,14 +632,14 @@ id,tyc,gaia,hip,hr,bayer,flam,con,proper,ra,dec,dist,mag,ci,pmra,pmdec,spect
 
     #[test]
     fn missing_columns_and_bad_values_are_reported() {
-        let missing = parse_athyg("ra,dec\n1,2\n".as_bytes());
+        let missing = parse_athyg("ra,dec\n1,2\n".as_bytes(), &mut crate::progress::NoProgress(std::io::sink()), &mut crate::timing::StepTimes::default());
         assert_eq!(missing, Err(CatalogError::MissingColumn("mag")));
-        let malformed = parse_athyg("ra,dec,mag\n1,2,3\n1,x,3\n".as_bytes());
+        let malformed = parse_athyg("ra,dec,mag\n1,2,3\n1,x,3\n".as_bytes(), &mut crate::progress::NoProgress(std::io::sink()), &mut crate::timing::StepTimes::default());
         assert_eq!(
             malformed,
             Err(CatalogError::MalformedDatasetRow { line: 3, column: "dec" })
         );
-        let unreadable = load_athyg_catalog(Path::new("/nonexistent/athyg.csv"));
+        let unreadable = load_athyg_catalog(Path::new("/nonexistent/athyg.csv"), &mut crate::progress::Report::quiet());
         assert!(matches!(unreadable, Err(CatalogError::Io(message)) if message.contains("/nonexistent/athyg.csv")));
     }
 }

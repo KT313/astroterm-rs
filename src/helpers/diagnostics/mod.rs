@@ -7,9 +7,10 @@ use std::io;
 use std::process::ExitCode;
 use std::time::Instant;
 use astroterm::cli::Arguments;
-use astroterm::model::{Config, FrameTime};
+use astroterm::astro::FrameTime;
+use astroterm::model::Config;
 use astroterm::present::{CompressionSupport, DisplayInfo, Presented};
-use astroterm::terminal::{CaptureDisplay, CaptureGeometry};
+use serde::Serialize;
 use astroterm::timing::StepTimes;
 use ratatui_image::picker::ProtocolType;
 
@@ -69,6 +70,25 @@ pub(crate) fn finish_frame_diagnostics(config: &Config, frame_start: Instant, ti
         elapsed * 1000.0, time.utc
     ));
     elapsed
+}
+
+/// The terminal geometry a benchmark record carries.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct CaptureGeometry {
+    pub screen_cells: [u32; 2],
+    pub font_pixels: Option<[u32; 2]>,
+    pub image_pixels: Option<[u32; 2]>,
+}
+
+/// The display facts a benchmark record carries: small owned values, no image copies.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct CaptureDisplay {
+    pub renderer: &'static str,
+    pub graphics_protocol: &'static str,
+    pub geometry: CaptureGeometry,
+    pub transport: &'static str,
+    pub compression_support: &'static str,
+    pub tmux: bool,
 }
 
 /// The display facts a benchmark record carries, checked against the terminal's current size.

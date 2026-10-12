@@ -6,7 +6,7 @@ use std::{io, time::{Instant, Duration}};
 
 pub(super) fn download_ranges(store: &BlobStore, job: &Job, fetch: &impl Fetch, control: &TransferControl, admitted: Instant) -> io::Result<parquet::Ranges> {
     control.check()?;
-    let footer: Footer = decode(&store.read_object(&job.footer_hash)?)?;
+    let footer: Footer = decode(&store.read_object(&job.footer_hash, &mut crate::progress::NoProgress(std::io::sink()))?)?;
     let mut input = parquet::Ranges {
         size: footer.identity.size,
         parts: vec![(footer.identity.size - footer.bytes.len() as u64, Bytes::from(footer.bytes))],

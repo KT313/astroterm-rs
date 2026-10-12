@@ -21,8 +21,8 @@ const TOKYO: Observer = Observer { latitude: 0.6228, longitude: 2.4382 };       
 const UTC_2025_03_01_11H: f64 = 2460735.958333333;
 
 fn tables() -> SkyTables {
-    let prepared = prepare_owned_catalog(load_embedded_catalog().unwrap()).unwrap();
-    build_sky_tables(&prepared, &mut NoProgress(std::io::sink()), &mut StepTimes::default()).unwrap()
+    let prepared = prepare_owned_catalog(load_embedded_catalog(&mut astroterm::progress::Report::quiet()).unwrap(), &mut astroterm::progress::Report::quiet()).unwrap();
+    build_sky_tables(&prepared, &mut astroterm::progress::Report::live(&mut NoProgress(std::io::sink()), &mut StepTimes::default())).unwrap()
 }
 
 fn settings() -> RenderOptions {

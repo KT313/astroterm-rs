@@ -44,7 +44,7 @@ fn selection_cache_identity(selected: &MastSelection, policy: &str, cache_root: 
 }
 
 fn save_prepared_catalog(path: Option<std::path::PathBuf>, prepared: &PreparedCatalog, fingerprint: &[u8; 32], progress: &mut dyn DatasetProgress, times: &mut StepTimes) -> io::Result<()> {
-    if let Some(path) = path && let Err(error) = super::super::cache::write_cached_catalog_with_times(&path, prepared, fingerprint, progress, times) {
+    if let Some(path) = path && let Err(error) = crate::sky::write_cached_catalog(&path, prepared, fingerprint, &mut crate::progress::Report::live(progress, times)) {
         progress.finish_stage(crate::progress::Outcome::Failed);
         writeln!(progress, "Could not save prepared MAST catalog: {error}; converted blocks remain available.")?;
     }
@@ -72,7 +72,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("occupied");
         std::fs::create_dir(&path).unwrap();
-        let catalog = crate::sky::prepare_owned_catalog(crate::catalog::Catalog::new(Vec::new(), crate::catalog::StarNames::default(), Vec::new())).unwrap();
+        let catalog = crate::sky::prepare_owned_catalog(crate::catalog::Catalog::new(Vec::new(), crate::catalog::StarNames::default(), Vec::new()), &mut crate::progress::Report::quiet()).unwrap();
         let mut reporter = Reporter::default();
         save_prepared_catalog(Some(path.clone()), &catalog, &[0; 32], &mut reporter, &mut StepTimes::default()).unwrap();
         assert!(path.is_dir());

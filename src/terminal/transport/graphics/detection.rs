@@ -21,14 +21,6 @@ pub fn describe_compression(value: CompressionSupport) -> &'static str {
     }
 }
 
-pub fn select_transport_notice(protocol: ProtocolType, shared_memory: bool) -> Option<&'static str> {
-    match protocol {
-        ProtocolType::Halfblocks => Some("Pixel renderer: half-block output (no graphics protocol selected)."),
-        ProtocolType::Kitty if !shared_memory => Some("Shared memory unavailable; using streaming."),
-        _ => None,
-    }
-}
-
 #[derive(Default)]
 struct Capabilities {
     protocol: Option<ProtocolType>,
@@ -182,15 +174,6 @@ fn query_capabilities(_tmux: bool, _out: &mut impl io::Write, _blacklist: bool) 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn shared_memory_notice_is_limited_to_unavailable_kitty_transfers() {
-        assert_eq!(select_transport_notice(ProtocolType::Kitty, false), Some("Shared memory unavailable; using streaming."));
-        assert!(select_transport_notice(ProtocolType::Kitty, true).is_none());
-        assert!(select_transport_notice(ProtocolType::Sixel, false).is_none());
-        assert!(select_transport_notice(ProtocolType::Iterm2, false).is_none());
-        assert!(select_transport_notice(ProtocolType::Halfblocks, false).unwrap().contains("half-block"));
-    }
 
     #[test]
     fn shared_memory_requires_an_explicit_successful_query_reply() {

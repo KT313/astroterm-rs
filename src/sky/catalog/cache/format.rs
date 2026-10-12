@@ -6,13 +6,11 @@ use super::super::grid::stored_cell;
 use super::validation::IdScratch;
 use crate::catalog::{
     StarNames,
-    cache::{PreparedCatalogReader, invalid, write_sections_with_times},
+    cache::{PreparedCatalogReader, invalid, write_sections},
     load_constellation_figures,
 };
 use sha2::{Digest, Sha256};
 use crate::{progress::{DatasetProgress, Unit}, timing::StepTimes};
-#[cfg(test)]
-use crate::catalog::cache::write_sections;
 use std::{
     collections::HashSet,
     fs,
@@ -73,7 +71,6 @@ pub fn catalog_fingerprint() -> [u8; 32] {
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/model/catalog/storage/reordering.rs")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/model/catalog/grid.rs")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/model/catalog/records.rs")).as_slice(),
-        include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/model/celestial/objects.rs")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/sky/catalog/grid/mod.rs")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/sky/mod.rs")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/sky/catalog/pipeline.rs")).as_slice(),
@@ -115,15 +112,9 @@ pub fn cache_path(source: &Path, directory: &Path) -> io::Result<PathBuf> {
     )))
 }
 
-pub fn write_cached_catalog(path: &Path, prepared: &PreparedCatalog, fingerprint: &[u8; 32]) -> io::Result<()> {
-    write_cached_catalog_with_progress(path, prepared, fingerprint, &mut crate::progress::NoProgress(io::sink()))
-}
-
-pub(crate) fn write_cached_catalog_with_progress(path: &Path, prepared: &PreparedCatalog, fingerprint: &[u8; 32], progress: &mut dyn crate::progress::DatasetProgress) -> io::Result<()> {
-    write_cached_catalog_with_times(path, prepared, fingerprint, progress, &mut StepTimes::default())
-}
-
-pub(crate) fn write_cached_catalog_with_times(path: &Path, prepared: &PreparedCatalog, fingerprint: &[u8; 32], progress: &mut dyn DatasetProgress, times: &mut StepTimes) -> io::Result<()> {
+/// Write the prepared catalog to its cache file, validating it first; progress and timings go to `report`.
+pub fn write_cached_catalog(path: &Path, prepared: &PreparedCatalog, fingerprint: &[u8; 32], report: &mut crate::progress::Report<'_>) -> io::Result<()> {
+    let (progress, times) = report.parts();
     times.measure_steps("Prepared catalog write", |times| write_prepared_sections(path, prepared, fingerprint, progress, times))
 }
 
@@ -153,18 +144,12 @@ fn write_prepared_sections(path: &Path, prepared: &PreparedCatalog, fingerprint:
         bytemuck::cast_slice(catalog.stars.source_ids().unwrap_or(&[])),
         &label_mode,
     ]);
-    write_sections_with_times(path, fingerprint, &sections, progress, times)
+    write_sections(path, fingerprint, &sections, progress, times)
 }
 
-pub fn load_cached_catalog(path: &Path, fingerprint: &[u8; 32]) -> io::Result<PreparedCatalog> {
-    load_cached_catalog_with_progress(path, fingerprint, &mut crate::progress::NoProgress(io::sink()))
-}
-
-pub(super) fn load_cached_catalog_with_progress(path: &Path, fingerprint: &[u8; 32], progress: &mut dyn crate::progress::DatasetProgress) -> io::Result<PreparedCatalog> {
-    load_cached_catalog_with_times(path, fingerprint, progress, &mut StepTimes::default())
-}
-
-pub(super) fn load_cached_catalog_with_times(path: &Path, fingerprint: &[u8; 32], progress: &mut dyn DatasetProgress, times: &mut StepTimes) -> io::Result<PreparedCatalog> {
+/// Read and validate a prepared catalog whose file carries `fingerprint`; progress and timings go to `report`.
+pub fn load_cached_catalog(path: &Path, fingerprint: &[u8; 32], report: &mut crate::progress::Report<'_>) -> io::Result<PreparedCatalog> {
+    let (progress, times) = report.parts();
     let prepared = times.measure("Prepared section reading", || read_prepared_sections(path, fingerprint, progress))?;
     times.measure_steps("Prepared catalog validation", |times| validate_catalog(&prepared.catalog, &prepared.preparation, false, progress, times))?;
     progress.finish_stage(crate::progress::Outcome::Complete);
@@ -377,67 +362,37 @@ fn decode_figures(bytes: &[u8]) -> io::Result<Vec<Constellation>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sky::load_sky_catalog;
     use crate::catalog::{load_embedded_catalog, datasets::{Dataset, DatasetDirectories}};
-    use crate::astro::{J2000, Observer};
-    use crate::canvas::Canvas;
-    use crate::model::{Sky, ProjectionViewport as Viewport, View, RenderOptions};
-    use crate::projection::project_sky;
-    use crate::scene::draw_sky_scene;
-    use crate::sky::update_sky_positions;
+    use crate::model::SkyTables;
+    use crate::progress::NoProgress;
     use crate::timing::StepTimes;
-    use std::sync::Arc;
 
     fn prepared() -> PreparedCatalog {
-        crate::sky::prepare_owned_catalog(load_embedded_catalog().unwrap()).unwrap()
+        crate::sky::prepare_owned_catalog(load_embedded_catalog(&mut crate::progress::Report::quiet()).unwrap(), &mut crate::progress::Report::quiet()).unwrap()
     }
-    fn render(prepared: PreparedCatalog, threshold: f64, date: f64) -> Canvas {
-        let mut sky = Sky::new(Arc::new(prepared.catalog));
-        update_sky_positions(
-            &mut sky,
-            date,
-            &Observer::default(),
-            threshold,
-            &mut StepTimes::default(),
-        );
-        crate::sky::refract_sky_positions(&mut sky);
-        let mut canvas = Canvas::new(41, 81);
-        let options = RenderOptions {
-            unicode: true,
-            braille: true,
-            color: true,
-            constellations: true,
-            grid: false,
-            magnitude_threshold: threshold,
-            dynamic_names: true,
-        };
-        draw_sky_scene(
-            &mut canvas,
-            &options,
-            &project_sky(&sky, &View::default(), Viewport { height: 41, width: 81 }).view(&sky),
-        );
-        canvas
+    /// The loader without progress display or timings, with its notices collected.
+    fn load_sky_catalog(dataset: Option<&Dataset>, dirs: &DatasetDirectories, notices: &mut Vec<u8>) -> io::Result<PreparedCatalog> {
+        crate::sky::load_sky_catalog(dataset, crate::constants::MAST_PARALLEL_BLOCKS, dirs, &mut crate::progress::Report::live(&mut NoProgress(notices), &mut StepTimes::default()))
+    }
+    fn tables(prepared: &PreparedCatalog) -> SkyTables {
+        crate::sky::build_sky_tables(prepared, &mut crate::progress::Report::quiet()).unwrap()
     }
     #[test]
-    fn owned_roundtrip_preserves_data_threshold_edges_and_frames() {
+    fn owned_roundtrip_preserves_data_threshold_edges_and_tables() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("catalog");
         let source = prepared();
         let fingerprint = catalog_fingerprint();
-        write_cached_catalog(&path, &source, &fingerprint).unwrap();
-        let cached = load_cached_catalog(&path, &fingerprint).unwrap();
+        write_cached_catalog(&path, &source, &fingerprint, &mut crate::progress::Report::quiet()).unwrap();
+        let cached = load_cached_catalog(&path, &fingerprint, &mut crate::progress::Report::quiet()).unwrap();
         assert_eq!(source, cached);
         for threshold in [5_f32.next_down() as f64, 5.0, 5_f32.next_up() as f64] {
-            for date in [J2000, J2000 + 1e6, crate::astro::COMPUTATIONAL_INTERVAL.end_tt] {
-                assert_eq!(
-                    render(source.clone(), threshold, date),
-                    render(cached.clone(), threshold, date)
-                );
-            }
+            assert_eq!(source.catalog.count_bright_stars(threshold), cached.catalog.count_bright_stars(threshold));
         }
+        assert_eq!(tables(&source), tables(&cached));                                       // the frame loop's tables are the same
         drop(cached);
-        let cached = load_cached_catalog(&path, &fingerprint).unwrap();
-        write_cached_catalog(&path, &source, &fingerprint).unwrap(); // atomic replacement cannot change already loaded data
+        let cached = load_cached_catalog(&path, &fingerprint, &mut crate::progress::Report::quiet()).unwrap();
+        write_cached_catalog(&path, &source, &fingerprint, &mut crate::progress::Report::quiet()).unwrap(); // atomic replacement cannot change already loaded data
         fs::remove_file(&path).unwrap();
         assert_eq!(cached, source); // no file or reader is needed after loading
     }
@@ -449,7 +404,7 @@ mod tests {
         sections
     }
     fn save_sections(path: &Path, fingerprint: &[u8; 32], sections: &[Vec<u8>]) {
-        write_sections(path, fingerprint, &sections.iter().map(Vec::as_slice).collect::<Vec<_>>(), &mut crate::progress::NoProgress(io::sink())).unwrap();
+        write_sections(path, fingerprint, &sections.iter().map(Vec::as_slice).collect::<Vec<_>>(), &mut crate::progress::NoProgress(io::sink()), &mut crate::timing::StepTimes::default()).unwrap();
     }
     #[test]
     fn exception_payloads_are_rejected_without_rebuilding_from_source() {
@@ -466,7 +421,7 @@ mod tests {
         for section_index in [EXCEPTIONS, STAR_SECTIONS - 1] {
             let mut sections = original.clone();
             sections[section_index] = vec![0; 56]; // nonempty placeholder or orphan; contents must never be consumed
-            write_sections(&path, &fingerprint, &sections.iter().map(Vec::as_slice).collect::<Vec<_>>(), &mut crate::progress::NoProgress(io::sink())).unwrap();
+            write_sections(&path, &fingerprint, &sections.iter().map(Vec::as_slice).collect::<Vec<_>>(), &mut crate::progress::NoProgress(io::sink()), &mut crate::timing::StepTimes::default()).unwrap();
             let saved = fs::read(&path).unwrap();
             let error = load_sky_catalog(Some(&dataset), &dirs, &mut notices).unwrap_err();
             assert_eq!(error.kind(), io::ErrorKind::Unsupported);
@@ -477,7 +432,7 @@ mod tests {
         invalid.catalog.star_exceptions.push(crate::model::StarException {
             catalog_row_index: 0, uses_motion_fallback: true, precise_motion_entry: 0,
         });
-        let error = write_cached_catalog(&root.path().join("must-not-exist"), &invalid, &fingerprint).unwrap_err();
+        let error = write_cached_catalog(&root.path().join("must-not-exist"), &invalid, &fingerprint, &mut crate::progress::Report::quiet()).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::Unsupported);
         assert!(!root.path().join("must-not-exist").exists());
     }
@@ -488,14 +443,14 @@ mod tests {
         let path = dir.path().join("cache");
         let data = prepared();
         let fingerprint = catalog_fingerprint();
-        write_cached_catalog(&path, &data, &fingerprint).unwrap();
+        write_cached_catalog(&path, &data, &fingerprint, &mut crate::progress::Report::quiet()).unwrap();
         let mut sections = read_sections(&path, &fingerprint);
         for (axis, value) in data.catalog.stars.columns().u0[0].into_iter().enumerate() {
             sections[1][axis * 4..axis * 4 + 4].copy_from_slice(&(-value * 0.001).to_le_bytes());
         }
         sections[4][..4].copy_from_slice(&1f32.to_le_bytes());
         save_sections(&path, &fingerprint, &sections);
-        assert_eq!(load_cached_catalog(&path, &fingerprint).unwrap_err().kind(), io::ErrorKind::Unsupported);
+        assert_eq!(load_cached_catalog(&path, &fingerprint, &mut crate::progress::Report::quiet()).unwrap_err().kind(), io::ErrorKind::Unsupported);
     }
 
     #[test]
@@ -503,7 +458,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("cache");
         let fingerprint = catalog_fingerprint();
-        write_cached_catalog(&path, &prepared(), &fingerprint).unwrap();
+        write_cached_catalog(&path, &prepared(), &fingerprint, &mut crate::progress::Report::quiet()).unwrap();
         let original = read_sections(&path, &fingerprint);
         for (index, payload, message) in [
             (3, 65535_u16.to_le_bytes().to_vec(), "encoded brightness bound"),
@@ -512,7 +467,7 @@ mod tests {
             let mut sections = original.clone();
             sections[index][..payload.len()].copy_from_slice(&payload);
             save_sections(&path, &fingerprint, &sections);
-            let error = load_cached_catalog(&path, &fingerprint).unwrap_err();
+            let error = load_cached_catalog(&path, &fingerprint, &mut crate::progress::Report::quiet()).unwrap_err();
             assert!(error.to_string().contains(message), "{error}");
         }
     }
@@ -523,7 +478,7 @@ mod tests {
         let path = dir.path().join("catalog");
         let source = prepared();
         let fingerprint = catalog_fingerprint();
-        write_cached_catalog(&path, &source, &fingerprint).unwrap();
+        write_cached_catalog(&path, &source, &fingerprint, &mut crate::progress::Report::quiet()).unwrap();
         let original = read_sections(&path, &fingerprint);
         for case in 0..14 {
             let mut sections = original.clone();
@@ -544,7 +499,7 @@ mod tests {
                 _ => sections[LABEL_MODE][0] = 1,
             }
             save_sections(&path, &fingerprint, &sections);
-            assert!(load_cached_catalog(&path, &fingerprint).is_err(), "case {case}");
+            assert!(load_cached_catalog(&path, &fingerprint, &mut crate::progress::Report::quiet()).is_err(), "case {case}");
         }
     }
     #[test]
@@ -560,7 +515,7 @@ mod tests {
         let mut notices = Vec::new();
         let expected = load_sky_catalog(Some(&dataset), &dirs, &mut notices).unwrap();
         let path = cache_path(&source, dirs.cache.as_ref().unwrap()).unwrap();
-        assert_eq!(load_cached_catalog(&path, &super::super::loading::fingerprint_source(&Some(path.clone()))).unwrap(), expected);
+        assert_eq!(load_cached_catalog(&path, &super::super::loading::fingerprint_source(&Some(path.clone())), &mut crate::progress::Report::quiet()).unwrap(), expected);
         assert_eq!(load_sky_catalog(Some(&dataset), &dirs, &mut notices).unwrap(), expected);
         fs::write(&path, b"broken cache").unwrap();
         let rebuilt = load_sky_catalog(Some(&dataset), &dirs, &mut notices).unwrap();
@@ -592,9 +547,9 @@ mod tests {
         assert_ne!(before, cache_path(&source, dir.path()).unwrap());
         let path = dir.path().join("cache");
         let mut fingerprint = catalog_fingerprint();
-        write_cached_catalog(&path, &prepared(), &fingerprint).unwrap();
+        write_cached_catalog(&path, &prepared(), &fingerprint, &mut crate::progress::Report::quiet()).unwrap();
         fingerprint[0] ^= 1;
-        assert!(load_cached_catalog(&path, &fingerprint).is_err());
+        assert!(load_cached_catalog(&path, &fingerprint, &mut crate::progress::Report::quiet()).is_err());
     }
     #[cfg(unix)]
     #[test]
@@ -628,7 +583,7 @@ mod tests {
     fn precision_exceptions_are_rejected_while_supported_labels_survive_cached_loading() {
         use crate::astro::{Equatorial, Vector3};
         use crate::catalog::{CatalogStar, Designation, SpaceMotion, StarId};
-        let mut input = load_embedded_catalog().unwrap();
+        let mut input = load_embedded_catalog(&mut crate::progress::Report::quiet()).unwrap();
         input.stars.clear();
         input.constellations.clear();
         input.hr_representatives.clear();
@@ -688,28 +643,27 @@ mod tests {
                 has_data: true,
             });
         }
-        let error = crate::sky::prepare_catalog(&input).unwrap_err();
+        let error = crate::sky::prepare_catalog(&input, &mut crate::progress::Report::quiet()).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::Unsupported);
         assert!(error.to_string().contains("higher-precision trajectory"));
         for star in &mut input.stars { star.space_motion.as_mut().unwrap().velocity = v * 0.001; }
-        let catalog = crate::sky::prepare_owned_catalog(input).unwrap();
+        let catalog = crate::sky::prepare_owned_catalog(input, &mut crate::progress::Report::quiet()).unwrap();
         assert_eq!(catalog.catalog.stars.precise_count(), 0);
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("cache");
         let fingerprint = catalog_fingerprint();
-        write_cached_catalog(&path, &catalog, &fingerprint).unwrap();
-        let cached = load_cached_catalog(&path, &fingerprint).unwrap();
+        write_cached_catalog(&path, &catalog, &fingerprint, &mut crate::progress::Report::quiet()).unwrap();
+        let cached = load_cached_catalog(&path, &fingerprint, &mut crate::progress::Report::quiet()).unwrap();
         assert_eq!(cached, catalog);
         for storage in [&catalog.catalog.stars, &cached.catalog.stars] {
-            let trajectories = storage.borrow_trajectory_fields();
             for i in 0..storage.len() {
                 let full = storage.get(i);
-                assert_eq!(trajectories.motion(i), full.motion);
+                assert_eq!(storage.motion(i), full.motion);
                 assert_eq!(storage.name(i), full.name);
             }
         }
 
-        assert_eq!(render(cached, 5.0, J2000), render(catalog, 5.0, J2000));
+        assert_eq!(tables(&cached), tables(&catalog));
     }
 
     #[test]
@@ -719,12 +673,12 @@ mod tests {
         let source = prepared();
         let fingerprint = catalog_fingerprint();
         std::thread::scope(|scope| {
-            let first = scope.spawn(|| write_cached_catalog(&path, &source, &fingerprint));
-            let second = scope.spawn(|| write_cached_catalog(&path, &source, &fingerprint));
+            let first = scope.spawn(|| write_cached_catalog(&path, &source, &fingerprint, &mut crate::progress::Report::quiet()));
+            let second = scope.spawn(|| write_cached_catalog(&path, &source, &fingerprint, &mut crate::progress::Report::quiet()));
             first.join().unwrap().unwrap();
             second.join().unwrap().unwrap();
         });
-        assert_eq!(load_cached_catalog(&path, &fingerprint).unwrap(), source);
+        assert_eq!(load_cached_catalog(&path, &fingerprint, &mut crate::progress::Report::quiet()).unwrap(), source);
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 
@@ -752,12 +706,12 @@ mod tests {
     }
 
     fn prepare_with_ids(ids: &[u32]) -> PreparedCatalog {
-        let mut input = load_embedded_catalog().unwrap();
+        let mut input = load_embedded_catalog(&mut crate::progress::Report::quiet()).unwrap();
         input.stars.truncate(ids.len());
         input.constellations.clear();
         input.hr_representatives.clear();
         for (star, &id) in input.stars.iter_mut().zip(ids) { star.id = crate::catalog::StarId(id); }
-        crate::sky::prepare_owned_catalog(input).unwrap()
+        crate::sky::prepare_owned_catalog(input, &mut crate::progress::Report::quiet()).unwrap()
     }
 
     #[test]
@@ -767,21 +721,21 @@ mod tests {
         for ids in [vec![], vec![u32::MAX], vec![0, 1, 2, 3], vec![0, 1, u32::MAX - 1, u32::MAX]] {
             let path = root.path().join(format!("catalog-{}", ids.len()));
             let source = prepare_with_ids(&ids);
-            write_cached_catalog(&path, &source, &fingerprint).unwrap();
-            assert_eq!(load_cached_catalog(&path, &fingerprint).unwrap(), source);
+            write_cached_catalog(&path, &source, &fingerprint, &mut crate::progress::Report::quiet()).unwrap();
+            assert_eq!(load_cached_catalog(&path, &fingerprint, &mut crate::progress::Report::quiet()).unwrap(), source);
             if ids.len() < 2 { continue; }
 
             let mut sections = read_sections(&path, &fingerprint);
             let first_id = sections[5][..4].to_vec();
             sections[5][4..8].copy_from_slice(&first_id);
             save_sections(&path, &fingerprint, &sections);                                  // valid compression and CRC cannot hide duplicate IDs
-            assert!(load_cached_catalog(&path, &fingerprint).is_err());
+            assert!(load_cached_catalog(&path, &fingerprint, &mut crate::progress::Report::quiet()).is_err());
 
             let mut duplicate_ids = ids;
             duplicate_ids[1] = duplicate_ids[0];
             let invalid = prepare_with_ids(&duplicate_ids);
             let before = fs::read(&path).unwrap();
-            assert!(write_cached_catalog(&path, &invalid, &fingerprint).is_err());
+            assert!(write_cached_catalog(&path, &invalid, &fingerprint, &mut crate::progress::Report::quiet()).is_err());
             assert_eq!(fs::read(&path).unwrap(), before);                                  // the public writer must reject invalid data before publication
         }
     }
@@ -792,7 +746,7 @@ mod tests {
         let path = root.path().join("invalid-labels");
         let mut source = prepare_with_ids(&[]);
         source.catalog.names = StarNames::absent();                                       // valid only for Gaia; stored labels need their zero boundary even when empty
-        let error = write_cached_catalog(&path, &source, &catalog_fingerprint()).unwrap_err();
+        let error = write_cached_catalog(&path, &source, &catalog_fingerprint(), &mut crate::progress::Report::quiet()).unwrap_err();
         assert!(error.to_string().contains("label boundaries"));
         assert!(!path.exists());
     }
@@ -803,7 +757,7 @@ mod tests {
         let path = dir.path().join("cache");
         let mut source = prepared();
         source.preparation.motion_bounds.clear();
-        assert!(write_cached_catalog(&path, &source, &catalog_fingerprint()).is_err());
+        assert!(write_cached_catalog(&path, &source, &catalog_fingerprint(), &mut crate::progress::Report::quiet()).is_err());
         assert!(!path.exists());
     }
 }

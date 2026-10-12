@@ -116,13 +116,11 @@ mod tests {
     use crate::constants::FAST_GROUP_HOLD_SECONDS;
     use crate::model::{ProjectionKind, View, ViewCenter};
     use crate::observation::observe;
-    use crate::progress::NoProgress;
     use crate::selection::select_regions;
-    use crate::timing::StepTimes;
 
     fn bsc5() -> SkyTables {
-        let prepared = crate::sky::prepare_owned_catalog(crate::catalog::load_embedded_catalog().unwrap()).unwrap();
-        crate::sky::build_sky_tables(&prepared, &mut NoProgress(std::io::sink()), &mut StepTimes::default()).unwrap()
+        let prepared = crate::sky::prepare_owned_catalog(crate::catalog::load_embedded_catalog(&mut crate::progress::Report::quiet()).unwrap(), &mut crate::progress::Report::quiet()).unwrap();
+        crate::sky::build_sky_tables(&prepared, &mut crate::progress::Report::quiet()).unwrap()
     }
     fn boston() -> Observer { Observer { latitude: 42.3601_f64.to_radians(), longitude: -71.0589_f64.to_radians() } }
     fn view(fov_degrees: f64, azimuth: f64) -> View { View { center: ViewCenter::Facing { azimuth, tilt: 0.5 }, projection: ProjectionKind::Stereographic, fov_degrees } }
@@ -238,9 +236,7 @@ mod tests {
     }
 
     #[test]
-    fn a_single_star_tile_equals_the_old_pixel_renderers_glyph() {
-        use crate::model::{PixelStarKey, StarOpacityTable};
-        use crate::scene::{draw_pixel_stars, prepare_star_opacities};
+    fn a_single_star_tile_holds_the_four_texel_glyph_of_the_old_pixel_renderer() {
         let tables = bsc5();
         let (region, group, table) = tables.stars.iter().find(|(_, _, table)| table.len() == 1).unwrap();
         let mut caches = RegionCaches::default();
@@ -250,16 +246,13 @@ mod tests {
         let tile = TileGeometry::new(region);
         let simulation = caches.simulations().group(region, group);
         let (column, row) = tile.project(simulation.directions()[0]).unwrap();
-        let cell = (row.round() as i32, column.round() as i32);
-        let mut opacities = StarOpacityTable::default();
-        prepare_star_opacities(&mut opacities, 180.0);                                       // no zoom boost in the tiles
-        let mut layer = vec![crate::model::StarPixel::default(); TileGeometry::texel_count()];
-        draw_pixel_stars(&mut layer, TileGeometry::size(), &opacities, [PixelStarKey { cell, magnitude: simulation.magnitudes()[0], color: table.columns().display_color[0] }]);
-        assert_eq!(image.texels().len(), layer.len());
-        for (texel, pixel) in image.texels().iter().zip(&layer) {
-            assert_eq!((texel.rgb, texel.opacity), (pixel.rgb, pixel.opacity));
-        }
-        assert_eq!(layer.iter().filter(|pixel| pixel.opacity > 0.0).count(), 4);
+        let (row, column) = (row.round() as usize, column.round() as usize);                 // the glyph's bottom right texel
+        let opacity = caches.opacities().of(simulation.magnitudes()[0]);                     // no zoom boost in the tiles
+        let expected = Texel { rgb: premultiplied_color(table.columns().display_color[0], opacity), opacity };
+        let size = TileGeometry::size();
+        let lit: Vec<usize> = image.texels().iter().enumerate().filter(|(_, texel)| texel.opacity > 0.0).map(|(index, _)| index).collect();
+        assert_eq!(lit, [(row - 1) * size + column - 1, (row - 1) * size + column, row * size + column - 1, row * size + column]);
+        for index in lit { assert_eq!(image.texels()[index], expected); }
         assert_eq!(caches.region_image(region).texels(), image.texels());                 // one group: the sum is the image
     }
 

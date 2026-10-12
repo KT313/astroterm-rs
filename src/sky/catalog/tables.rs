@@ -10,12 +10,13 @@ use std::io;
 use crate::catalog::cache::invalid;
 use crate::constants::{CELL_COUNT, CONSTELLATION_REGION, SIMULATION_REGION_COUNT, SPEED_GROUP_COUNT};
 use crate::model::{Bodies, Constellation, Constellations, GroupTable, LabelColumn, PreparedCatalog, SkyCatalog, SkyTables, StarRow, StarRowVec, Stars};
-use crate::progress::{DatasetProgress, Outcome, Stage, Unit};
+use crate::progress::{DatasetProgress, Outcome, Report, Stage, Unit};
 use crate::regions::speed_group;
 use crate::timing::StepTimes;
 
 /// Split a prepared catalog into the per-group tables and the constellation table, then validate them.
-pub fn build_sky_tables(prepared: &PreparedCatalog, progress: &mut dyn DatasetProgress, times: &mut StepTimes) -> io::Result<SkyTables> {
+pub fn build_sky_tables(prepared: &PreparedCatalog, report: &mut Report<'_>) -> io::Result<SkyTables> {
+    let (progress, times) = report.parts();
     let count = prepared.catalog.stars.len();
     progress.begin_stage(Stage::Group, "", Unit::Stars, Some(count as u64));
     let result = build_tables(prepared, progress, times);
@@ -122,11 +123,11 @@ mod tests {
     use crate::progress::NoProgress;
 
     fn embedded() -> PreparedCatalog {
-        crate::sky::prepare_owned_catalog(load_embedded_catalog().unwrap()).unwrap()
+        crate::sky::prepare_owned_catalog(load_embedded_catalog(&mut crate::progress::Report::quiet()).unwrap(), &mut crate::progress::Report::quiet()).unwrap()
     }
 
     fn build(prepared: &PreparedCatalog) -> io::Result<SkyTables> {
-        build_sky_tables(prepared, &mut NoProgress(io::sink()), &mut StepTimes::default())
+        build_sky_tables(prepared, &mut crate::progress::Report::live(&mut NoProgress(io::sink()), &mut StepTimes::default()))
     }
 
     /// Where the named star is: its speed group, or `None` for the constellation table.
@@ -178,8 +179,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("bsc5.catalog");
         let fingerprint = [7_u8; 32];
-        crate::sky::write_cached_catalog(&path, &prepared, &fingerprint).unwrap();
-        let cached = crate::sky::load_cached_catalog(&path, &fingerprint).unwrap();
+        crate::sky::write_cached_catalog(&path, &prepared, &fingerprint, &mut crate::progress::Report::quiet()).unwrap();
+        let cached = crate::sky::load_cached_catalog(&path, &fingerprint, &mut crate::progress::Report::quiet()).unwrap();
         assert_eq!(build(&cached).unwrap(), build(&prepared).unwrap());
     }
 
@@ -192,7 +193,7 @@ mod tests {
 
     #[test]
     fn empty_catalog_gives_empty_tables() {
-        let prepared = crate::sky::prepare_owned_catalog(crate::catalog::Catalog::new(Vec::new(), crate::catalog::StarNames::default(), Vec::new())).unwrap();
+        let prepared = crate::sky::prepare_owned_catalog(crate::catalog::Catalog::new(Vec::new(), crate::catalog::StarNames::default(), Vec::new()), &mut crate::progress::Report::quiet()).unwrap();
         let tables = build(&prepared).unwrap();
         assert!(tables.stars.is_empty() && tables.constellations.is_empty());
         assert_eq!(describe(&tables), format!("slow=0; medium=0; fast=0; constellation=0; filled group tables=0 of {}", CELL_COUNT * SPEED_GROUP_COUNT));

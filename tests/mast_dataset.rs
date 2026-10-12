@@ -1,5 +1,5 @@
 //! Opt-in real transport qualification. Ordinary tests never download data.
-use astroterm::{catalog::datasets::{Dataset, DatasetDirectories}, sky::load_sky_catalog_with_times,
+use astroterm::{catalog::datasets::{Dataset, DatasetDirectories}, sky::load_sky_catalog,
     timing::StepTimes, progress::{DatasetProgress, Stage, Unit}};
 use std::{io::{self, Write}, path::PathBuf, time::Duration};
 
@@ -38,7 +38,7 @@ fn mast_two_groups_extend_without_reconverting_old_rows() {
         let mut log = Counts::default();
         let started = std::time::Instant::now();
         let mut times = StepTimes::with_trace(true);
-        let catalog = load_sky_catalog_with_times(Some(&Dataset::GaiaGdr3Stars { stars: count }), parallel, &directories, &mut log, &mut times).unwrap();
+        let catalog = load_sky_catalog(Some(&Dataset::GaiaGdr3Stars { stars: count }), parallel, &directories, &mut astroterm::progress::Report::live(&mut log, &mut times)).unwrap();
         let converted = times.trace().unwrap().steps.iter().filter(|step| step.name == "MAST block conversion").count();
         assert_eq!((log.downloaded, converted), (expected_downloads, expected_conversions));
         assert_eq!(log.received > 0, expected_downloads > 0);

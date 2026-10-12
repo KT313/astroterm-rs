@@ -7,30 +7,6 @@ use std::sync::OnceLock;
 
 const NUMERIC_SLACK: f64 = 1e-10;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub enum SkyRegion {
-    #[default]
-    All,
-    /// Unit center in the observer's East/North/Up frame, angular radius in radians.
-    Cone { center: Vector3, radius: f64 },
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct SelectionStats {
-    pub cells: usize,
-    pub candidates: usize,
-    pub region_stars: usize,
-    pub brute_force: bool,
-}
-
-/// Intermediate region selection, consumed by the independently timed brightness pass.
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct SelectedRegion {
-    pub(crate) cells: Vec<usize>,
-    pub(crate) star_count: usize,
-    pub(crate) brute_force: bool,
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct SkyGrid {
     pub offsets: crate::catalog::cache::CatalogArray<usize>,

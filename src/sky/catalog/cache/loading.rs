@@ -9,7 +9,7 @@ use super::format::{cache_path, catalog_fingerprint};
 
 pub(super) fn load_embedded_sky(times: &mut StepTimes, notices: &mut dyn crate::progress::DatasetProgress) -> io::Result<PreparedCatalog> {
     let parsed = times
-        .measure("Embedded BSC loading", || crate::catalog::load_embedded_catalog_with_progress(notices))
+        .measure("Embedded BSC loading", || crate::catalog::load_embedded_catalog(&mut crate::progress::Report::live(notices, &mut StepTimes::default())))
         .map_err(io::Error::other)?;
     times.describe("Embedded BSC loading", || {
         format!(
@@ -52,7 +52,7 @@ pub(super) fn fingerprint_source(path: &Option<PathBuf>) -> [u8; 32] {
 
 pub(crate) fn try_load_prepared_catalog(path: &Option<PathBuf>, fingerprint: &[u8; 32], notices: &mut dyn crate::progress::DatasetProgress, times: &mut StepTimes) -> io::Result<Option<PreparedCatalog>> {
     if let Some(path) = path {
-        let cached = times.measure_steps("Prepared catalog lookup", |times| super::format::load_cached_catalog_with_times(path, fingerprint, notices, times));
+        let cached = times.measure_steps("Prepared catalog lookup", |times| super::format::load_cached_catalog(path, fingerprint, &mut crate::progress::Report::live(notices, times)));
         times.describe("Prepared catalog lookup", || match &cached {
             Ok(catalog) => format!("hit: validated owned stars={}; source CSV not read; original skipped-row counts unavailable in this cache format", catalog.catalog.stars.len()),
             Err(error) => format!("miss: {error}; parse source next"),
@@ -82,7 +82,7 @@ pub(super) fn write_prepared_catalog_if_stable(path: Option<PathBuf>, source: &P
     if let Some(path) = path {
         if cache_path(source, path.parent().unwrap()).ok().as_ref() != Some(&path) {
             writeln!(notices, "Dataset changed while loading; cache was not written.")?;
-        } else if let Err(error) = super::format::write_cached_catalog_with_times(&path, catalog, fingerprint, notices, times) {
+        } else if let Err(error) = super::format::write_cached_catalog(&path, catalog, fingerprint, &mut crate::progress::Report::live(notices, times)) {
             notices.finish_stage(crate::progress::Outcome::Failed);
             writeln!(
                 notices,
@@ -96,7 +96,7 @@ pub(super) fn write_prepared_catalog_if_stable(path: Option<PathBuf>, source: &P
 
 pub(super) fn prepare_catalog(parsed: crate::catalog::Catalog, times: &mut crate::timing::StepTimes, notices: &mut dyn crate::progress::DatasetProgress) -> io::Result<PreparedCatalog> {
     let input = parsed.stars.len();
-    let catalog = times.measure_steps("Catalog preparation", |times| super::super::pipeline::prepare_owned_catalog_with_progress(parsed, notices, times))?;
+    let catalog = times.measure_steps("Catalog preparation", |times| super::super::pipeline::prepare_owned_catalog(parsed, &mut crate::progress::Report::live(notices, times)))?;
     times.describe("Catalog preparation", || format!("input entries={input}; removed placeholders={}; output stars={}; grid cells={CELL_COUNT}; unique constellation endpoints={}", input - catalog.catalog.stars.len(), catalog.catalog.stars.len(), catalog.catalog.endpoint_indices().len()));
     Ok(catalog)
 }

@@ -105,8 +105,6 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
         frame_benchmark,
         no_progress: arguments.no_progress,
         debug_log_data: arguments.debug_log_data,
-        cache: crate::cache::CacheConfig::load(arguments.cache_config.as_deref(), arguments.disable_cache)
-            .map_err(|e| ConfigError(e.to_string()))?,
         text_scale: arguments.text_scale,
         graphics_protocol: arguments.graphics_protocol,
         simulation,

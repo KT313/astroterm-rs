@@ -3,7 +3,7 @@
 
 mod local_time;
 mod records;
-pub use records::{ObserverTimeZone, MetadataField, StarCounts};
+pub use records::{ObserverTimeZone, MetadataField};
 
 use chrono::{Datelike, Timelike};
 
@@ -126,15 +126,8 @@ fn append_metadata_fields(
     }
 }
 
-/// Append the four already-published counters; never inspect catalog or projected rows here.
-pub fn append_star_count_fields(fields: &mut Vec<MetadataField>, counts: &StarCounts) {
-    for (label, value) in [("Stars loaded", counts.loaded), ("In candidate regions", counts.candidate_regions),
-        ("Passed filter", counts.filtered), ("Passed projection", counts.projected)] {
-        fields.push(create_field(label, format!("{} stars", format_star_count(value))));
-    }
-}
-
-fn format_star_count(value: usize) -> String {
+/// A star count with digit groups: 1234567 → "1,234,567".
+pub fn format_star_count(value: usize) -> String {
     let digits = value.to_string();
     let mut grouped = String::with_capacity(digits.len() + digits.len() / 3);
     for (index, digit) in digits.chars().enumerate() {
@@ -228,11 +221,6 @@ mod tests {
             assert_eq!(format_star_count(value), expected);
         }
         assert_eq!(format_star_count(usize::MAX).replace(',', ""), usize::MAX.to_string());
-        let mut fields = Vec::new();
-        append_star_count_fields(&mut fields, &StarCounts { loaded: 10221029, candidate_regions: 1000000, filtered: 1000, projected: 0 });
-        assert_eq!(fields.iter().map(|f| (f.label.as_str(), f.value.as_str())).collect::<Vec<_>>(),
-            [("Stars loaded", "10,221,029 stars"), ("In candidate regions", "1,000,000 stars"),
-            ("Passed filter", "1,000 stars"), ("Passed projection", "0 stars")]);
     }
 
     #[test]
@@ -261,50 +249,6 @@ mod tests {
             assert_eq!(timing_fields.as_ptr(), timing_pointer);
         }
         assert_eq!((fields.capacity(), timing_fields.capacity()), capacities);
-    }
-
-    #[test]
-    fn metadata_panel_snapshot_uses_an_explicit_zone_and_frozen_clock() {
-        let time = chrono::DateTime::parse_from_rfc3339("2025-03-01T20:00:00+09:00").unwrap();
-        let local_time = Some(LocalTime {
-            time,
-            zone: "JST".to_string(),
-        });
-        let observer = Observer {
-            latitude: 35.69_f64.to_radians(),
-            longitude: 139.69_f64.to_radians(),
-        };
-        let mut clock = SimulationClock::start(2460736.9583333335, 0.0);
-        clock.toggle_pause();
-        let fields = format_metadata_fields(
-            local_time,
-            clock.start_julian_date(),
-            &clock,
-            MoonPhase::WaxingCrescent,
-            &observer,
-            &View::default(),
-            true,
-        );
-        let mut panel = crate::canvas::Canvas::new(0, 0);
-        crate::scene::draw_metadata_panel(&mut panel, &fields);
-        let occupancy = (0..panel.height())
-            .map(|row| {
-                panel
-                    .row(row)
-                    .iter()
-                    .map(|cell| if cell.is_continuation() { '>' } else { '.' })
-                    .collect::<String>()
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        let snapshot = format!(
-            "{}\ncontinuations:\n{occupancy}\ncolors: all default",
-            panel.to_lines().join("\n")
-        );
-        insta::with_settings!({snapshot_path => concat!(env!("CARGO_MANIFEST_DIR"), "/tests/snapshots")}, {
-            insta::assert_snapshot!("metadata_panel", snapshot);
-        });
-        assert!((0..panel.height()).all(|row| { panel.row(row).iter().all(|cell| cell.color.is_none()) }));
     }
 
     #[test]

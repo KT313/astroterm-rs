@@ -11,13 +11,6 @@ use crate::terminal::format_key_bindings_help;
 #[command(name = "astroterm", version, override_usage = "astroterm [OPTION]...", after_help = format_key_bindings_help())]
 #[command(disable_help_flag = true, disable_version_flag = true)]
 pub struct Arguments {
-    /// Recompute runtime processing results every frame; keeps downloaded datasets and the on-disk catalog cache.
-    #[arg(long)]
-    pub disable_cache: bool,
-    /// Read processing-cache policies from this TOML file instead of the user configuration directory.
-    #[arg(long, value_name = "path")]
-    pub cache_config: Option<std::path::PathBuf>,
-
     /// Pixel protocol (normally detected). Force one to test terminal support; halfblocks needs no graphics protocol.
     #[arg(long, value_enum, default_value_t = crate::model::GraphicsProtocol::Auto)]
     pub graphics_protocol: crate::model::GraphicsProtocol,

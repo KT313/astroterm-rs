@@ -1,42 +1,40 @@
-//! Machine-readable current-model output for scripts/reference/generate.py; not an independent reference.
+//! Machine-readable current-model output for scripts/reference/generate.py; not an independent reference. Bodies
+//! and stars go through the frame loop's steps 1 and 2 and the stellar motion model, airless.
 
 use astroterm::astro::{
-    Observer, Vector3, compute_moon_age, compute_moon_geocentric, compute_planet_heliocentric,
-    compute_precession_matrix,
+    FrameTime, Horizontal, Observer, Vector3, compute_moon_age, compute_moon_geocentric, compute_planet_heliocentric,
+    compute_precession_matrix, models::{BodyId, stars::years_since_j2000},
 };
 use astroterm::catalog::{EARTH_ORBIT, MOON_ORBIT, load_embedded_catalog};
-use astroterm::sky::update_sky_positions;
-use astroterm::timing::StepTimes;
+use astroterm::model::{Bodies, View};
+use astroterm::observation::observe;
+use astroterm::solar_system::simulate_solar_system;
 
 fn main() {
     let observer = Observer {
         latitude: 42.3601_f64.to_radians(),
         longitude: -71.0589_f64.to_radians(),
     };
-    let mut sky = astroterm::sky::create_sky_from_catalog(&load_embedded_catalog().unwrap()).unwrap();
+    let catalog = astroterm::sky::prepare_owned_catalog(load_embedded_catalog(&mut astroterm::progress::Report::quiet()).unwrap(), &mut astroterm::progress::Report::quiet()).unwrap().catalog;
+    let bodies = Bodies::default();
+    let print = |date: f64, name: &str, direction: Vector3| {
+        let position = Horizontal::from_vector(direction);
+        println!("position,{date:.12},{name},{:.16},{:.16}", position.azimuth, position.altitude);
+    };
     for date in [2451545.0, 2459146.0, 2460736.9583333335] {
-        update_sky_positions(&mut sky, date, &observer, f64::INFINITY, &mut StepTimes::default());
+        let time = FrameTime::from_utc(date);
+        let system = simulate_solar_system(&bodies, time);
+        let observation = observe(&observer, false, &View::default(), time);
         for name in ["Vega", "Arcturus"] {
-            let star = sky.stars.iter().find(|star| sky.star_name(star) == Some(name)).unwrap();
-            println!(
-                "position,{date:.12},{name},{:.16},{:.16}",
-                star.horizontal_position().azimuth,
-                star.horizontal_position().altitude
-            );
+            let star = catalog.stars.iter().find(|star| catalog.star_name(star) == Some(name)).unwrap();
+            let sample = star.motion.evaluate(years_since_j2000(time.tt), star.magnitude);
+            print(date, name, observation.apparent_star_direction(sample.direction));
         }
-        for planet in &sky.planets {
-            println!(
-                "position,{date:.12},{},{:.16},{:.16}",
-                planet.kind.name(),
-                planet.horizontal_position().azimuth,
-                planet.horizontal_position().altitude
-            );
+        for (planet, &position) in bodies.planets.iter().zip(&system.planets) {
+            if planet.id == BodyId::Earth { continue; }
+            print(date, planet.name, observation.apparent_direction(position));
         }
-        println!(
-            "position,{date:.12},Moon,{:.16},{:.16}",
-            sky.moon.horizontal_position().azimuth,
-            sky.moon.horizontal_position().altitude
-        );
+        print(date, "Moon", observation.apparent_direction(system.moon_position(0, observation.observer.position)));
         let moon = compute_moon_geocentric(&MOON_ORBIT, date);
         let sun = -compute_planet_heliocentric(&EARTH_ORBIT, date);
         let old_age = compute_moon_age(moon, sun);

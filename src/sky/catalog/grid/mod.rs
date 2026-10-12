@@ -1,11 +1,7 @@
 //! Fixed catalog-epoch regions and conservative brightness selection. Motion beyond the fixed margin may be culled.
-use crate::constants::{ABERRATION_MARGIN, CELL_COUNT, CONSTELLATION_REGION, GRID_DEPTH, QUANTIZATION_MARGIN, REFRACTION_MARGIN, SIMULATION_REGION_COUNT, STELLAR_DRIFT_MARGIN};
-use crate::model::{StarStorage, SkyRegion};
-use std::f64::consts::PI;
-use crate::model::{
-    SelectionStats, SkyGrid, SelectedRegion,
-};
-const NUMERIC_SLACK: f64 = 1e-10;
+use crate::constants::{CONSTELLATION_REGION, GRID_DEPTH, SIMULATION_REGION_COUNT};
+use crate::model::StarStorage;
+use crate::model::SkyGrid;
 
 /// Geometric cell for a stored direction; constellation endpoints instead belong to the dedicated region.
 pub(crate) fn stored_cell(stars: &StarStorage, index: usize) -> usize {
@@ -46,140 +42,15 @@ pub(super) fn build_grid_from_counts(stars: usize, mut counts: Vec<usize>, endpo
     Ok(SkyGrid::from_offsets(counts.into()))
 }
 
-/// Select conservative regions, then collect the brightness-sorted cell prefixes.
-pub fn select_grid(
-    grid: &SkyGrid,
-    stars: &StarStorage,
-    region: SkyRegion,
-    observer: &crate::model::ObserverState,
-    threshold: f64,
-    refraction: bool,
-    indices: &mut Vec<usize>,
-) -> SelectionStats {
-    let region = select_region(grid, region, observer, refraction);
-    select_brightness(grid, stars, &region, threshold, indices)
-}
-
-/// Select cells with a fixed motion allowance; exact visibility is determined later by projection.
-/// Stars drifting beyond that allowance can be missed until moving-region handling is implemented.
-pub(crate) fn select_region(
-    grid: &SkyGrid,
-    region: SkyRegion,
-    observer: &crate::model::ObserverState,
-    refraction: bool,
-) -> SelectedRegion {
-    if !crate::astro::COMPUTATIONAL_INTERVAL.contains(observer.time.tt) {
-        return SelectedRegion {
-            cells: (0..SIMULATION_REGION_COUNT).collect(),
-            star_count: *grid.offsets.last().unwrap(),
-            brute_force: true,
-        };
-    }
-    let mut cells = Vec::new();
-    match region {
-        SkyRegion::Cone { center, radius } if radius < 150_f64.to_radians() => {
-            let margin = 0.1_f64.to_radians() / 3600.0 // retained numerical padding; the fixed regional TTL is not angular-error qualified
-                + STELLAR_DRIFT_MARGIN
-                + QUANTIZATION_MARGIN
-                + ABERRATION_MARGIN.max(
-                    (observer.state.velocity.length() / crate::astro::LIGHT_SPEED_AU_DAY)
-                        .clamp(0.0, 1.0)
-                        .asin(),
-                )
-                + NUMERIC_SLACK
-                + if refraction { REFRACTION_MARGIN } else { 0.0 };
-            let radius = (radius + margin).min(PI);
-            let center = observer.inertial_to_horizon.transpose().apply(center).normalized();
-            let fine = radius < 30_f64.to_radians();
-            for (parent, cap) in grid.coarse_caps.iter().enumerate() {
-                if !cap.intersects(center, radius) {
-                    continue;
-                }
-                for child in parent * crate::constants::GRID_CHILDREN_PER_COARSE_CELL..(parent + 1) * crate::constants::GRID_CHILDREN_PER_COARSE_CELL {
-                    if !fine || grid.fine_caps[child].intersects(center, radius) {
-                        cells.push(child);
-                    }
-                }
-            }
-        }
-        _ => {
-            for cell in 0..CELL_COUNT {
-                cells.push(cell);
-            }
-        }
-    }
-    cells.push(CONSTELLATION_REGION); // endpoint dots and lines share one always-requested group
-    SelectedRegion {
-        star_count: cells.iter().map(|&cell| grid.offsets[cell + 1] - grid.offsets[cell]).sum(),
-        cells,
-        brute_force: false,
-    }
-}
-
-/// Count region membership without expanding the sorted catalog ranges.
-pub(crate) fn count_region_stars(_grid: &SkyGrid, region: &SelectedRegion, _total: usize) -> (usize, usize) {
-    (if region.brute_force { CELL_COUNT } else { region.cells.len() - 1 }, region.star_count)
-}
-
-/// Collect the brightness-qualified prefix from each selected region.
-pub(crate) fn select_brightness(
-    grid: &SkyGrid,
-    stars: &StarStorage,
-    region: &SelectedRegion,
-    threshold: f64,
-    indices: &mut Vec<usize>,
-) -> SelectionStats {
-    indices.clear();
-    let keys = stars.brightness_keys();
-    if region.brute_force {
-        indices.extend(0..stars.len());
-    } else {
-        for &cell in &region.cells {
-            append_bright(keys, grid.offsets[cell]..grid.offsets[cell + 1], threshold, indices);
-        }
-    }
-    SelectionStats {
-        cells: if region.brute_force {
-            CELL_COUNT
-        } else {
-            region.cells.len() - 1
-        },
-        candidates: indices.len(),
-        region_stars: region.star_count,
-        brute_force: region.brute_force,
-    }
-}
-
-fn append_bright(keys: &[u16], range: std::ops::Range<usize>, threshold: f64, indices: &mut Vec<usize>) {
-    let count = keys[range.clone()].partition_point(|&key| crate::catalog::passes_brightness_bound(key, threshold));
-    indices.extend(range.start..range.start + count); // each region is already ordered from brightest bound to dimmest
-}
-
 #[cfg(test)]
 mod tests {
     use crate::model::{build_caps, hash_direction};
     use crate::astro::Vector3;
     use crate::model::{interleave, direction};
-    use super::*;
     use crate::astro::{Equatorial, Horizontal, apply_refraction};
+    use crate::constants::REFRACTION_MARGIN;
     use proptest::prelude::*;
-
-    #[test]
-    fn brightness_prefix_matches_linear_selection_at_encoded_boundaries() {
-        let keys: Vec<_> = (0..=u16::MAX).collect();
-        for code in [0, 1, 9999, 10000, 10001, 15000, u16::MAX] {
-            let value = crate::catalog::decode_magnitude(code);
-            for threshold in [value.next_down(), value, value.next_up(), f64::NEG_INFINITY, f64::INFINITY, f64::NAN] {
-                for range in [0..keys.len(), 1..keys.len(), 10000..10000, 9999..10002] {
-                    let expected: Vec<_> = range.clone().take_while(|&i| crate::catalog::passes_brightness_bound(keys[i], threshold)).collect();
-                    let mut actual = vec![usize::MAX];
-                    append_bright(&keys, range, threshold, &mut actual);
-                    assert_eq!(&actual[1..], expected);
-                    assert_eq!(actual[0], usize::MAX); // appending a region preserves earlier regions
-                }
-            }
-        }
-    }
+    use std::f64::consts::PI;
 
     #[test]
     fn refraction_margin_covers_the_clamped_formula() {

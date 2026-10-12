@@ -61,7 +61,7 @@ pub(super) fn validate_raw_block(raw: &[u8], rows: usize) -> io::Result<()> {
 }
 
 pub(super) fn recoverable_read(store: &BlobStore, key: &str, progress: &mut dyn DatasetProgress) -> io::Result<Option<VerifiedBlob>> {
-    match store.read_verified_with_progress(key, progress) {
+    match store.read_verified(key, progress) {
         Ok(value) => Ok(value),
         Err(error) => {
             writeln!(progress, "Ignoring invalid cached MAST data: {error}; refetching the original input.")?;

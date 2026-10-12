@@ -32,8 +32,6 @@
 /// Tunable defaults, resource limits and cache durations; independent of all application layers.
 pub mod constants;
 pub mod astro;
-pub mod cache;
-pub mod canvas;
 pub mod catalog;
 pub mod cli;
 pub mod controls;
@@ -46,16 +44,9 @@ pub mod projection;
 pub mod regions;
 pub mod progress;
 pub mod rows;
-pub mod scene;
 pub mod selection;
 pub mod solar_system;
 pub mod sky;
-pub mod state;
 pub mod terminal;
+pub mod text;
 pub mod timing;
-
-#[cfg(test)]
-extern crate self as astroterm;
-#[cfg(test)]
-#[path = "../tests/support/cached.rs"]
-pub(crate) mod test_pipeline;

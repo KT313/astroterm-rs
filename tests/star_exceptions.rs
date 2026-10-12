@@ -1,34 +1,45 @@
 //! Stage-3 skeleton rejects unsupported input explicitly; accepted catalogs keep empty exception storage.
-use astroterm::{catalog::datasets::{Dataset, DatasetDirectories}, model::StarException,
-    sky::{load_sky_catalog, prepare_owned_catalog, write_cached_catalog, load_cached_catalog, catalog_fingerprint},
-    cli::{Arguments, build_config}, state::ApplicationState, timing::StepTimes};
-use clap::Parser;
+use astroterm::{catalog::datasets::{Dataset, DatasetDirectories}, constants::MAST_PARALLEL_BLOCKS, model::StarException,
+    progress::NoProgress, sky::{load_sky_catalog, prepare_owned_catalog, write_cached_catalog, load_cached_catalog, catalog_fingerprint},
+    timing::StepTimes};
 use std::io;
 
 #[test]
 fn ordinary_catalog_exposes_an_empty_allocation_free_exception_table() {
-    let prepared = prepare_owned_catalog(astroterm::catalog::load_embedded_catalog().unwrap()).unwrap();
+    let prepared = prepare_owned_catalog(astroterm::catalog::load_embedded_catalog(&mut astroterm::progress::Report::quiet()).unwrap(), &mut astroterm::progress::Report::quiet()).unwrap();
     assert_eq!(prepared.catalog.star_exceptions.capacity(), 0);
     assert_eq!(prepared.catalog.stars.precise_count(), 0);
     prepared.catalog.validate_exception_support().unwrap();
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("catalog");
     let fingerprint = catalog_fingerprint();
-    write_cached_catalog(&path, &prepared, &fingerprint).unwrap();
-    let loaded = load_cached_catalog(&path, &fingerprint).unwrap();
+    write_cached_catalog(&path, &prepared, &fingerprint, &mut astroterm::progress::Report::quiet()).unwrap();
+    let loaded = load_cached_catalog(&path, &fingerprint, &mut astroterm::progress::Report::quiet()).unwrap();
     assert_eq!(loaded, prepared);
     assert_eq!(loaded.catalog.star_exceptions.capacity(), 0);
-    let config = build_config(Arguments::try_parse_from(["astroterm"]).unwrap(), &[]).unwrap();
-    let mut state = ApplicationState::new(config, StepTimes::default());
-    state.replace_catalog(loaded);
-    let mut log = Vec::new();
-    state.write_tables(&mut log, None).unwrap();
-    let text = String::from_utf8(log).unwrap();
-    let exceptions = text.split("### persistent.catalog.star\\_exceptions\n").nth(1).unwrap().split("\n### ").next().unwrap();
-    assert!(exceptions.contains("**Used:** 0 B · **Reserved:** 0 B"));
-    assert!(exceptions.contains("uses\\_motion\\_fallback: bool"));
-    let stars = text.split("### persistent.catalog.stars\n").nth(1).unwrap().split("\n### ").next().unwrap();
-    assert!(!stars.contains("data\\_flags:") && !stars.contains("precise\\_motion\\_entry:"));
+    astroterm::sky::build_sky_tables(&loaded, &mut astroterm::progress::Report::quiet()).unwrap(); // the frame loop's tables accept it
+}
+
+#[test]
+fn supported_fast_motion_prepares_without_exceptions_and_is_filed_in_its_region() {
+    use astroterm::astro::{J2000, JULIAN_YEAR_DAYS};
+    use astroterm::constants::GRID_DEPTH;
+    use astroterm::model::hash_direction;
+    use astroterm::regions::{rows_wanted, speed_group};
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("fast.csv");
+    std::fs::write(&path, "ra,dec,mag,pmdec\n1,60,4,20626\n").unwrap();                        // 0.0001 rad/yr in declination, no distance
+    let prepared = prepare_owned_catalog(astroterm::catalog::load_athyg_catalog(&path, &mut astroterm::progress::Report::quiet()).unwrap(), &mut astroterm::progress::Report::quiet()).unwrap();
+    assert!(prepared.catalog.star_exceptions.is_empty());
+    assert_eq!(prepared.catalog.singular_count, 0);
+    let tables = astroterm::sky::build_sky_tables(&prepared, &mut astroterm::progress::Report::quiet()).unwrap();
+    let (region, group, table) = tables.stars.iter().find(|(_, _, table)| !table.is_empty()).unwrap();
+    assert_eq!(table.len(), 1);
+    assert_eq!(region, hash_direction(GRID_DEPTH, table.stored_direction(0)));                 // filed by its catalog-epoch direction
+    assert_eq!(group, speed_group(table.motion_bound(0)));
+    let sample = table.motion(0).evaluate(1000.0, 4.0);
+    assert!(sample.direction.x.is_finite() && sample.direction.y.is_finite() && sample.direction.z.is_finite());
+    assert_eq!(rows_wanted(table, J2000 + 1000.0 * JULIAN_YEAR_DAYS, 5.0), 1);
 }
 
 #[test]
@@ -50,7 +61,7 @@ fn source_errors_are_reported_before_a_cache_is_published() {
         std::fs::write(&path, format!("ra,dec,mag,dist,rv\n{row}\n")).unwrap();
         let cache = root.path().join("cache");
         let dirs = DatasetDirectories { data: None, cache: Some(cache.clone()) };
-        let error = load_sky_catalog(Some(&Dataset::Path(path)), &dirs, &mut Vec::new()).unwrap_err();
+        let error = load_sky_catalog(Some(&Dataset::Path(path)), MAST_PARALLEL_BLOCKS, &dirs, &mut astroterm::progress::Report::live(&mut NoProgress(io::sink()), &mut StepTimes::default())).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::Unsupported);
         assert!(error.to_string().contains(reason), "{error}");
         assert!(error.to_string().contains("Star 0"));

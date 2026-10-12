@@ -1,5 +1,5 @@
 use super::*;
-use super::super::super::transport::{Response, TransferControl};
+use crate::catalog::mast::transport::{Response, TransferControl};
 use std::sync::{Condvar, atomic::AtomicUsize};
 
 #[derive(Default)]

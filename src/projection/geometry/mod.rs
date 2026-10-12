@@ -3,28 +3,17 @@ use crate::constants::{DEFAULT_FOV_DEGREES, MIN_FOV_DEGREES};
 mod cartesian;
 mod maps;
 mod sky;
-mod draw_order;
+mod types;
 
 pub use cartesian::{prepare_camera, project_camera, rotate_camera_into};
 pub use maps::{project_equidistant_horizontal, project_stereographic_horizontal, project_stereographic_north};
-pub use sky::{polar_to_cell, project_light_direction, project_sky, project_sky_with_times, project_to_cell};
-pub(super) use draw_order::prepare_draw_order_with_times;
-pub(super) use sky::{project_bodies, project_constellations};
+pub use sky::{polar_to_cell, project_light_direction, project_to_cell};
 pub use sky::{project_constellation_segment, project_horizon_labels, project_horizon_line};
-#[cfg(test)]
-pub(crate) use sky::compute_visible_horizon_half_range;
+pub use types::{ArcPart, CartesianCamera, Polar, ProjectedArc, ScreenPoint};
 
-use crate::model::{ArcPart, Polar, ProjectionKind, View, ViewCenter};
+use crate::model::{ProjectionKind, View, ViewCenter};
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 use crate::astro::{Horizontal, horizontal_to_spherical};
-
-/// Describe the viewing cone in horizontal coordinates for conservative observation selection.
-pub fn select_view_region(view: &View) -> crate::model::SkyRegion {
-    crate::model::SkyRegion::Cone {
-        center: view.center_direction().to_unit_vector(),
-        radius: view.fov_degrees.to_radians() / 2.0,
-    }
-}
 
 /// Find visible intervals along the shorter great-circle arc between two horizontal positions.
 pub fn find_visible_arc_parts(view: &View, from: Horizontal, to: Horizontal) -> Vec<ArcPart> {

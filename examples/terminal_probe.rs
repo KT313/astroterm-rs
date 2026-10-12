@@ -1,4 +1,4 @@
-//! Small subprocess probe for scripts/checks/terminal.py. Never used by the normal application.
+//! Small subprocess probe for scripts/checks/terminal.py and pixels.py. Never used by the normal application.
 
 use astroterm::terminal::{detect_cell_aspect_ratio, open_terminal_session};
 
@@ -10,37 +10,26 @@ fn main() {
             panic!("intentional terminal restoration probe");
         }
         Some("pixel-panic") => {
-            use astroterm::{
-                cli::{Arguments, build_config},
-                terminal::Renderer,
-            };
+            // one frame through the seven steps on a forced Kitty display, then a panic inside a synchronized update
+            use astroterm::{cli::{Arguments, build_config}, present::{Display, present}, observation::observe, points::{PointInputs, draw_points},
+                projection::project_stars_to_screen, regions::{RegionCaches, refresh_regions}, selection::select_regions, solar_system::simulate_solar_system,
+                astro::FrameTime};
             use clap::Parser;
-            let arguments = Arguments::parse_from(["probe", "--graphics-protocol", "kitty"]);
-            let config = build_config(arguments, &[]).unwrap();
-            let (mut renderer, mut rendering) = Renderer::open(
-                astroterm::model::RendererKind::Pixels,
-                config.graphics_protocol,
-                config.render,
-                config.terminal,
-                config.text_scale,
-            )
-            .unwrap();
-            let sky = astroterm::sky::create_sky_from_catalog(&astroterm::catalog::load_embedded_catalog().unwrap()).unwrap();
-            let projected_data = astroterm::projection::project_sky(&sky, &config.view, renderer.viewport(&rendering));
-    let projected = projected_data.view(&sky);
-            let clock = astroterm::astro::SimulationClock::start(config.simulation.start_julian_date, 0.0);
-            renderer
-                .render_frame(
-                    &mut rendering,
-                    &projected,
-                    &config.view,
-                    clock.julian_date(),
-                    &clock,
-                    &config.simulation.observer,
-                    &projected.star_counts(),
-                    &mut astroterm::timing::StepTimes::default(),
-                )
-                .unwrap();
+            let config = build_config(Arguments::parse_from(["probe", "--graphics-protocol", "kitty"]), &[]).unwrap();
+            let prepared = astroterm::sky::prepare_owned_catalog(astroterm::catalog::load_embedded_catalog(&mut astroterm::progress::Report::quiet()).unwrap(), &mut astroterm::progress::Report::quiet()).unwrap();
+            let tables = astroterm::sky::build_sky_tables(&prepared, &mut astroterm::progress::Report::quiet()).unwrap();
+            let mut display = Display::open(Some(ratatui_image::picker::ProtocolType::Kitty), config.terminal, config.text_scale).unwrap();
+            let mut frame = display.new_frame();
+            let mut caches = RegionCaches::default();
+            let time = FrameTime::from_utc(config.simulation.start_julian_date);
+            let solar_system = simulate_solar_system(&tables.bodies, time);
+            let observation = observe(&config.simulation.observer, config.simulation.refraction, &config.view, time);
+            let selected = select_regions(&tables.stars, &observation);
+            refresh_regions(&mut caches, &tables, &selected, time, &config.render);
+            project_stars_to_screen(&mut frame, &caches, &selected, &observation, &config.view);
+            let inputs = PointInputs { solar_system: &solar_system, tables: &tables, caches: &caches, selected: &selected, panel: &[] };
+            draw_points(&mut frame, &inputs, &observation, &config.view, &config.render);
+            present(&frame, display.terminal()).unwrap();
             crossterm::execute!(std::io::stdout(), crossterm::terminal::BeginSynchronizedUpdate).unwrap();
             panic!("intentional pixel restoration probe");
         }

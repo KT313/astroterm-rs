@@ -34,14 +34,14 @@ fn repair_with_fetch(store: &BlobStore, block: &mut MastBlock, fetch: &impl Fetc
 }
 
 fn read_validated_block(store: &BlobStore, block: &MastBlock, progress: &mut dyn DatasetProgress) -> io::Result<Vec<u8>> {
-    let bytes = store.read_object_with_progress(&block.hash, progress)?;
+    let bytes = store.read_object(&block.hash, progress)?;
     validate_raw_block(&bytes, block.rows).map_err(|error| invalid(format!("invalid cached Parquet block: {error}")))?;
     Ok(bytes)
 }
 
 fn repair_block(store: &BlobStore, block: &mut MastBlock, fetch: &impl Fetch, progress: &mut dyn DatasetProgress, times: &mut StepTimes) -> io::Result<Vec<u8>> {
     let source = block.source.as_ref().ok_or_else(|| invalid("missing pinned block provenance"))?;
-    let footer: Footer = decode(&store.read_object(&source.footer_hash)?)?;
+    let footer: Footer = decode(&store.read_object(&source.footer_hash, &mut crate::progress::NoProgress(std::io::sink()))?)?;
     let metadata = parquet::parse_footer(&footer.bytes)?;
     if source.group >= metadata.num_row_groups() || metadata.row_group(source.group).num_rows() != block.rows as i64 {
         return Err(invalid("pinned row-group shape mismatch"));

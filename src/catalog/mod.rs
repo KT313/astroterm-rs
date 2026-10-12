@@ -21,7 +21,6 @@ use std::collections::HashMap;
 use std::fmt;
 
 pub use athyg::load_athyg_catalog;
-pub(crate) use athyg::load_athyg_catalog_with_times;
 pub use bsc5::{Bsc5Entry, parse_bsc5};
 pub use cities::{City, find_city, parse_cities, suggest_cities};
 pub use designation::Designation;
@@ -176,11 +175,8 @@ impl fmt::Display for CatalogError {
 impl std::error::Error for CatalogError {}
 
 /// Parse the catalogs embedded in the binary: the Yale Bright Star Catalog with its star names.
-pub fn load_embedded_catalog() -> Result<Catalog, CatalogError> {
-    load_embedded_catalog_with_progress(&mut crate::progress::NoProgress(std::io::sink()))
-}
-
-pub(crate) fn load_embedded_catalog_with_progress(progress: &mut dyn crate::progress::DatasetProgress) -> Result<Catalog, CatalogError> {
+pub fn load_embedded_catalog(report: &mut crate::progress::Report<'_>) -> Result<Catalog, CatalogError> {
+    let (progress, _) = report.parts();
     let entries = bsc5::parse_bsc5(BSC5_DATA, progress)?;
     let star_names = parse_star_names(STAR_NAMES_TEXT, entries.len())?;
     let mut names = StarNames::default();
@@ -238,7 +234,7 @@ mod tests {
 
     #[test]
     fn embedded_catalog_is_consistent() {
-        let catalog = load_embedded_catalog().expect("embedded catalog loads");
+        let catalog = load_embedded_catalog(&mut crate::progress::Report::quiet()).expect("embedded catalog loads");
         assert_eq!(catalog.stars.len(), 9110);
         assert!(
             catalog

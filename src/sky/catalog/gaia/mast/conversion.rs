@@ -23,7 +23,7 @@ pub(super) enum ConvertedRow {
 }
 
 pub(super) fn fingerprint() -> String {
-    let mut bytes = super::super::super::cache::catalog_fingerprint().to_vec();
+    let mut bytes = crate::sky::catalog::cache::catalog_fingerprint().to_vec();
     bytes.extend_from_slice(&crate::constants::GAIA_DISTANCE_MIN_SIGNAL.to_le_bytes());
     for source in [include_bytes!("conversion.rs").as_slice(), include_bytes!("assembly.rs").as_slice(), include_bytes!("mod.rs").as_slice(),
         include_bytes!("../conversion.rs").as_slice(), include_bytes!("../../../../catalog/mast/parquet/mod.rs").as_slice()] {
@@ -40,7 +40,7 @@ pub(super) fn load_converted_block(raw_store: &BlobStore, block: &mut MastBlock,
 fn load_with_raw_reader(raw_store: &BlobStore, block: &mut MastBlock, store: &BlobStore, policy: &str, progress: &mut dyn DatasetProgress, times: &mut StepTimes,
     read_raw: impl FnOnce(&BlobStore, &mut MastBlock, &mut dyn DatasetProgress, &mut StepTimes) -> io::Result<Vec<u8>>) -> io::Result<ConvertedBlock> {
     let key = block_key(block, policy);
-    let cached = times.measure("MAST converted block read", || store.read_with_progress(&key, progress));
+    let cached = times.measure("MAST converted block read", || store.read(&key, progress));
     let cached = cached.and_then(|bytes| bytes.map(|bytes| {
         progress.set_detail("Decoding cached block");
         times.measure("MAST converted block decode", || decode_mast::<ConvertedBlock>(&bytes))

@@ -120,11 +120,7 @@ impl PreparedCatalogReader {
 }
 
 /// Publish only a complete, synced compressed file. CRC covers the exact stream before its trailer.
-#[cfg(test)]
-pub(crate) fn write_sections(path: &Path, fingerprint: &[u8; 32], sections: &[&[u8]], progress: &mut dyn DatasetProgress) -> io::Result<()> {
-    write_sections_with_times(path, fingerprint, sections, progress, &mut StepTimes::default())
-}
-pub(crate) fn write_sections_with_times(path: &Path, fingerprint: &[u8; 32], sections: &[&[u8]], progress: &mut dyn DatasetProgress, times: &mut StepTimes) -> io::Result<()> {
+pub(crate) fn write_sections(path: &Path, fingerprint: &[u8; 32], sections: &[&[u8]], progress: &mut dyn DatasetProgress, times: &mut StepTimes) -> io::Result<()> {
     if !supported() || sections.len() > MAX_SECTIONS { return Err(invalid("unsupported cache layout")); }
     let directory = path.parent().ok_or_else(|| invalid("missing cache directory"))?;
     std::fs::create_dir_all(directory)?;

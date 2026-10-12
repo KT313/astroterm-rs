@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""Fail when a foundation (keep-list) module imports from the parts of the crate that are being rebuilt or dropped.
+"""Check the structural rules of CLAUDE.md ("Pipeline restructuring rules") over the whole crate, without
+reading Rust.
 
-Pipeline restructuring, chunk 3 (dev/pipeline-restructuring-plan.md section 3 and chunk 3 of the steps file). The
-keep list below is the set of paths that must compile and test without the old processing spine. A violation is
-any `crate::...` path in a keep-list file that leads into a forbidden module. Re-exports through `crate::model`,
-`crate::sky` and `crate::projection` are resolved to the submodule that defines the symbol by reading the
-`pub use submodule::{...}` lines of the respective `mod.rs`.
+1. The seven step functions (`simulate_solar_system`, `observe`, `select_regions`, `refresh_regions`,
+   `project_stars_to_screen`, `draw_points`, `present`) are called only from `src/pipeline.rs`; their defining
+   modules and test code are exempt.
+2. At most two module levels below `src/` (`src/a/b/c.rs` is fine, `src/a/b/c/d.rs` is not). The loader folders
+   in EXEMPT_DEEP still exceed it; they are listed in the output as pending the owner's decision, not failures.
+3. No function has a `_with_progress` or `_with_times` twin: no function name carries either suffix.
+4. No `super::super::super` paths.
 
-Test code is not checked: files declared with `#[cfg(test)] mod name;`, files named `tests.rs` or `*_tests.rs`, and
-everything after the first line that is exactly `#[cfg(test)]` (the repository keeps inline test modules at the end
-of a file).
+Test code is not checked for rule 1: files declared with `#[cfg(test)] mod name;`, files named `tests.rs` or
+`*_tests.rs`, and everything after the first line that is exactly `#[cfg(test)]`.
 
 Usage: python3 scripts/checks/foundation_imports.py [--list]   (exit code 1 on violations; --list prints the files)
 """
@@ -20,112 +22,70 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 
-# The keep list of plan section 3, as paths. A directory means every non-test .rs file below it.
-KEEP = [
-    "constants.rs", "astro", "cache", "rows", "progress", "timing", "catalog", "sky/catalog",
-    "model/catalog", "model/configuration", "cli", "metadata", "controls",
-    "terminal/startup", "terminal/input", "terminal/transport/graphics",
-    "scene/text/raster.rs", "scene/raster/pixels/stars.rs",
-]
-
-# Module prefixes a keep-list file must not reach. `crate::model`, `crate::sky` and `crate::projection` are allowed
-# as roots; their symbols are resolved to submodules through the maps below.
-FORBIDDEN = [
-    "state", "scene", "canvas", "helpers", "projection::caching",
-    "sky::observation", "sky::selection", "sky::simulation", "sky::observer", "sky::positions", "sky::illumination",
-    "model::celestial", "model::presentation",
-]
-ROOT_MAPS = {"model": SRC / "model/mod.rs", "sky": SRC / "sky/mod.rs", "projection": SRC / "projection/mod.rs"}
-
-PATH = re.compile(r"crate::([A-Za-z_][\w:]*?)(?:::\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\})?(?=[^\w:{]|$)", re.S)
-REEXPORT = re.compile(r"pub(?:\(crate\))?\s+use\s+([a-z_]+)::\{([^}]*)\}|pub(?:\(crate\))?\s+use\s+([a-z_]+)::([A-Za-z_]\w*)", re.S)
-
-
-def symbol_map(mod_rs):
-    """symbol -> submodule for every `pub use submodule::...` line of one mod.rs."""
-    mapping = {}
-    for group_module, group, single_module, single in REEXPORT.findall(mod_rs.read_text()):
-        if group_module:
-            for item in group.split(","):
-                name = item.strip().split(" as ")[-1].strip()
-                if name: mapping[name] = group_module
-        elif single_module:
-            mapping[single] = single_module
-    return mapping
+STEPS = ["simulate_solar_system", "observe", "select_regions", "refresh_regions", "project_stars_to_screen", "draw_points", "present"]
+STEP_HOMES = {"solar_system", "observation", "selection", "regions", "projection", "points", "present"}
+LOOP = SRC / "pipeline.rs"
+# Keep-list loader folders deeper than two levels (plan section 3: "may be moved, not rewritten"); owner decides.
+EXEMPT_DEEP = ["astro/models", "catalog/mast", "catalog/cache", "sky/catalog", "model/catalog/storage", "terminal/transport/graphics"]
 
 
 def test_files():
-    """Files declared as test modules anywhere under src."""
     declared = set()
     for path in SRC.rglob("*.rs"):
-        text = path.read_text()
-        for name in re.findall(r"#\[cfg\(test\)\]\s*(?:#\[path = \"([^\"]+)\"\]\s*)?mod\s+([a-z_]+)\s*;", text):
-            explicit, module = name
+        for explicit, module in re.findall(r"#\[cfg\(test\)\]\s*(?:#\[path = \"([^\"]+)\"\]\s*)?mod\s+([a-z_]+)\s*;", path.read_text()):
             folder = path.parent if path.name == "mod.rs" else path.parent / path.stem
             candidates = [path.parent / explicit] if explicit else [folder / f"{module}.rs", folder / module / "mod.rs", path.parent / f"{module}.rs"]
             declared.update(c.resolve() for c in candidates if c.exists())
     return declared
 
 
-VISIBILITY = re.compile(r"pub\(in crate(?:::[A-Za-z_]\w*)*\)")
-
-
 def production_text(path):
-    """The file without its trailing inline test module and without `pub(in crate::...)` visibility paths."""
     lines = path.read_text().split("\n")
     for index, line in enumerate(lines):
         if line.strip() == "#[cfg(test)]":
             lines = lines[:index]
             break
-    return VISIBILITY.sub("", "\n".join(lines))
+    return "\n".join(lines)
 
 
-def expand(path_text, group):
-    """All full paths named by one `crate::a::b::{x, y::{z}}` occurrence."""
-    if group is None:
-        return [path_text]
-    paths = []
-    for item in re.split(r",(?![^{]*\})", group):
-        item = item.strip()
-        if not item: continue
-        nested = re.match(r"([A-Za-z_]\w*)::\{([^}]*)\}", item)
-        if nested:
-            paths.extend(f"{path_text}::{nested.group(1)}::{inner.strip().split(' as ')[0]}" for inner in nested.group(2).split(",") if inner.strip())
-        else:
-            paths.append(f"{path_text}::{item.split(' as ')[0].strip()}")
-    return paths
-
-
-def violations(path, maps, keep_files):
-    found = []
-    for match in PATH.finditer(production_text(path)):
-        for full in expand(match.group(1), match.group(2)):
-            parts = full.split("::")
-            root = parts[0]
-            resolved = full
-            if root in maps and len(parts) >= 2 and parts[1] in maps[root]:
-                resolved = "::".join([root, maps[root][parts[1]]] + parts[1:])
-            if any(resolved == f or resolved.startswith(f + "::") for f in FORBIDDEN):
-                found.append(f"{full} -> {resolved}" if resolved != full else full)
-    return sorted(set(found))
+def module_depth(path):
+    relative = path.relative_to(SRC)
+    parts = list(relative.parts[:-1])
+    if relative.name != "mod.rs":
+        parts.append(relative.stem)
+    return len(parts) - 1                                     # src/a.rs and src/a/mod.rs are level 0 modules
 
 
 def main():
-    maps = {root: symbol_map(mod_rs) for root, mod_rs in ROOT_MAPS.items()}
     excluded = test_files()
-    keep_files = []
-    for entry in KEEP:
-        target = SRC / entry
-        files = [target] if target.is_file() else sorted(target.rglob("*.rs"))
-        keep_files.extend(f for f in files if f.resolve() not in excluded and not (f.name == "tests.rs" or f.name.endswith("_tests.rs")))
+    files = sorted(f for f in SRC.rglob("*.rs") if f.resolve() not in excluded and not (f.name == "tests.rs" or f.name.endswith("_tests.rs")))
     if "--list" in sys.argv:
-        for f in keep_files: print(f.relative_to(ROOT))
-    failures = 0
-    for path in keep_files:
-        for item in violations(path, maps, keep_files):
-            print(f"{path.relative_to(ROOT)}: {item}")
-            failures += 1
-    print(f"{len(keep_files)} keep-list files checked, {failures} forbidden imports")
+        for f in files: print(f.relative_to(ROOT))
+    failures, exemptions = [], []
+    call = {step: re.compile(r"(?<![\w.])" + step + r"\(") for step in STEPS}
+    for path in files:
+        relative = path.relative_to(ROOT)
+        text = production_text(path)
+        home = path.relative_to(SRC).parts[0].removesuffix(".rs")
+        if path != LOOP and home not in STEP_HOMES:
+            for step, pattern in call.items():
+                if pattern.search(text) and not re.search(r"\bfn " + step + r"\(", text):
+                    failures.append(f"{relative}: calls step function `{step}` outside pipeline.rs")
+        for name in re.findall(r"\bfn\s+([a-z_0-9]+)", text):
+            if name.endswith("_with_progress") or name.endswith("_with_times"):
+                failures.append(f"{relative}: twin function `{name}`")
+        if "super::super::super" in text:
+            failures.append(f"{relative}: super::super::super path")
+        depth = module_depth(path)
+        if depth > 2:
+            folder = str(path.relative_to(SRC).parent).replace("\\", "/")
+            if any(folder == e or folder.startswith(e + "/") for e in EXEMPT_DEEP):
+                exemptions.append(f"{relative}: module level {depth}")
+            else:
+                failures.append(f"{relative}: module level {depth} exceeds two below src/")
+    for item in failures: print(item)
+    print(f"{len(files)} files checked, {len(failures)} violations, {len(exemptions)} deep loader files exempt (owner decision): "
+          + ", ".join(sorted({str(pathlib.Path(e.split(':')[0]).parent) for e in exemptions})))
     return 1 if failures else 0
 
 

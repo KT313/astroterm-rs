@@ -76,6 +76,6 @@ fn previous_label_boundary_format_is_rejected() {
     let mut bytes = fs::read(&path).unwrap();
     bytes[8..12].copy_from_slice(&7_u32.to_le_bytes());
     fs::write(&path, bytes).unwrap();
-    let error = super::super::format::load_cached_catalog(&path, &fingerprint).unwrap_err();
+    let error = super::super::format::load_cached_catalog(&path, &fingerprint, &mut crate::progress::Report::quiet()).unwrap_err();
     assert!(error.to_string().contains("version"));
 }

@@ -63,12 +63,10 @@ mod tests {
     use crate::constants::GRID_DEPTH;
     use crate::model::{ProjectionKind, SkyTables, View, ViewCenter, hash_direction};
     use crate::observation::observe;
-    use crate::progress::NoProgress;
-    use crate::timing::StepTimes;
 
     fn bsc5() -> SkyTables {
-        let prepared = crate::sky::prepare_owned_catalog(crate::catalog::load_embedded_catalog().unwrap()).unwrap();
-        crate::sky::build_sky_tables(&prepared, &mut NoProgress(std::io::sink()), &mut StepTimes::default()).unwrap()
+        let prepared = crate::sky::prepare_owned_catalog(crate::catalog::load_embedded_catalog(&mut crate::progress::Report::quiet()).unwrap(), &mut crate::progress::Report::quiet()).unwrap();
+        crate::sky::build_sky_tables(&prepared, &mut crate::progress::Report::quiet()).unwrap()
     }
     fn boston() -> Observer { Observer { latitude: 42.3601_f64.to_radians(), longitude: -71.0589_f64.to_radians() } }
     fn facing(fov_degrees: f64) -> View { View { center: ViewCenter::Facing { azimuth: 2.0, tilt: 0.5 }, projection: ProjectionKind::Stereographic, fov_degrees } }

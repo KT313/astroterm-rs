@@ -1,13 +1,15 @@
 //! Independent phase-6 fixtures. References use DE441/ERFA components with matched TT and UT1;
-//! empirical coverage is deliberately narrower than the computational/indexing interval.
-use astroterm::state::{SimulationState};
+//! empirical coverage is deliberately narrower than the computational/indexing interval. The body and star
+//! positions come from the frame loop's steps 1 and 2 (`simulate_solar_system`, `observe`); the reference
+//! values and tolerances are unchanged since the old spine.
 use astroterm::astro::{
-    self, Horizontal, Observer, Vector3,
-    models::{BodyId, orientation::*},
+    self, FrameTime, Horizontal, Observer, Vector3,
+    models::{BodyId, orientation::*, stars::years_since_j2000},
 };
-use astroterm::model::{Sky, SkyRegion, FrameTime};
-use astroterm::sky::{observe_sky, prepare_observation, update_solar_system};
-use astroterm::timing::StepTimes;
+use astroterm::catalog::load_embedded_catalog;
+use astroterm::model::{Bodies, PreparedCatalog, View};
+use astroterm::observation::{Observation, observe as observe_sky};
+use astroterm::solar_system::{SolarSystem, simulate_solar_system};
 use serde_json::Value;
 
 fn vector(v: &Value) -> Vector3 {
@@ -20,33 +22,39 @@ fn vector(v: &Value) -> Vector3 {
 fn angle(a: Vector3, b: Vector3) -> f64 {
     a.cross(b).length().atan2(a.dot(b)).to_degrees() * 3600.0
 }
+
+/// The Boston sky at one time: the solar system as its light arrives, the observer's orientation, the catalog.
+struct Sky { bodies: Bodies, system: SolarSystem, observation: Observation, catalog: PreparedCatalog }
+
 fn observe(tt: f64, ut1: f64) -> Sky {
-    let mut state = SimulationState::default();
-    let mut times = StepTimes::default();
-    // Deliberately seed the caches 59 seconds before the requested frame.
-    let seed = FrameTime {
-        utc: ut1 - 59.0 / 86400.0,
-        ut1: ut1 - 59.0 / 86400.0,
-        tt: tt - 59.0 / 86400.0,
-    };
-    update_solar_system(&mut state, seed, &[], &mut times).unwrap();
     let time = FrameTime { utc: ut1, ut1, tt };
-    update_solar_system(&mut state, time, &[], &mut times).unwrap();
     let site = Observer {
         latitude: 42.3601_f64.to_radians(),
         longitude: -71.0589_f64.to_radians(),
     };
-    let observer = prepare_observation(&mut state, time, site).unwrap();
-    let mut sky = astroterm::sky::create_sky_from_catalog(&astroterm::catalog::load_embedded_catalog().unwrap()).unwrap();
-    observe_sky(&state, &observer, 5.0, false, SkyRegion::All, &mut sky, &mut times).unwrap();
-    sky
+    let bodies = Bodies::default();
+    let system = simulate_solar_system(&bodies, time);
+    let observation = observe_sky(&site, false, &View::default(), time);
+    let catalog = astroterm::sky::prepare_owned_catalog(load_embedded_catalog(&mut astroterm::progress::Report::quiet()).unwrap(), &mut astroterm::progress::Report::quiet()).unwrap();
+    Sky { bodies, system, observation, catalog }
 }
+/// The apparent horizon direction (East, North, Up) of a body, airless.
 fn body(sky: &Sky, name: &str) -> Vector3 {
     if name == "Moon" {
-        sky.moon.position
+        sky.observation.apparent_direction(sky.system.moon_position(0, sky.observation.observer.position))
+    } else if name == "Sun" {
+        sky.observation.apparent_direction(sky.system.sun)
     } else {
-        sky.planets.iter().find(|p| p.kind.name() == name).unwrap().position
+        let index = sky.bodies.planets.iter().position(|planet| planet.name == name).unwrap_or_else(|| panic!("{name}"));
+        sky.observation.apparent_direction(sky.system.planets[index])
     }
+}
+/// The apparent horizon direction of the star with HR number `hr`, from the stellar motion model.
+fn star(sky: &Sky, hr: u32) -> Vector3 {
+    let catalog = &sky.catalog.catalog;
+    let star = catalog.stars.iter().find(|star| star.id.0 == hr).unwrap();
+    let sample = star.motion.evaluate(years_since_j2000(sky.observation.time.tt), star.magnitude);
+    sky.observation.apparent_star_direction(sample.direction)
 }
 
 #[test]
@@ -154,8 +162,7 @@ fn observed_frames_match_de441_in_the_claimed_intervals_and_record_far_failures(
             }
         }
         for (i, hr) in [7001, 5340].into_iter().enumerate() {
-            let star = sky.star_views().find(|s| s.id().0 == hr).unwrap();
-            assert!(angle(star.position, vector(&row["stars"][i])) < 0.1);
+            assert!(angle(star(&sky, hr), vector(&row["stars"][i])) < 0.1);
         }
     }
 }
