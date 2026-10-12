@@ -2,6 +2,9 @@
 mod caching;
 mod geometry;
 mod pipeline;
+mod warp;
+
+pub use warp::{Frame, ViewKey, ViewTable, project_stars_to_screen};
 
 pub use caching::{borrow_projected, borrow_render_projection};
 pub use pipeline::{project_cached_sky, project_cached_regions};

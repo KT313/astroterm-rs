@@ -20,7 +20,9 @@
 //!
 //! The frame pipeline is being rebuilt (`dev/pipeline-restructuring-plan.md`). The new spine grows one step module
 //! at a time directly under `src/`: [`solar_system`] (step 1), [`observation`] (step 2), [`selection`] (step 3) and
-//! [`regions`] (step 4: speed groups, simulation caches, sky-fixed group and region images, `refresh_regions`).
+//! [`regions`] (step 4: speed groups, simulation caches, sky-fixed group and region images, `refresh_regions`) and
+//! [`projection`] (step 5, `project_stars_to_screen`: the warp of the region tiles onto the screen, beside the
+//! projection geometry it reuses).
 //!
 //! Earth is the only production anchor. Common f64 states use equatorial J2000 axes, AU and AU/day, with
 //! a barycentric origin. [`sky`] documents the observer site and apparent-place corrections.

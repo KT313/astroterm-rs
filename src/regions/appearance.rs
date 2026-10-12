@@ -24,6 +24,9 @@ impl Texel {
     pub fn plus(self, other: Texel) -> Texel {
         Texel { rgb: [self.rgb[0] + other.rgb[0], self.rgb[1] + other.rgb[1], self.rgb[2] + other.rgb[2]], opacity: self.opacity + other.opacity }
     }
+    pub fn scaled(self, factor: f32) -> Texel {
+        Texel { rgb: self.rgb.map(|c| c * factor), opacity: self.opacity * factor }
+    }
 }
 
 /// A visual compensation for fewer overlapping stars when zoomed in, independent of catalog brightness: 1 at the

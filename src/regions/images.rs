@@ -2,7 +2,7 @@
 //! screen would draw it) and one per region (its group images added together). Tone mapping and the zoom boost
 //! happen in the frame output, not here.
 use crate::astro::Vector3;
-use crate::constants::SPEED_GROUP_COUNT;
+use crate::constants::{SPEED_GROUP_COUNT, TILE_EDGE_TEXELS};
 use crate::regions::UNPLACED;
 use crate::regions::appearance::{StarOpacities, Texel, blend_star, premultiplied_color};
 use crate::regions::tiles::TileGeometry;
@@ -78,6 +78,7 @@ fn round_half_away(v: f64) -> i64 { (v + 0.5_f64.copysign(v)) as i64 }
 pub struct RegionImage {
     keys: Option<[Option<ImageKey>; SPEED_GROUP_COUNT]>, // the group keys as summed; None before the first sum
     texels: Vec<Texel>,                     // the tile, or none when every group image is empty
+    lit: Vec<u64>,                          // per tile row, bit x set when texel x of that row holds light; lets the warp skip empty areas
 }
 
 impl RegionImage {
@@ -85,6 +86,8 @@ impl RegionImage {
     pub fn is_empty(&self) -> bool { self.texels.is_empty() }
     pub fn bytes(&self) -> usize { self.texels.len() * Texel::SIZE }
     pub fn is_summed(&self) -> bool { self.keys.is_some() }
+    /// One bit per texel, a word per tile row: which texels hold light. Empty when the image is.
+    pub fn lit_rows(&self) -> &[u64] { &self.lit }
 
     /// Whether the sum still matches the group images.
     pub fn is_current(&self, groups: &[GroupImage]) -> bool {
@@ -95,12 +98,14 @@ impl RegionImage {
     pub fn sum(&mut self, groups: &[GroupImage]) {
         self.keys = Some(std::array::from_fn(|group| groups[group].key()));
         let mut parts = groups.iter().filter(|group| !group.is_empty());
-        let Some(first) = parts.next() else { self.texels = Vec::new(); return; };
+        let Some(first) = parts.next() else { self.texels = Vec::new(); self.lit = Vec::new(); return; };
         self.texels.clear();
         self.texels.extend_from_slice(first.texels());
         for part in parts {
             for (sum, texel) in self.texels.iter_mut().zip(part.texels()) { *sum = sum.plus(*texel); }
         }
+        self.lit.clear();
+        self.lit.extend(self.texels.chunks_exact(TILE_EDGE_TEXELS).map(|row| row.iter().enumerate().filter(|(_, texel)| !texel.is_empty()).fold(0_u64, |bits, (x, _)| bits | 1 << x)));
     }
 }
 
@@ -192,6 +197,9 @@ mod tests {
         let middle = MIDDLE * SIZE + MIDDLE;
         assert!((region_image.texels()[middle].opacity - 0.2).abs() < 1e-3);                 // added, not blended: 0.1 + 0.1
         assert_eq!(region_image.texels()[middle].rgb, groups[0].texels()[middle].rgb.map(|c| c * 2.0));
+        let lit: Vec<(usize, u32)> = region_image.lit_rows().iter().enumerate().filter(|(_, bits)| **bits != 0).map(|(y, bits)| (y, bits.count_ones())).collect();
+        assert_eq!(lit, [(MIDDLE - 1, 2), (MIDDLE, 2)]);                                     // the glyph's two rows, two texels each
+        assert_eq!(region_image.lit_rows()[MIDDLE] & (1 << MIDDLE), 1 << MIDDLE);
         let mut reversed = RegionImage::default();
         reversed.sum(&[groups[2].clone(), groups[1].clone(), groups[0].clone()]);
         assert_eq!(reversed.texels(), region_image.texels());                               // stacking order is irrelevant
@@ -200,6 +208,6 @@ mod tests {
         region_image.sum(&groups);
         assert!((region_image.texels()[middle].opacity - 0.1).abs() < 1e-3);
         region_image.sum(&[GroupImage::default(), GroupImage::default(), GroupImage::default()]);
-        assert!(region_image.is_empty() && region_image.bytes() == 0 && region_image.is_summed()); // only empty groups: no texels
+        assert!(region_image.is_empty() && region_image.bytes() == 0 && region_image.is_summed() && region_image.lit_rows().is_empty()); // only empty groups: no texels
     }
 }

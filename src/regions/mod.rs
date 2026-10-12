@@ -19,7 +19,7 @@ pub use appearance::{STAR_GLYPH_RADIUS, StarOpacities, Texel, blend_star, premul
 pub use groups::{speed_group, speed_group_hold_seconds, drift_bound_for_rate};
 pub use images::{GroupImage, ImageKey, RegionImage};
 pub use simulation::{GroupSimulation, Simulations, Refresh, UNPLACED, rows_wanted};
-pub use tiles::TileGeometry;
+pub use tiles::{TileFrame, TileGeometry, tile_frames};
 
 use crate::astro::FrameTime;
 use crate::catalog::magnitude_code;
