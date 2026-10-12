@@ -9,6 +9,7 @@ mod configuration;
 pub use catalog::{
     SkyCatalog, CatalogPreparation, PreparedCatalog, ConstellationSet, StarException, SkyRegion, SelectionStats, SkyGrid,
     hash_direction, STAR_SECTIONS, StarRow, StarRowSlice, StarRowVec, StarStorage, Star, Constellation, StarColor,
+    Stars, GroupTable, LabelColumn, Constellations, Bodies, Body, Satellite, SkyTables,
 };
 pub(crate) use catalog::{SelectedRegion, StellarFields, unsupported_star_data};
 pub use celestial::{
