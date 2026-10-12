@@ -1,4 +1,4 @@
-//! Measure frame steps and expose opt-in, bounded execution and memory diagnostics.
+//! Measure frame steps and expose the opt-in execution trace.
 //! Use this module's exports; recording, history and event implementation remain private.
 use crate::rows::row_columns;
 
@@ -11,27 +11,15 @@ mod batches;
 mod trace;
 #[path = "events/mod.rs"]
 mod memory;
-#[cfg(feature = "memory-diagnostics")]
-#[path = "history/run.rs"]
-mod run;
 #[path = "reporting/formatting.rs"]
 mod formatting;
 #[path = "reporting/capture.rs"]
 mod capture;
 pub use capture::CaptureSteps;
-#[cfg(feature = "memory-diagnostics")]
-#[path = "reporting/run.rs"]
-mod reporting;
 
 pub use trace::{PipelineTrace, TraceStep};
 pub use memory::{Access, BufferId, BufferShape, IndexDomain, MemoryEvent, MemoryStepId, Operation};
-#[cfg(feature = "memory-diagnostics")]
-pub use memory::RecordedMemoryEvent;
-#[cfg(feature = "memory-diagnostics")]
-pub use run::{MemoryFrame, MemoryRun, StepAggregate, TraceBounds};
 pub(crate) use formatting::format_bytes;
-#[cfg(feature = "memory-diagnostics")]
-pub(crate) use formatting::format_count;
 
 
 /// The smoothed duration of one step.
@@ -51,26 +39,6 @@ pub struct StepTimes {
     parents: Vec<&'static str>,
     per_frame: bool,
     trace: Option<PipelineTrace>,
-    #[cfg(feature = "memory-diagnostics")]
-    memory_enabled: bool,
-    #[cfg(feature = "memory-diagnostics")]
-    memory_completed: Option<memory::MemoryStepId>,
-    #[cfg(feature = "memory-diagnostics")]
-    memory_batch: bool,
-    #[cfg(feature = "memory-diagnostics")]
-    memory_batch_seconds: f64,
-    #[cfg(feature = "memory-diagnostics")]
-    memory_run: Option<MemoryRun>,
-    #[cfg(feature = "memory-diagnostics")]
-    memory_epoch: u64,
-    #[cfg(feature = "memory-diagnostics")]
-    memory_bounded: bool,
-    #[cfg(feature = "memory-diagnostics")]
-    memory_suppressed: usize,
-    #[cfg(feature = "memory-diagnostics")]
-    registry_omitted: u64,
-    #[cfg(feature = "memory-diagnostics")]
-    memory_batch_events: usize,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -80,8 +48,4 @@ struct StepRecord {
     previous_average: Option<f64>,
     frame_seconds: Option<f64>,
     frame_calls: usize,
-    #[cfg(feature = "memory-diagnostics")]
-    memory_events: Vec<memory::RecordedMemoryEvent>,
-    #[cfg(feature = "memory-diagnostics")]
-    memory_omitted: usize,
 }

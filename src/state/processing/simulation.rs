@@ -107,8 +107,6 @@ impl SimulationState {
         }
     }
 }
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(SimulationState { planets, moon, orientation, planet_work, moon_work, orientation_work, group });
 
 /// Separate simulation families, grouped only for state inspection.
 #[derive(Default)]
@@ -116,8 +114,6 @@ pub struct SimulationCaches {
     pub solar_system: SimulationState,
     pub stars: super::StellarSimulationState,
 }
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(SimulationCaches { solar_system, stars });
 
 /// A complete group is published only after final emission-time bodies are prepared.
 #[derive(Clone, Debug, PartialEq)]
@@ -132,8 +128,6 @@ impl Default for SolarGroup {
     fn default() -> Self { Self { request_key: None, complete_key: None, calculated_at: None, has_been_invalidated: true, request_generation: 0 } }
 }
 crate::rows::row_columns!(SolarGroup { request_key, complete_key, calculated_at, has_been_invalidated, request_generation });
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_flat!(SolarGroup);
 
 impl Default for SimulationState {
     fn default() -> Self {

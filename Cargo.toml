@@ -13,20 +13,6 @@ path = "src/lib.rs"
 name = "astroterm"
 path = "src/main.rs"
 
-[features]
-default = []
-memory-diagnostics = []
-
-[[test]]
-name = "memory_inventory"
-path = "tests/memory_inventory.rs"
-required-features = ["memory-diagnostics"]
-
-[[test]]
-name = "memory_trace"
-path = "tests/memory_trace.rs"
-required-features = ["memory-diagnostics"]
-
 [dependencies]
 base64-simd = "0.8"
 bincode = { version = "2", features = ["serde"] }

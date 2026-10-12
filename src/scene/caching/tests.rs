@@ -1,6 +1,4 @@
 use crate::scene::{draw_pixels, draw_characters};
-#[cfg(feature = "memory-diagnostics")]
-use crate::scene::draw_characters_with_times;
 use crate::model::{View, ProjectionViewport as Viewport, ScreenPoint};
 use crate::projection::project_sky;
 use super::*;
@@ -355,27 +353,4 @@ fn failed_pixel_refresh_keeps_committed_value_and_candidate_for_retry() {
     assert_eq!(cache.pixels.generation, generation); // retry compared against the old committed image
     assert_eq!(cache.pixels.stats.refreshes, refreshes + 1);
     assert!(!cache.pixels.has_been_invalidated);
-}
-
-#[cfg(feature = "memory-diagnostics")]
-#[test]
-fn character_memory_events_preserve_copy_paths_and_skip_drawing_on_hits() {
-    use crate::timing::{BufferId, MemoryEvent, Operation};
-    let sky = fixture("First", *b"B0", None);
-    let data = project(&sky);
-    let projected = data.view(&sky);
-    let mut cache = SceneCache::default();
-    let mut canvas = Canvas::new(40, 60);
-    let mut first = StepTimes::with_trace(true);
-    first.enable_memory_events(true);
-    draw_characters_with_times(&mut cache, &mut canvas, &projected, &options(), J2000, &mut first);
-    let expected = canvas.clone();
-    assert!(first.trace().unwrap().steps.iter().any(|step| step.name == "Character cache copy" && step.memory_events.iter().any(|e| matches!(e.event, MemoryEvent::Operation { buffer: BufferId::CharacterScene, operation: Operation::Copy, .. }))));
-    canvas.clear();
-    let mut hit = StepTimes::with_trace(true);
-    hit.enable_memory_events(true);
-    draw_characters_with_times(&mut cache, &mut canvas, &projected, &options(), J2000, &mut hit);
-    assert_eq!(canvas, expected);
-    assert!(!hit.trace().unwrap().steps.iter().any(|step| step.name == "Canvas initialization"));
-    assert!(hit.trace().unwrap().steps.iter().any(|step| step.name == "Raster output copy" && step.memory_events.iter().any(|e| matches!(e.event, MemoryEvent::Operation { buffer: BufferId::CharacterFrame, operation: Operation::Copy, .. }))));
 }

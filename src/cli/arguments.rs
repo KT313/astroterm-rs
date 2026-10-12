@@ -167,7 +167,7 @@ pub struct Arguments {
 
     /// Capture N completed frames (including reused displays) to --debug-frame-report; no interactive controls
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(1..), requires = "debug_frame_report",
-        conflicts_with_all = ["debug_singleframe", "debug_memory", "debug_log_data", "speed"])]
+        conflicts_with_all = ["debug_singleframe", "debug_log_data", "speed"])]
     pub debug_frames: Option<u32>,
 
     /// New JSONL timing file for --debug-frames; existing files are never overwritten
@@ -181,11 +181,6 @@ pub struct Arguments {
     /// Append Markdown table dumps in tmp/ at startup, after preparation, and after each projection and rendering. Available in every build
     #[arg(long)]
     pub debug_log_data: bool,
-
-    /// Report bounded memory inventories and instrumented operations after quitting; combine with --debug-singleframe for one frame.
-    /// Requires: cargo build --features memory-diagnostics --bin astroterm. Does not enable the on-screen timing panel
-    #[arg(long)]
-    pub debug_memory: bool,
 
     /// Print this help message
     #[arg(short = 'h', long, action = ArgAction::Help)]

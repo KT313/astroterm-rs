@@ -1,6 +1,4 @@
 //! Small ownership/provenance helpers, with no processing or buffer allocation.
-#[cfg(feature = "memory-diagnostics")]
-pub(super) mod regions;
 pub(super) fn sum_stats(stats: impl IntoIterator<Item = crate::cache::CacheStats>) -> crate::cache::CacheStats {
     let mut total = crate::cache::CacheStats::default();
     for stats in stats { total.hits += stats.hits; total.refreshes += stats.refreshes; total.bypasses += stats.bypasses; }
@@ -18,8 +16,5 @@ impl Default for StageId {
     }
 }
 
-
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_flat!(StageId);
 
 crate::rows::debug_preview!(StageId);

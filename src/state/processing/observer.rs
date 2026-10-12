@@ -59,8 +59,6 @@ impl ObserverPreparationCache {
         super::sum_stats([self.observer.stats, self.light_time.stats, self.bodies.stats])
     }
 }
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(ObserverPreparationCache { config, observer, light_time, bodies });
 
 #[derive(Clone, Copy)]
 pub struct PreparedBodies<'a> {

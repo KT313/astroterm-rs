@@ -180,11 +180,4 @@ fn blended_layer_table_reports_straight_colors_and_owned_capacity() {
         }
     });
     assert!(found);
-    #[cfg(feature = "memory-diagnostics")]
-    {
-        let inventory = crate::state::collect_inventory("scene", &cache);
-        let row = inventory.rows.iter().find(|r| r.kind == crate::cache::Kind::Heap && r.path.ends_with(".star_layer")).unwrap();
-        assert_eq!(row.used, Some(256 * 16));
-        assert!(row.reserved.unwrap() >= 256 * 16);
-    }
 }

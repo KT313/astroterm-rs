@@ -16,8 +16,6 @@ pub(crate) use projection::{
     HorizonGeometry,
 };
 pub(crate) use rendering::{KittyDisplayKey, RenderResultVersion, PixelFrameKey, KittyEncodingKey, ProductionRasterKey, SceneKey, StarPixel, StarOpacityTable, PixelStarKey, CharacterStarKey, StarKeys, Glyph};
-#[cfg(feature = "memory-diagnostics")]
-pub(crate) use rendering::RasterRegion; // only the diagnostics tables name the per-region raster dependency record
 
 mod text;
 pub(crate) use text::{PixelLabel, PixelLabelKey, PixelTextKey, PixelTextCache};

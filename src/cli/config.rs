@@ -27,10 +27,6 @@ impl std::error::Error for ConfigError {}
 
 /// Validate the arguments and convert them to a [`Config`]. `cities` resolves `--city`.
 pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, ConfigError> {
-    #[cfg(not(feature = "memory-diagnostics"))]
-    if arguments.debug_memory {
-        return Err(ConfigError("--debug-memory requires rebuilding with cargo build --features memory-diagnostics".into()));
-    }
     if !arguments.text_scale.is_finite() || !(0.25..=4.0).contains(&arguments.text_scale) {
         return Err(ConfigError("Text scale must be finite and between 0.25 and 4".into()));
     }
@@ -113,7 +109,6 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
         frame_benchmark,
         no_progress: arguments.no_progress,
         debug_log_data: arguments.debug_log_data,
-        debug_memory: arguments.debug_memory,
         cache: crate::cache::CacheConfig::load(arguments.cache_config.as_deref(), arguments.disable_cache)
             .map_err(|e| ConfigError(e.to_string()))?,
         text_scale: arguments.text_scale,
@@ -438,7 +433,7 @@ mod tests {
         assert!(!config_from(&[]).unwrap().debug_log_data);
         let config = config_from(&["--debug-log-data"]).unwrap();
         assert!(config.debug_log_data);
-        assert!(!config.debug_singleframe && !config.debug_memory);
+        assert!(!config.debug_singleframe);
         assert!(!config.terminal.frame_times && !config.terminal.metadata_panel);
         assert!(config_from(&["--debug-log-data", "--debug-singleframe"]).unwrap().debug_singleframe);
     }
@@ -479,7 +474,7 @@ mod benchmark_tests {
         let base = ["astroterm", "--debug-frames", "3", "--debug-frame-report", "report.jsonl"];
         let config = build_config(Arguments::try_parse_from(base).unwrap(), &[]).unwrap();
         assert_eq!(config.frame_benchmark.unwrap().step_seconds, 0.0);
-        for extra in [vec!["-s", "1"], vec!["--debug-singleframe"], vec!["--debug-memory"], vec!["--debug-log-data"]] {
+        for extra in [vec!["-s", "1"], vec!["--debug-singleframe"], vec!["--debug-log-data"]] {
             assert!(Arguments::try_parse_from(base.into_iter().chain(extra)).is_err());
         }
         for args in [vec!["astroterm", "--debug-frames", "0", "--debug-frame-report", "x"],

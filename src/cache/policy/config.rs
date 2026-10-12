@@ -151,9 +151,6 @@ impl CacheConfig {
     }
 }
 
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(CacheConfig { groups });
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -106,9 +106,6 @@ impl LabelBuilder {
     }
 }
 
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(StarNames { text, boundaries, ascii_alternatives });
-
 #[cfg(test)]
 mod tests {
     use super::*;

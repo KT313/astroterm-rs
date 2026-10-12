@@ -96,13 +96,3 @@ fn install_panic_restore_hook() {
         }));
     });
 }
-
-#[cfg(feature = "memory-diagnostics")]
-impl crate::cache::ReportBuffers for TerminalSession {
-    fn report_buffers(&self, sink: &mut dyn crate::cache::BufferSink) {
-        if sink.enter("output_writer", std::mem::size_of_val(&self.out)) {
-            sink.payload(self.out.buffer().len(), self.out.capacity(), 1, crate::cache::Quality::ExactPayload, "external scoped BufWriter payload; terminal/OS internals excluded");
-            sink.leave();
-        }
-    }
-}

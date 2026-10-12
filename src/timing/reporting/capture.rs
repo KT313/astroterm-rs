@@ -21,8 +21,6 @@ impl StepTimes {
     pub fn capture_steps(&self) -> io::Result<CaptureSteps<'_>> {
         let trace = self.trace.as_ref().ok_or_else(|| io::Error::other("frame capture requires tracing"))?;
         if !trace.active.is_empty() || !self.parents.is_empty() { return Err(io::Error::other("cannot export an active timing scope")); }
-        #[cfg(feature = "memory-diagnostics")]
-        if self.memory_bounded || self.memory_enabled { return Err(io::Error::other("frame capture cannot share memory-report retention")); }
         for (index, step) in trace.steps.iter().enumerate() {
             if !step.seconds.is_finite() || step.seconds < 0.0 || !step.direct_diagnostic_seconds.is_finite()
                 || step.direct_diagnostic_seconds < 0.0 || step.parent.is_some_and(|parent| parent >= index) {
@@ -39,11 +37,6 @@ impl StepTimes {
         let mut steps = std::mem::take(&mut trace.steps);
         steps.clear();
         *trace = super::PipelineTrace { steps, ..Default::default() };
-        #[cfg(feature = "memory-diagnostics")]
-        {
-            self.memory_epoch = self.memory_epoch.checked_add(1).expect("diagnostic frame handle epoch exhausted");
-            self.memory_completed = None;
-        }
         Ok(())
     }
 }
@@ -51,16 +44,6 @@ impl StepTimes {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(feature = "memory-diagnostics")]
-    #[test]
-    fn bounded_memory_history_cannot_be_discarded_by_frame_capture() {
-        let mut times = StepTimes::with_trace(true);
-        times.enable_memory_run(true);
-        times.measure("Startup", || {});
-        assert!(times.capture_steps().is_err());
-        assert!(times.clear_capture_segment().is_err());
-        assert_eq!(times.trace().unwrap().steps.len(), 1);
-    }
 
     #[test]
     fn thousands_of_frames_reuse_one_trace_without_losing_parent_indices() {

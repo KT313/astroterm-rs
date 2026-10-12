@@ -120,9 +120,3 @@ impl SkyGrid {
         }
     }
 }
-
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(SkyGrid { offsets, coarse_caps, fine_caps });
-
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(SelectedRegion { cells });

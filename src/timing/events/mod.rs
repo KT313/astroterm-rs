@@ -81,42 +81,11 @@ impl MemoryEvent {
     pub fn unknown_operation(buffer: BufferId, operation: Operation) -> Self {
         Self::Operation { buffer, operation, before: None, after: None, elements: None, logical_bytes: None, quality: Quality::Unknown }
     }
-    #[cfg(feature = "memory-diagnostics")]
-    fn counts(self) -> (Option<usize>, Option<usize>) {
-        match self {
-            Self::Borrow { shape, .. } => (shape.len, shape.logical_bytes()),
-            Self::Operation { elements, logical_bytes, .. } => (elements, logical_bytes),
-        }
-    }
-    #[cfg(feature = "memory-diagnostics")]
-    fn same_kind(self, other: Self) -> bool {
-        match (self, other) {
-            (Self::Borrow { buffer: a, access: x, shape: s }, Self::Borrow { buffer: b, access: y, shape: t }) => a == b && x == y && s.domain == t.domain && s.quality == t.quality,
-            (Self::Operation { buffer: a, operation: x, quality: s, .. }, Self::Operation { buffer: b, operation: y, quality: t, .. }) => a == b && x == y && s == t,
-            _ => false,
-        }
-    }
 }
 
-#[cfg(feature = "memory-diagnostics")]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct MemoryStepId(pub(crate) Target, pub(crate) u64);
-#[cfg(feature = "memory-diagnostics")]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Target { Trace(usize), Batch(usize) }
-
-#[cfg(feature = "memory-diagnostics")]
-#[path = "recording/enabled.rs"]
-mod enabled;
-#[cfg(feature = "memory-diagnostics")]
-pub use enabled::RecordedMemoryEvent;
-#[cfg(feature = "memory-diagnostics")]
-pub(crate) use enabled::write_events;
-#[cfg(not(feature = "memory-diagnostics"))]
 #[path = "recording/disabled.rs"]
 mod disabled;
 mod hooks;
 
-#[cfg(not(feature = "memory-diagnostics"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MemoryStepId;

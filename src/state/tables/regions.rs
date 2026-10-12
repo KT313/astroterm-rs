@@ -80,33 +80,5 @@ mod tests {
         assert!(table.preview().len() <= 20);
         assert_eq!(table.rows(), 100);
     }
-    #[cfg(feature = "memory-diagnostics")]
-    #[test]
-    fn regional_inventory_sums_all_payloads_without_exhausting_the_row_cap() {
-        use crate::{astro::{Matrix3, Vector3}, cache::{Kind, ReportBuffers}, model::{SelectedStar, CorrectionStats, View, ProjectionViewport}, state::{ObservationCache, ProjectionCache}};
-        fn used(owner: &impl ReportBuffers) -> usize {
-            let snapshot = crate::state::collect_inventory("regional", owner);
-            assert_eq!(snapshot.omitted_nodes, 0);
-            assert!(snapshot.rows.len() < 200);
-            snapshot.rows.iter().filter(|row| row.kind == Kind::Heap).map(|row| row.used.unwrap()).sum()
-        }
-        let mut observation = ObservationCache { regions: (0..crate::constants::SIMULATION_REGION_COUNT).map(|_| Default::default()).collect(), ..Default::default() };
-        let entry = &mut observation.regions[123];
-        entry.eligible.store((1, 1, 5.0), 0.0, 0.0, vec![true, false]);
-        entry.corrections.store((1, 1), 0.0, 0.0, (vec![SelectedStar { source_index: 42, drawable: true }], CorrectionStats::default()));
-        entry.apparent.store((1, 1, Vector3::default()), 0.0, 0.0, vec![Vector3::default()]);
-        entry.apparent.invalidate(); // retained invalidated data must remain in the accounting
-        assert_eq!(used(&observation), ObservationRegionsTable(&observation.regions).bytes().used.unwrap());
-
-        let mut projection = ProjectionCache {
-            regional_stars: (0..crate::constants::SIMULATION_REGION_COUNT).map(|_| Cache::default()).collect(),
-            regional_orders: (0..crate::constants::SIMULATION_REGION_COUNT).map(|_| Cache::default()).collect(), ..Default::default()
-        };
-        projection.regional_stars[123].store(((1, 1, 1), Matrix3::IDENTITY, false, View::default(), ProjectionViewport { width: 10, height: 10 }), 0.0, 0.0, vec![crate::model::DrawnStar { source_index: 42, cell: (3, 4), magnitude: 14000, color: 1 }]);
-        projection.regional_orders[123].store((1, 1), 0.0, 0.0, vec![crate::model::RegionalDrawRecord { row: 0, source_index: 42, magnitude: 14000 }]);
-        let cells = RegionalTable { entries: &projection.regional_stars, nested_bytes: TableBytes::vector };
-        let orders = RegionalTable { entries: &projection.regional_orders, nested_bytes: TableBytes::vector };
-        assert_eq!(used(&projection), cells.bytes().used.unwrap() + orders.bytes().used.unwrap());
-    }
 
 }

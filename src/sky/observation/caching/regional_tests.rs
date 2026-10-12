@@ -227,20 +227,3 @@ fn requested_empty_regions_do_not_change_direction_generations() {
     assert_eq!(cache.observation.region_reports(crate::constants::CONSTELLATION_REGION).unwrap()[2].generation, endpoint_generation);
     assert_eq!(cache.observation.horizontal.generation, horizontal);
 }
-
-#[cfg(feature = "memory-diagnostics")]
-#[test]
-fn inventory_keeps_original_regions_and_counts_request_capacity_without_combined_lists() {
-    let (simulation, observer) = prepare();
-    let mut cache = PipelineCache::default();
-    let mut output = ObservedSky::new(catalog());
-    frame(&mut cache, &simulation, &observer, 20.0, SkyRegion::All, &mut output);
-    let snapshot = crate::state::collect_inventory("observation", &cache.observation);
-    assert_eq!(snapshot.omitted_nodes, 0);
-    let metadata = snapshot.rows.iter().find(|row| row.kind == crate::cache::Kind::Heap && row.path.ends_with(".layout_sources")).unwrap();
-    assert_eq!(metadata.used, Some(cache.observation.layout_sources.len() * std::mem::size_of::<(usize, u64, u64)>()));
-    assert!(!snapshot.rows.iter().any(|row| row.path == "observation.eligible" || row.path == "observation.corrections"));
-    let body_bytes = (output.planets.len() + 1) * std::mem::size_of::<Vector3>();
-    assert!(snapshot.rows.iter().filter(|row| row.kind == crate::cache::Kind::Heap && row.path.contains("horizontal")).all(|row| row.used.is_some_and(|used| used <= body_bytes))); // bodies only; no star-sized horizontal buffer
-    assert!(snapshot.rows.iter().any(|row| row.kind == crate::cache::Kind::Heap && row.path.ends_with(".regions.results")));
-}

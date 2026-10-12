@@ -1,8 +1,6 @@
 //! Per-step registration and smoothing; frame orchestration stays in pipeline.rs.
 use crate::constants::TIMING_EMA_FACTOR;
 use super::{StepRecord, StepTime, StepTimes};
-#[cfg(feature = "memory-diagnostics")]
-use super::memory;
 
 impl StepTimes {
     pub(super) fn reset_frame_samples(&mut self) {
@@ -19,12 +17,8 @@ impl StepTimes {
     /// Add a duration to a step's average. A new step starts at its first duration rather than at zero.
     pub(super) fn record(&mut self, name: &'static str, seconds: f64) {
         let Some(index) = self.register_step(name) else {
-            #[cfg(feature = "memory-diagnostics")]
-            if self.memory_batch { self.memory_completed = None; }
             return;
         };
-        #[cfg(feature = "memory-diagnostics")]
-        if self.memory_batch { self.memory_completed = Some(memory::MemoryStepId(memory::Target::Batch(index), self.memory_epoch)); }
         let step = &mut self.steps[index];
         let record = &mut self.records[index];
         record.frame_calls = record.frame_calls.saturating_add(1);
@@ -40,11 +34,6 @@ impl StepTimes {
     }
 
     pub(super) fn register_step(&mut self, name: &'static str) -> Option<usize> {
-        #[cfg(feature = "memory-diagnostics")]
-        if self.memory_bounded && self.memory_suppressed != 0 {
-            self.registry_omitted = self.registry_omitted.saturating_add(1);
-            return None;
-        }
         if let Some(index) = self
             .steps
             .iter()
@@ -52,11 +41,6 @@ impl StepTimes {
             .position(|(step, record)| step.name == name && record.parents == self.parents)
         {
             return Some(index);
-        }
-        #[cfg(feature = "memory-diagnostics")]
-        if self.memory_bounded && self.steps.len() >= crate::constants::MAX_TIMING_PATHS {
-            self.registry_omitted = self.registry_omitted.saturating_add(1);
-            return None;
         }
         self.steps.push(StepTime {
             name,
@@ -71,13 +55,6 @@ impl StepTimes {
     }
 }
 
-
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_flat!(StepTime);
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(StepRecord { parents, memory_events });
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(StepTimes { steps, records, parents, trace, memory_run });
 
 #[cfg(test)]
 mod tests {

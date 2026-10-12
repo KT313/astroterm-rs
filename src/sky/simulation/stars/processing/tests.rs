@@ -240,25 +240,6 @@ fn duplicate_hr_companions_do_not_duplicate_endpoint_membership() {
     assert_eq!(catalog.endpoint_indices(), &[1, 2]);
 }
 
-#[cfg(feature = "memory-diagnostics")]
-#[test]
-fn regional_inventory_and_table_count_nested_payload_without_region_row_explosion() {
-    use crate::state::Table;
-    let mut run = Run::new(CacheConfig::default());
-    run.frame(J2000, SkyRegion::All, 5.0);
-    let regions = &run.stars.regions;
-    let bytes = regions.bytes();
-    let expected = regions.entries.len() * std::mem::size_of::<crate::cache::Cache<(), Vec<crate::astro::models::stars::StellarSample>>>()
-        + run.catalog.stars.len() * std::mem::size_of::<crate::astro::models::stars::StellarSample>();
-    assert_eq!(bytes.used, Some(expected));
-    assert_eq!(regions.rows(), SIMULATION_REGION_COUNT);
-    assert!(regions.preview().len() <= 20);
-    let snapshot = crate::state::collect_inventory("Regions", regions);
-    assert!(snapshot.rows.len() < 10);
-    assert_eq!(snapshot.omitted_nodes, 0);
-    assert_eq!(snapshot.rows.iter().filter(|r| r.kind == crate::cache::Kind::Heap).map(|r| r.used.unwrap()).sum::<usize>(), expected);
-}
-
 #[test]
 fn zero_stellar_age_reuses_paused_results_but_expires_on_any_time_change() {
     let mut run = Run::new(CacheConfig::parse("[groups.stellar_state]\nmax_age_seconds=0").unwrap());
@@ -378,37 +359,4 @@ fn selection_at_another_time_requires_a_completed_request_even_with_equal_rows()
     sky::simulate_stars(&mut run.stars, run.selection.stars(), J2000 + 1.0, &mut times);
     assert_eq!(run.stars.results(run.selection.stars()).selected_count(), 3);
     assert_eq!(run.stars.region_report(run.region(3)).unwrap().calculated_at, Some(J2000));
-}
-
-#[cfg(feature = "memory-diagnostics")]
-#[test]
-fn work_reservations_stop_growing_after_warmup_and_hits_do_not_touch_work() {
-    use crate::timing::{BufferId, MemoryEvent, Operation};
-    let mut run = Run::new(CacheConfig::default());
-    let normal = run.region(3);
-    let mut growth = Vec::new();
-    for _ in 0..5 {
-        let mut times = StepTimes::with_trace(true);
-        times.enable_memory_events(true);
-        sky::select_cached_stars(&mut run.selection, &run.catalog, &observer(J2000), 10.0, false, cone(0.0), &mut times);
-        if !run.stars.regions.entries.is_empty() {
-            run.stars.invalidate_region(normal);
-            run.stars.invalidate_region(CONSTELLATION_REGION);
-        }
-        sky::simulate_stars(&mut run.stars, run.selection.stars(), J2000, &mut times);
-        let mut grew = false;
-        for event in times.trace().unwrap().steps.iter().flat_map(|step| &step.memory_events) {
-            if let MemoryEvent::Operation { buffer: BufferId::StellarOutputWork, operation: Operation::Reserve, before: Some(before), after: Some(after), .. } = event.event {
-                grew |= after.capacity > before.capacity;
-            }
-        }
-        growth.push(grew);
-    }
-    assert!(growth[0]); // initial regional population allocates
-    assert!(!growth[3] && !growth[4]); // stabilized refreshes reserve within retained capacity
-    let mut times = StepTimes::with_trace(true);
-    times.enable_memory_events(true);
-    sky::simulate_stars(&mut run.stars, run.selection.stars(), J2000, &mut times);
-    assert!(!times.trace().unwrap().steps.iter().flat_map(|step| &step.memory_events).any(|record| matches!(record.event,
-        MemoryEvent::Operation { buffer: BufferId::StellarOutputWork, .. })));
 }

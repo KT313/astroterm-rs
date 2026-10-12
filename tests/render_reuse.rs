@@ -130,27 +130,6 @@ fn invalidated_projection_cannot_issue_trusted_rendering_input() {
     assert!(result.is_err());
 }
 
-#[cfg(feature = "memory-diagnostics")]
-#[test]
-fn hit_diagnostics_do_not_report_star_input_work_or_geometry_copies() {
-    use astroterm::timing::{BufferId, MemoryEvent, Operation};
-    let mut run = Run::new(0.2); let mut cache = SceneCache::default();
-    let projected = run.project(J2000, 8.0, View::default(), viewport(), SkyRegion::All);
-    let mut first = StepTimes::with_trace(true); first.enable_memory_events(true);
-    scene::draw_prepared_pixels(&mut cache, &projected, &options(), J2000, &mut first).unwrap();
-    assert!(first.trace().unwrap().steps.iter().flat_map(|s| &s.memory_events).any(|e| matches!(e.event,
-        MemoryEvent::Operation { buffer: BufferId::StarLayer, operation: Operation::Build, .. })));
-    let mut hit = StepTimes::with_trace(true); hit.enable_memory_events(true);
-    scene::draw_prepared_pixels(&mut cache, &projected, &options(), J2000, &mut hit).unwrap();
-    for event in hit.trace().unwrap().steps.iter().flat_map(|s| &s.memory_events) {
-        if let MemoryEvent::Operation { buffer, operation, .. } = event.event {
-            assert_ne!(buffer, BufferId::StarLayer);
-            assert_ne!(operation, Operation::Copy);
-        }
-    }
-    assert!(!did(&hit, "Raster stars"));
-}
-
 #[test]
 fn empty_requested_regions_are_part_of_the_dependency_identity() {
     let mut run = Run::new(0.2); let mut cache = SceneCache::default();

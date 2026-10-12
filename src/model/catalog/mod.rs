@@ -11,7 +11,4 @@ pub(crate) use grid::{SelectedRegion};
 #[cfg(test)]
 pub(crate) use grid::{interleave, direction, build_caps};
 
-#[cfg(feature = "memory-diagnostics")]
-pub(crate) use grid::CellCap;
-
 pub(crate) use records::unsupported_star_data;

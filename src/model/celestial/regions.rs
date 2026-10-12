@@ -14,9 +14,6 @@ pub struct ObservedRegion {
 }
 row_columns!(ObservedRegion { region, start, end, selection_generation, motion_generation, apparent_generation });
 
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_flat!(ObservedRegion);
-
 /// Each retained result addresses stable catalog rows within one region.
 #[derive(Default, Debug)]
 pub(crate) struct ObservationRegion {
@@ -24,6 +21,3 @@ pub(crate) struct ObservationRegion {
     pub corrections: crate::cache::Cache<(u64, u64), (Vec<crate::model::SelectedStar>, crate::model::CorrectionStats)>,
     pub apparent: crate::cache::Cache<(u64, u64, Vector3), Vec<Vector3>>,
 }
-
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(ObservationRegion { eligible, corrections, apparent });

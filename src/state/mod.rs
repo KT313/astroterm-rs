@@ -5,8 +5,6 @@ mod application;
 mod processing;
 mod rendering;
 mod tables;
-#[cfg(feature = "memory-diagnostics")]
-mod memory;
 
 pub use application::{ApplicationState, Persistent, Caches};
 pub use processing::{
@@ -20,11 +18,5 @@ pub(crate) use processing::{
 };
 pub use rendering::{RenderingState, CompressionSupport, CharacterState, PixelState, Presenter, TextRasterizer};
 pub use tables::{Table, TableBytes, TableVisitor, Tables};
-#[cfg(feature = "memory-diagnostics")]
-pub(crate) use tables::observation_region_bytes;
-#[cfg(feature = "memory-diagnostics")]
-pub use memory::{
-    InventoryCollector, KnownPayload, collect_inventory, capture_run_inventory, sum_known_payload, write_inventory,
-};
 
 pub(crate) use rendering::SharedMemoryImage;

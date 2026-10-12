@@ -88,24 +88,6 @@ impl ObservationCache {
         total
     }
 }
-#[cfg(feature = "memory-diagnostics")]
-impl crate::cache::ReportBuffers for ObservationCache {
-    fn report_buffers(&self, sink: &mut dyn crate::cache::BufferSink) {
-        super::support::regions::report_region_storage(sink, "regions", &self.regions, |region| {
-            let sizes = crate::state::observation_region_bytes(region);
-            Some((sizes.used?, sizes.reserved?))
-        });
-        crate::cache::report_field(sink, "body_apparent", &self.body_apparent);
-        crate::cache::report_field(sink, "regional_output", &self.regional_output);
-        crate::cache::report_field(sink, "layout_sources", &self.layout_sources);
-        crate::cache::report_field(sink, "config", &self.config);
-        crate::cache::report_field(sink, "catalog", &self.catalog);
-        crate::cache::report_field(sink, "relative", &self.relative);
-        crate::cache::report_field(sink, "illumination", &self.illumination);
-        crate::cache::report_field(sink, "horizontal", &self.horizontal);
-        crate::cache::report_field(sink, "refracted", &self.refracted);
-    }
-}
 
 /// Read-only handoff constructed by observation. Holding it prevents mutation of its sky and region versions.
 #[derive(Clone, Copy)]

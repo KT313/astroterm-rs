@@ -441,16 +441,12 @@ pub(crate) struct DrawnStar {
     pub(crate) color: u8,         // catalog palette index (`StarColor`)
 }
 row_columns!(DrawnStar { source_index, cell, magnitude, color });
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_flat!(DrawnStar);
 
 /// One painted region of a frame: paint indices `start..end` are `regional_stars[region]`, requested through
 /// descriptor `slot`; `generation` is that cell cache's version, the region's raster dependency.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct DrawnSpan { pub(crate) slot: usize, pub(crate) region: usize, pub(crate) start: usize, pub(crate) end: usize, pub(crate) generation: u64 }
 row_columns!(DrawnSpan { slot, region, start, end, generation });
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_flat!(DrawnSpan);
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct DrawRecord {
@@ -482,5 +478,3 @@ pub(crate) type RegionalOrderKey = (u64, u64);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct RegionalDrawRecord { pub(crate) row: u32, pub(crate) source_index: u32, pub(crate) magnitude: u16 }
 row_columns!(RegionalDrawRecord { row, source_index, magnitude });
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_flat!(RegionalDrawRecord);

@@ -204,9 +204,6 @@ fn braille_dots(symbol: char) -> Option<u8> {
     u8::try_from(offset).ok()
 }
 
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(Canvas { cells });
-
 crate::rows::debug_preview!(Color);
 
 #[cfg(test)]

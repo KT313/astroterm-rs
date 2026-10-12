@@ -55,5 +55,3 @@ impl SceneCache {
         }
     }
 }
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(SceneCache { config, star_layer, star_opacities, image_scratch, pixel_candidate, character_candidate, pixels, characters });

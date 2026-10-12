@@ -32,15 +32,6 @@ pub struct StarStorage {
 #[derive(Clone, Debug, PartialEq)]
 enum StarLabels { Stored(Vec<u32>), Gaia(Vec<u64>) }
 impl Default for StarLabels { fn default() -> Self { Self::Stored(Vec::new()) } }
-#[cfg(feature = "memory-diagnostics")]
-impl crate::cache::ReportBuffers for StarLabels {
-    fn report_buffers(&self, collector: &mut dyn crate::cache::BufferSink) {
-        match self {
-            Self::Stored(entries) => entries.report_buffers(collector),
-            Self::Gaia(ids) => ids.report_buffers(collector),
-        }
-    }
-}
 
 impl PartialEq for StarStorage {
     fn eq(&self, other: &Self) -> bool {
@@ -379,11 +370,6 @@ impl StarStorage {
         match &mut self.labels { StarLabels::Gaia(ids) => ids.shrink_to_fit(), StarLabels::Stored(entries) => entries.shrink_to_fit() }
     }
 }
-
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(StarRowVec { u0, w, magnitude, brightness_key, distance, id, display_color });
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(StarStorage { clipping, rows, labels, precise_motions });
 
 #[cfg(test)]
 mod tests {

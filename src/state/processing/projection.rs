@@ -91,31 +91,6 @@ impl ProjectionCache {
         total
     }
 }
-#[cfg(feature = "memory-diagnostics")]
-impl crate::cache::ReportBuffers for ProjectionCache {
-    fn report_buffers(&self, sink: &mut dyn crate::cache::BufferSink) {
-        use super::support::regions::{report_region_storage, cached_vector_bytes};
-        report_region_storage(sink, "regional_stars", &self.regional_stars, cached_vector_bytes);
-        report_region_storage(sink, "regional_orders", &self.regional_orders, cached_vector_bytes);
-        crate::cache::report_field(sink, "stale_slots", &self.stale_slots);
-        crate::cache::report_field(sink, "regional_cell_work", &self.regional_cell_work);
-        crate::cache::report_field(sink, "regional_direction_work", &self.regional_direction_work);
-        crate::cache::report_field(sink, "regional_order_work", &self.regional_order_work);
-        crate::cache::report_field(sink, "regional_catalog", &self.regional_catalog);
-        crate::cache::report_field(sink, "regional_owner", &self.regional_owner);
-        crate::cache::report_field(sink, "regional_active", &self.regional_active);
-        crate::cache::report_field(sink, "regional_spans", &self.regional_spans);
-        crate::cache::report_field(sink, "config", &self.config);
-        crate::cache::report_field(sink, "star_candidate", &self.star_candidate);
-        crate::cache::report_field(sink, "order_candidate", &self.order_candidate);
-        crate::cache::report_field(sink, "stars", &self.stars);
-        crate::cache::report_field(sink, "order", &self.order);
-        crate::cache::report_field(sink, "draw_order_scratch", &self.draw_order_scratch);
-        crate::cache::report_field(sink, "bodies", &self.bodies);
-        crate::cache::report_field(sink, "constellations", &self.constellations);
-        crate::cache::report_field(sink, "horizon", &self.horizon);
-    }
-}
 
 /// Projection may append cells and update its cache, but cannot access motion or rendering state.
 pub(crate) struct StarProjectionBuffers<'a> {

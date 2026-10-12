@@ -139,21 +139,3 @@ impl StellarSimulationState {
         borrow_selected_samples(selection, &self.regions).filter(|(_, sample)| sample.used_singular_fallback).count()
     }
 }
-#[cfg(feature = "memory-diagnostics")]
-impl crate::cache::ReportBuffers for StellarRegions {
-    fn report_buffers(&self, sink: &mut dyn crate::cache::BufferSink) {
-        use crate::cache::Quality;
-        sink.payload(self.entries.len(), self.entries.capacity(), std::mem::size_of::<Cache<(), Vec<StellarSample>>>(), Quality::ExactPayload, "region slots; samples aggregated separately");
-        if sink.enter("samples", 0) {
-            let totals = self.entries.iter().filter_map(Cache::stored).try_fold((0_usize, 0_usize), |(len, capacity), samples| {
-                Some((len.checked_add(samples.len())?, capacity.checked_add(samples.capacity())?))
-            });
-            if let Some((len, capacity)) = totals {
-                sink.payload(len, capacity, std::mem::size_of::<StellarSample>(), Quality::ExactPayload, "sum of disjoint regional sample allocations; no per-region traversal rows");
-            } else { sink.unknown("regional sample payload overflow"); }
-            sink.leave();
-        }
-    }
-}
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(StellarSimulationState { config, catalog, prepared_classes, regions, refresh_regions, stellar_scratch, region_output_work });

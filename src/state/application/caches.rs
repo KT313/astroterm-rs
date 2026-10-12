@@ -28,6 +28,3 @@ impl Caches {
     }
 
 }
-
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(Caches { selection, observer, sky, simulation, observation, projection, rendering });

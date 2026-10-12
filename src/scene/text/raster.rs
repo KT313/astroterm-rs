@@ -6,13 +6,6 @@ use image::RgbaImage;
 use std::collections::HashMap;
 use unicode_width::UnicodeWidthChar;
 
-# [cfg (feature = "memory-diagnostics")] use crate::timing::Access;
-# [cfg (feature = "memory-diagnostics")] use crate::timing::BufferId;
-# [cfg (feature = "memory-diagnostics")] use crate::timing::BufferShape;
-# [cfg (feature = "memory-diagnostics")] use crate::timing::IndexDomain;
-# [cfg (feature = "memory-diagnostics")] use crate::timing::MemoryEvent;
-# [cfg (feature = "memory-diagnostics")] use crate::timing::Operation;
-
 const FONT: &[u8] = include_bytes!("../../../data/fonts/DejaVuSansMono.ttf");
 
 use crate::model::Glyph;
@@ -34,8 +27,6 @@ pub fn create_text_rasterizer() -> Result<TextRasterizer, &'static str> {
         cell: (0, 0),
         size: 1.0,
         baseline: 1.0,
-        #[cfg(feature = "memory-diagnostics")]
-        glyph_operations: None,
     };
     set_text_cell_size(&mut renderer, 10, 20);
     Ok(renderer)
@@ -48,8 +39,6 @@ pub fn set_text_cell_size(state: &mut TextRasterizer, width: u16, height: u16) {
         return;
     }
     state.cell = cell;
-    #[cfg(feature = "memory-diagnostics")]
-    if let Some(counts) = &mut state.glyph_operations { counts.cleared += 1; counts.cleared_masks += state.glyphs.len(); }
     state.glyphs.clear();
     let line = state
         .font
@@ -66,21 +55,7 @@ pub fn set_text_cell_size(state: &mut TextRasterizer, width: u16, height: u16) {
 /// Measure one text pass and aggregate mask operations already visited by its drawing loops.
 /// Counter increments are included in the pass time; descriptor construction is charged as diagnostics.
 pub(crate) fn paint_text_buffer_with_times(state: &mut TextRasterizer, image: &mut RgbaImage, text: &ratatui::buffer::Buffer, cell: (u16, u16), times: &mut crate::timing::StepTimes) {
-    #[cfg(feature = "memory-diagnostics")]
-    { state.glyph_operations = times.inspect_memory(Default::default); }
     times.measure("Text rasterization", || paint_text_buffer(state, image, text, cell));
-    #[cfg(feature = "memory-diagnostics")]
-    {
-        times.record_borrow(BufferId::TextCells, Access::ReadOnly, || BufferShape::vector(&text.content, IndexDomain::Cells));
-        times.record_borrow(BufferId::FrameImage, Access::Writable, || BufferShape::vector(image.as_raw(), IndexDomain::Bytes));
-        times.record_borrow(BufferId::GlyphMasks, Access::Writable, || BufferShape::unknown(IndexDomain::Glyphs));
-        if let Some(counts) = times.inspect_memory(|| state.glyph_operations.take()).flatten() {
-            times.describe("Text rasterization", || format!("glyph memory operations aggregate interleaved loop branches: {} clear calls, {} removed masks, {} new masks, {} reuse lookups; event categories are not per-glyph chronology", counts.cleared, counts.cleared_masks, counts.built, counts.reused));
-            if counts.cleared > 0 { times.record_memory(times.last_memory_step(), || MemoryEvent::operation(BufferId::GlyphMasks, Operation::Clear, None, None, Some(counts.cleared_masks), None)); }
-            if counts.built > 0 { times.record_memory(times.last_memory_step(), || MemoryEvent::operation(BufferId::GlyphMasks, Operation::Build, None, None, Some(counts.built), Some(counts.coverage_bytes))); }
-            if counts.reused > 0 { times.record_memory(times.last_memory_step(), || MemoryEvent::operation(BufferId::GlyphMasks, Operation::Reuse, None, None, Some(counts.reused), None)); }
-        }
-    }
 }
 
 /// Paint a prepared cell layout into the image. Backgrounds are applied before glyphs so wide characters
@@ -145,21 +120,12 @@ pub fn draw_text(
             ch
         };
         let glyph = if let Some(glyph) = state.glyphs.get(&ch) {
-            #[cfg(feature = "memory-diagnostics")]
-            if let Some(counts) = &mut state.glyph_operations { counts.reused += 1; }
             glyph
         } else {
             if state.glyphs.len() >= MAX_CACHED_GLYPHS {
-                #[cfg(feature = "memory-diagnostics")]
-                if let Some(counts) = &mut state.glyph_operations { counts.cleared += 1; counts.cleared_masks += state.glyphs.len(); }
                 state.glyphs.clear();
             }
             let (metrics, coverage) = state.font.rasterize(ch, state.size);
-            #[cfg(feature = "memory-diagnostics")]
-            if let Some(counts) = &mut state.glyph_operations {
-                counts.built += 1;
-                counts.coverage_bytes += coverage.len();
-            }
             state.glyphs.entry(ch).or_insert(Glyph { metrics, coverage })
         };
         let x0 = pen + glyph.metrics.xmin;
@@ -300,65 +266,5 @@ mod tests {
         draw_text(&mut renderer, &mut replacement, "�", (0, 0), (20, 20), [255; 3]);
         assert_eq!(missing, replacement);
         assert!(missing.pixels().any(|p| p[0] != 0));
-    }
-}
-
-#[cfg(all(test, feature = "memory-diagnostics"))]
-mod memory_tests {
-    use super::*;
-    use crate::timing::StepTimes;
-
-    fn trace(active: bool) -> StepTimes {
-        let mut times = StepTimes::with_trace(true);
-        times.enable_memory_events(active);
-        times
-    }
-    fn count(times: &StepTimes, wanted: Operation) -> usize {
-        times.trace().unwrap().steps.iter().flat_map(|step| &step.memory_events).filter_map(|record| {
-            match record.event {
-                MemoryEvent::Operation { buffer: BufferId::GlyphMasks, operation, elements, .. } if operation == wanted => elements,
-                _ => None,
-            }
-        }).sum()
-    }
-
-    #[test]
-    fn mask_events_count_existing_branches_without_changing_text_pixels() {
-        let mut state = create_text_rasterizer().unwrap();
-        let mut text = ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 3, 1));
-        for x in 0..3 { text[(x, 0)].set_symbol("A"); }
-        let mut image = RgbaImage::new(30, 20);
-        let mut first = trace(true);
-        paint_text_buffer_with_times(&mut state, &mut image, &text, (10, 20), &mut first);
-        assert_eq!(count(&first, Operation::Build), 1);
-        assert_eq!(count(&first, Operation::Reuse), 2);
-        assert!(state.glyph_operations.is_none());
-        let expected = image.clone();
-        image.fill(0);
-        let mut hit = trace(true);
-        paint_text_buffer_with_times(&mut state, &mut image, &text, (10, 20), &mut hit);
-        assert_eq!(image, expected);
-        assert_eq!(count(&hit, Operation::Build), 0);
-        assert_eq!(count(&hit, Operation::Reuse), 3);
-        image.fill(0);
-        let mut inactive = trace(false);
-        paint_text_buffer_with_times(&mut state, &mut image, &text, (10, 20), &mut inactive);
-        assert_eq!(image, expected);
-        assert!(inactive.trace().unwrap().steps.iter().all(|step| step.memory_events.is_empty()));
-        assert!(state.glyph_operations.is_none());
-    }
-
-    #[test]
-    fn mask_resizing_reports_clear_then_actual_new_masks() {
-        let mut state = create_text_rasterizer().unwrap();
-        let mut text = ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 1, 1));
-        text[(0, 0)].set_symbol("A");
-        let mut image = RgbaImage::new(40, 40);
-        paint_text_buffer_with_times(&mut state, &mut image, &text, (10, 20), &mut trace(false));
-        let mut resized = trace(true);
-        paint_text_buffer_with_times(&mut state, &mut image, &text, (20, 40), &mut resized);
-        assert_eq!(count(&resized, Operation::Build), 1);
-        assert_eq!(count(&resized, Operation::Reuse), 0);
-        assert!(resized.trace().unwrap().steps[0].memory_events.iter().any(|record| matches!(record.event, MemoryEvent::Operation { buffer: BufferId::GlyphMasks, operation: Operation::Clear, .. })));
     }
 }

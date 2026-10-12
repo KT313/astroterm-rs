@@ -17,17 +17,3 @@ impl Drop for SharedMemoryImage {
         }
     }
 }
-
-#[cfg(feature = "memory-diagnostics")]
-impl crate::cache::ReportBuffers for SharedMemoryImage {
-    fn report_buffers(&self, sink: &mut dyn crate::cache::BufferSink) {
-        if sink.enter("rgb_object", std::mem::size_of::<Self>()) {
-            let owner = sink.set_owner(crate::cache::Owner::External);
-            sink.borrowed(self.bytes, 1, "kernel-owned RGB extent exposed through a file handle; not Rust heap or a client mapping");
-            sink.unknown("OS allocation overhead and resident pages are not measured");
-            sink.set_owner(owner);
-            sink.unknown("file handle and name allocator capacity excluded");
-            sink.leave();
-        }
-    }
-}

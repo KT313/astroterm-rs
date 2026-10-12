@@ -239,31 +239,6 @@ fn incomplete_failed_and_bypassed_encoding_never_reuses_partial_bytes() {
 }
 
 
-#[cfg(feature = "memory-diagnostics")]
-#[test]
-fn reused_pixels_and_encoding_report_reuse_without_build_or_conversion_events() {
-    let mut state = pixels();
-    prepare_sky(&mut state);
-    set_text(&mut state, "A");
-    let completed_text = state.text.clone();
-    let text_version = state.text_version;
-    prepare_kitty_pixels(&mut state, (2, 2), &mut StepTimes::default()).unwrap();
-    encode_kitty_upload(&mut state, &mut StepTimes::default()).unwrap();
-    state.text = completed_text;
-    state.text_version = text_version;
-    let mut times = StepTimes::with_trace(true);
-    times.enable_memory_events(true);
-    prepare_kitty_pixels(&mut state, (2, 2), &mut times).unwrap();
-    encode_kitty_upload(&mut state, &mut times).unwrap();
-    let trace = times.trace().unwrap();
-    for buffer in [BufferId::FrameImage, BufferId::UploadBytes] {
-        assert!(trace.steps.iter().flat_map(|step| &step.memory_events).any(|event| matches!(event.event,
-            crate::timing::MemoryEvent::Operation { buffer: actual, operation: Operation::Reuse, .. } if actual == buffer)));
-    }
-    assert!(trace.steps.iter().flat_map(|step| &step.memory_events).all(|event| !matches!(event.event,
-        crate::timing::MemoryEvent::Operation { operation: Operation::Build | Operation::Clear | Operation::Copy, .. })));
-}
-
 #[test]
 fn compressor_is_lazy_and_each_warm_encode_starts_a_new_stream() {
     let mut state = pixels();
@@ -283,21 +258,5 @@ fn compressor_is_lazy_and_each_warm_encode_starts_a_new_stream() {
         encode_kitty_upload(&mut state, &mut StepTimes::default()).unwrap();
         assert!(state.compressor.is_some()); // retained working memory remains available for the next compressed image
         assert_eq!(decode_upload(&state.upload, false), rgb(&state));
-    }
-}
-
-#[cfg(feature = "memory-diagnostics")]
-#[test]
-fn changed_images_report_engine_build_once_then_working_memory_reuse() {
-    let mut state = pixels();
-    state.frame_image = Some(image::RgbaImage::from_pixel(12, 8, image::Rgba([1, 2, 3, 255])));
-    for expected in [Operation::Build, Operation::Reuse, Operation::Reuse] {
-        state.frame_version.publish(true); // force real compression, not an encoded-result hit
-        let mut times = StepTimes::with_trace(true); times.enable_memory_events(true);
-        encode_kitty_upload(&mut state, &mut times).unwrap();
-        let events: Vec<_> = times.trace().unwrap().steps.iter().flat_map(|step| &step.memory_events).filter_map(|event| {
-            if let crate::timing::MemoryEvent::Operation { buffer: BufferId::CompressionEngine, operation, .. } = event.event { Some(operation) } else { None }
-        }).collect();
-        assert_eq!(events, [expected]);
     }
 }

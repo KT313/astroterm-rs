@@ -116,11 +116,9 @@ fn borrow_frame_projection<'a>(sky: astroterm::state::RegionalObservation<'a>, v
     projected
 }
 
-/// Cancel the empty diagnostic frame on a quit key without losing the last successfully presented frame.
-pub(crate) fn stop_on_quit(input: &FrameInput, times: &mut StepTimes) -> bool {
-    if !input.controls.contains(&astroterm::controls::Control::Quit) { return false; }
-    times.cancel_memory_frame();
-    true
+/// Stop on a quit key without processing any other control.
+pub(crate) fn stop_on_quit(input: &FrameInput) -> bool {
+    input.controls.contains(&astroterm::controls::Control::Quit)
 }
 
 #[cfg(test)]

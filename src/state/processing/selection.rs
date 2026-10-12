@@ -44,8 +44,6 @@ impl StarSelectionCache {
         super::sum_stats([self.region.stats, self.working.stats, self.candidate_region_stats, self.selected_region_stats])
     }
 }
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(StarSelectionCache { config, catalog, region, requested_sources, statistics, working, region_candidates, region_selected });
 
 /// Immutable working rows with their catalog and source generation. No row data is copied.
 #[derive(Clone, Copy)]

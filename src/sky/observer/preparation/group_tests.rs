@@ -174,18 +174,6 @@ fn failed_emission_preparation_leaves_group_incomplete() {
     frame(&mut simulation, &mut observer, time, Observer::default());
 }
 
-#[cfg(feature = "memory-diagnostics")]
-#[test]
-fn inventory_reports_retained_sample_work_capacity() {
-    let mut simulation = SimulationState::default();
-    let mut observer = ObserverPreparationCache::default();
-    for day in [J2000, J2000 + 1.0] { frame(&mut simulation, &mut observer, FrameTime::from_utc(day), Observer::default()); }
-    let snapshot = crate::state::collect_inventory("solar", &simulation);
-    for name in ["planet_work", "moon_work", "orientation_work"] {
-        assert!(snapshot.rows.iter().any(|row| row.path.ends_with(name) && row.used == Some(0) && row.reserved.is_some_and(|bytes| bytes > 0)), "missing retained scratch: {name}");
-    }
-}
-
 #[test]
 fn low_level_observer_replacement_cannot_reuse_an_old_completion_token() {
     let mut simulation = SimulationState::default();

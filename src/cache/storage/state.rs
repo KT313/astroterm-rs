@@ -173,14 +173,6 @@ impl<K: PartialEq, T: PartialEq> Cache<K, Vec<T>> {
         StoreOutcome { value_changed }
     }
 }
-#[cfg(feature = "memory-diagnostics")]
-impl<K: super::buffers::ReportBuffers, V: super::buffers::ReportBuffers> super::buffers::ReportBuffers for Cache<K, V> {
-    const HAS_BUFFERS: bool = K::HAS_BUFFERS || V::HAS_BUFFERS;
-    fn report_buffers(&self, sink: &mut dyn super::buffers::BufferSink) {
-        super::buffers::report_field(sink, "key", &self.key);
-        super::buffers::report_field(sink, "value", &self.value); // invalidated results still own their allocations
-    }
-}
 
 #[cfg(test)]
 mod tests {

@@ -69,7 +69,6 @@ private; their layout is for navigation, not additional import paths.
 | `processing/` | Simulation samples, observation/projection/scene caches, and their restricted borrowed views. |
 | `rendering/` | Character/pixel frame buffers, terminal diff history and glyph storage. |
 | `tables/` | The table registry and `log_data`: one flat listing of every table the root holds. |
-| `memory/` | The inventory capture flow; collection and report helpers implement its bounded traversal and output. |
 
 Shared records follow the same rule through `crate::model`: catalog representation is under `model/catalog/`,
 celestial records under `model/celestial/`, projection/rendering records under `model/presentation/`, and validated
@@ -404,10 +403,9 @@ process peaks. Character raster output copies and the previous-frame character c
 
 ## Diagnostics and deliberate exceptions
 
-`timings` owns ordinary timing arrays and optional trace events/details/inventories. Continuous memory diagnostics
-retain startup, the latest completed frame, the current partial frame and bounded per-step aggregates, not a frame
-history of unbounded length. See [the user guide](../../docs/memory-diagnostics.md) for limits and report meanings.
-Collector path/dedup scratch is temporary; saved inventory descriptors carry sizes, not references to the subject.
+`timings` owns ordinary timing arrays and the optional execution trace with its details. The memory-diagnostics
+feature that once inventoried every owner was removed on 2026-10-12; the no-op `record_*` hooks it left behind go
+away with the old processing spine.
 Timing history counts these descriptors once without recursively revisiting their captured application data.
 
 Not every local allocation belongs in the root:

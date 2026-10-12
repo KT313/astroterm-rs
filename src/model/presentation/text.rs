@@ -44,12 +44,3 @@ pub(crate) struct PixelTextCache {
     pub labels_version: RenderResultVersion,
     pub text_key: Option<PixelTextKey>,
 }
-
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(PixelLabel { text });
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(PixelLabelKey { projection });
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(PixelTextKey { planets, horizon, fields, notice });
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(PixelTextCache { labels, labels_key, text_key });

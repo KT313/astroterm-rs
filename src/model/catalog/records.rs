@@ -83,10 +83,6 @@ pub struct PreparedCatalog {
     pub catalog: SkyCatalog,
     pub preparation: CatalogPreparation,
 }
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(CatalogPreparation { motion_bounds });
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(PreparedCatalog { catalog, preparation });
 
 /// One immutable definition set, shared by catalog users and retained cache keys.
 #[derive(Debug, Default, PartialEq, Eq)] // Eq lets `Arc<ConstellationSet>` keys compare by pointer first
@@ -98,8 +94,6 @@ impl ConstellationSet {
     pub fn figures(&self) -> &[Constellation] { &self.figures }
     pub fn endpoints(&self) -> &[usize] { &self.endpoints }
 }
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(ConstellationSet { figures, endpoints });
 
 /// Sparse future metadata. Row indices address the final sorted catalog; zero precise_motion_entry means absent.
 /// No entries are accepted yet, including entries that claim neither exception.

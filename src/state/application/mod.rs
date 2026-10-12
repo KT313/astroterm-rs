@@ -66,6 +66,3 @@ impl ApplicationState {
         scene.configure(&self.config.cache);
     }
 }
-
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(Persistent { catalog });

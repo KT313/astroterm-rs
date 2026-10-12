@@ -60,13 +60,6 @@ pub(crate) fn load_catalog(state: &mut ApplicationState, directories: &DatasetDi
     let catalog = &state.persistent.catalog;
     if state.config.dataset.is_some() { eprintln!("Catalog: {} stars loaded.", state.star_counts.loaded); } // the embedded catalog loads silently, as before
 
-    #[cfg(feature = "memory-diagnostics")]
-    state.timings.record_memory(state.timings.last_memory_step(), || {
-        use astroterm::timing::{BufferId, BufferShape, IndexDomain, MemoryEvent, Operation};
-        let shape = BufferShape { len: Some(catalog.stars.len()), ..BufferShape::unknown(IndexDomain::Catalog) };
-        MemoryEvent::operation(BufferId::CatalogStars, Operation::Build, None, Some(shape), shape.len, None)
-    });
-
     state.timings.describe("Dataset loading", || format!(
         "output stars={}; constellation figures={}; unique endpoints={}; tangential fallbacks={}; storage=owned",
         catalog.stars.len(), catalog.constellations().len(), catalog.endpoint_indices().len(),

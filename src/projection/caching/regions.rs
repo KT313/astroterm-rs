@@ -522,32 +522,4 @@ mod tests {
         assert!(storage.regional_order_work.is_empty());
     }
 
-    #[cfg(feature = "memory-diagnostics")]
-    #[test]
-    fn regional_events_and_inventory_report_reuse_and_retained_work() {
-        use crate::timing::{MemoryEvent, Operation};
-        let sky = fixture(); let regions = descriptors(); let observed = token(&sky, &regions);
-        let mut storage = ProjectionCache::new(CacheConfig::disabled());
-        for _ in 0..3 {
-            let mut times = StepTimes::with_trace(true); times.enable_memory_events(true);
-            project_cached_regions(&mut storage, observed, &View::default(), ProjectionViewport { width: 80, height: 40 }, 0.0, &mut times);
-            let events: Vec<_> = times.trace().unwrap().steps.iter().flat_map(|step| &step.memory_events).map(|record| record.event).collect();
-            for expected in [BufferId::RegionalProjectedCells, BufferId::RegionalDrawOrder] {
-                assert!(events.iter().any(|event| matches!(event, MemoryEvent::Operation { buffer, operation: Operation::Build, elements: Some(3), .. } if *buffer == expected)), "{expected:?}"); // bypass rebuilds all three regions
-                assert!(!events.iter().any(|event| matches!(event, MemoryEvent::Operation { buffer, operation: Operation::Copy | Operation::Reuse, .. } if *buffer == expected)));
-            }
-        }
-        storage.config = CacheConfig::default();
-        let mut times = StepTimes::with_trace(true); times.enable_memory_events(true);
-        project_cached_regions(&mut storage, observed, &View::default(), ProjectionViewport { width: 80, height: 40 }, 0.0, &mut times);
-        let events: Vec<_> = times.trace().unwrap().steps.iter().flat_map(|step| &step.memory_events).map(|record| record.event).collect();
-        assert!(events.iter().any(|event| matches!(event, MemoryEvent::Operation { buffer: BufferId::RegionalProjectedCells, operation: Operation::Reuse, elements: Some(3), .. })));
-        let inventory = crate::state::collect_inventory("projection", &storage);
-        let row = inventory.rows.iter().find(|row| row.path.ends_with("regional_order_work") && row.kind == crate::cache::Kind::Heap).unwrap();
-        assert_eq!(row.used, Some(0)); assert_eq!(row.reserved, Some(storage.regional_order_work.capacity() * std::mem::size_of::<RegionalDrawRecord>()));
-        let row = inventory.rows.iter().find(|row| row.path.ends_with("regional_cell_work") && row.kind == crate::cache::Kind::Heap).unwrap();
-        assert_eq!(row.used, Some(0)); assert_eq!(row.reserved, Some(storage.regional_cell_work.capacity() * std::mem::size_of::<DrawnStar>()));
-        let row = inventory.rows.iter().find(|row| row.path.ends_with("stale_slots") && row.kind == crate::cache::Kind::Heap).unwrap();
-        assert_eq!(row.reserved, Some(storage.stale_slots.capacity() * std::mem::size_of::<usize>()));
-    }
 }

@@ -10,8 +10,7 @@
 //! and [`scene`] contain preparation, correction, geometric and drawing algorithms over restricted borrowed inputs.
 //! [`state::ApplicationState`] owns the catalog, processing caches, rendering buffers and designated scratch from
 //! startup; the prepared catalog is installed through `replace_catalog`. Only the terminal writer/restoration guard
-//! stays scoped outside it. The optional
-//! `memory-diagnostics` feature inventories those owners without changing their calculations or cache policies.
+//! stays scoped outside it.
 //!
 //! [`astro::models`] keeps independent star, planet, Moon and orientation formulas. [`controls`] changes views and
 //! the simulation clock; [`cli`] parses/validates input, and [`terminal`] owns scoped I/O and restoration. Shared data uses canonical `model`/`state` paths;

@@ -104,6 +104,3 @@ impl Renderer {
         Ok(())
     }
 }
-
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(Renderer { session });

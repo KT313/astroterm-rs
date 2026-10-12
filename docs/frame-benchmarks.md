@@ -19,7 +19,7 @@ that many simulated seconds per frame. Frame 1 uses the exact requested date; la
 from that starting date and the frame index, independently of processing speed or report I/O delays.
 Metadata shows `paused` or a signed number of seconds per frame. Ordinary interactive clock behavior is unchanged.
 
-Do not combine this mode with `--speed`, `--debug-singleframe`, `--debug-memory`, or `--debug-log-data`.
+Do not combine this mode with `--speed`, `--debug-singleframe`, or `--debug-log-data`.
 Quit, a resize, or recognized view/time controls abort capture with a nonzero exit status. An incomplete
 run is not a successful benchmark. `--debug-singleframe` retains its existing human-readable report.
 

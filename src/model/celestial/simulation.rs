@@ -112,14 +112,6 @@ impl<T> Sample<T> {
     }
 }
 
-#[cfg(feature = "memory-diagnostics")]
-impl<T: crate::cache::ReportBuffers> crate::cache::ReportBuffers for Sample<T> {
-    const HAS_BUFFERS: bool = T::HAS_BUFFERS;
-    fn report_buffers(&self, sink: &mut dyn crate::cache::BufferSink) {
-        crate::cache::report_field(sink, "sample", &self.value);
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SelectedStar {
     pub source_index: usize,

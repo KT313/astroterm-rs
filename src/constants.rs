@@ -68,18 +68,8 @@ pub const METADATA_TAB_WIDTH: usize = 8;                                        
 pub const METADATA_VALUE_COLUMN: usize = 16;                                              // earliest column where metadata values begin
 pub const KEYS_COLUMN_WIDTH: usize = 18;                                                  // space reserved for key names in the help text
 
-// Timing smoothing and bounded diagnostic history
+// Timing smoothing
 pub const TIMING_EMA_FACTOR: f64 = 0.95;                                                  // keep 95% of the old timing average and add 5% of the new value
-pub const MAX_MEMORY_EVENTS_PER_STEP: usize = 128;                                        // maximum memory-operation records retained for one pipeline step
-pub const MAX_TRACE_STEPS: usize = 1024;                                                  // maximum recorded steps in each retained startup or frame trace
-pub const MAX_TRACE_DEPTH: usize = 32;                                                    // maximum nesting of recorded pipeline steps
-pub const MAX_TRACE_EVENTS: usize = 8192;                                                 // maximum memory-operation records in each retained trace
-pub const MAX_TRACE_DETAILS: usize = 4096;                                                // maximum detail messages in each retained trace
-pub const MAX_TRACE_TEXT_BYTES: usize = 256 * 1024;                                       // maximum combined detail-text bytes in each retained trace
-pub const MAX_DETAIL_BYTES: usize = 4096;                                                 // maximum bytes kept from one detail message
-pub const MAX_TRACE_INVENTORIES: usize = 1;                                               // maximum memory snapshots in each retained trace
-pub const MAX_TIMING_PATHS: usize = 512;                                                  // maximum distinct step paths with smoothed timing averages
-pub const MAX_AGGREGATE_PATHS: usize = 1024;                                              // maximum distinct step paths with accumulated diagnostic totals
 
 // Memory inventory and table preview limits
 pub const INVENTORY_MAX_ROWS: usize = 4096;                                               // maximum rows in a memory-usage report

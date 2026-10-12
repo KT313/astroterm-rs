@@ -39,22 +39,3 @@ pub(super) fn record_sample_family<T>(times: &mut StepTimes, step: Option<Memory
             Some(BufferShape::vector(work, IndexDomain::ModelSamples)), Some(0), None)); // displaced allocation was cleared, not freed
     });
 }
-
-#[cfg(all(test, feature = "memory-diagnostics"))]
-mod tests {
-    use super::*;
-    #[test]
-    fn empty_sample_family_reports_zero_without_indexing_a_sample() {
-        let mut times = StepTimes::with_trace(true);
-        times.enable_memory_events(true);
-        times.measure("Samples", || ());
-        let samples: Vec<Sample<crate::astro::Matrix3>> = Vec::new();
-        let before = times.inspect_memory(|| (BufferShape::vector(&samples, IndexDomain::ModelSamples), BufferShape::vector(&samples, IndexDomain::ModelSamples)));
-        let step = times.last_memory_step();
-        record_sample_family(&mut times, step, (BufferId::OrientationSamples, BufferId::OrientationSampleWork), before, (&samples, &samples), 0, Some(true));
-        let events = &times.trace().unwrap().steps[0].memory_events;
-        assert_eq!(events.len(), 6);
-        assert!(matches!(events[2].event, MemoryEvent::Operation { operation: Operation::Build, elements: Some(0), logical_bytes: Some(0), .. }));
-        assert!(matches!(events[3].event, MemoryEvent::Operation { operation: Operation::Copy, elements: Some(0), logical_bytes: Some(0), .. }));
-    }
-}

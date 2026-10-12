@@ -5,8 +5,6 @@ mod catalog;
 mod celestial;
 mod presentation;
 mod configuration;
-#[cfg(feature = "memory-diagnostics")]
-mod diagnostics;
 
 pub use catalog::{
     SkyCatalog, CatalogPreparation, PreparedCatalog, ConstellationSet, StarException, SkyRegion, SelectionStats, SkyGrid,
@@ -32,15 +30,10 @@ pub(crate) use presentation::{
     DrawnStar, DrawnSpan, RegionalProjectionKey, RegionalOrderKey, RegionalDrawRecord, DrawRecord, StarKey, ProjectionBodyKey, ConstellationKey, HorizonGeometry,
     PixelLabel, PixelLabelKey, PixelTextKey, PixelTextCache, KittyDisplayKey, RenderResultVersion, PixelFrameKey, KittyEncodingKey, ProductionRasterKey, SceneKey, StarPixel, StarOpacityTable, PixelStarKey, CharacterStarKey, StarKeys, Glyph,
 };
-#[cfg(feature = "memory-diagnostics")]
-pub(crate) use presentation::RasterRegion;
 pub use configuration::{FrameBenchmarkConfig, Config, SimulationSettings, TerminalSettings, RendererKind, GraphicsProtocol};
 
 #[cfg(test)]
 pub(crate) use catalog::{interleave, direction, build_caps};
-
-#[cfg(feature = "memory-diagnostics")]
-pub(crate) use catalog::CellCap;
 
 // Fixed-size leaf records used by bounded table previews.
 crate::rows::debug_preview!(Anchor, FrameTime, MoonIllumination, PlanetKind, ProjectionViewport, View, ProjectedMoon, CorrectionStats);
