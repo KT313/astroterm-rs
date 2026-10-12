@@ -3,38 +3,35 @@
 //! run has no figures). The frame always selects the whole table, so it has no regions or groups.
 use std::io;
 
-use crate::astro::{Vector3, models::stars::StellarMotion};
+use crate::astro::models::stars::StellarMotion;
 use crate::catalog::{StarId, cache::invalid};
-use super::{Constellation, StarRowSlice, StarRowVec};
+use super::{Constellation, GroupTable, LabelColumn, StarRowSlice, StarRowVec};
 
+/// The endpoint stars as one `GroupTable` (so the simulation treats them like a group) and the figures.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Constellations {
-    columns: StarRowVec,
-    names: Vec<u32>,                       // name entries, one-based into the shared `StarNames`; zero for none
-    figures: Vec<Constellation>,           // segments index rows of `columns`
+    stars: GroupTable,                     // labels are name entries, one-based into the shared `StarNames`; zero for none
+    figures: Vec<Constellation>,           // segments index rows of `stars`
 }
 
 impl Constellations {
     /// Assemble the table from its parts without checking them; the loader calls `validate` afterwards.
     pub fn new(columns: StarRowVec, names: Vec<u32>, figures: Vec<Constellation>) -> Self {
-        Self { columns, names, figures }
+        Self { stars: GroupTable::new(columns, LabelColumn::Names(names)), figures }
     }
 
-    pub fn len(&self) -> usize { self.columns.len() }
-    pub fn is_empty(&self) -> bool { self.columns.is_empty() }
-    pub fn columns(&self) -> StarRowSlice<'_> { self.columns.as_slice() }
-    pub fn names(&self) -> &[u32] { &self.names }
+    pub fn len(&self) -> usize { self.stars.len() }
+    pub fn is_empty(&self) -> bool { self.stars.is_empty() }
+    pub fn table(&self) -> &GroupTable { &self.stars }
+    pub fn columns(&self) -> StarRowSlice<'_> { self.stars.columns() }
+    pub fn names(&self) -> &[u32] { match self.stars.labels() { LabelColumn::Names(entries) => entries, LabelColumn::SourceIds(_) => &[] } }
     pub fn figures(&self) -> &[Constellation] { &self.figures }
-    pub fn id(&self, i: usize) -> StarId { StarId(self.columns.id[i]) }
-
-    pub fn motion(&self, i: usize) -> StellarMotion {
-        let (u0, w, distance) = (self.columns.u0[i], self.columns.w[i], self.columns.distance[i]);
-        StellarMotion { u0: expand(u0), w: expand(w), distance_pc: (distance > 0.0).then_some(f64::from(distance)) }
-    }
+    pub fn id(&self, i: usize) -> StarId { self.stars.id(i) }
+    pub fn motion(&self, i: usize) -> StellarMotion { self.stars.motion(i) }
 
     /// The IDs of the table's stars in ascending order, for the region table's exclusion check.
     pub fn sorted_ids(&self) -> Vec<u32> {
-        let mut ids = self.columns.id.to_vec();
+        let mut ids = self.columns().id.to_vec();
         ids.sort_unstable();
         ids
     }
@@ -43,7 +40,7 @@ impl Constellations {
     /// end of some segment, no star appears twice, and the name column matches the star count.
     pub fn validate(&self) -> io::Result<()> {
         let count = self.len();
-        if self.names.len() != count { return Err(invalid(format!("{} constellation star names for {count} stars", self.names.len()))); }
+        if self.names().len() != count { return Err(invalid(format!("{} constellation star names for {count} stars", self.names().len()))); }
         let mut referenced = vec![false; count];
         for figure in &self.figures {
             for &index in figure.segments.iter().flatten() {
@@ -52,7 +49,7 @@ impl Constellations {
             }
         }
         if let Some(row) = referenced.iter().position(|&used| !used) {
-            return Err(invalid(format!("constellation star {} at row {row} is not an endpoint of any figure", self.columns.id[row])));
+            return Err(invalid(format!("constellation star {} at row {row} is not an endpoint of any figure", self.id(row).0)));
         }
         let ids = self.sorted_ids();
         if let Some(pair) = ids.windows(2).find(|pair| pair[0] == pair[1]) {
@@ -62,21 +59,18 @@ impl Constellations {
     }
 }
 
-fn expand(v: [f32; 3]) -> Vector3 {
-    Vector3 { x: f64::from(v[0]), y: f64::from(v[1]), z: f64::from(v[2]) }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use super::super::stars::fixtures::{region_center, row};
 
-    fn triangle() -> Constellations {
+    fn triangle_with(ids: [u32; 3], names: Vec<u32>) -> Constellations {
         let mut columns = StarRowVec::new();
-        for (id, magnitude) in [(21_u32, 0.5), (22, 2.5), (23, 1.0)] { columns.push(row(region_center(id as usize), 0.0, magnitude, id).into()); }
+        for (region, (id, magnitude)) in [21_usize, 22, 23].into_iter().zip(ids.into_iter().zip([0.5, 2.5, 1.0])) { columns.push(row(region_center(region), 0.0, magnitude, id).into()); }
         let figures = vec![Constellation { abbreviation: "Tri", segments: vec![[0, 1], [1, 2], [2, 0]] }];
-        Constellations::new(columns, vec![3, 0, 0], figures)
+        Constellations::new(columns, names, figures)
     }
+    fn triangle() -> Constellations { triangle_with([21, 22, 23], vec![3, 0, 0]) }
 
     #[test]
     fn empty_table_validates() {
@@ -106,11 +100,9 @@ mod tests {
         let mut unused = triangle();
         unused.figures[0].segments.truncate(1);
         assert!(unused.validate().unwrap_err().to_string().contains("star 23 at row 2 is not an endpoint"));
-        let mut twice = triangle();
-        twice.columns.id[2] = 21;
+        let twice = triangle_with([21, 22, 21], vec![3, 0, 0]);
         assert!(twice.validate().unwrap_err().to_string().contains("star 21 is stored twice"));
-        let mut names = triangle();
-        names.names.pop();
+        let names = triangle_with([21, 22, 23], vec![3, 0]);
         assert!(names.validate().unwrap_err().to_string().contains("2 constellation star names for 3 stars"));
     }
 }
