@@ -94,7 +94,7 @@ def main():
     parser.add_argument("--report-dir", type=Path)
     args = parser.parse_args()
     cases = [("chars", []), ("unicode", ["-cuC", "--debug-frametimes", "--disable-cache"])]
-    cases.extend((protocol, ["--renderer", "pixels", "--graphics-protocol", protocol, "-C", "-m"])
+    cases.extend((protocol, ["--graphics-protocol", protocol, "-C", "-m"])
                  for protocol in ["halfblocks", "sixel", "iterm2", "kitty"])
     for name, flags in cases:
         report = check(args.binary.resolve(), name, flags)

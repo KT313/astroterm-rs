@@ -68,6 +68,7 @@ const PANEL_RGB: [u8; 3] = [255, 255, 255];
 pub fn draw_points(frame: &mut Frame, inputs: &PointInputs<'_>, observation: &Observation, view: &View, settings: &RenderOptions) -> Drawn {
     let mut drawn = Drawn::default();
     frame.clear_overlay();
+    if frame.width() == 0 || frame.height() == 0 { return drawn; }                       // nothing to draw on
     let sky = frame.sky();
     let viewport = sky.viewport();
     let camera = prepare_camera(view);
@@ -107,7 +108,7 @@ pub fn draw_points(frame: &mut Frame, inputs: &PointInputs<'_>, observation: &Ob
             }
         }
         if settings.constellations {
-            drawn.arcs = stroke_constellations(&mut canvas, sky, view, inputs, simulation, threshold);
+            drawn.arcs = stroke_constellations(&mut canvas, sky, observation, view, inputs, simulation, threshold);
         }
         if settings.grid && !view.is_facing() {
             let (cx, cy) = (sky.x as f64 + (sky.size as f64 - 1.0) * 0.5, sky.y as f64 + (sky.size as f64 - 1.0) * 0.5);
@@ -195,7 +196,7 @@ pub fn body_rgb(id: crate::astro::models::BodyId) -> [u8; 3] {
 }
 
 /// Stroke every figure whose endpoints are all bright enough, each arc its own subpath, one stroke call.
-fn stroke_constellations(canvas: &mut PixmapMut<'_>, sky: SkyArea, view: &View, inputs: &PointInputs<'_>, simulation: &crate::regions::GroupSimulation, threshold: u16) -> usize {
+fn stroke_constellations(canvas: &mut PixmapMut<'_>, sky: SkyArea, observation: &Observation, view: &View, inputs: &PointInputs<'_>, simulation: &crate::regions::GroupSimulation, threshold: u16) -> usize {
     let viewport = sky.viewport();
     let mut path = PathBuilder::new();
     let mut arcs = 0;
@@ -204,7 +205,7 @@ fn stroke_constellations(canvas: &mut PixmapMut<'_>, sky: SkyArea, view: &View, 
         let bright_enough = rows.clone().all(|row| simulation.magnitudes().get(row).is_some_and(|&code| code <= threshold && code != UNPLACED));
         if !bright_enough { continue; }
         for &[from, to] in &figure.segments {
-            let (a, b) = (inputs.observation_direction(simulation, from), inputs.observation_direction(simulation, to));
+            let (a, b) = (observation.apparent_star_direction(simulation.directions()[from]), observation.apparent_star_direction(simulation.directions()[to])); // as the endpoint stars themselves are placed
             for arc in project_constellation_segment(view, viewport, a, b) {
                 add_arc(&mut path, sky, &arc);
                 arcs += 1;
@@ -213,13 +214,6 @@ fn stroke_constellations(canvas: &mut PixmapMut<'_>, sky: SkyArea, view: &View, 
     }
     if let Some(path) = path.finish() { stroke_path(canvas, &path, CONSTELLATION_RGB, 0.8); }
     arcs
-}
-
-impl PointInputs<'_> {
-    /// The apparent horizon direction of a constellation star row.
-    fn observation_direction(&self, simulation: &crate::regions::GroupSimulation, row: usize) -> Vector3 {
-        simulation.directions()[row]
-    }
 }
 
 fn add_arc(path: &mut PathBuilder, sky: SkyArea, arc: &ProjectedArc) {
@@ -316,10 +310,11 @@ fn direction_labels(sky: SkyArea, view: &View, settings: &RenderOptions, viewpor
         return labels;
     }
     let (top, left, size) = (sky.y as i32, sky.x as i32, sky.size as i32);
-    for (pixel, text) in [((top, left + size / 2), "N"), ((top + size - 1, left + size / 2), "S"), ((top + size / 2, left), "E"), ((top + size / 2, left + size - 1), "W")] {
-        labels.push(Label { text: text.to_string(), pixel, rgb: DIRECTION_RGB });
-    }
-    if settings.grid {
+    if !settings.grid {                                                                   // the grid's angles replace the compass letters, which would overlap them
+        for (pixel, text) in [((top, left + size / 2), "N"), ((top + size - 1, left + size / 2), "S"), ((top + size / 2, left), "E"), ((top + size / 2, left + size - 1), "W")] {
+            labels.push(Label { text: text.to_string(), pixel, rgb: DIRECTION_RGB });
+        }
+    } else {
         for angle in (0..360).step_by(30) {
             let (s, c) = (angle as f64).to_radians().sin_cos();
             let row = f64::from(top) + (1.0 - s) * f64::from(size - 1) / 2.0;
@@ -566,6 +561,20 @@ mod tests {
     }
 
     #[test]
+    fn constellation_lines_pass_through_their_endpoint_stars() {
+        let tables = bsc5();
+        let view = View { center: ViewCenter::Facing { azimuth: 5.9, tilt: 0.35 }, projection: ProjectionKind::Stereographic, fov_degrees: 120.0 };
+        let mut frame = Frame::square(801);
+        let (drawn, _) = draw(&tables, &view, 0.0, &RenderOptions { magnitude_threshold: 9.0, ..settings() }, &mut frame);
+        assert!(drawn.arcs > 20 && drawn.star_labels.len() == 5, "{drawn:?}");
+        let (width, overlay) = (frame.width(), frame.overlay());
+        let line_near = |(row, column): (i32, i32)| (-2..=2).flat_map(|dr| (-2..=2).map(move |dc| (row + dr, column + dc)))
+            .any(|(r, c)| r >= 0 && c >= 0 && (r as usize) < width && (c as usize) < width && overlay[((r as usize) * width + c as usize) * 4 + 3] > 0);
+        let through = drawn.star_labels.iter().filter(|label| line_near(label.pixel)).count();             // the brightest stars of the view are figure endpoints
+        assert!(through >= 3, "lines pass through {through} of 5 labelled stars: {:?}", drawn.star_labels);
+    }
+
+    #[test]
     fn the_horizon_is_hidden_when_looking_far_above_it_and_crosses_the_middle_of_a_level_view() {
         let tables = stars(&[]);
         let mut frame = Frame::square(201);
@@ -597,8 +606,8 @@ mod tests {
         assert_eq!(plain.direction_labels.len(), 4);
         let before = lit_overlay(&frame);
         let (grid, _) = draw(&tables, &View::default(), 0.0, &RenderOptions { grid: true, ..settings() }, &mut frame);
-        assert_eq!(grid.direction_labels.len(), 4 + 12);
-        assert!(find(&grid, "90").is_some() && find(&grid, "330").is_some());
+        assert_eq!(grid.direction_labels.len(), 12);                                      // the angles replace the compass letters
+        assert!(find(&grid, "90").is_some() && find(&grid, "330").is_some() && find(&grid, "N").is_none());
         assert!(lit_overlay(&frame) > before + 300, "twelve spokes");
         let centre = overlay_pixel(&frame, sky.y as i32 + sky.size as i32 / 2, sky.x as i32 + sky.size as i32 / 2);
         assert!(centre[3] > 0);

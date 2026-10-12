@@ -1,4 +1,4 @@
-//! Optional trace descriptions, table dumps and reporting after terminal cleanup.
+//! Optional trace descriptions and reporting after terminal cleanup.
 mod benchmark;
 pub(crate) use benchmark::{BenchmarkSession, open_frame_benchmark, begin_benchmark_capture, prepare_benchmark_frame,
     validate_benchmark_time, complete_benchmark_frame, finish_benchmark_report};
@@ -8,25 +8,19 @@ use std::process::ExitCode;
 use std::time::Instant;
 use astroterm::cli::Arguments;
 use astroterm::model::{Config, FrameTime};
-use astroterm::state::{ApplicationState};
+use astroterm::present::{CompressionSupport, DisplayInfo, Presented};
+use astroterm::terminal::{CaptureDisplay, CaptureGeometry};
 use astroterm::timing::StepTimes;
+use ratatui_image::picker::ProtocolType;
 
 /// Capture startup timings for the requested diagnostic mode.
 pub(crate) fn start_step_times(arguments: &Arguments) -> StepTimes {
     StepTimes::with_trace(arguments.debug_singleframe || arguments.debug_frames.is_some())
 }
 
-/// When enabled, append one named table dump and create any missing parent folders.
-pub(crate) fn log_pipeline_data_if_requested(state: &ApplicationState, path: impl AsRef<std::path::Path>, section: &str) -> io::Result<()> {
-    if !state.config.debug_log_data { return Ok(()); }
-    let path = path.as_ref();
-    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) { std::fs::create_dir_all(parent)?; }
-    state.log_data(Some(path), Some(section))
-}
-
 /// Report diagnostics and the original rendering result after the terminal scope has dropped its guard.
-pub(crate) fn finish_rendering(result: io::Result<()>, state: &ApplicationState) -> ExitCode {
-    finish_requested_report(result, &state.config, &state.timings, &mut io::stdout().lock(), &mut io::stderr().lock())
+pub(crate) fn finish_rendering(result: io::Result<()>, config: &Config, times: &StepTimes) -> ExitCode {
+    finish_requested_report(result, config, times, &mut io::stdout().lock(), &mut io::stderr().lock())
 }
 
 /// Keep an operational error primary even if the separate diagnostic writer also fails.
@@ -64,25 +58,31 @@ pub(crate) fn begin_frame_diagnostics(times: &mut StepTimes) -> Instant {
     frame_start
 }
 
-/// Record the duration of a successful frame, including reuse of an already displayed image, through presentation.
-pub(crate) fn finish_frame_diagnostics(config: &Config, frame_start: Instant, time: FrameTime, outcome: astroterm::model::RenderOutcome, times: &mut StepTimes) -> f64 {
+/// Record the duration of a successful frame through presentation, whether or not anything was sent.
+pub(crate) fn finish_frame_diagnostics(config: &Config, frame_start: Instant, time: FrameTime, presented: Presented, times: &mut StepTimes) -> f64 {
+    times.record_frame_presentation(matches!(presented, Presented::Sent(_)));
     if !(config.debug_singleframe || config.frame_benchmark.is_some()) { return 0.0; }
     let elapsed = frame_start.elapsed().as_secs_f64();
-    times.describe(if outcome.was_presented() { "Present" } else { "Presentation decision" }, || format!(
-        "frame elapsed through presentation={:.3} ms; UTC JD={:.9}; includes in-frame diagnostics; sleep excluded",
+    times.describe("Present", || format!(
+        "{}; frame elapsed through presentation={:.3} ms; UTC JD={:.9}; includes in-frame diagnostics; sleep excluded",
+        match presented { Presented::Sent(bytes) => format!("sent {bytes} bytes"), Presented::Unchanged => "unchanged frame, nothing sent".into() },
         elapsed * 1000.0, time.utc
     ));
     elapsed
 }
 
-/// Record the actual read-only frame view, without creating another view or copying its geometry.
-#[inline]
-pub(super) fn record_projected_memory(times: &mut StepTimes, projected: &astroterm::model::ProjectedSky<'_>) {
-    use astroterm::timing::{Access, BufferId, BufferShape, IndexDomain, MemoryEvent};
-    times.record_memory(times.last_memory_step(), || {
-        let shape = BufferShape { len: Some(projected.stars.len()), ..BufferShape::unknown(IndexDomain::Visible) };
-        MemoryEvent::borrow(BufferId::ProjectedView, Access::ReadOnly, shape)
-    });
+/// The display facts a benchmark record carries, checked against the terminal's current size.
+pub(crate) fn capture_display(info: DisplayInfo) -> io::Result<CaptureDisplay> {
+    let protocol = match info.protocol { ProtocolType::Kitty => "kitty", ProtocolType::Sixel => "sixel", ProtocolType::Iterm2 => "iterm2", ProtocolType::Halfblocks => "halfblocks" };
+    let compression_support = match info.compression { CompressionSupport::Supported => "supported", CompressionSupport::Unsupported => "unsupported", CompressionSupport::Unknown => "unknown" };
+    let display = CaptureDisplay { renderer: "pixels", graphics_protocol: protocol, compression_support, tmux: info.tmux, transport: "streaming",
+        geometry: CaptureGeometry { screen_cells: [u32::from(info.screen.width), u32::from(info.screen.height)],
+            font_pixels: Some([u32::from(info.font.0), u32::from(info.font.1)]), image_pixels: Some([info.image.0 as u32, info.image.1 as u32]) } };
+    let (columns, rows) = crossterm::terminal::size()?;
+    if display.geometry.screen_cells != [u32::from(columns), u32::from(rows)] {
+        return Err(io::Error::new(io::ErrorKind::Interrupted, "benchmark terminal resized during frame processing"));
+    }
+    Ok(display)
 }
 
 #[cfg(test)]

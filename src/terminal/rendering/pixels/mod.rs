@@ -2,7 +2,7 @@
 mod setup;
 mod steps;
 mod layout;
-mod detection;
+use crate::terminal::transport::graphics::detection;                               // moved to the transport in chunk 13
 mod text;
 
 pub(in crate::terminal) use setup::{open_pixel_renderer, pixel_viewport, fit_pixel_terminal};

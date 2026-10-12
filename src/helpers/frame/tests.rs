@@ -1,42 +1,76 @@
 use super::*;
-use astroterm::{cli::{Arguments, build_config}, model::StarCounts, state::ApplicationState};
+use astroterm::astro::J2000;
+use astroterm::cli::{Arguments, build_config};
+use astroterm::model::{ProjectionKind, ViewCenter};
+use astroterm::observation::observe;
+use astroterm::present::CompressionSupport;
+use astroterm::progress::NoProgress;
+use astroterm::regions::refresh_regions;
+use astroterm::selection::select_regions;
+use astroterm::solar_system::simulate_solar_system;
 use clap::Parser;
+use ratatui::layout::Rect;
+
+fn config(flags: &[&str]) -> Config {
+    build_config(Arguments::try_parse_from(["astroterm", "-d", "2025-03-01T11:00:00", "-s", "0", "-i", "Tokyo"].into_iter().chain(flags.iter().copied())).unwrap(),
+        &astroterm::catalog::load_embedded_cities().unwrap()).unwrap()
+}
+
+fn tables() -> SkyTables {
+    let prepared = astroterm::sky::prepare_owned_catalog(astroterm::catalog::load_embedded_catalog().unwrap()).unwrap();
+    astroterm::sky::build_sky_tables(&prepared, &mut NoProgress(std::io::sink()), &mut StepTimes::default()).unwrap()
+}
 
 #[test]
-fn each_stage_publishes_only_its_counter_on_refresh_and_cache_hits() {
-    let config = build_config(Arguments::try_parse_from(["astroterm", "-d", "2025-03-01T11:00:00", "-s", "0"]).unwrap(), &[]).unwrap();
-    let mut state = ApplicationState::new(config, StepTimes::default());
-    state.replace_catalog(astroterm::sky::prepare_owned_catalog(astroterm::catalog::load_embedded_catalog().unwrap()).unwrap());
-    let loaded = state.persistent.catalog.stars.len();
-    assert_eq!(state.star_counts, StarCounts { loaded, ..Default::default() });
-    let time = FrameTime::from_utc(state.config.simulation.start_julian_date);
-    astroterm::sky::prepare_stellar_catalog(&mut state.cache.simulation.stars, state.persistent.catalog.clone(), time.tt, &mut state.timings);
-    let mut previous = None;
-    for frame in 0..4 {
-        if frame == 2 { state.current_view.fov_degrees = 40.0; }
-        let threshold = if frame == 3 { -20.0 } else { 5.0 };
-        state.star_counts.candidate_regions = usize::MAX;
-        state.star_counts.filtered = usize::MAX;
-        state.star_counts.projected = usize::MAX;
-        simulate_solar_system_frame(&mut state.cache.simulation.solar_system, &mut state.cache.observer, state.config.simulation.observer, time, &mut state.timings).unwrap();
-        let observer = prepare_observer_frame(state.config.simulation.observer, &mut state.cache.simulation.solar_system, &mut state.cache.observer, time, &mut state.timings).unwrap();
-        select_stars_frame(&mut state.cache.selection, &state.persistent.catalog, &observer, &state.current_view, threshold, false, &mut state.star_counts.candidate_regions, &mut state.timings);
-        assert!(state.star_counts.candidate_regions <= loaded);
-        assert_eq!(state.star_counts.filtered, usize::MAX);
-        simulate_stars_frame(&mut state.cache.simulation.stars, state.cache.selection.stars(), time, &mut state.timings);
-        let observed = observe_frame(&mut state.cache.observation, state.cache.simulation.stars.results(state.cache.selection.stars()), state.cache.observer.bodies(&observer), &observer, threshold, false, &mut state.cache.sky, &mut state.star_counts.filtered, &mut state.timings);
-        assert_eq!(state.star_counts.filtered, observed.sky().stars.iter().filter(|s| s.drawable).count());
-        assert_eq!(state.star_counts.projected, usize::MAX);
-        let viewport = ProjectionViewport { width: 80, height: 40 };
-        project_frame(observed, &state.current_view, viewport, time, &mut state.cache.projection, &mut state.star_counts.projected, &mut state.timings);
-        let projected = astroterm::projection::borrow_projected(&state.cache.projection, observed.sky(), &state.current_view, viewport);
-        assert_eq!(state.star_counts.projected, projected.stars.len());
-        assert_eq!(state.star_counts.loaded, loaded);
-        assert!(state.star_counts.candidate_regions >= state.star_counts.filtered && state.star_counts.filtered >= state.star_counts.projected);
-        if frame == 1 { assert_eq!(state.star_counts, previous.unwrap()); }
-        if frame == 3 { assert_eq!((state.star_counts.filtered, state.star_counts.projected), (0, 0)); }
-        previous = Some(state.star_counts);
+fn controls_change_the_view_and_the_clock_and_quit_is_detected() {
+    let config = config(&[]);
+    let mut clock = SimulationClock::start(config.simulation.start_julian_date, 0.0);
+    let mut view = config.view;
+    let input = FrameInput { controls: vec![Control::ZoomIn, Control::TogglePause], resized: false };
+    assert!(!stop_on_quit(&input));
+    apply_frame_controls(&input, &config.view, &mut view, &mut clock);
+    assert!(view.fov_degrees < config.view.fov_degrees && clock.is_paused());
+    apply_frame_controls(&FrameInput { controls: vec![Control::ResetView], resized: false }, &config.view, &mut view, &mut clock);
+    assert_eq!(view, config.view);
+    assert!(stop_on_quit(&FrameInput { controls: vec![Control::PanLeft, Control::Quit], resized: false }));
+    assert_eq!(resolve_frame_time(true, J2000, &clock).utc, J2000);                                  // single-frame mode shows the requested epoch
+    assert_eq!(resolve_frame_time(false, J2000, &clock).utc, config.simulation.start_julian_date);
+}
+
+#[test]
+fn the_panel_is_empty_when_off_and_lists_time_counts_display_and_timings_when_on() {
+    let tables = tables();
+    let time = FrameTime::from_utc(config(&[]).simulation.start_julian_date);
+    let clock = SimulationClock::start(time.utc, 0.0);
+    let view = View { center: ViewCenter::Zenith, fov_degrees: 360.0, projection: ProjectionKind::Equidistant };     // the whole sky, as chunk 10 tests it
+    let observation = observe(&config(&[]).simulation.observer, false, &view, time);
+    let solar_system = simulate_solar_system(&tables.bodies, time);
+    let selected = select_regions(&tables.stars, &observation);
+    let mut caches = RegionCaches::default();
+    let refreshed = refresh_regions(&mut caches, &tables, &selected, time, &config(&[]).render);
+    let display = DisplayInfo { protocol: ProtocolType::Kitty, tmux: false, compression: CompressionSupport::Unknown, screen: Rect::new(0, 0, 100, 40), font: (10, 20), image: (1000, 800), text_cell: (9, 17) };
+    let frame = PanelFrame { time, clock: &clock, solar_system: &solar_system, selected: &selected, caches: &caches, refreshed, display };
+    let mut times = StepTimes::default();
+    times.measure("Projection", || {});
+
+    let off = config(&[]);
+    let mut panel = Panel::new(&off, &tables);
+    assert!(panel.lines(&frame, &off.simulation.observer, &view, &tables, &times).is_empty());
+
+    let on = config(&["-m", "--debug-frametimes"]);
+    let mut panel = Panel::new(&on, &tables);
+    let lines = panel.lines(&frame, &on.simulation.observer, &view, &tables, &times).to_vec();
+    let labels: Vec<&str> = lines.iter().map(|field| field.label.as_str()).collect();
+    assert!(labels.iter().any(|label| label.starts_with("Date (")), "{labels:?}");
+    for label in ["Lunar Phase", "Stars loaded", "In selected regions", "Regions selected", "Tile memory", "Graphics", "Transport", "Compression", "Groups refreshed", "Frame Time"] {
+        assert!(labels.contains(&label), "{label} missing from {labels:?}");
     }
-    state.replace_catalog(astroterm::sky::prepare_owned_catalog(astroterm::catalog::Catalog::new(Vec::new(), Default::default(), Vec::new())).unwrap());
-    assert_eq!(state.star_counts, StarCounts::default());
+    let value = |label: &str| lines.iter().find(|field| field.label == label).unwrap().value.clone();
+    assert_eq!(value("Stars loaded"), format!("{} stars", group_digits(tables.stars.len() + tables.constellations.len())));
+    assert!(value("Regions selected").ends_with("(whole sky)"));
+    assert!(value("Graphics").contains("1000×800"));
+    assert!(value("Groups refreshed").starts_with(&format!("{} simulated", refreshed.simulated)));
+    assert!(labels.iter().any(|label| label.trim() == "Projection"));                                // the step timings follow the metadata
+    assert_eq!(group_digits(1234567), "1,234,567");
+    assert_eq!(group_digits(999), "999");
 }

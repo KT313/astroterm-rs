@@ -15,7 +15,6 @@ pub struct Config {
     pub cache: crate::cache::CacheConfig,
     /// Raster text size and spacing relative to terminal cells; ignored by native text renderers.
     pub text_scale: f64,
-    pub renderer: RendererKind,
     pub graphics_protocol: GraphicsProtocol,
     pub simulation: SimulationSettings,
     /// The view to start with, and to reset to.
@@ -61,6 +60,7 @@ pub struct TerminalSettings {
     pub frame_times: bool,
 }
 
+/// The old renderer switch; only the old `terminal::Renderer` still reads it (gone with chunk 14).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum)]
 pub enum RendererKind {
     #[default]

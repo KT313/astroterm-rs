@@ -20,7 +20,7 @@ fn completed_frames_include_reuse_and_keep_startup_separate() {
     for index in 1..=3 {
         times.begin_frame();
         times.measure_steps("Observation", |times| { times.measure("Repeated", || {}); times.measure("Repeated", || {}); });
-        let outcome = if index == 1 { RenderOutcome::Presented } else { RenderOutcome::ReusedDisplayedFrame };
+        let outcome = if index == 1 { Presented::Sent(1) } else { Presented::Unchanged };
         let done = session.record_frame(FrameTime::from_utc(config.simulation.start_julian_date), outcome, 0.000_123_456, display(), &mut times).unwrap();
         assert_eq!(done, index == 3);
         assert!(times.trace().unwrap().steps.is_empty());
@@ -55,7 +55,7 @@ fn failed_report_flush_and_geometry_change_cannot_complete_capture() {
     session.begin_capture(&config, display(), &mut times).unwrap();
     let mut changed = display();
     changed.geometry.screen_cells[0] += 1;
-    let error = session.record_frame(FrameTime::from_utc(2451545.0), RenderOutcome::Presented, 0.1, changed, &mut times).unwrap_err();
+    let error = session.record_frame(FrameTime::from_utc(2451545.0), Presented::Sent(1), 0.1, changed, &mut times).unwrap_err();
     assert_eq!(error.kind(), io::ErrorKind::Interrupted);
     session.write_end(&Err(error)).unwrap();
     let records: Vec<serde_json::Value> = String::from_utf8(session.writer).unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect();

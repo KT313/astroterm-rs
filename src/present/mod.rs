@@ -4,7 +4,11 @@
 //! Runs every frame: the star layer is tone mapped to 8 bits and the overlay composited over it, then the bytes are
 //! compared with the previous frame; an unchanged frame sends nothing, a changed one is encoded for the terminal's
 //! graphics protocol (Kitty upload and swap, Sixel, iTerm2, or half-block cells) through the keep-list transport
-//! and written. Nothing here reads catalog data.
+//! and written. Nothing here reads catalog data. `display` opens the terminal and sizes the frame.
+mod display;
+pub use display::{Display, DisplayInfo};
+pub use crate::terminal::transport::graphics::detection::{CompressionSupport, describe_compression}; // the detection result the panel and the benchmark report describe
+
 use crate::constants::{MIN_STAR_PIXEL_OPACITY, PIXEL_BACKGROUND_RGBA};
 use crate::projection::Frame;
 use crate::terminal::transport::graphics::{compose_image, encode_image, kitty, present_frame, serialize_frame_into};
@@ -64,7 +68,7 @@ impl<W: Write> Terminal<W> {
 /// Show the frame: tone map, compare, encode, send. Returns whether anything was sent.
 pub fn present<W: Write>(frame: &Frame, terminal: &mut Terminal<W>) -> io::Result<Presented> {
     compose(frame, &mut terminal.image);
-    if terminal.image == terminal.previous { return Ok(Presented::Unchanged); }
+    if terminal.image == terminal.previous || terminal.image.is_empty() { return Ok(Presented::Unchanged); } // a zero-size frame has nothing to send
     let (width, height) = (frame.width() as u32, frame.height() as u32);
     let written = match terminal.protocol {
         ProtocolType::Kitty => {

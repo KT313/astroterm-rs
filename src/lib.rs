@@ -1,8 +1,8 @@
 //! astroterm: a terminal star map.
 //!
-//! The frame loop is visible in the binary's `pipeline.rs`: simulate the solar system, prepare observer/light-time
-//! inputs, select stars, simulate those stars, apply observation corrections, project, then render through
-//! [`terminal::Renderer`]. Simulation and selection have separate owners and exchange read-only borrowed views.
+//! The frame loop is the binary's `pipeline.rs`: the seven steps of `dev/pipeline-restructuring-plan.md` section 6,
+//! called by name and in order (chunk 13, 2026-10-12). The old spine described below is no longer run by the
+//! binary and goes in chunk 14.
 //!
 //! Pure foundations ([`astro`], [`canvas`], [`catalog`], [`cache`], [`rows`], [`progress`] and [`timing`]) support the shared records in
 //! [`model`]. Catalog and observed data, view settings, projected geometry and validated configuration live there;
@@ -23,7 +23,8 @@
 //! [`regions`] (step 4: speed groups, simulation caches, sky-fixed group and region images, `refresh_regions`) and
 //! [`projection`] (step 5, `project_stars_to_screen`: the warp of the region tiles onto the screen, beside the
 //! projection geometry it reuses), [`points`] (step 6, `draw_points`: bodies, constellation lines, labels and
-//! overlays on the frame) and [`present`] (step 7, `present`: tone mapping and the terminal output).
+//! overlays on the frame) and [`present`] (step 7, `present`: tone mapping and the terminal output; its
+//! `Display` opens the terminal and sizes the frame).
 //!
 //! Earth is the only production anchor. Common f64 states use equatorial J2000 axes, AU and AU/day, with
 //! a barycentric origin. [`sky`] documents the observer site and apparent-place corrections.

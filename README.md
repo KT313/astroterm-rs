@@ -50,8 +50,8 @@ With `-m`, the panel shows stars loaded, in candidate regions, passed filtering 
 ## Views
 
 ```sh
-# Pixel graphics instead of characters
-./target/release/astroterm -i Tokyo --renderer pixels -C -m
+# Constellations and the metadata panel
+./target/release/astroterm -i Tokyo -C -m
 
 # Look north-northwest, 20° above the horizon
 ./target/release/astroterm -i Tokyo --facing NNW --tilt 20 --fov 120 -cCu

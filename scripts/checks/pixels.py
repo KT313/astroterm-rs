@@ -46,7 +46,7 @@ def extract_png(raw):
 
 
 def check_protocol(binary, protocol, capture_dir=None):
-    terminal = TerminalProcess([str(binary), "--renderer", "pixels", "--graphics-protocol", protocol,
+    terminal = TerminalProcess([str(binary), "--graphics-protocol", protocol,
                                 "-d", "2025-03-01T11:00:00", "-i", "Tokyo", "-s", "0", "-C", "-m", "--fps", "4"],
                                rows=80, columns=100, pixels=(1000, 1600))
     terminal.stream.feed = lambda _: None  # pyte does not interpret graphics payloads; inspect transport bytes only
@@ -89,7 +89,7 @@ def check_protocol(binary, protocol, capture_dir=None):
 
 
 def check_auto(binary):
-    terminal = TerminalProcess([str(binary), "--renderer", "pixels", "-m", "-s", "0", "--fps", "2"])
+    terminal = TerminalProcess([str(binary), "-m", "-s", "0", "--fps", "2"])
     try:
         terminal.until(lambda: b"half-block output" in terminal.raw, timeout=20)
         terminal.send("q")
@@ -101,7 +101,7 @@ def check_auto(binary):
 
 
 def check_detection(binary, response, expected):
-    terminal = TerminalProcess([str(binary), "--renderer", "pixels", "-m", "-s", "0", "--fps", "2"])
+    terminal = TerminalProcess([str(binary), "-m", "-s", "0", "--fps", "2"])
     terminal.stream.feed = lambda _: None
     try:
         terminal.until(lambda: b"\x1b[5n" in terminal.raw, timeout=5)
@@ -118,7 +118,7 @@ def check_detection(binary, response, expected):
 
 
 def check_kitty_compression(binary, support, forced):
-    command = [str(binary), "--renderer", "pixels", "-d", "2025-03-01T11:00:00", "-i", "Tokyo",
+    command = [str(binary), "-d", "2025-03-01T11:00:00", "-i", "Tokyo",
                "-s", "0", "-t", "5", "--fps", "10"]
     if forced:
         command += ["--graphics-protocol", "kitty"]
@@ -183,7 +183,7 @@ def check_panic(probe):
 
 
 def check_startup_fallback(binary):
-    terminal = TerminalProcess([str(binary), "--renderer", "pixels", "--graphics-protocol", "sixel", "-s", "0"],
+    terminal = TerminalProcess([str(binary), "--graphics-protocol", "sixel", "-s", "0"],
                                pixels=(65535, 65535))
     try:
         terminal.until(lambda: b"Pixel startup failed; using characters" in terminal.raw, timeout=20)

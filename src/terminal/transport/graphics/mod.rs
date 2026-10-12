@@ -1,6 +1,7 @@
 //! Image encoding and complete-frame serialization. Graphics protocols receive the fully composed raster;
 //! half-block output merges native text into its cell buffer before serialization.
 pub(crate) mod kitty;
+pub(crate) mod detection;
 
 use std::io::{self, Write};
 

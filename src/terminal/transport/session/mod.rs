@@ -67,6 +67,11 @@ impl TerminalSession {
     }
 }
 
+impl Write for TerminalSession {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> { self.out.write(bytes) }
+    fn flush(&mut self) -> io::Result<()> { self.out.flush() }
+}
+
 impl Drop for TerminalSession {
     fn drop(&mut self) {
         let _ = self.out.flush();

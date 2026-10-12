@@ -9,8 +9,11 @@ use ratatui_image::{
 };
 use std::io;
 
-use crate::state::CompressionSupport;
-pub(super) fn describe_compression(value: CompressionSupport) -> &'static str {
+/// Whether the terminal accepted a zlib-compressed Kitty upload during the capability query.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CompressionSupport { Supported, Unsupported, #[default] Unknown }
+
+pub fn describe_compression(value: CompressionSupport) -> &'static str {
     match value {
         CompressionSupport::Supported => "Enabled (zlib)",
         CompressionSupport::Unsupported => "Not supported by terminal; using RGB",
@@ -18,7 +21,7 @@ pub(super) fn describe_compression(value: CompressionSupport) -> &'static str {
     }
 }
 
-pub(super) fn select_transport_notice(protocol: ProtocolType, shared_memory: bool) -> Option<&'static str> {
+pub fn select_transport_notice(protocol: ProtocolType, shared_memory: bool) -> Option<&'static str> {
     match protocol {
         ProtocolType::Halfblocks => Some("Pixel renderer: half-block output (no graphics protocol selected)."),
         ProtocolType::Kitty if !shared_memory => Some("Shared memory unavailable; using streaming."),
@@ -34,7 +37,7 @@ struct Capabilities {
     shared_memory: bool,
 }
 
-pub(super) fn detect_protocol(
+pub fn detect_protocol(
     forced: Option<ProtocolType>,
     tmux: bool,
     out: &mut impl io::Write,

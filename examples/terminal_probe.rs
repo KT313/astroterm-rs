@@ -15,10 +15,10 @@ fn main() {
                 terminal::Renderer,
             };
             use clap::Parser;
-            let arguments = Arguments::parse_from(["probe", "--renderer", "pixels", "--graphics-protocol", "kitty"]);
+            let arguments = Arguments::parse_from(["probe", "--graphics-protocol", "kitty"]);
             let config = build_config(arguments, &[]).unwrap();
             let (mut renderer, mut rendering) = Renderer::open(
-                config.renderer,
+                astroterm::model::RendererKind::Pixels,
                 config.graphics_protocol,
                 config.render,
                 config.terminal,

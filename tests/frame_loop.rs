@@ -1,0 +1,104 @@
+//! The seven steps of the frame loop run headlessly, end to end, on the embedded catalog: the smoke checks the test
+//! inventory assigned to chunk 13 (every view and size renders, dynamic names in a zoomed view, Polaris lit).
+use astroterm::astro::Observer;
+use astroterm::catalog::load_embedded_catalog;
+use astroterm::model::{ProjectionKind, RenderOptions, SkyTables, View, ViewCenter};
+use astroterm::observation::{Observation, observe};
+use astroterm::points::{Drawn, PointInputs, draw_points, star_label};
+use astroterm::present::{Presented, Terminal, present};
+use astroterm::progress::NoProgress;
+use astroterm::projection::{Frame, SkyArea, prepare_camera, project_camera, project_stars_to_screen, project_to_cell};
+use astroterm::regions::{RegionCaches, refresh_regions};
+use astroterm::selection::select_regions;
+use astroterm::sky::{build_sky_tables, prepare_owned_catalog};
+use astroterm::solar_system::simulate_solar_system;
+use astroterm::astro::FrameTime;
+use astroterm::timing::StepTimes;
+use ratatui::layout::Rect;
+use ratatui_image::picker::ProtocolType;
+
+const TOKYO: Observer = Observer { latitude: 0.6228, longitude: 2.4382 };                   // 35.69° N, 139.69° E
+const UTC_2025_03_01_11H: f64 = 2460735.958333333;
+
+fn tables() -> SkyTables {
+    let prepared = prepare_owned_catalog(load_embedded_catalog().unwrap()).unwrap();
+    build_sky_tables(&prepared, &mut NoProgress(std::io::sink()), &mut StepTimes::default()).unwrap()
+}
+
+fn settings() -> RenderOptions {
+    RenderOptions { unicode: true, braille: false, color: true, constellations: true, grid: false, magnitude_threshold: 6.0, dynamic_names: true }
+}
+
+/// One frame through steps 1 to 6 into `frame`; returns the observation and what step 6 drew.
+fn run_frame(tables: &SkyTables, caches: &mut RegionCaches, frame: &mut Frame, view: &View, settings: &RenderOptions) -> (Observation, Drawn) {
+    let time = FrameTime::from_utc(UTC_2025_03_01_11H);
+    let solar_system = simulate_solar_system(&tables.bodies, time);                                  // 1
+    let observation = observe(&TOKYO, true, view, time);                                              // 2
+    let selected = select_regions(&tables.stars, &observation);                                       // 3
+    refresh_regions(caches, tables, &selected, time, settings);                                       // 4
+    project_stars_to_screen(frame, caches, &selected, &observation, view);                            // 5
+    let inputs = PointInputs { solar_system: &solar_system, tables, caches, selected: &selected, panel: &[] };
+    let drawn = draw_points(frame, &inputs, &observation, view, settings);                            // 6
+    (observation, drawn)
+}
+
+#[test]
+fn every_view_renders_at_every_size_including_degenerate_frames() {
+    let tables = tables();
+    let mut caches = RegionCaches::default();
+    let views = [
+        View { center: ViewCenter::Zenith, projection: ProjectionKind::Stereographic, fov_degrees: 180.0 },
+        View { center: ViewCenter::Zenith, projection: ProjectionKind::Equidistant, fov_degrees: 360.0 },
+        View { center: ViewCenter::Facing { azimuth: 0.0, tilt: 0.0 }, projection: ProjectionKind::Stereographic, fov_degrees: 120.0 },
+        View { center: ViewCenter::Facing { azimuth: 3.9, tilt: 0.5 }, projection: ProjectionKind::Stereographic, fov_degrees: 20.0 },
+        View { center: ViewCenter::Facing { azimuth: 1.5, tilt: -0.3 }, projection: ProjectionKind::Equidistant, fov_degrees: 300.0 },
+        View { center: ViewCenter::Facing { azimuth: 5.0, tilt: 1.4 }, projection: ProjectionKind::Stereographic, fov_degrees: 1.0 },
+    ];
+    for (width, height) in [(401, 221), (13, 7), (1, 1), (0, 0)] {
+        let mut frame = Frame::new(width, height, SkyArea::centred(width, height), (10, 20));
+        let mut terminal = Terminal::new(Vec::new(), ProtocolType::Sixel, false, Rect::new(0, 0, (width / 10).max(1) as u16, (height / 20).max(1) as u16), false);
+        for (index, view) in views.iter().enumerate() {
+            run_frame(&tables, &mut caches, &mut frame, view, &settings());
+            assert_eq!(frame.stars().len(), width * height);
+            let presented = present(&frame, &mut terminal).unwrap();                                  // 7
+            let expect_sent = index == 0 && width * height > 0;                                       // the first frame of a size is always sent; tiny frames may then repeat
+            assert!(!expect_sent || matches!(presented, Presented::Sent(_)), "{width}x{height} {view:?}: {presented:?}");
+        }
+    }
+    let mut frame = Frame::new(401, 221, SkyArea::centred(401, 221), (10, 20));
+    let (_, drawn) = run_frame(&tables, &mut caches, &mut frame, &views[0], &settings());
+    let lit = frame.stars().iter().filter(|texel| texel.opacity > 0.0).count();
+    assert!(lit > 800 && drawn.arcs > 50 && drawn.direction_labels.len() == 4, "lit={lit} {drawn:?}");    // the overhead frame has stars, figures and the compass
+}
+
+#[test]
+fn dynamic_names_label_stars_in_a_zoomed_view() {
+    let tables = tables();
+    let mut caches = RegionCaches::default();
+    let view = View { center: ViewCenter::Facing { azimuth: 225_f64.to_radians(), tilt: 30_f64.to_radians() }, projection: ProjectionKind::Stereographic, fov_degrees: 20.0 };
+    let mut frame = Frame::new(401, 221, SkyArea::centred(401, 221), (10, 20));
+    let (_, named) = run_frame(&tables, &mut caches, &mut frame, &view, &settings());
+    let (_, unnamed) = run_frame(&tables, &mut caches, &mut frame, &view, &RenderOptions { dynamic_names: false, ..settings() });
+    assert!(named.star_labels.len() >= 3 && unnamed.star_labels.is_empty(), "{:?}", named.star_labels);
+    assert!(named.star_labels.iter().all(|label| !label.text.is_empty()));
+}
+
+#[test]
+fn polaris_is_lit_where_the_projection_places_it() {
+    let tables = tables();
+    let mut caches = RegionCaches::default();
+    let view = View { center: ViewCenter::Zenith, projection: ProjectionKind::Stereographic, fov_degrees: 180.0 };
+    let mut frame = Frame::new(401, 401, SkyArea::centred(401, 401), (10, 20));
+    let (observation, _) = run_frame(&tables, &mut caches, &mut frame, &view, &settings());
+
+    // Polaris is a constellation endpoint, so step 6 drew it from the constellation simulation
+    let constellations = tables.constellations.table();
+    let row = (0..constellations.len()).find(|&row| star_label(constellations.labels(), row, &tables.names, true) == "Polaris").expect("Polaris is in Ursa Minor");
+    let direction = observation.apparent_star_direction(caches.simulations().constellations().directions()[row]);
+    let point = project_camera(prepare_camera(&view), direction).expect("Polaris is above Tokyo's horizon");
+    let (r, c) = project_to_cell(frame.sky().viewport(), point);
+    assert!(r > 0 && r < 200 && c > 150 && c < 250, "Polaris at ({r}, {c}): north, above the centre");   // north is up in the zenith view
+    let (row, column) = frame.sky().frame_pixel((r, c));
+    let lit = (-2..=1).flat_map(|dr| (-2..=1).map(move |dc| (dr, dc))).any(|(dr, dc)| frame.star((row + dr) as usize, (column + dc) as usize).opacity > 0.0);
+    assert!(lit, "no star light around Polaris at ({row}, {column})");
+}

@@ -44,29 +44,3 @@ fn report_write_or_flush_failure_turns_success_into_failure() {
         assert!(String::from_utf8(errors).unwrap().starts_with("ERROR: report"));
     }
 }
-
-#[test]
-fn disabled_table_logging_does_not_access_the_requested_path() {
-    let config = report_config(&["astroterm"]);
-    let state = ApplicationState::new(config, StepTimes::default());
-    let directory = tempfile::tempdir().unwrap();
-    let blocker = directory.path().join("file");
-    std::fs::write(&blocker, "unchanged").unwrap();
-    log_pipeline_data_if_requested(&state, blocker.join("tables.md"), "disabled").unwrap();
-    log_pipeline_data_if_requested(&state, directory.path().join("missing/tables.md"), "disabled").unwrap();
-    assert_eq!(std::fs::read_to_string(&blocker).unwrap(), "unchanged");
-    assert!(!directory.path().join("missing").exists());
-}
-
-#[test]
-fn requested_table_logs_create_parents_append_and_propagate_io_errors() {
-    let config = report_config(&["astroterm", "--debug-log-data"]);
-    let state = ApplicationState::new(config, StepTimes::default());
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("nested/tables.md");
-    log_pipeline_data_if_requested(&state, &path, "first").unwrap();
-    log_pipeline_data_if_requested(&state, &path, "second").unwrap();
-    let text = std::fs::read_to_string(&path).unwrap();
-    assert!(text.find("## first").unwrap() < text.find("## second").unwrap());
-    assert!(log_pipeline_data_if_requested(&state, path.join("cannot-create.md"), "failed").is_err());
-}

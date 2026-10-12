@@ -45,8 +45,7 @@ pub const ORIENTATION_ERROR_ARCSECONDS: f64 = 0.2;                              
 
 // View defaults and interactive controls
 pub const DEFAULT_FOV_DEGREES: f64 = 180.0;                                               // starting view width; also sets polar-projection scaling
-pub const DEFAULT_CHARACTER_FPS: i64 = 24;                                                // target frames per second for character rendering unless overridden
-pub const DEFAULT_PIXEL_FPS: i64 = 12;                                                    // target frames per second for pixel rendering unless overridden
+pub const DEFAULT_FPS: i64 = 12;                                                          // target frames per second unless overridden
 pub const DEFAULT_PIXEL_TEXT_SCALE: f64 = 0.85;                                           // draw pixel text at 85% of terminal-cell size unless overridden
 pub const DEFAULT_MAGNITUDE_THRESHOLD: f32 = 5.0;                                         // faintest stars shown by default; larger magnitudes are dimmer
 pub const DEFAULT_SIMULATION_SPEED: f64 = 1.0;                                            // simulated seconds per real second; 1 means normal speed

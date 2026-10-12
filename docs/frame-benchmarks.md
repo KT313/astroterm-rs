@@ -5,7 +5,7 @@ Capture a fixed number of frames with reproducible simulated dates:
 ```sh
 mkdir -p tmp
 target/release/astroterm -i Tokyo -d 2025-03-01T11:00:00 -m \
-  --renderer pixels --graphics-protocol kitty --fps 10000 \
+  --graphics-protocol kitty --fps 10000 \
   --debug-frames 101 --debug-frame-step-seconds 0 \
   --debug-frame-report tmp/frames-001.jsonl
 ```

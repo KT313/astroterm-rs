@@ -18,11 +18,6 @@ pub struct Arguments {
     #[arg(long, value_name = "path")]
     pub cache_config: Option<std::path::PathBuf>,
 
-    /// Renderer: characters (default) or true-color pixels. Constellations, grid, thresholds, labels,
-    /// refraction and metadata apply to both; --color, --unicode and --braille affect characters only.
-    #[arg(long, value_enum, default_value_t = crate::model::RendererKind::Chars)]
-    pub renderer: crate::model::RendererKind,
-
     /// Pixel protocol (normally detected). Force one to test terminal support; halfblocks needs no graphics protocol.
     #[arg(long, value_enum, default_value_t = crate::model::GraphicsProtocol::Auto)]
     pub graphics_protocol: crate::model::GraphicsProtocol,
@@ -70,7 +65,7 @@ pub struct Arguments {
     )]
     pub threshold: f32,
 
-    /// Frames per second (default: 24 for characters, 12 for pixels)
+    /// Frames per second (default: 12)
     #[arg(short = 'f', long, value_name = "int", allow_negative_numbers = true)]
     pub fps: Option<i64>,
 

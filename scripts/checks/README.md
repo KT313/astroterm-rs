@@ -30,7 +30,7 @@ memory at 1000×600. PTY startup measurements do not include an emulator's decod
 For physical checks in Contour, Rio or another terminal, start with:
 
 ```sh
-make run -- --renderer pixels -i Tokyo -d 2025-03-01T11:00:00 -s 0 -C -m
+make run -- -i Tokyo -d 2025-03-01T11:00:00 -s 0 -C -m
 ```
 
 Check stars, curves and readable labels/panel; pan with arrows, zoom with +/- and reset with 0. Resize repeatedly,

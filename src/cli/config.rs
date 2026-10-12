@@ -62,11 +62,7 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
     };
 
     // frame rate and view
-    let default_fps = match arguments.renderer {
-        crate::model::RendererKind::Chars => crate::constants::DEFAULT_CHARACTER_FPS,
-        crate::model::RendererKind::Pixels => crate::constants::DEFAULT_PIXEL_FPS,
-    };
-    let fps = u32::try_from(arguments.fps.unwrap_or(default_fps))
+    let fps = u32::try_from(arguments.fps.unwrap_or(crate::constants::DEFAULT_FPS))
         .ok()
         .filter(|&fps| fps >= 1);
     let fps = fps.ok_or_else(|| ConfigError("FPS must be greater than or equal to 1".into()))?;
@@ -112,7 +108,6 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
         cache: crate::cache::CacheConfig::load(arguments.cache_config.as_deref(), arguments.disable_cache)
             .map_err(|e| ConfigError(e.to_string()))?,
         text_scale: arguments.text_scale,
-        renderer: arguments.renderer,
         graphics_protocol: arguments.graphics_protocol,
         simulation,
         view,
@@ -262,7 +257,7 @@ mod tests {
         assert_eq!(config.render.magnitude_threshold, 5.0);
         assert_eq!(
             (config.fps, config.simulation.speed, config.terminal.aspect_ratio),
-            (24, 1.0, None)
+            (12, 1.0, None)                                                             // the pixel renderer's rate; the 24 fps character default went with it
         );
         assert!(!config.terminal.metadata_panel && !config.simulation.refraction && !config.terminal.quit_on_any_key);
         assert!(!config.terminal.frame_times && config.render.dynamic_names);
@@ -401,16 +396,16 @@ mod tests {
     }
 
     #[test]
-    fn renderer_frame_rate_defaults_preserve_explicit_overrides() {
-        assert_eq!(config_from(&[]).unwrap().fps, 24);
-        assert_eq!(config_from(&["--renderer", "pixels"]).unwrap().fps, 12);
-        assert_eq!(config_from(&["--renderer", "pixels", "--fps", "24"]).unwrap().fps, 24);
-        assert!(config_from(&["--renderer", "pixels", "--fps", "0"]).is_err());
+    fn frame_rate_defaults_preserve_explicit_overrides() {
+        assert_eq!(config_from(&[]).unwrap().fps, 12);
+        assert_eq!(config_from(&["--fps", "24"]).unwrap().fps, 24);
+        assert!(config_from(&["--fps", "0"]).is_err());
+        assert!(Arguments::try_parse_from(["astroterm", "--renderer", "pixels"]).is_err());  // the flag is gone with the character renderer
     }
 
     #[test]
     fn raster_text_scale_defaults_and_invalid_values() {
-        assert_eq!(config_from(&["--renderer", "pixels"]).unwrap().text_scale, 0.85);
+        assert_eq!(config_from(&[]).unwrap().text_scale, 0.85);
         for value in ["0.25", "0.7", "1", "1.5", "4"] {
             assert_eq!(
                 config_from(&["--text-scale", value]).unwrap().text_scale,

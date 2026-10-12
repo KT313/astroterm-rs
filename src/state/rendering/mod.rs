@@ -19,8 +19,7 @@ pub enum RenderingState {
     Pixels(Box<PixelState>),
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum CompressionSupport { Supported, Unsupported, #[default] Unknown }
+pub use crate::terminal::transport::graphics::detection::CompressionSupport;        // detection result, owned by the transport since chunk 13
 
 /// Character backend storage. Scene keys/results retain their existing cache semantics; frame and presenter
 /// canvases use terminal cell coordinates. Resize resets frame/screen and invalidates the scene cache.
