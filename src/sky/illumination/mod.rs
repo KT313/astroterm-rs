@@ -1,35 +1,11 @@
-//! Continuous illumination from observer-relative vectors in one inertial frame. The phase angle is independent
-//! of the anchor. Waxing means positive projected elongation around the supplied reference-plane north pole.
-use crate::astro::{MoonPhase, Vector3, moon_age_to_phase};
-use std::f64::consts::{PI, TAU};
-
-use crate::model::MoonIllumination;
-
-/// Resolve the named phase from continuous phase angle and waxing direction.
-pub fn name_moon_phase(illumination: MoonIllumination) -> MoonPhase {
-    if illumination.phase_angle <= 0.03 * TAU {
-        return MoonPhase::Full;
-    } // phase latitude means exact i=0 is rare
-    let fraction = (PI - illumination.phase_angle) / TAU;
-    moon_age_to_phase(if illumination.waxing { fraction } else { 1.0 - fraction })
-}
-
-/// `moon` and `sun` are relative to the same observer at the same epoch. The observer-to-Moon vector is negated
-/// to form the Moon-to-observer direction; the Sun-to-Moon separation is never confused with elongation.
-pub fn compute_moon_illumination(moon: Vector3, sun: Vector3, reference_north: Vector3) -> MoonIllumination {
-    let to_observer = -moon;
-    let to_sun = sun - moon;
-    let cosine = (to_observer.dot(to_sun) / (to_observer.length() * to_sun.length())).clamp(-1.0, 1.0);
-    MoonIllumination {
-        illuminated_fraction: (1.0 + cosine) / 2.0,
-        phase_angle: cosine.acos(),
-        waxing: sun.cross(moon).dot(reference_north) >= 0.0,
-    }
-}
+//! Moon illumination: the formulas moved to `astro::models::moons` (pipeline restructuring, chunk 7); this module
+//! re-exports them for the old pipeline until the cut-over.
+pub use crate::astro::{compute_moon_illumination, name_moon_phase};
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::astro::{MoonPhase, Vector3};
     #[test]
     fn full_new_quarter_and_waxing_use_the_angle_at_the_moon() {
         let moon = Vector3 { x: 1.0, y: 0.0, z: 0.0 };

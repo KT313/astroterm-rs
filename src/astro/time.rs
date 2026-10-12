@@ -88,6 +88,19 @@ pub fn estimate_delta_t(year: f64) -> f64 {
 }
 
 /// Convert UT1 to approximate TT using a continuous decimal Gregorian year (no monthly jumps).
+/// The time of a frame: UTC as given, UT1 approximated by UTC, and TT with the Espenak–Meeus estimate of ΔT.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FrameTime {
+    pub utc: f64,
+    pub ut1: f64,
+    pub tt: f64,
+}
+impl FrameTime {
+    pub fn from_utc(utc: f64) -> Self {
+        Self { utc, ut1: utc, tt: ut1_to_tt(utc) }
+    }
+}
+
 pub fn ut1_to_tt(julian_date_ut1: f64) -> f64 {
     let year = julian_date_to_utc(julian_date_ut1).map_or(2000.0 + (julian_date_ut1 - J2000) / 365.2425, |date| {
         let year = date.year();

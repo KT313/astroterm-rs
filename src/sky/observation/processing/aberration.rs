@@ -1,9 +1,8 @@
 //! Aberration formulas and their numerical regression tests.
-use crate::astro::{Vector3, LIGHT_SPEED_AU_DAY};
-/// First-order annual plus diurnal aberration; error is O(beta²), below 0.002 arcseconds for Earth.
-pub fn apply_aberration(direction: Vector3, velocity: Vector3) -> Vector3 {
-    (direction.normalized() + velocity * (1.0 / LIGHT_SPEED_AU_DAY)).normalized()
-}
+use crate::astro::Vector3;
+pub use crate::astro::apply_aberration;
+#[cfg(test)]
+use crate::astro::LIGHT_SPEED_AU_DAY;
 
 /// Aberration for an already normalized stellar direction. `beta` is observer velocity / c, prepared once per pass.
 /// The near-unit output has a bounded squared norm, so a square root suffices; retain robust normalization for

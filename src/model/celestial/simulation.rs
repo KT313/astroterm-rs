@@ -5,22 +5,7 @@ use crate::constants::{PLANETARY_SAMPLE_TTL_SECONDS, LUNAR_SAMPLE_TTL_SECONDS, O
 use crate::astro::{COMPUTATIONAL_INTERVAL, models::BodyId};
 use std::fmt;
 
-/// UTC input approximates UT1; TT includes the Espenak–Meeus estimate of ΔT.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct FrameTime {
-    pub utc: f64,
-    pub ut1: f64,
-    pub tt: f64,
-}
-impl FrameTime {
-    pub fn from_utc(utc: f64) -> Self {
-        Self {
-            utc,
-            ut1: utc,
-            tt: crate::astro::ut1_to_tt(utc),
-        }
-    }
-}
+pub use crate::astro::FrameTime;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ModelFamily {

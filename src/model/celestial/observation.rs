@@ -5,7 +5,6 @@ use crate::model::{
     SkyCatalog, SelectionStats, ObservedStar, ObservedStarView, Planet, Moon, Constellation, create_planets,
     create_moon,
 };
-use std::f64::consts::PI;
 use crate::astro::{Observer, Matrix3, Vector3, models::BodyState};
 use crate::model::FrameTime;
 
@@ -95,21 +94,7 @@ impl ObservedSky {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct MoonIllumination {
-    pub illuminated_fraction: f64,
-    pub phase_angle: f64,
-    pub waxing: bool,
-}
-impl Default for MoonIllumination {
-    fn default() -> Self {
-        Self {
-            illuminated_fraction: 0.0,
-            phase_angle: PI,
-            waxing: true,
-        }
-    }
-}
+pub use crate::astro::MoonIllumination;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Anchor {

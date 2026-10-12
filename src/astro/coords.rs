@@ -95,6 +95,12 @@ pub fn offset_towards(from: Horizontal, to: Horizontal, angle: f64) -> Horizonta
     Horizontal::from_vector(a * cos + tangent * (sin / tangent_length))
 }
 
+/// First-order annual plus diurnal aberration of a direction seen by an observer moving at `velocity` (AU/day);
+/// the error is O(β²), below 0.002 arcseconds for the Earth.
+pub fn apply_aberration(direction: Vector3, velocity: Vector3) -> Vector3 {
+    (direction.normalized() + velocity * (1.0 / crate::astro::LIGHT_SPEED_AU_DAY)).normalized()
+}
+
 /// Apply refraction without recovering azimuth. The horizontal direction is preserved, including across azimuth 0.
 pub fn refract_direction(direction: Vector3) -> Vector3 {
     let horizontal = direction.x.hypot(direction.y);

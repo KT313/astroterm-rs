@@ -104,3 +104,84 @@ fn boston_utc_approximation_remains_close_to_historical_apparent_references() {
         }
     }
 }
+
+// ---- the same references through the rebuilt steps (pipeline restructuring, chunk 7) ----
+
+mod rebuilt {
+    use super::{baseline, separation_arcseconds};
+    use astroterm::astro::{FrameTime, Horizontal, ObjectClass, Observer, Vector3, accuracy_target_arcseconds, models::stars::years_since_j2000};
+    use astroterm::catalog::load_embedded_catalog;
+    use astroterm::model::{Bodies, PreparedCatalog, View};
+    use astroterm::observation::{Observation, observe};
+    use astroterm::solar_system::{SolarSystem, simulate_solar_system};
+
+    struct BostonSky { catalog: PreparedCatalog, bodies: Bodies, system: SolarSystem, observation: Observation }
+
+    fn boston_sky(julian_date_ut1: f64) -> BostonSky {
+        let catalog = astroterm::sky::prepare_owned_catalog(load_embedded_catalog().unwrap()).unwrap();
+        let site = Observer { latitude: 42.3601_f64.to_radians(), longitude: -71.0589_f64.to_radians() };
+        let time = FrameTime::from_utc(julian_date_ut1);
+        let bodies = Bodies::default();
+        let system = simulate_solar_system(&bodies, time);
+        let observation = observe(&site, false, &View::default(), time);
+        BostonSky { catalog, bodies, system, observation }
+    }
+
+    /// The apparent horizon position of a body or a named star, airless, as the two steps and the star model give it.
+    fn find_position(sky: &BostonSky, name: &str) -> Horizontal {
+        let direction: Vector3 = if name == "Moon" {
+            sky.observation.apparent_direction(sky.system.moon_position(0, sky.observation.observer.position))
+        } else if name == "Sun" {
+            sky.observation.apparent_direction(sky.system.sun)
+        } else if let Some(index) = sky.bodies.planets.iter().position(|planet| planet.name == name) {
+            sky.observation.apparent_direction(sky.system.planets[index])
+        } else {
+            let catalog = &sky.catalog.catalog;
+            let star = catalog.stars.iter().find(|star| catalog.star_name(star) == Some(name)).unwrap_or_else(|| panic!("{name}"));
+            let sample = star.motion.evaluate(years_since_j2000(sky.observation.time.tt), star.magnitude);
+            sky.observation.apparent_star_direction(sample.direction)
+        };
+        Horizontal::from_vector(direction)
+    }
+
+    #[test]
+    fn rebuilt_steps_preserve_the_current_model_at_three_epochs() {
+        let mut previous = f64::NAN;
+        let mut sky = boston_sky(baseline::POSITIONS[0].0);
+        for &(date, name, azimuth, altitude) in baseline::POSITIONS {
+            if date != previous {
+                sky = boston_sky(date);
+                previous = date;
+            }
+            let error = separation_arcseconds(find_position(&sky, name), Horizontal { azimuth, altitude });
+            assert!(error <= 0.01, "{date} {name}: {error} arcsec");
+        }
+    }
+
+    #[test]
+    fn rebuilt_steps_stay_close_to_historical_apparent_references() {
+        let references: serde_json::Value = serde_json::from_str(include_str!("fixtures/reference/references.json")).unwrap();
+        let sky = boston_sky(2459146.0);
+        for body in references["horizons_boston"].as_array().unwrap() {
+            let name = body["name"].as_str().unwrap();
+            let row = &body["rows"][0];
+            let angle = |field: &str| row[field].as_str().unwrap().parse::<f64>().unwrap().to_radians();
+            let reference = Horizontal { azimuth: angle("Azimuth_(a-app)"), altitude: angle("Elevation_(a-app)") };
+            let error = separation_arcseconds(find_position(&sky, name), reference);
+            let (class, current_limit) = match name {
+                "Sun" | "Mars" | "Neptune" => (ObjectClass::SunAndPlanets, 3.0),
+                "Moon" => (ObjectClass::Moon, 10.0),
+                _ => unreachable!(),
+            };
+            let future_target = accuracy_target_arcseconds(class, 2459146.000800741).unwrap();
+            eprintln!("{name}: {error:.3} arcsec; current envelope {current_limit}, future target {future_target}");
+            assert!(error < current_limit, "{name}: {error} arcsec");
+        }
+        for star in references["boston_stars"].as_array().unwrap() {
+            let coordinates = &star["apparent_az_alt_rad"];
+            let reference = Horizontal { azimuth: coordinates[0].as_f64().unwrap(), altitude: coordinates[1].as_f64().unwrap() };
+            let error = separation_arcseconds(find_position(&sky, star["name"].as_str().unwrap()), reference);
+            assert!(error < 1.0, "{} {error} arcsec", star["name"]);
+        }
+    }
+}

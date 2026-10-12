@@ -39,18 +39,18 @@ pub use accuracy::{
     PLANET_VALIDATED_INTERVAL, PRECESSION_TARGET_ARCSECONDS, STAR_VALIDATED_INTERVAL, accuracy_target_arcseconds,
 };
 pub use coords::{
-    apply_refraction, equatorial_to_horizontal, horizontal_to_spherical, offset_towards, offset_vector_towards,
+    apply_aberration, apply_refraction, equatorial_to_horizontal, horizontal_to_spherical, offset_towards, offset_vector_towards,
     rectangular_to_equatorial, refract_direction,
 };
 pub use matrix::Matrix3;
-pub use models::moons::{MoonOrbit, MoonPhase, compute_moon_age, compute_moon_geocentric, moon_age_to_phase};
+pub use models::moons::{MoonIllumination, MoonOrbit, MoonPhase, compute_moon_age, compute_moon_geocentric, compute_moon_illumination, moon_age_to_phase, name_moon_phase};
 pub use models::orientation::{PrecessionMatrix, compute_precession_matrix};
 pub use models::planets::{PerturbationTerms, PlanetOrbit, compute_planet_heliocentric};
 pub use models::stars::compute_star_position;
 pub use notation::{DegreesMinutesSeconds, ElapsedTime, ZodiacSign, azimuth_to_compass, compass_point_to_azimuth};
 pub use orbital::OrbitalElements;
 pub use time::{
-    J2000, SimulationClock, current_julian_date, datetime_to_julian_date, earth_rotation_angle, estimate_delta_t,
+    FrameTime, J2000, SimulationClock, current_julian_date, datetime_to_julian_date, earth_rotation_angle, estimate_delta_t,
     greenwich_mean_sidereal_time, julian_date_to_utc, parse_utc_datetime, ut1_to_tt,
 };
 
