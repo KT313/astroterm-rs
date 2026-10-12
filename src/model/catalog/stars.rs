@@ -3,14 +3,14 @@
 //! pipeline are a second list with the same numbering, so a worker can own whole groups later on.
 //!
 //! A star is in the table of the region its stored direction hashes to (`hash_direction`) and of the speed group
-//! its stored motion bound gives (`regions::speed_group`). Constellation endpoint stars are in no group; they live
+//! its stored motion bound gives (`crate::model::speed_group`). Constellation endpoint stars are in no group; they live
 //! in [`Constellations`](super::Constellations).
 use std::io;
 
 use crate::astro::{Vector3, models::stars::StellarMotion};
 use crate::catalog::{Catalog, StarId, cache::invalid, passes_brightness_bound};
 use crate::constants::{CELL_COUNT, GRID_DEPTH, QUANTIZATION_MARGIN, SPEED_GROUP_COUNT};
-use crate::regions::speed_group;
+use crate::model::speed_group;
 use super::{StarRowSlice, StarRowVec, hash_direction};
 
 /// How the stars of a table are labelled: name entries (one-based into the shared `StarNames`, zero for none) for

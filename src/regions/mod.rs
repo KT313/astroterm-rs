@@ -8,15 +8,13 @@
 //! holds do nothing. Images are never dropped: a region that leaves the view keeps its images for its return
 //! (owner's decision of 2026-10-12; the memory is bounded by the fixed tile size times the region count).
 //!
-//! The module holds the speed-group rule (`groups`), the simulation caches (`simulation`), the star appearance
+//! The module holds the simulation caches (`simulation`), the star appearance
 //! (`appearance`), the tile geometry (`tiles`) and the image caches (`images`).
 mod appearance;
-mod groups;
 mod images;
 mod simulation;
 mod tiles;
 pub use appearance::{STAR_GLYPH_RADIUS, StarOpacities, Texel, blend_star, premultiplied_color, star_opacity, zoom_opacity_boost};
-pub use groups::{speed_group, speed_group_hold_seconds, drift_bound_for_rate};
 pub use images::{GroupImage, ImageKey, RegionImage};
 pub use simulation::{GroupSimulation, Simulations, Refresh, UNPLACED, rows_wanted};
 pub use tiles::{TileFrame, TileGeometry, tile_frames};

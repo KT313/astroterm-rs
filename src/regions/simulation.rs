@@ -11,8 +11,7 @@ use crate::astro::models::stars::years_since_j2000;
 use crate::astro::{COMPUTATIONAL_INTERVAL, Vector3};
 use crate::catalog::decode_magnitude;
 use crate::constants::{CELL_COUNT, FAST_GROUP_HOLD_SECONDS, SPEED_GROUP_COUNT};
-use crate::model::GroupTable;
-use crate::regions::speed_group_hold_seconds;
+use crate::model::{GroupTable, speed_group_hold_seconds};
 
 /// A row the motion model cannot place (its straight line passes through the Sun); never drawn.
 pub const UNPLACED: u16 = u16::MAX;

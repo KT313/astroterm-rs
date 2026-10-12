@@ -11,13 +11,13 @@ Bottom-up. Every module exposes its symbols from its root `mod.rs`; callers use 
 | `progress/` | the startup progress trait and `Report`, the one value that carries progress and timings through the loaders |
 | `timing/` | `StepTimes`: smoothed step durations and the opt-in execution trace |
 | `text/` | the fontdue text rasterizer used for labels and the panel |
-| `model/catalog` | the data model: `SkyTables` (per-region, per-group star tables, constellation table, bodies, names), the cube-map grid, packed storage |
+| `model/catalog` | the data model: `SkyTables` (per-region, per-group star tables, constellation table, bodies, names), the cube-map grid, speed-group rules, packed storage |
 | `model/configuration` | `Config`, `View`, `RenderOptions`, `TerminalSettings` |
 | `sky/catalog` | loading: resolve or download a dataset, prepare and cache it, build the sky tables |
 | `solar_system/` | step 1, `simulate_solar_system` |
 | `observation/` | step 2, `observe` |
 | `selection/` | step 3, `select_regions` |
-| `regions/` | step 4, `refresh_regions`: speed groups, simulation caches, star appearance, tile geometry, group and region images |
+| `regions/` | step 4, `refresh_regions`: simulation caches, star appearance, tile geometry, group and region images |
 | `projection/` | step 5, `project_stars_to_screen` (`warp.rs`) and the projection geometry (`geometry/`) steps 5 and 6 share |
 | `points/` | step 6, `draw_points` |
 | `present/` | step 7, `present`, and `Display` (terminal session, protocol detection, frame layout) |

@@ -11,7 +11,7 @@ use crate::catalog::cache::invalid;
 use crate::constants::{CELL_COUNT, CONSTELLATION_REGION, SIMULATION_REGION_COUNT, SPEED_GROUP_COUNT};
 use crate::model::{Bodies, Constellation, Constellations, GroupTable, LabelColumn, PreparedCatalog, SkyCatalog, SkyTables, StarRow, StarRowVec, Stars};
 use crate::progress::{DatasetProgress, Outcome, Report, Stage, Unit};
-use crate::regions::speed_group;
+use crate::model::speed_group;
 use crate::timing::StepTimes;
 
 /// Split a prepared catalog into the per-group tables and the constellation table, then validate them.

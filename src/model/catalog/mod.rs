@@ -1,6 +1,7 @@
 //! Immutable catalog records, spatial indexing and packed storage.
 mod records;
 mod grid;
+mod groups;
 mod storage;
 mod star_color;
 mod stars;
@@ -14,6 +15,7 @@ pub use tables::SkyTables;
 pub use records::{SkyCatalog, CatalogPreparation, PreparedCatalog, ConstellationSet, StarException, Star, Constellation};
 pub use star_color::StarColor;
 pub use grid::{SkyGrid, hash_direction};
+pub use groups::{speed_group, speed_group_hold_seconds, drift_bound_for_rate};
 pub(crate) use grid::region_caps;
 #[cfg(test)]
 pub(crate) use stars::fixtures;

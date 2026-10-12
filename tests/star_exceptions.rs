@@ -25,7 +25,8 @@ fn supported_fast_motion_prepares_without_exceptions_and_is_filed_in_its_region(
     use astroterm::astro::{J2000, JULIAN_YEAR_DAYS};
     use astroterm::constants::GRID_DEPTH;
     use astroterm::model::hash_direction;
-    use astroterm::regions::{rows_wanted, speed_group};
+    use astroterm::regions::rows_wanted;
+    use astroterm::model::speed_group;
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("fast.csv");
     std::fs::write(&path, "ra,dec,mag,pmdec\n1,60,4,20626\n").unwrap();                        // 0.0001 rad/yr in declination, no distance
