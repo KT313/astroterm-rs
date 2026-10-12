@@ -159,7 +159,8 @@ labels are independent. Use `--disable-dynamic-names` to hide star labels; the f
 been removed. Independent accuracy checks are documented in
 [scripts/reference/README.md](scripts/reference/README.md).
 
-Stars use equal-size four-pixel dots; overlapping stars add their light and zooming in boosts their brightness.
+Stars use four-texel dots in their sky tiles, enlarged when zoomed in. Within each group, stars blend from dim
+to bright current magnitude (ascending ID for ties); group images add together. Zooming in boosts brightness.
 Stars whose complete dot would cross the image boundary are omitted. The Sun, planets and Moon retain their sizes.
 With the azimuthal grid on, its angle labels replace the compass letters.
 

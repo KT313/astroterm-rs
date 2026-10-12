@@ -6,6 +6,17 @@ use crate::constants::{MIN_FOV_DEGREES, STAR_BRIGHTNESS_REFERENCE_FOV_DEGREES, S
     STAR_OPACITY_MAGNITUDE_SCALE, STAR_OPACITY_REFERENCE_MAGNITUDE};
 use crate::model::StarColor;
 
+/// Rows to paint, dimmest current magnitude first, then ascending ID so the brighter/higher-ID star covers it.
+/// The input slices borrow one table's simulated prefix; only row indices are allocated and sorted.
+pub fn order_star_rows(magnitudes: &[u16], ids: &[u32], threshold: u16) -> Vec<usize> {
+    assert_eq!(magnitudes.len(), ids.len(), "draw order needs one magnitude per star ID");
+    let mut rows: Vec<_> = magnitudes.iter().enumerate()
+        .filter(|&(_, &code)| code <= threshold && code != crate::regions::UNPLACED)
+        .map(|(row, _)| row).collect();
+    rows.sort_unstable_by(|&a, &b| magnitudes[b].cmp(&magnitudes[a]).then_with(|| ids[a].cmp(&ids[b])));
+    rows
+}
+
 /// How far the glyph reaches from the star's rounded position, in texels: the four texels around the rounded
 /// position (the cell and the three above and to the left), plus the half texel of rounding.
 pub const STAR_GLYPH_RADIUS: usize = 2;

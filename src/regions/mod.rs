@@ -14,7 +14,7 @@ mod appearance;
 mod images;
 mod simulation;
 mod tiles;
-pub use appearance::{STAR_GLYPH_RADIUS, StarOpacities, Texel, blend_star, premultiplied_color, star_opacity, zoom_opacity_boost};
+pub use appearance::{STAR_GLYPH_RADIUS, StarOpacities, Texel, blend_star, order_star_rows, premultiplied_color, star_opacity, zoom_opacity_boost};
 pub use images::{GroupImage, ImageKey, RegionImage};
 pub use simulation::{GroupSimulation, Simulations, Refresh, UNPLACED, rows_wanted};
 pub use tiles::{TileFrame, TileGeometry, tile_frames};

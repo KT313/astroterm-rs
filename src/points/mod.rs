@@ -17,7 +17,7 @@ use crate::metadata::MetadataField;
 use crate::model::{LabelColumn, RenderOptions, SkyTables, StarColor, View};
 use crate::observation::Observation;
 use crate::projection::{Frame, ProjectedArc, ScreenPoint, SkyArea, prepare_camera, project_camera, project_constellation_segment, project_horizon_labels, project_horizon_line, project_light_direction, project_to_cell};
-use crate::regions::{RegionCaches, UNPLACED, blend_star, premultiplied_color, rows_wanted, zoom_opacity_boost};
+use crate::regions::{RegionCaches, UNPLACED, blend_star, order_star_rows, premultiplied_color, rows_wanted, zoom_opacity_boost};
 use crate::text::draw_text_over;
 use crate::selection::Selected;
 use crate::solar_system::SolarSystem;
@@ -83,12 +83,13 @@ pub fn draw_points(frame: &mut Frame, inputs: &PointInputs<'_>, observation: &Ob
     let simulation = inputs.caches.simulations().constellations();
     let boost = zoom_opacity_boost(view.fov_degrees) as f32;
     let mut endpoint_pixels = Vec::with_capacity(constellations.len());
-    for row in 0..simulation.len().min(constellations.len()) {
+    let rows = simulation.len().min(constellations.len());
+    for row in 0..rows {
+        endpoint_pixels.push(pixel_of(observation.apparent_star_direction(simulation.directions()[row])));
+    }
+    for row in order_star_rows(&simulation.magnitudes()[..rows], &constellations.columns().id[..rows], threshold) {
         let code = simulation.magnitudes()[row];
-        let pixel = pixel_of(observation.apparent_star_direction(simulation.directions()[row]));
-        endpoint_pixels.push(pixel);
-        if code > threshold || code == UNPLACED { continue; }
-        let Some(pixel) = pixel else { continue };
+        let Some(pixel) = endpoint_pixels[row] else { continue };
         if !sky.glyph_fits((pixel.0 - sky.y as i32, pixel.1 - sky.x as i32)) { continue; }
         let opacity = inputs.caches.opacities().of(code) * boost;
         let premultiplied = premultiplied_color(constellations.columns().display_color[row], opacity);
@@ -454,6 +455,33 @@ mod tests {
         frame.overlay()[index..index + 4].try_into().unwrap()
     }
     fn lit_overlay(frame: &Frame) -> usize { frame.overlay().chunks_exact(4).filter(|pixel| pixel[3] != 0).count() }
+
+    #[test]
+    fn overlapping_endpoint_stars_paint_dimmest_first_and_break_ties_by_ascending_id() {
+        let direction = catalog_direction(90.0, 80.0);
+        let colors = [StarColor::RedOrange, StarColor::BlueWhite, StarColor::Orange];
+        for (magnitudes, expected_order) in [([0.0, 3.0, 6.0], [2, 1, 0]), ([3.0; 3], [1, 2, 0])] {
+            let mut columns = crate::model::StarRowVec::new();
+            for (i, id) in [30, 10, 20].into_iter().enumerate() {
+                let code = magnitude_code(magnitudes[i]);
+                columns.push(crate::model::StarRow { u0: [direction.x as f32, direction.y as f32, direction.z as f32],
+                    w: [0.0; 3], distance: 0.0, magnitude: code, brightness_key: code, id, name: 0,
+                    display_color: colors[i].index() }.into());
+            }
+            let tables = SkyTables { constellations: crate::model::Constellations::new(columns, vec![0; 3], Vec::new()), ..SkyTables::default() };
+            let mut frame = Frame::square(201);
+            let (drawn, _) = draw(&tables, &View::default(), 0.0, &settings(), &mut frame);
+            let mut expected = crate::regions::Texel::default();
+            for row in expected_order {
+                let opacity = crate::regions::star_opacity(magnitudes[row], 1.0);
+                blend_star(&mut expected, premultiplied_color(colors[row].index(), opacity), opacity);
+            }
+            assert_eq!(drawn.endpoint_stars, 3);
+            let lit: Vec<_> = frame.stars().iter().filter(|texel| !texel.is_empty()).collect();
+            assert_eq!(lit.len(), 4);
+            assert!(lit.iter().all(|&&texel| texel == expected));
+        }
+    }
 
     #[test]
     fn dynamic_names_go_to_the_five_brightest_stars_in_view_dimmest_first() {
