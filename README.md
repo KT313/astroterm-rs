@@ -150,6 +150,8 @@ Each region's stars are sorted into three speed groups and simulated per group w
 fastest group, longer for the others); the drawn stars of a region are kept as a 64 × 64 sky-fixed tile that is
 re-rendered only when its simulation or the brightness threshold changes, and the screen is produced by mapping
 every pixel back to its tile. Tiles of regions that leave the view stay in memory for their return.
+The fixed holds have known direction-error exceptions; the opt-in [offline hold audit](docs/stellar-hold-audit.md)
+reports them without changing the runtime policy.
 
 This port draws pixel graphics instead of characters (the character renderer of the original was removed), adds
 interactive pan/zoom/time controls and optional AT-HYG downloads, and improves astronomical calculations, curved

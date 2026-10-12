@@ -2,10 +2,10 @@
 //! each group holds its computed directions for `HELD_DIRECTION_ERROR / upper motion bound` (plan section 5).
 //!
 //! A star carries no rate, only the stored motion bound: the largest angle between its catalog direction and its
-//! straight-line position at either end of the computational interval, plus the quantization margin. The rate is
-//! recovered from that angle over the shorter half of the interval, which never underestimates the present
-//! tangential rate (a star is closest to the Sun, and so fastest, at the end where its drift is largest), so a star
-//! is never placed in a group whose hold time is too long for it.
+//! straight-line position at either end of the computational interval, plus the quantization margin. That angle is
+//! compared with the displacement of each rate threshold over the shorter half of the interval. This is a
+//! grouping policy, not a bound on angular speed at every date: approaching stars can move faster later.
+//! `tests/stellar_hold_accuracy.rs` audits the resulting fixed holds without changing runtime behavior.
 use crate::astro::{JULIAN_YEAR_DAYS, models::stars::computational_years};
 use crate::constants::{FAST_GROUP_HOLD_SECONDS, HELD_DIRECTION_ERROR, SPEED_GROUP_BOUNDS, SPEED_GROUP_COUNT};
 
@@ -16,8 +16,8 @@ pub fn speed_group(motion_bound: f32) -> usize {
     SPEED_GROUP_BOUNDS.iter().filter(|&&rate| drift_bound_for_rate(rate) <= bound).count()
 }
 
-/// Simulated seconds for which a group's computed directions stay within `HELD_DIRECTION_ERROR`: the error limit
-/// divided by the group's upper rate, with today's fixed 10 days for the fast group.
+/// Configured hold in simulated seconds: the target error divided by the group's upper rate, with a fixed
+/// 10 days for the fast group. These holds do not guarantee the target for every trajectory and date.
 pub fn speed_group_hold_seconds(group: usize) -> f64 {
     assert!(group < SPEED_GROUP_COUNT, "speed group {group} does not exist");
     match SPEED_GROUP_BOUNDS.get(group) {

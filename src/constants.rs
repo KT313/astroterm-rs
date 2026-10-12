@@ -18,7 +18,7 @@ pub const STELLAR_BATCH_SIZE: usize = 1024;                                     
 // Speed groups (radians per Julian year; the pipeline rebuild groups the stars of a region by proper motion)
 pub const SPEED_GROUP_BOUNDS: [f64; 2] = [0.03 * ARCSECOND, 0.3 * ARCSECOND];              // slow below 0.03″/yr, medium below 0.3″/yr, fast from 0.3″/yr on
 pub const SPEED_GROUP_COUNT: usize = SPEED_GROUP_BOUNDS.len() + 1;                        // one group per bound plus the fast group; calculated automatically
-pub const HELD_DIRECTION_ERROR: f64 = 0.285 * ARCSECOND;                                  // keep a group's held directions within 0.285″ (Barnard's Star over 10 days)
+pub const HELD_DIRECTION_ERROR: f64 = 0.285 * ARCSECOND;                                  // target held-direction error for the offline audit; fixed holds are not universally qualified
 pub const FAST_GROUP_HOLD_SECONDS: f64 = 10.0 * 86_400.0;                                 // recompute the fast group every 10 simulated days (today's behaviour)
 const ARCSECOND: f64 = PI / (180.0 * 3600.0);                                             // one arcsecond in radians, for the settings above
 
