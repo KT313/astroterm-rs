@@ -11,8 +11,8 @@
 use std::sync::OnceLock;
 
 use crate::astro::COMPUTATIONAL_INTERVAL;
-use crate::constants::{CELL_COUNT, GRID_CHILDREN_PER_COARSE_CELL, GRID_COARSE_DEPTH, GRID_DEPTH};
-use crate::model::{CellCap, GroupTable, Stars, build_caps};
+use crate::constants::{CELL_COUNT, GRID_CHILDREN_PER_COARSE_CELL, GRID_COARSE_DEPTH};
+use crate::model::{CellCap, GroupTable, Stars, build_caps, region_caps};
 use crate::observation::Observation;
 
 /// The regions a frame works on. The constellation table is always included and is not listed here.
@@ -34,7 +34,7 @@ pub fn select_regions(stars: &Stars, observation: &Observation) -> Selected {
     }
 
     // coarse caps first, fine caps only for narrow patches
-    let caps = region_caps();
+    let caps = caps();
     let fine = patch.radius < 30_f64.to_radians();
     for (parent, cap) in caps.coarse.iter().enumerate() {
         if !cap.intersects(patch.center, patch.radius) { continue; }
@@ -48,18 +48,19 @@ pub fn select_regions(stars: &Stars, observation: &Observation) -> Selected {
 /// The bounding caps of the coarse and the fine grid cells: fixed geometry, built on first use.
 struct RegionCaps {
     coarse: Vec<CellCap>,
-    fine: Vec<CellCap>,
+    fine: &'static [CellCap],
 }
 
-fn region_caps() -> &'static RegionCaps {
+fn caps() -> &'static RegionCaps {
     static CAPS: OnceLock<RegionCaps> = OnceLock::new();
-    CAPS.get_or_init(|| RegionCaps { coarse: build_caps(GRID_COARSE_DEPTH), fine: build_caps(GRID_DEPTH) })
+    CAPS.get_or_init(|| RegionCaps { coarse: build_caps(GRID_COARSE_DEPTH), fine: region_caps() })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::astro::{FrameTime, J2000, Observer};
+    use crate::constants::GRID_DEPTH;
     use crate::model::{ProjectionKind, SkyTables, View, ViewCenter, hash_direction};
     use crate::observation::observe;
     use crate::progress::NoProgress;
@@ -112,7 +113,7 @@ mod tests {
             assert!(!selected.whole_sky, "{fov}");
             check_covers_the_patch(&tables, &selected, &observation);
             let parents: std::collections::BTreeSet<_> = selected.regions.iter().map(|region| region / GRID_CHILDREN_PER_COARSE_CELL).collect();
-            assert!(parents.iter().all(|&parent| region_caps().coarse[parent].intersects(observation.patch.center, observation.patch.radius)));
+            assert!(parents.iter().all(|&parent| caps().coarse[parent].intersects(observation.patch.center, observation.patch.radius)));
         }
     }
 

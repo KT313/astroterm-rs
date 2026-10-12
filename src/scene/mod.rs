@@ -21,4 +21,6 @@ pub(crate) use pipeline::draw_sky_scene_with_times;
 pub(crate) use raster::{select_dynamically_named_stars, select_pixel_star_labels};
 pub(crate) use raster::pixels::planet_rgb;
 pub(crate) use raster::pixels::{star_rgb, pixel_star_fits, StarPixel, StarOpacityTable, PixelStarKey};
+#[cfg(test)]
+pub(crate) use raster::pixels::{draw_pixel_stars, prepare_star_opacities};
 pub(crate) use text::paint_text_buffer_with_times;

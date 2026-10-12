@@ -1,7 +1,6 @@
 //! Fixed four-pixel stars with premultiplied RGB and a tabulated opacity curve. No drawing-library blending is used here.
-use crate::constants::{MAX_IMAGE_PIXELS, MIN_STAR_PIXEL_OPACITY,
-    STAR_OPACITY_REFERENCE_MAGNITUDE, STAR_OPACITY_MAGNITUDE_SCALE, MIN_FOV_DEGREES,
-    STAR_BRIGHTNESS_REFERENCE_FOV_DEGREES, STAR_BRIGHTNESS_ZOOM_POWER};
+use crate::constants::{MAX_IMAGE_PIXELS, MIN_STAR_PIXEL_OPACITY};
+use crate::regions::{star_opacity, zoom_opacity_boost};
 use crate::model::{Cell, ProjectionViewport, StarColor};
 use crate::rows::row_columns;
 use tiny_skia::Pixmap;
@@ -60,20 +59,13 @@ pub(in crate::scene) fn initialize_star_layer(layer: &mut Vec<StarPixel>, viewpo
     Some(())
 }
 
-/// A visual compensation for fewer overlapping stars when zoomed in, independent of catalog brightness.
-pub(in crate::scene) fn calculate_zoom_opacity_boost(fov_degrees: f64) -> f64 {
-    let zoom = (STAR_BRIGHTNESS_REFERENCE_FOV_DEGREES / fov_degrees.max(MIN_FOV_DEGREES)).max(1.0);
-    zoom.powf(STAR_BRIGHTNESS_ZOOM_POWER)
-}
-
-/// The opacity curve itself; stars read it through the table, so this runs once per code, not once per star.
-fn calculate_star_opacity(magnitude: f64, zoom_boost: f64) -> f32 {
-    let exponent = -STAR_OPACITY_MAGNITUDE_SCALE * (magnitude - STAR_OPACITY_REFERENCE_MAGNITUDE);
-    (10_f64.powf(exponent) * zoom_boost).clamp(f64::from(f32::MIN_POSITIVE), 1.0) as f32 // keep very faint finite stars nonzero so the floor still lights them
-}
+/// The zoom boost and the opacity curve live with the new pipeline's star appearance (`crate::regions`); the
+/// pixel renderer reads them from there so both draw a star identically.
+pub(in crate::scene) fn calculate_zoom_opacity_boost(fov_degrees: f64) -> f64 { zoom_opacity_boost(fov_degrees) }
+fn calculate_star_opacity(magnitude: f64, zoom_boost: f64) -> f32 { star_opacity(magnitude, zoom_boost) }
 
 /// Build the opacity table for this view's zoom boost unless it already holds it. Returns whether it was rebuilt.
-pub(in crate::scene) fn prepare_star_opacities(table: &mut StarOpacityTable, fov_degrees: f64) -> bool {
+pub(crate) fn prepare_star_opacities(table: &mut StarOpacityTable, fov_degrees: f64) -> bool {
     let zoom_boost = calculate_zoom_opacity_boost(fov_degrees);
     if table.zoom_boost == zoom_boost && table.opacities.len() == OPACITY_TABLE_LEN { return false; }
     table.opacities.clear();
@@ -83,7 +75,7 @@ pub(in crate::scene) fn prepare_star_opacities(table: &mut StarOpacityTable, fov
 }
 
 /// Inputs already passed the full-footprint check for this viewport. Normal Rust bounds checks stay enabled.
-pub(in crate::scene) fn draw_pixel_stars(layer: &mut [StarPixel], width: usize, opacities: &StarOpacityTable, stars: impl IntoIterator<Item = PixelStarKey>) -> usize {
+pub(crate) fn draw_pixel_stars(layer: &mut [StarPixel], width: usize, opacities: &StarOpacityTable, stars: impl IntoIterator<Item = PixelStarKey>) -> usize {
     let table: &[f32; OPACITY_TABLE_LEN] = opacities.opacities.as_slice().try_into().expect("prepared star opacity table");
     let mut submitted = 0;
     for star in stars {
@@ -125,6 +117,7 @@ pub(in crate::scene) fn composite_star_layer(canvas: &mut Pixmap, layer: &[StarP
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::constants::{MIN_FOV_DEGREES, STAR_BRIGHTNESS_REFERENCE_FOV_DEGREES, STAR_BRIGHTNESS_ZOOM_POWER, STAR_OPACITY_MAGNITUDE_SCALE, STAR_OPACITY_REFERENCE_MAGNITUDE};
 
     fn pixel(rgb: [f32; 3], opacity: f32) -> StarPixel { StarPixel { rgb: rgb.map(|c| c / 255.0 * opacity), opacity } }
     fn straight(pixel: StarPixel) -> [f32; 3] { pixel.rgb.map(|c| c / pixel.opacity) }

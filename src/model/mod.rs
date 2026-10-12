@@ -11,7 +11,9 @@ pub use catalog::{
     hash_direction, STAR_SECTIONS, StarRow, StarRowSlice, StarRowVec, StarStorage, Star, Constellation, StarColor,
     Stars, GroupTable, LabelColumn, Constellations, Bodies, Body, Satellite, SkyTables,
 };
-pub(crate) use catalog::{SelectedRegion, StellarFields, unsupported_star_data, CellCap, build_caps};
+pub(crate) use catalog::{SelectedRegion, StellarFields, unsupported_star_data, CellCap, build_caps, region_caps};
+#[cfg(test)]
+pub(crate) use catalog::fixtures;
 pub use celestial::{
     ObservedSkyView, ObservedPlanets, ObservedStars, RegionData, ApparentFrame, ObservedRegion, SelectedStar, ObservedStar, ObservedStarState, ObservedStarView, PlanetKind, Planet, Moon, create_planets, create_moon,
     CorrectionStats, ObservedSky, Sky, MoonIllumination, Anchor, ObserverState, FrameTime, ModelFamily, StateRequest,

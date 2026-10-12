@@ -3,6 +3,7 @@ use crate::constants::GRID_DEPTH;
 use crate::rows::row_columns;
 use crate::astro::Vector3;
 use std::f64::consts::PI;
+use std::sync::OnceLock;
 
 const NUMERIC_SLACK: f64 = 1e-10;
 
@@ -109,6 +110,13 @@ pub(crate) fn build_caps(depth: u8) -> Vec<CellCap> {
         }
     }
     caps
+}
+
+/// The bounding caps of the `GRID_DEPTH` regions: fixed geometry, built on first use and shared by the selection
+/// and the tiles.
+pub(crate) fn region_caps() -> &'static [CellCap] {
+    static CAPS: OnceLock<Vec<CellCap>> = OnceLock::new();
+    CAPS.get_or_init(|| build_caps(GRID_DEPTH))
 }
 
 impl SkyGrid {

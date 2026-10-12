@@ -126,7 +126,7 @@ fn expand(v: [f32; 3]) -> Vector3 {
 }
 
 #[cfg(test)]
-pub(super) mod fixtures {
+pub(crate) mod fixtures {
     //! Hand-built tiny catalogs for the layout tests of this folder.
     use super::*;
     use crate::catalog::encode_magnitude;

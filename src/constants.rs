@@ -68,6 +68,7 @@ pub const STAR_OPACITY_MAGNITUDE_SCALE: f64 = 0.12;                             
 pub const STAR_BRIGHTNESS_REFERENCE_FOV_DEGREES: f64 = 180.0;                            // keep the base star brightness at this view width or wider
 pub const STAR_BRIGHTNESS_ZOOM_POWER: f64 = 0.8;                                          // halving the field of view multiplies opacity by 2 raised to this power
 pub const MIN_STAR_PIXEL_OPACITY: f32 = 0.05;                                             // raise nonempty star pixels to this opacity after all stars are blended
+pub const TILE_EDGE_TEXELS: usize = 64;                                                   // every sky tile (one per speed group and per region) is this many texels wide and high, whatever the zoom
 pub const DYNAMIC_NAME_COUNT: usize = 5;                                                  // label at most this many visible stars; planets and Moon are separate
 pub const MAX_CACHED_GLYPHS: usize = 512;                                                 // maximum saved character images before clearing the glyph cache
 pub const METADATA_PANEL_WIDTH: usize = 45;                                               // width of the metadata text panel, in character columns
