@@ -70,4 +70,11 @@ fn the_panel_is_empty_when_off_and_lists_time_counts_display_and_timings_when_on
     assert!(value("Graphics").contains("1000×800"));
     assert!(value("Groups refreshed").starts_with(&format!("{} simulated", refreshed.simulated)));
     assert!(labels.iter().any(|label| label.trim() == "Projection"));                                // the step timings follow the metadata
+
+    for (flags, expected) in [(&["-m"][..], "Pisces"), (&["-m", "-u"][..], "Pisces ♓")] {
+        let config = config(flags);
+        let mut panel = Panel::new(&config, &tables);
+        let fields = panel.lines(&frame, &config.simulation.observer, &view, &tables, &times);
+        assert_eq!(fields.iter().find(|field| field.label == "Zodiac").unwrap().value, expected);
+    }
 }

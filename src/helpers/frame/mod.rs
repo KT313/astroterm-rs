@@ -31,6 +31,7 @@ pub(crate) fn stop_on_quit(input: &FrameInput) -> bool {
 /// The metadata panel: its lines are rebuilt every frame into the same vector, empty when the panel is off.
 pub(crate) struct Panel {
     frame_times: bool,
+    unicode: bool,
     time_zone: Option<ObserverTimeZone>,          // resolved once, only when the panel is shown
     stars_loaded: usize,
     lines: Vec<MetadataField>,
@@ -52,6 +53,7 @@ impl Panel {
         let enabled = config.terminal.metadata_panel;
         Self {
             frame_times: config.terminal.frame_times,
+            unicode: config.render.unicode,
             time_zone: enabled.then(|| resolve_observer_timezone(&config.simulation.observer)),
             stars_loaded: tables.stars.len() + tables.constellations.len(),
             lines: Vec::new(),
@@ -64,7 +66,7 @@ impl Panel {
         self.lines.clear();
         let Some(time_zone) = &self.time_zone else { return &self.lines; };
         let phase = name_moon_phase(frame.solar_system.moon_illumination(0));
-        fill_metadata_fields(&mut self.lines, frame.time.utc, frame.clock, phase, observer, view, true, time_zone);
+        fill_metadata_fields(&mut self.lines, frame.time.utc, frame.clock, phase, observer, view, self.unicode, time_zone);
 
         // stars and regions
         let in_regions: usize = frame.selected.regions.iter().map(|&region| tables.stars.region(region).iter().map(|table| table.len()).sum::<usize>()).sum();
