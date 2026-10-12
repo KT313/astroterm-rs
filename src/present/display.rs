@@ -22,6 +22,7 @@ pub struct DisplayInfo {
     pub protocol: ProtocolType,
     pub tmux: bool,
     pub compression: CompressionSupport,
+    pub shared_memory: bool,                // Kitty uploads go through shared memory (live: false after a fallback to streaming)
     pub screen: Rect,                       // the terminal in cells
     pub font: (u16, u16),                   // pixels per cell
     pub image: (usize, usize),              // the frame in pixels
@@ -44,17 +45,17 @@ impl Display {
         session.configure_graphics(false, false);                                          // cleanup also covers a failed capability query
         let picker = Picker::halfblocks();
         let tmux = picker.tmux_detected();
-        let (protocol, font, compression, _shared_memory) = detect_protocol(forced, tmux, session.output())?;
+        let (protocol, font, compression, shared_memory) = detect_protocol(forced, tmux, session.output())?; // shared memory only after the terminal answered the probe
         let font = font.unwrap_or(picker.font_size());
         session.configure_graphics(protocol == ProtocolType::Kitty, tmux);
-        let terminal = Terminal::new(session, protocol, tmux, Rect::default(), compression == CompressionSupport::Supported);
-        let info = DisplayInfo { protocol, tmux, compression, screen: Rect::default(), font: (font.width, font.height), image: (0, 0), text_cell: (1, 1) };
+        let terminal = Terminal::new(session, protocol, tmux, Rect::default(), compression == CompressionSupport::Supported, shared_memory);
+        let info = DisplayInfo { protocol, tmux, compression, shared_memory, screen: Rect::default(), font: (font.width, font.height), image: (0, 0), text_cell: (1, 1) };
         let mut display = Self { terminal, info, aspect_ratio: settings.aspect_ratio, text_scale };
         display.measure()?;
         Ok(display)
     }
 
-    pub fn info(&self) -> DisplayInfo { self.info }
+    pub fn info(&self) -> DisplayInfo { DisplayInfo { shared_memory: self.terminal.shared_memory(), ..self.info } } // the transport can fall back mid-run
     pub fn terminal(&mut self) -> &mut Terminal<TerminalSession> { &mut self.terminal }
 
     /// A frame sized to the terminal as last measured.

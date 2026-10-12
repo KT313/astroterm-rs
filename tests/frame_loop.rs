@@ -37,7 +37,7 @@ fn run_frame(tables: &SkyTables, caches: &mut RegionCaches, frame: &mut Frame, v
     let selected = select_regions(&tables.stars, &observation);                                       // 3
     refresh_regions(caches, tables, &selected, time, settings);                                       // 4
     project_stars_to_screen(frame, caches, &selected, &observation, view);                            // 5
-    let inputs = PointInputs { solar_system: &solar_system, tables, caches, selected: &selected, panel: &[] };
+    let inputs = PointInputs { solar_system: &solar_system, tables, caches, selected: &selected, panel: &[], notice: None };
     let drawn = draw_points(frame, &inputs, &observation, view, settings);                            // 6
     (observation, drawn)
 }
@@ -56,7 +56,7 @@ fn every_view_renders_at_every_size_including_degenerate_frames() {
     ];
     for (width, height) in [(401, 221), (13, 7), (1, 1), (0, 0)] {
         let mut frame = Frame::new(width, height, SkyArea::centred(width, height), (10, 20));
-        let mut terminal = Terminal::new(Vec::new(), ProtocolType::Sixel, false, Rect::new(0, 0, (width / 10).max(1) as u16, (height / 20).max(1) as u16), false);
+        let mut terminal = Terminal::new(Vec::new(), ProtocolType::Sixel, false, Rect::new(0, 0, (width / 10).max(1) as u16, (height / 20).max(1) as u16), false, false);
         for (index, view) in views.iter().enumerate() {
             run_frame(&tables, &mut caches, &mut frame, view, &settings());
             assert_eq!(frame.stars().len(), width * height);

@@ -1,4 +1,5 @@
-//! Copy the frame's RGB into a named POSIX object; no mappings or terminal-input reader are needed in the frame loop.
+//! Copy the frame's RGB into a named POSIX object the terminal reads and unlinks itself; no mappings or
+//! terminal-input reader are needed in the frame loop, only a bounded wait for the unlink.
 use std::{io, fmt::Write as _, ffi::CString, fs::File};
 use ratatui_image::picker::cap_parser::Parser;
 
@@ -58,15 +59,32 @@ pub(crate) fn encode_shared_upload(object: &SharedMemoryImage, dimensions: (u32,
     write!(output, "{escape}\\{end}").unwrap();
 }
 
+#[cfg(unix)]
+fn was_consumed(object: &SharedMemoryImage) -> io::Result<bool> {
+    use std::os::unix::fs::MetadataExt;
+    Ok(object.file.metadata()?.nlink() == 0) // check the original inode, even if another object reused its name
+}
+
+/// True once the terminal has read and unlinked the object; bounded polling.
+pub(crate) fn wait_for_shared_consumption(object: &SharedMemoryImage) -> io::Result<bool> {
+    #[cfg(unix)]
+    {
+        use std::time::{Duration, Instant};
+        let deadline = Instant::now() + Duration::from_millis(crate::constants::KITTY_SHARED_MEMORY_TIMEOUT_MS);
+        loop {
+            if was_consumed(object)? { return Ok(true); }
+            if Instant::now() >= deadline { return Ok(false); }
+            std::thread::sleep(Duration::from_millis(crate::constants::KITTY_SHARED_MEMORY_POLL_MS.max(1)));
+        }
+    }
+    #[cfg(not(unix))]
+    { let _ = object; Ok(false) }
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::io::Read;
-
-    fn was_consumed(object: &SharedMemoryImage) -> io::Result<bool> {
-        use std::os::unix::fs::MetadataExt;
-        Ok(object.file.metadata()?.nlink() == 0) // check the original inode, even if another object reused its name
-    }
 
     #[test]
     fn named_rgb_is_exact_and_remains_readable_until_consumption() {
@@ -81,7 +99,7 @@ mod tests {
         let payload = command.split_once(';').unwrap().1.trim_end_matches("\x1b\\");
         assert_eq!(base64_simd::STANDARD.decode_to_vec(payload).unwrap(), object.name.to_bytes());
         rustix::shm::unlink(object.name.as_c_str()).unwrap();
-        assert!(was_consumed(&object).unwrap());
+        assert!(wait_for_shared_consumption(&object).unwrap());
     }
 
     #[test]

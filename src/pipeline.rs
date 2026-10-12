@@ -8,7 +8,7 @@ use std::time::Duration;
 use astroterm::model::{Config, SkyTables};
 use astroterm::observation::{Observation, observe};
 use astroterm::points::{PointInputs, draw_points};
-use astroterm::present::{Display, present};
+use astroterm::present::{Display, present, transport_notice};
 use astroterm::projection::project_stars_to_screen;
 use astroterm::regions::{RefreshReport, RegionCaches, refresh_regions};
 use astroterm::selection::{Selected, select_regions};
@@ -51,8 +51,9 @@ pub(super) fn run_frame_loop(config: &Config, tables: &SkyTables, display: &mut 
         let refreshed = times.measure("Regions", || refresh_regions(&mut caches, tables, &selected, time, settings));          // 4  per group: simulate if hold expired, draw if key changed, re-sum region
         times.measure("Projection", || project_stars_to_screen(&mut frame, &caches, &selected, &observation, &view));          // 5  warp region images; per screen pixel, no per-star work
         describe_steps(times, &observation, &selected, refreshed, &caches);
-        let lines = panel.lines(&PanelFrame { time, clock: &clock, solar_system: &solar_system, selected: &selected, caches: &caches, refreshed, display: display.info() }, &observer, &view, tables, times);
-        let inputs = PointInputs { solar_system: &solar_system, tables, caches: &caches, selected: &selected, panel: lines };
+        let info = display.info();                                                                                                 // the transport as it is now: it can fall back mid-run
+        let lines = panel.lines(&PanelFrame { time, clock: &clock, solar_system: &solar_system, selected: &selected, caches: &caches, refreshed, display: info }, &observer, &view, tables, times);
+        let inputs = PointInputs { solar_system: &solar_system, tables, caches: &caches, selected: &selected, panel: lines, notice: transport_notice(&info) };
         times.measure("Points", || draw_points(&mut frame, &inputs, &observation, &view, settings));                         // 6  planets, Moon, Sun, constellation lines, labels, overlays
         let presented = times.measure("Present", || present(&frame, display.terminal()))?;                                    // 7  tone map, encode, send; nothing for an unchanged frame
 

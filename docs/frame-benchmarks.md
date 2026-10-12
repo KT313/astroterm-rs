@@ -31,7 +31,9 @@ cache reuse without that extra rendering work. Metadata (`-m`) can still be show
 
 Each flushed JSONL record is available while the program runs. Transport schema version 1 contains:
 
-- `run`: count, time step, starting date, actual renderer/geometry/transport and effective configuration.
+- `run`: count, time step, starting date, actual renderer/geometry/transport and effective configuration. The
+  Kitty `transport` is `shared_memory` or `streaming`; each frame record carries the transport in force for that
+  frame, since a terminal that does not consume a shared object switches the run to streaming.
 - `startup`: raw startup steps, including catalog and frame preparation.
 - `frame`: contiguous one-based index, UTC/TT, elapsed seconds, presentation outcome, actual display state,
   and raw timing steps. `reused_display` is a successful completed frame even without a `Present` step.

@@ -95,7 +95,7 @@ pub(crate) struct CaptureDisplay {
 pub(crate) fn capture_display(info: DisplayInfo) -> io::Result<CaptureDisplay> {
     let protocol = match info.protocol { ProtocolType::Kitty => "kitty", ProtocolType::Sixel => "sixel", ProtocolType::Iterm2 => "iterm2", ProtocolType::Halfblocks => "halfblocks" };
     let compression_support = match info.compression { CompressionSupport::Supported => "supported", CompressionSupport::Unsupported => "unsupported", CompressionSupport::Unknown => "unknown" };
-    let display = CaptureDisplay { renderer: "pixels", graphics_protocol: protocol, compression_support, tmux: info.tmux, transport: "streaming",
+    let display = CaptureDisplay { renderer: "pixels", graphics_protocol: protocol, compression_support, tmux: info.tmux, transport: if info.shared_memory { "shared_memory" } else { "streaming" },
         geometry: CaptureGeometry { screen_cells: [u32::from(info.screen.width), u32::from(info.screen.height)],
             font_pixels: Some([u32::from(info.font.0), u32::from(info.font.1)]), image_pixels: Some([info.image.0 as u32, info.image.1 as u32]) } };
     let (columns, rows) = crossterm::terminal::size()?;

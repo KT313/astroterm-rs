@@ -78,8 +78,8 @@ impl Panel {
         let display = frame.display;
         self.lines.push(field("Graphics", format!("{:?} · {}×{}", display.protocol, display.image.0, display.image.1)));
         if display.protocol == ProtocolType::Kitty {
-            self.lines.push(field("Transport", "Streaming".into()));
-            self.lines.push(field("Compression", describe_compression(display.compression).into()));
+            self.lines.push(field("Transport", if display.shared_memory { "Shared memory" } else { "Streaming" }.into()));
+            self.lines.push(field("Compression", if display.shared_memory { "Not used (shared memory)".into() } else { describe_compression(display.compression).into() }));
         }
 
         // timings

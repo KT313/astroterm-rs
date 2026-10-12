@@ -129,7 +129,7 @@ fn clipping_notice_coexists_with_date_notice_and_the_tables_carry_it() {
         let mut caches = RegionCaches::default();
         refresh_regions(&mut caches, tables, &selected, time, &settings);
         let mut frame = Frame::new(140, 60, SkyArea::centred(140, 60), (10, 20));
-        let inputs = PointInputs { solar_system: &solar_system, tables, caches: &caches, selected: &selected, panel: &[] };
+        let inputs = PointInputs { solar_system: &solar_system, tables, caches: &caches, selected: &selected, panel: &[], notice: None };
         draw_points(&mut frame, &inputs, &observation, &view, &settings).notices
     };
     let clipped = tables(&prepare_owned_catalog(load_csv("ra,dec,mag,dist,rv\n0,0,-9.9,10,-100\n").unwrap(), &mut astroterm::progress::Report::quiet()).unwrap());

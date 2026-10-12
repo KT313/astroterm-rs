@@ -4,10 +4,21 @@
 //! Runs every frame: the star layer is tone mapped to 8 bits and the overlay composited over it, then the bytes are
 //! compared with the previous frame; an unchanged frame sends nothing, a changed one is encoded for the terminal's
 //! graphics protocol (Kitty upload and swap, Sixel, iTerm2, or half-block cells) through the keep-list transport
-//! and written. Nothing here reads catalog data. `display` opens the terminal and sizes the frame.
+//! and written. A Kitty terminal that passed the shared-memory probe gets the RGB bytes as a named POSIX object
+//! it reads and unlinks itself; if it does not consume the object in time, or the object cannot be made, the
+//! session falls back to streaming for good. Nothing here reads catalog data. `display` opens the terminal and
+//! sizes the frame.
 mod display;
 pub use display::{Display, DisplayInfo};
 pub use crate::terminal::transport::graphics::detection::{CompressionSupport, describe_compression}; // the detection result the panel and the benchmark report describe
+
+/// The notice step 6 shows when a Kitty terminal streams: the old transport notice, unchanged.
+pub const SHARED_MEMORY_NOTICE: &str = "Shared memory unavailable; using streaming.";
+
+/// The transport notice for the display as it is now: none unless a Kitty terminal is streaming.
+pub fn transport_notice(info: &DisplayInfo) -> Option<&'static str> {
+    (info.protocol == ProtocolType::Kitty && !info.shared_memory).then_some(SHARED_MEMORY_NOTICE)
+}
 
 use crate::constants::{MIN_STAR_PIXEL_OPACITY, PIXEL_BACKGROUND_RGBA};
 use crate::projection::Frame;
@@ -23,7 +34,8 @@ pub struct Terminal<W: Write> {
     protocol: ProtocolType,
     tmux: bool,
     screen: Rect,                           // the terminal in cells; the frame covers it
-    compress: bool,                         // zlib for Kitty uploads
+    compress: bool,                         // zlib for streamed Kitty uploads
+    shared_memory: bool,                    // Kitty reads the RGB from a shared-memory object; cleared for the session on the first failed transfer
     kitty_id: u32,
     previous: Vec<u8>,                      // the RGBA bytes last sent; empty before the first frame
     image: Vec<u8>,                         // the composed RGBA bytes of this frame
@@ -44,9 +56,9 @@ pub enum Presented {
 }
 
 impl<W: Write> Terminal<W> {
-    pub fn new(out: W, protocol: ProtocolType, tmux: bool, screen: Rect, compress: bool) -> Self {
+    pub fn new(out: W, protocol: ProtocolType, tmux: bool, screen: Rect, compress: bool, shared_memory: bool) -> Self {
         Self {
-            out, protocol, tmux, screen, compress,
+            out, protocol, tmux, screen, compress, shared_memory,
             kitty_id: kitty::IMAGE_IDS[0],
             previous: Vec::new(), image: Vec::new(), rgb: Vec::new(), compressed: Vec::new(), compressor: None,
             upload: String::new(), swap: Vec::new(), blank: Buffer::empty(Rect::default()), serialized: Vec::new(),
@@ -57,6 +69,8 @@ impl<W: Write> Terminal<W> {
     pub fn screen(&self) -> Rect { self.screen }
     pub fn output(&mut self) -> &mut W { &mut self.out }
     pub fn kitty_image_id(&self) -> u32 { self.kitty_id }
+    /// Whether Kitty uploads currently go through shared memory rather than the base64 stream.
+    pub fn shared_memory(&self) -> bool { self.shared_memory }
 
     /// Adopt a new terminal size; the next frame is sent whole.
     pub fn resize(&mut self, screen: Rect) {
@@ -73,12 +87,16 @@ pub fn present<W: Write>(frame: &Frame, terminal: &mut Terminal<W>) -> io::Resul
     let written = match terminal.protocol {
         ProtocolType::Kitty => {
             strip_alpha(&terminal.image, &mut terminal.rgb);
-            kitty::encode_upload_reusing(&terminal.rgb, (width, height), terminal.kitty_id, terminal.compress, terminal.tmux, &mut terminal.compressor, &mut terminal.compressed, &mut terminal.upload)?;
+            let mut written = upload_shared(terminal, (width, height))?;                                  // the shared object, if the terminal takes it
+            if !terminal.shared_memory {                                                                  // otherwise, or after a failed transfer, stream the same image
+                kitty::encode_upload_reusing(&terminal.rgb, (width, height), terminal.kitty_id, terminal.compress, terminal.tmux, &mut terminal.compressor, &mut terminal.compressed, &mut terminal.upload)?;
+                present_frame(&mut terminal.out, terminal.upload.as_bytes())?;
+                written += terminal.upload.len();
+            }
             kitty::serialize_swap_into(terminal.kitty_id, terminal.screen, terminal.tmux, &mut terminal.swap)?;
-            present_frame(&mut terminal.out, terminal.upload.as_bytes())?;
             present_frame(&mut terminal.out, &terminal.swap)?;
             terminal.kitty_id = kitty::other_image_id(terminal.kitty_id);
-            terminal.upload.len() + terminal.swap.len()
+            written + terminal.swap.len()
         }
         protocol => {
             let image = RgbaImage::from_raw(width, height, terminal.image.clone()).expect("the composed frame is width × height RGBA");
@@ -91,6 +109,24 @@ pub fn present<W: Write>(frame: &Frame, terminal: &mut Terminal<W>) -> io::Resul
     };
     std::mem::swap(&mut terminal.previous, &mut terminal.image);
     Ok(Presented::Sent(written))
+}
+
+/// Hand the RGB bytes to a Kitty terminal through a shared-memory object and wait for it to read and unlink them.
+/// Returns the command bytes written. Does nothing when the transport is off, and switches it off for the rest of
+/// the session when the object cannot be made or the terminal does not consume it in time; the caller then streams
+/// the same image under the same id, so nothing is placed before a complete upload. The object is unlinked here if
+/// the terminal did not, also when the write fails.
+fn upload_shared<W: Write>(terminal: &mut Terminal<W>, dimensions: (u32, u32)) -> io::Result<usize> {
+    if !terminal.shared_memory { return Ok(0); }
+    let object = match kitty::create_shared_image(&terminal.rgb) {
+        Ok(object) => object,
+        Err(_) => { terminal.shared_memory = false; return Ok(0); }                                      // no shared memory on this system: stream from now on
+    };
+    kitty::encode_shared_upload(&object, dimensions, terminal.kitty_id, false, terminal.tmux, &mut terminal.upload);
+    present_frame(&mut terminal.out, terminal.upload.as_bytes())?;                                        // on error the object drops and unlinks its name
+    let consumed = kitty::wait_for_shared_consumption(&object);
+    if !matches!(consumed, Ok(true)) { terminal.shared_memory = false; }                                  // timed out or unreadable: the streamed copy follows
+    Ok(terminal.upload.len())
 }
 
 /// Tone map the star layer over the background and composite the overlay, into opaque 8-bit RGBA. A star pixel
@@ -173,7 +209,7 @@ mod tests {
     #[test]
     fn an_unchanged_frame_sends_nothing_and_a_changed_one_is_sent() {
         let mut frame = frame(40, 20);
-        let mut terminal = Terminal::new(Vec::new(), ProtocolType::Sixel, false, Rect::new(0, 0, 4, 1), false);
+        let mut terminal = Terminal::new(Vec::new(), ProtocolType::Sixel, false, Rect::new(0, 0, 4, 1), false, false);
         let first = present(&frame, &mut terminal).unwrap();
         let Presented::Sent(bytes) = first else { panic!("{first:?}") };
         assert!(bytes > 0 && terminal.output().len() == bytes);
@@ -193,7 +229,7 @@ mod tests {
         let mut frame = frame(1920, 1100);
         for (index, texel) in frame.stars_mut().iter_mut().enumerate() { if index % 97 == 0 { *texel = Texel { rgb: [0.5, 0.5, 0.4], opacity: 0.6 }; } }
         for protocol in [ProtocolType::Kitty, ProtocolType::Sixel] {
-            let mut terminal = Terminal::new(std::io::sink(), protocol, false, Rect::new(0, 0, 192, 55), protocol == ProtocolType::Kitty);
+            let mut terminal = Terminal::new(std::io::sink(), protocol, false, Rect::new(0, 0, 192, 55), protocol == ProtocolType::Kitty, false);
             let started = std::time::Instant::now();
             let mut composed = Vec::new();
             compose(&frame, &mut composed);
@@ -209,9 +245,17 @@ mod tests {
     }
 
     #[test]
+    fn the_transport_notice_is_limited_to_streaming_kitty_displays() {
+        let info = |protocol, shared_memory| DisplayInfo { protocol, tmux: false, compression: CompressionSupport::Unknown, shared_memory, screen: Rect::default(), font: (10, 20), image: (100, 50), text_cell: (9, 17) };
+        assert_eq!(transport_notice(&info(ProtocolType::Kitty, false)), Some(SHARED_MEMORY_NOTICE));
+        assert_eq!(transport_notice(&info(ProtocolType::Kitty, true)), None);
+        for protocol in [ProtocolType::Sixel, ProtocolType::Iterm2, ProtocolType::Halfblocks] { assert_eq!(transport_notice(&info(protocol, false)), None); }
+    }
+
+    #[test]
     fn kitty_frames_upload_then_swap_and_alternate_the_image_id() {
         let frame = frame(8, 4);
-        let mut terminal = Terminal::new(Vec::new(), ProtocolType::Kitty, false, Rect::new(0, 0, 8, 2), false);
+        let mut terminal = Terminal::new(Vec::new(), ProtocolType::Kitty, false, Rect::new(0, 0, 8, 2), false, false);
         let first_id = terminal.kitty_image_id();
         let Presented::Sent(bytes) = present(&frame, &mut terminal).unwrap() else { panic!() };
         let text = String::from_utf8_lossy(terminal.output()).into_owned();
@@ -220,5 +264,103 @@ mod tests {
         assert_ne!(terminal.kitty_image_id(), first_id);
         assert_eq!(present(&frame, &mut terminal).unwrap(), Presented::Unchanged);
         assert_eq!(terminal.kitty_image_id(), kitty::other_image_id(first_id));
+    }
+}
+
+#[cfg(all(test, unix))]
+mod shared_tests {
+    use super::*;
+    use crate::projection::SkyArea;
+    use crate::regions::Texel;
+    use std::{ffi::CString, io::Read};
+
+    /// A Kitty terminal stand-in: decodes shared-memory uploads and either consumes (reads and unlinks) them or not.
+    struct Receiver { consume: bool, fail_upload: bool, names: Vec<CString>, pixels: Vec<Vec<u8>>, output: Vec<u8> }
+    impl Receiver {
+        fn new(consume: bool) -> Self { Self { consume, fail_upload: false, names: Vec::new(), pixels: Vec::new(), output: Vec::new() } }
+    }
+    impl Write for Receiver {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.output.extend_from_slice(bytes);
+            let text = std::str::from_utf8(bytes).unwrap();
+            if text.contains("t=s,") {
+                let command = &text[text.find("_G").unwrap() + 2..];
+                let payload = command.split_once(';').unwrap().1.split('\x1b').next().unwrap();
+                let name = CString::new(base64_simd::STANDARD.decode_to_vec(payload).unwrap()).unwrap();
+                self.names.push(name.clone());
+                if self.fail_upload { return Err(io::Error::other("injected shared upload failure")); }
+                if self.consume {
+                    let mut input = std::fs::File::from(rustix::shm::open(name.as_c_str(), rustix::shm::OFlags::RDONLY, rustix::shm::Mode::empty())?);
+                    let mut rgb = Vec::new(); input.read_to_end(&mut rgb)?;
+                    self.pixels.push(rgb);
+                    rustix::shm::unlink(name.as_c_str())?;
+                }
+            }
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> { Ok(()) }
+    }
+
+    fn frame() -> Frame {
+        let mut frame = Frame::new(16, 8, SkyArea::centred(16, 8), (4, 8));
+        frame.stars_mut()[20] = Texel { rgb: [1.0, 0.5, 0.25], opacity: 1.0 };
+        frame
+    }
+    fn rgb(frame: &Frame) -> Vec<u8> { let mut rgba = Vec::new(); compose(frame, &mut rgba); rgba.chunks_exact(4).flat_map(|pixel| pixel[..3].to_vec()).collect() }
+    fn missing(name: &CString) -> bool {
+        rustix::shm::open(name.as_c_str(), rustix::shm::OFlags::RDONLY, rustix::shm::Mode::empty()).is_err_and(|error| error == rustix::io::Errno::NOENT)
+    }
+    fn terminal(consume: bool, tmux: bool) -> Terminal<Receiver> { Terminal::new(Receiver::new(consume), ProtocolType::Kitty, tmux, Rect::new(0, 0, 4, 1), true, true) }
+
+    #[test]
+    fn shared_transfer_carries_the_rgb_without_a_stream_and_the_next_frame_is_unchanged() {
+        for tmux in [false, true] {
+            let frame = frame();
+            let mut terminal = terminal(true, tmux);
+            let Presented::Sent(bytes) = present(&frame, &mut terminal).unwrap() else { panic!() };
+            assert_eq!(terminal.output().pixels, [rgb(&frame)]);                                          // the object carries RGB, not the RGBA frame
+            assert!(terminal.shared_memory() && terminal.output().names.iter().all(missing));            // consumed: the name is gone and the transport stays
+            let text = String::from_utf8(terminal.output().output.clone()).unwrap();
+            assert!(text.contains("t=s,") && !text.contains("t=d,") && !text.contains("o=z,"), "{text}"); // no streamed copy, no compression
+            assert!(text.find("t=s,").unwrap() < text.find("a=p,").unwrap());
+            assert_eq!(text.len(), bytes);
+            assert_eq!(present(&frame, &mut terminal).unwrap(), Presented::Unchanged);
+            assert_eq!(terminal.output().names.len(), 1);
+        }
+    }
+
+    #[test]
+    fn an_unconsumed_object_falls_back_to_a_complete_stream_before_the_swap_for_the_rest_of_the_session() {
+        let frame = frame();
+        let mut terminal = terminal(false, false);
+        assert!(matches!(present(&frame, &mut terminal).unwrap(), Presented::Sent(_)));
+        assert!(!terminal.shared_memory() && terminal.output().names.iter().all(missing));              // unlinked here, transport switched off
+        let text = String::from_utf8(terminal.output().output.clone()).unwrap();
+        assert!(text.find("t=s,").unwrap() < text.find("t=d,").unwrap() && text.find("t=d,").unwrap() < text.find("a=p,").unwrap());
+        let mut compressed = Vec::new();
+        for command in text.split("\x1b_G").skip(1) {
+            let Some((header, payload)) = command.split_once(';') else { continue; };
+            if header.contains("m=") { compressed.extend(base64_simd::STANDARD.decode_to_vec(payload.split('\x1b').next().unwrap()).unwrap()); }
+        }
+        let mut decoded = Vec::new(); flate2::read::ZlibDecoder::new(compressed.as_slice()).read_to_end(&mut decoded).unwrap();
+        assert_eq!(decoded, rgb(&frame));                                                                 // the streamed copy is the whole image
+        let mut changed = frame; changed.stars_mut()[30] = Texel { rgb: [0.2, 0.2, 1.0], opacity: 1.0 };
+        let before = terminal.output().names.len();
+        assert!(matches!(present(&changed, &mut terminal).unwrap(), Presented::Sent(_)));
+        assert_eq!(terminal.output().names.len(), before);                                                // no further shared attempt this session
+    }
+
+    #[test]
+    fn a_failed_shared_write_unlinks_the_object_and_places_nothing() {
+        let frame = frame();
+        let mut terminal = terminal(false, false);
+        terminal.output().fail_upload = true;
+        let id = terminal.kitty_image_id();
+        assert!(present(&frame, &mut terminal).is_err());
+        assert_eq!(terminal.kitty_image_id(), id);
+        assert!(terminal.output().names.iter().all(missing));
+        assert!(!String::from_utf8(terminal.output().output.clone()).unwrap().contains("a=p,"));
+        terminal.output().fail_upload = false;
+        assert!(matches!(present(&frame, &mut terminal).unwrap(), Presented::Sent(_)));                  // the next frame is sent whole
     }
 }

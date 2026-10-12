@@ -31,6 +31,7 @@ pub struct PointInputs<'a> {
     pub caches: &'a RegionCaches,            // constellation simulation and the simulated prefixes the labels are chosen from
     pub selected: &'a Selected,
     pub panel: &'a [MetadataField],          // metadata lines for the top left corner; empty when the panel is off
+    pub notice: Option<&'static str>,        // the display's transport notice, shown above the warnings; none for a headless frame
 }
 
 /// A text label the step placed, for tests and the half-block fallback.
@@ -125,7 +126,7 @@ pub fn draw_points(frame: &mut Frame, inputs: &PointInputs<'_>, observation: &Ob
     // text: labels for the brightest stars, bodies and directions, the panel, the notices
     drawn.star_labels = select_star_labels(inputs, observation, settings, &pixel_of, sky, &endpoint_pixels);
     drawn.direction_labels = direction_labels(sky, view, settings, viewport);
-    drawn.notices = [needs_accuracy_warning(tt).then_some(ACCURACY_WARNING), inputs.tables.clipping.any().then_some(MAGNITUDE_CLIPPING_WARNING)].into_iter().flatten().collect();
+    drawn.notices = [needs_accuracy_warning(tt).then_some(ACCURACY_WARNING), inputs.tables.clipping.any().then_some(MAGNITUDE_CLIPPING_WARNING), inputs.notice].into_iter().flatten().collect();
     let cell = frame.text_cell();
     let (cell_width, cell_height) = (i32::from(cell.0), i32::from(cell.1));
     let (overlay, text) = frame.overlay_and_text();
@@ -438,7 +439,7 @@ mod tests {
         let selected = select_regions(&tables.stars, &observation);
         let mut caches = RegionCaches::default();
         refresh_regions(&mut caches, tables, &selected, time, settings);
-        let inputs = PointInputs { solar_system: &solar_system, tables, caches: &caches, selected: &selected, panel: &[] };
+        let inputs = PointInputs { solar_system: &solar_system, tables, caches: &caches, selected: &selected, panel: &[], notice: None };
         (draw_points(frame, &inputs, &observation, view, settings), observation)
     }
 
@@ -634,6 +635,15 @@ mod tests {
         assert_eq!(both.notices, [ACCURACY_WARNING, MAGNITUDE_CLIPPING_WARNING]);           // the clipping notice above the accuracy warning
         let (none, _) = draw(&tables, &View::default(), 0.0, &settings(), &mut frame);
         assert!(none.notices.is_empty());
+        let time = FrameTime::from_utc(J2000 + 30000.0 * 365.25);
+        let observation = observe(&boston(), false, &View::default(), time);
+        let solar_system = simulate_solar_system(&clipped.bodies, time);
+        let selected = select_regions(&clipped.stars, &observation);
+        let mut caches = RegionCaches::default();
+        refresh_regions(&mut caches, &clipped, &selected, time, &settings());
+        let inputs = PointInputs { solar_system: &solar_system, tables: &clipped, caches: &caches, selected: &selected, panel: &[], notice: Some("Shared memory unavailable; using streaming.") };
+        let streaming = draw_points(&mut frame, &inputs, &observation, &View::default(), &settings());
+        assert_eq!(streaming.notices, [ACCURACY_WARNING, MAGNITUDE_CLIPPING_WARNING, "Shared memory unavailable; using streaming."]); // the display's notice on top
     }
 
     /// Release-mode cost of step 6 on BSC5 at full HD; run with `--ignored --nocapture`.
@@ -650,7 +660,7 @@ mod tests {
         let settings = RenderOptions { magnitude_threshold: 9.0, ..settings() };
         refresh_regions(&mut caches, &tables, &selected, time, &settings);
         let fields = vec![MetadataField { label: "Date".into(), value: "2000-01-01".into() }; 12];
-        let inputs = PointInputs { solar_system: &solar_system, tables: &tables, caches: &caches, selected: &selected, panel: &fields };
+        let inputs = PointInputs { solar_system: &solar_system, tables: &tables, caches: &caches, selected: &selected, panel: &fields, notice: None };
         let mut frame = Frame::new(1920, 1100, SkyArea::centred(1920, 1100), (9, 17));
         draw_points(&mut frame, &inputs, &observation, &view, &settings);
         let started = std::time::Instant::now();
@@ -670,7 +680,7 @@ mod tests {
         let caches = RegionCaches::default();
         let fields = [MetadataField { label: "Date".into(), value: "2000-01-01".into() }, MetadataField { label: "Site".into(), value: "Boston".into() }];
         let mut frame = Frame::new(301, 201, SkyArea::centred(301, 201), (10, 20));
-        let inputs = PointInputs { solar_system: &solar_system, tables: &tables, caches: &caches, selected: &selected, panel: &fields };
+        let inputs = PointInputs { solar_system: &solar_system, tables: &tables, caches: &caches, selected: &selected, panel: &fields, notice: None };
         draw_points(&mut frame, &inputs, &observation, &View::default(), &RenderOptions { dynamic_names: false, ..settings() });
         let line = |row: i32| (0..301).filter(|&column| overlay_pixel(&frame, row, column)[3] > 0).count();
         assert!(line(10) > 20 && line(30) > 20, "two text lines at rows 0..40");

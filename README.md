@@ -66,8 +66,9 @@ With `-m`, the panel shows the stars loaded, the stars and regions selected for 
 Without `--facing`, the view is centered overhead. Looking around with the arrow keys switches to a facing view.
 
 The sky is drawn as pixels: Kitty, Sixel or iTerm2 graphics are detected, with colored half-blocks as the fallback.
-If graphics look wrong, try `--graphics-protocol halfblocks`. To choose a supported protocol yourself,
-use `--graphics-protocol kitty`, `sixel` or `iterm2`.
+A local Kitty terminal receives each frame through shared memory; other Kitty terminals (and tmux) get a
+compressed stream. If graphics look wrong, try `--graphics-protocol halfblocks`. To choose a supported protocol
+yourself, use `--graphics-protocol kitty`, `sixel` or `iterm2`.
 
 Use `--text-scale 0.7` for smaller pixel text or `--text-scale 1.2` for larger text
 (default: `0.85`). This affects Kitty/Sixel/iTerm2 only; half-blocks use your terminal's font size.

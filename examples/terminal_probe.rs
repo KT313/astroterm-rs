@@ -27,7 +27,7 @@ fn main() {
             let selected = select_regions(&tables.stars, &observation);
             refresh_regions(&mut caches, &tables, &selected, time, &config.render);
             project_stars_to_screen(&mut frame, &caches, &selected, &observation, &config.view);
-            let inputs = PointInputs { solar_system: &solar_system, tables: &tables, caches: &caches, selected: &selected, panel: &[] };
+            let inputs = PointInputs { solar_system: &solar_system, tables: &tables, caches: &caches, selected: &selected, panel: &[], notice: None };
             draw_points(&mut frame, &inputs, &observation, &config.view, &config.render);
             present(&frame, display.terminal()).unwrap();
             crossterm::execute!(std::io::stdout(), crossterm::terminal::BeginSynchronizedUpdate).unwrap();
