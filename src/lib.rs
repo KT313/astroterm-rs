@@ -18,6 +18,9 @@
 //! through `mod.rs`; optional `pipeline.rs` files show ordered processing while private supporting folders hold
 //! implementation details. Callers import root symbols instead of depending on those folders.
 //!
+//! The frame pipeline is being rebuilt (`dev/pipeline-restructuring-plan.md`); [`regions`] is the first module of
+//! the new spine and holds the speed-group rule until the refresh step moves in.
+//!
 //! Earth is the only production anchor. Common f64 states use equatorial J2000 axes, AU and AU/day, with
 //! a barycentric origin. [`sky`] documents the observer site and apparent-place corrections.
 
@@ -32,6 +35,7 @@ pub mod controls;
 pub mod metadata;
 pub mod model;
 pub mod projection;
+pub mod regions;
 pub mod progress;
 pub mod rows;
 pub mod scene;
