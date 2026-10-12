@@ -19,8 +19,8 @@
 //! implementation details. Callers import root symbols instead of depending on those folders.
 //!
 //! The frame pipeline is being rebuilt (`dev/pipeline-restructuring-plan.md`). The new spine grows one step module
-//! at a time directly under `src/`: [`solar_system`] (step 1), [`observation`] (step 2) and [`regions`] (step 4,
-//! holding the speed-group rule until the refresh step moves in).
+//! at a time directly under `src/`: [`solar_system`] (step 1), [`observation`] (step 2), [`selection`] (step 3) and
+//! [`regions`] (step 4, holding the speed-group rule until the refresh step moves in).
 //!
 //! Earth is the only production anchor. Common f64 states use equatorial J2000 axes, AU and AU/day, with
 //! a barycentric origin. [`sky`] documents the observer site and apparent-place corrections.
@@ -41,6 +41,7 @@ pub mod regions;
 pub mod progress;
 pub mod rows;
 pub mod scene;
+pub mod selection;
 pub mod solar_system;
 pub mod sky;
 pub mod state;

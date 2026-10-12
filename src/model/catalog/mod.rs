@@ -16,9 +16,9 @@ pub use star_color::StarColor;
 pub use grid::{SkyRegion, SelectionStats, SkyGrid, hash_direction};
 pub use storage::{STAR_SECTIONS, StarRow, StarRowSlice, StarRowVec, StarStorage};
 pub(crate) use storage::StellarFields;
-pub(crate) use grid::{SelectedRegion};
+pub(crate) use grid::{SelectedRegion, CellCap, build_caps};
 
 #[cfg(test)]
-pub(crate) use grid::{interleave, direction, build_caps};
+pub(crate) use grid::{interleave, direction};
 
 pub(crate) use records::unsupported_star_data;
