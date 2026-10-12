@@ -2,7 +2,7 @@
 use std::io::{self, Read, Write};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Stage { Resolve, Verify, Connect, Download, Install, Parse, Convert, PlanDownloads, CheckIds, AssignRegions, Reorder, Sort, Index, ReadCache, ValidateCache, WriteCache, FinalizeCache }
+pub enum Stage { Resolve, Verify, Connect, Download, Install, Parse, Convert, PlanDownloads, CheckIds, AssignRegions, Reorder, Sort, Index, Group, ReadCache, ValidateCache, WriteCache, FinalizeCache }
 impl Stage {
     pub fn label(self) -> &'static str {
         match self {
@@ -10,7 +10,7 @@ impl Stage {
             Self::Install => "Installing dataset", Self::Parse => "Loading stars", Self::Convert => "Preparing stars", Self::Sort => "Sorting stars by region",
             Self::PlanDownloads => "Planning dataset downloads", Self::CheckIds => "Checking Gaia source IDs",
             Self::AssignRegions => "Assigning star regions", Self::Reorder => "Reordering star fields",
-            Self::Index => "Building sky index", Self::ReadCache => "Reading prepared catalog", Self::ValidateCache => "Validating prepared catalog",
+            Self::Index => "Building sky index", Self::Group => "Grouping stars by speed", Self::ReadCache => "Reading prepared catalog", Self::ValidateCache => "Validating prepared catalog",
             Self::WriteCache => "Saving prepared catalog", Self::FinalizeCache => "Finalizing prepared catalog",
         }
     }

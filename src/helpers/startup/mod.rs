@@ -34,18 +34,21 @@ pub(crate) fn validate_arguments(arguments: Arguments, cities: &[City]) -> Resul
 
 /// Load the selected catalog into the state and record its startup diagnostics.
 pub(crate) fn load_catalog(state: &mut ApplicationState, directories: &DatasetDirectories) -> Result<(), ExitCode> {
-    let catalog = {
+    let loaded = {
         let mut progress = astroterm::terminal::open_startup_progress(state.config.no_progress);
         let result = state.timings.measure_steps("Dataset loading", |times| {
             astroterm::sky::load_sky_catalog_with_times(state.config.dataset.as_ref(), state.config.dataset_parallel_blocks, directories, &mut progress, times)
+        });
+        let result = result.and_then(|catalog| {                                                        // the rebuilt pipeline's tables, built and checked for every source
+            state.timings.measure_steps("Group tables", |times| astroterm::sky::build_sky_tables(&catalog, &mut progress, times)).map(|tables| (catalog, tables))
         });
         progress.finish(result.is_ok()); // stop all startup drawing before terminal setup or error reporting
         result
     };
     let allow_empty = matches!(state.config.dataset, Some(astroterm::catalog::datasets::Dataset::GaiaGdr3 { files: 0 } | astroterm::catalog::datasets::Dataset::GaiaGdr3Stars { stars: 0 })); // either zero selection explicitly requests no stars
-    let catalog = match catalog {
-        Ok(catalog) if catalog.catalog.stars.is_empty() && !allow_empty => Err(io::Error::other("dataset contains no stars")),
-        Ok(catalog) => Ok(catalog),
+    let catalog = match loaded {
+        Ok((catalog, _)) if catalog.catalog.stars.is_empty() && !allow_empty => Err(io::Error::other("dataset contains no stars")),
+        Ok((catalog, tables)) => { drop(tables); Ok(catalog) },                                          // nothing uses the tables before the frame loop takes them over in chunk 13
         Err(error) => Err(io::Error::other(error)),
     };
     let catalog = match catalog {

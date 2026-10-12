@@ -22,3 +22,28 @@ fn real_gaia_prefix_converts_and_reuses_prepared_cache() {
     assert_eq!(String::from_utf8_lossy(&notices).matches("no G-to-V conversion").count(), 1);
     println!("Prepared cache equality passed: {} stars from {count} files", original.catalog.stars.len());
 }
+
+/// The rebuilt pipeline's group tables from Gaia rows: Gaia labels are source IDs and there is no constellation
+/// table. Uses the first MAST row group only, converted from the local parquet block into a temporary cache.
+#[test]
+#[ignore = "requires ASTROTERM_GAIA_DATA with the first MAST parquet block; at most the first row group"]
+fn mast_first_block_builds_validated_group_tables() {
+    use astroterm::model::LabelColumn;
+    use astroterm::progress::NoProgress;
+    use astroterm::timing::StepTimes;
+    let data = std::env::var_os("ASTROTERM_GAIA_DATA").expect("set the astroterm data directory");
+    let cache = tempfile::tempdir().unwrap();
+    let dirs = DatasetDirectories { data: Some(data.into()), cache: Some(cache.path().into()) };
+    let dataset = Dataset::GaiaGdr3Stars { stars: 100_000 };
+    let mut notices = Vec::new();
+    let prepared = load_sky_catalog(Some(&dataset), &dirs, &mut notices).unwrap();
+    println!("{}", String::from_utf8_lossy(&notices));
+    assert!(prepared.catalog.stars.source_ids().is_some());
+    let tables = astroterm::sky::build_sky_tables(&prepared, &mut NoProgress(std::io::sink()), &mut StepTimes::default()).unwrap();
+    assert_eq!(tables.stars.len(), prepared.catalog.stars.len());
+    assert!(tables.constellations.is_empty());
+    assert!(tables.stars.iter().all(|(_, _, table)| matches!(table.labels(), LabelColumn::SourceIds(_))));
+    let labelled: usize = tables.stars.iter().map(|(_, _, table)| table.labels().len()).sum();
+    assert_eq!(labelled, tables.stars.len());
+    println!("Gaia group tables validated: {} stars", tables.stars.len());
+}

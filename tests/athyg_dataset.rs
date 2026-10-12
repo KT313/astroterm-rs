@@ -126,3 +126,32 @@ fn real_catalog_cache_preserves_the_rendered_frame() {
     assert!(cached.catalog.stars.len() > 2_500_000);
     assert_eq!(frame(cached.catalog), expected);
 }
+
+/// The rebuilt pipeline's group tables from the real AT-HYG catalog: built from the source, validated, and equal
+/// to the tables built from the prepared cache written on the way.
+#[test]
+#[ignore = "needs datasets/athyg_40.csv.gz"]
+fn athyg_builds_validated_group_tables_from_source_and_cache() {
+    use astroterm::catalog::datasets::{Dataset, DatasetDirectories};
+    use astroterm::progress::NoProgress;
+    use astroterm::timing::StepTimes;
+    let cache = tempfile::tempdir().unwrap();
+    let directories = DatasetDirectories { data: None, cache: Some(cache.path().into()) };
+    let dataset = Dataset::Path(DATASET.into());
+    let mut notices = Vec::new();
+    let started = std::time::Instant::now();
+    let prepared = astroterm::sky::load_sky_catalog(Some(&dataset), &directories, &mut notices).unwrap();
+    eprintln!("prepared {} stars in {:?}", prepared.catalog.stars.len(), started.elapsed());
+    let started = std::time::Instant::now();
+    let mut times = StepTimes::with_trace(true);
+    let tables = astroterm::sky::build_sky_tables(&prepared, &mut NoProgress(std::io::sink()), &mut times).unwrap();
+    eprintln!("built and validated the group tables in {:?}", started.elapsed());
+    for step in &times.trace().unwrap().steps { eprintln!("  {} {:.3}s {}", step.name, step.seconds, step.details.join("; ")); }
+    assert_eq!(tables.stars.len() + tables.constellations.len(), prepared.catalog.stars.len());
+    assert!(tables.stars.len() > 2_500_000);
+    assert_eq!(tables.constellations.len(), prepared.catalog.endpoint_indices().len());
+    let cached = astroterm::sky::load_sky_catalog(Some(&dataset), &directories, &mut notices).unwrap();
+    assert_eq!(cached, prepared);
+    let from_cache = astroterm::sky::build_sky_tables(&cached, &mut NoProgress(std::io::sink()), &mut StepTimes::default()).unwrap();
+    assert_eq!(from_cache, tables);
+}
