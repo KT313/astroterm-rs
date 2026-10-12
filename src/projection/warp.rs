@@ -17,6 +17,7 @@ use crate::model::{ProjectionKind, View};
 use crate::observation::Observation;
 use crate::projection::prepare_camera;
 use crate::regions::{RegionCaches, STAR_GLYPH_RADIUS, Texel, TileFrame, TileGeometry, tile_frames, zoom_opacity_boost};
+use crate::scene::{TextRasterizer, create_text_rasterizer, set_text_cell_size};
 use crate::selection::Selected;
 use std::f64::consts::FRAC_PI_2;
 use std::sync::OnceLock;
@@ -25,34 +26,87 @@ const EDGE: usize = 1 << GRID_DEPTH;                                       // re
 const REFRACTION_TABLE_SIZE: usize = 8192;                                 // entries over sin(apparent altitude); 0.002″ from the direct solve
 const REFRACTION_ITERATIONS: usize = 6;                                    // fixed-point steps of the inverse refraction
 
-/// The screen-sized buffers of a frame: the star layer step 5 fills and the ray table it keeps per view.
-#[derive(Clone, Debug)]
+/// The square of the frame that shows the sky: the projection's radius-1 circle is inscribed in it. The rest of
+/// the frame is margin for text (owner's layout: a centred square sky, the metadata panel at the top left).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SkyArea {
+    pub x: usize,                           // left column of the square in frame pixels
+    pub y: usize,                           // top row
+    pub size: usize,                        // side in pixels
+}
+
+impl SkyArea {
+    /// The largest centred square of a `width` × `height` frame.
+    pub fn centred(width: usize, height: usize) -> Self {
+        let size = width.min(height);
+        Self { x: (width - size) / 2, y: (height - size) / 2, size }
+    }
+    /// The frame pixel (row, column) of a sky-square cell, as `project_to_cell` numbers them.
+    pub fn frame_pixel(&self, cell: (i32, i32)) -> (i32, i32) { (cell.0 + self.y as i32, cell.1 + self.x as i32) }
+    /// Whether a sky cell and the three cells above and to the left of it lie inside the square (a star glyph fits).
+    pub fn glyph_fits(&self, (row, column): (i32, i32)) -> bool { row > 0 && column > 0 && (row as usize) < self.size && (column as usize) < self.size }
+    pub fn viewport(&self) -> crate::model::ProjectionViewport { crate::model::ProjectionViewport { width: self.size, height: self.size } }
+}
+
+/// The screen-sized buffers of a frame: the star layer step 5 fills, the overlay step 6 draws on top of it, the
+/// text rasterizer the overlay's labels use, and the ray table kept per view.
 pub struct Frame {
     width: usize,
     height: usize,
+    sky: SkyArea,
     stars: Vec<Texel>,                      // row-major, width × height: light per pixel before tone mapping
+    overlay: Vec<u8>,                       // premultiplied RGBA, transparent where nothing was drawn: points, lines and text over the stars
+    text: TextRasterizer,
+    text_cell: (u16, u16),                  // pixel size of one text cell: glyph size and line spacing
     rays: ViewTable,
 }
 
 impl Frame {
-    pub fn new(width: usize, height: usize) -> Self {
-        Self { width, height, stars: vec![Texel::default(); width * height], rays: ViewTable::default() }
+    /// A frame with the sky in the given square and text cells of `text_cell` pixels.
+    pub fn new(width: usize, height: usize, sky: SkyArea, text_cell: (u16, u16)) -> Self {
+        let mut text = create_text_rasterizer().expect("the bundled font parses");
+        set_text_cell_size(&mut text, text_cell.0, text_cell.1);
+        Self { width, height, sky, stars: vec![Texel::default(); width * height], overlay: vec![0; width * height * 4], text, text_cell, rays: ViewTable::default() }
     }
 
-    /// Adopt a new size; the pixels are cleared and the ray table rebuilt on the next projection.
-    pub fn resize(&mut self, width: usize, height: usize) {
-        if (width, height) == (self.width, self.height) { return; }
+    /// A square frame that is all sky, with the default text cell: the shape of the tests and the parity fixtures.
+    pub fn square(size: usize) -> Self { Self::new(size, size, SkyArea { x: 0, y: 0, size }, (10, 20)) }
+
+    /// Adopt a new size and sky square; the layers are cleared and the ray table rebuilt on the next projection.
+    pub fn resize(&mut self, width: usize, height: usize, sky: SkyArea) {
+        if (width, height, sky) == (self.width, self.height, self.sky) { return; }
         self.width = width;
         self.height = height;
+        self.sky = sky;
         self.stars.clear();
         self.stars.resize(width * height, Texel::default());
+        self.overlay.clear();
+        self.overlay.resize(width * height * 4, 0);
+    }
+
+    pub fn set_text_cell(&mut self, text_cell: (u16, u16)) {
+        self.text_cell = text_cell;
+        set_text_cell_size(&mut self.text, text_cell.0, text_cell.1);
     }
 
     pub fn width(&self) -> usize { self.width }
     pub fn height(&self) -> usize { self.height }
+    pub fn sky(&self) -> SkyArea { self.sky }
+    pub fn text_cell(&self) -> (u16, u16) { self.text_cell }
     pub fn stars(&self) -> &[Texel] { &self.stars }
+    pub fn stars_mut(&mut self) -> &mut [Texel] { &mut self.stars }
     pub fn star(&self, row: usize, column: usize) -> Texel { self.stars[row * self.width + column] }
+    pub fn overlay(&self) -> &[u8] { &self.overlay }
+    /// The overlay and the text rasterizer together, for drawing text onto the overlay.
+    pub fn overlay_and_text(&mut self) -> (&mut [u8], &mut TextRasterizer) { (&mut self.overlay, &mut self.text) }
+    pub fn clear_overlay(&mut self) { self.overlay.fill(0); }
     pub fn rays(&self) -> &ViewTable { &self.rays }
+}
+
+impl std::fmt::Debug for Frame {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Frame").field("width", &self.width).field("height", &self.height).field("sky", &self.sky).field("text_cell", &self.text_cell).finish()
+    }
 }
 
 /// What a ray table was built for.
@@ -62,13 +116,14 @@ pub struct ViewKey {
     pub fov_degrees: f64,
     pub width: usize,
     pub height: usize,
+    pub sky: SkyArea,
 }
 
 /// The per-view ray table (plan section 7): for every screen pixel its apparent direction in the camera frame
 /// (components along the camera's right, up and forward axes). The rays of neighbouring pixels give each pixel's
 /// footprint on the sky, so nothing else is stored.
 ///
-/// **Key:** projection kind, field of view, width and height. **Invalidated by:** any key change (zoom, a
+/// **Key:** projection kind, field of view, frame size and sky square. **Invalidated by:** any key change (zoom, a
 /// projection switch, a terminal resize); the table is then rebuilt. Panning, Earth's rotation and the observer do
 /// not touch it because the rays are stored relative to the camera, and refraction is removed per frame through
 /// a fixed table instead of being baked in.
@@ -86,19 +141,21 @@ struct Ray {
 impl ViewTable {
     pub fn key(&self) -> Option<ViewKey> { self.key }
 
-    /// Hold the rays of `view` at `width` × `height`, rebuilding only when the key changed. Returns whether it did.
-    fn prepare(&mut self, view: &View, width: usize, height: usize) -> bool {
-        let key = ViewKey { projection: view.projection, fov_degrees: view.fov_degrees, width, height };
+    /// Hold the rays of `view` for a `width` × `height` frame with the sky in `sky`, rebuilding only when the key
+    /// changed. Returns whether it did.
+    fn prepare(&mut self, view: &View, width: usize, height: usize, sky: SkyArea) -> bool {
+        let key = ViewKey { projection: view.projection, fov_degrees: view.fov_degrees, width, height, sky };
         if self.key == Some(key) { return false; }
         let scale = prepare_camera(view).scale;
-        let (rx, ry) = ((width as f64 - 1.0) / 2.0, (height as f64 - 1.0) / 2.0);
+        let radius = (sky.size as f64 - 1.0) / 2.0;
+        let (cx, cy) = (sky.x as f64 + radius, sky.y as f64 + radius);
         self.rays.clear();
         self.rays.reserve(width * height);
         for row in 0..height {
             for column in 0..width {
-                // pixel to projection-plane coordinates, the inverse of `project_to_cell`
-                let px = if rx > 0.0 { (column as f64 - rx) / rx } else { 0.0 };
-                let py = if ry > 0.0 { -(row as f64 - ry) / ry } else { 0.0 };
+                // pixel to projection-plane coordinates, the inverse of `project_to_cell` on the sky square
+                let px = if radius > 0.0 { (column as f64 - cx) / radius } else { 0.0 };
+                let py = if radius > 0.0 { -(row as f64 - cy) / radius } else { 0.0 };
                 let radius = px.hypot(py);
                 if radius > 1.0 + 1e-9 { self.rays.push(Ray { direction: [f32::NAN; 3] }); continue; } // outside the rendered circle
 
@@ -170,7 +227,7 @@ impl RefractionTable {
 /// Fill the frame's star layer from the region tiles for this observation and view. Returns whether the ray
 /// table had to be rebuilt.
 pub fn project_stars_to_screen(frame: &mut Frame, caches: &RegionCaches, selected: &Selected, observation: &Observation, view: &View) -> bool {
-    let rebuilt = frame.rays.prepare(view, frame.width, frame.height);
+    let rebuilt = frame.rays.prepare(view, frame.width, frame.height, frame.sky);
     let camera = prepare_camera(view);
     let pack = |v: Vector3| [v.x as f32, v.y as f32, v.z as f32];
     let mut in_view = vec![false; CELL_COUNT];
@@ -427,7 +484,7 @@ mod tests {
     use super::*;
     use crate::astro::{FrameTime, J2000, Observer, refract_direction};
     use crate::catalog::{SpaceMotion, StarId, load_embedded_catalog};
-    use crate::model::{ProjectionViewport, RenderOptions, SkyTables, ViewCenter, hash_direction, region_caps};
+    use crate::model::{RenderOptions, SkyTables, ViewCenter, hash_direction, region_caps};
     use crate::observation::observe;
     use crate::progress::NoProgress;
     use crate::projection::{project_camera, project_to_cell};
@@ -490,8 +547,9 @@ mod tests {
     fn old_position(observation: &Observation, view: &View, frame: &Frame, direction: Vector3) -> (f64, f64) {
         let apparent = observation.apparent_star_direction(direction);
         let point = project_camera(prepare_camera(view), apparent).unwrap();
-        let (rx, ry) = ((frame.width() as f64 - 1.0) / 2.0, (frame.height() as f64 - 1.0) / 2.0);
-        (-point.y * ry + ry, point.x * rx + rx)
+        let sky = frame.sky();
+        let radius = (sky.size as f64 - 1.0) / 2.0;
+        (sky.y as f64 + radius - point.y * radius, sky.x as f64 + radius + point.x * radius)
     }
 
     #[test]
@@ -500,9 +558,10 @@ mod tests {
             let view = view(fov, 0.7, 0.4, projection);
             let (width, height) = (101, 81);
             let mut table = ViewTable::default();
-            assert!(table.prepare(&view, width, height));
+            assert!(table.prepare(&view, width, height, SkyArea::centred(width, height)));
             let camera = prepare_camera(&view);
-            let viewport = ProjectionViewport { width, height };
+            let sky = SkyArea::centred(width, height);
+            let viewport = sky.viewport();
             let (mut inside, mut outside) = (0, 0);
             for row in 0..height {
                 for column in 0..width {
@@ -513,10 +572,10 @@ mod tests {
                     let horizon = camera.right * d[0] + camera.up * d[1] + camera.forward * d[2];
                     assert!((horizon.length() - 1.0).abs() < 1e-5);
                     let point = project_camera(camera, horizon).unwrap();
-                    assert_eq!(project_to_cell(viewport, point), (row as i32, column as i32), "{projection:?} {fov}° pixel ({row}, {column})");
+                    assert_eq!(sky.frame_pixel(project_to_cell(viewport, point)), (row as i32, column as i32), "{projection:?} {fov}° pixel ({row}, {column})");
                 }
             }
-            assert!(inside > width * height / 2 && outside > 0, "{projection:?}: {inside} inside, {outside} outside");
+            assert!(inside > sky.size * sky.size / 2 && outside > 0, "{projection:?}: {inside} inside, {outside} outside");
         }
     }
 
@@ -524,7 +583,7 @@ mod tests {
     fn the_ray_table_is_reused_across_frames_and_rebuilt_on_zoom_resize_or_projection_change() {
         let tables = bsc5();
         let mut caches = RegionCaches::default();
-        let mut frame = Frame::new(120, 120);
+        let mut frame = Frame::square(120);
         let wide = view(90.0, 1.0, 0.5, ProjectionKind::Stereographic);
         assert!(render(&mut frame, &mut caches, &tables, &wide, 0.0, true).1);
         assert!(!render(&mut frame, &mut caches, &tables, &wide, 0.0, true).1);               // the same frame
@@ -533,9 +592,9 @@ mod tests {
         assert!(!render(&mut frame, &mut caches, &tables, &wide, 0.0, false).1);              // the atmosphere switch
         assert!(render(&mut frame, &mut caches, &tables, &view(45.0, 1.0, 0.5, ProjectionKind::Stereographic), 0.0, true).1); // zoom
         assert!(render(&mut frame, &mut caches, &tables, &view(45.0, 1.0, 0.5, ProjectionKind::Equidistant), 0.0, true).1); // projection
-        frame.resize(100, 100);
+        frame.resize(100, 100, SkyArea::centred(100, 100));
         assert!(render(&mut frame, &mut caches, &tables, &view(45.0, 1.0, 0.5, ProjectionKind::Equidistant), 0.0, true).1); // resize
-        assert_eq!(frame.rays().key(), Some(ViewKey { projection: ProjectionKind::Equidistant, fov_degrees: 45.0, width: 100, height: 100 }));
+        assert_eq!(frame.rays().key(), Some(ViewKey { projection: ProjectionKind::Equidistant, fov_degrees: 45.0, width: 100, height: 100, sky: SkyArea { x: 0, y: 0, size: 100 } }));
         assert_eq!(frame.stars().len(), 10_000);
     }
 
@@ -554,7 +613,7 @@ mod tests {
 
     #[test]
     fn a_single_star_lands_where_the_old_projection_puts_it() {
-        let (width, height) = (301, 301);
+        let width = 301;
         for (fov, azimuth, tilt, days, atmosphere) in [(10.0, 1.0, 0.5, 0.0, true), (60.0, 2.5, 0.2, 100.0, true), (180.0, 4.0, 0.9, 4000.0, false), (120.0, 0.3, 0.1, 0.5, true)] {
             let view = view(fov, azimuth, tilt, ProjectionKind::Stereographic);
             let time = FrameTime::from_utc(J2000 + days);
@@ -563,7 +622,7 @@ mod tests {
             let direction = (observation.patch.center + offset * (0.25 * fov.to_radians() / 2.0)).normalized(); // a quarter of the way to the edge
             let tables = single_star(direction, 2.0);
             let mut caches = RegionCaches::default();
-            let mut frame = Frame::new(width, height);
+            let mut frame = Frame::square(width);
             render(&mut frame, &mut caches, &tables, &view, days, atmosphere);
             let ((row, column), count, total) = blob(&frame).unwrap_or_else(|| panic!("{fov}°: no star drawn"));
             let expected = old_position(&observation, &view, &frame, direction);
@@ -606,7 +665,7 @@ mod tests {
         for direction in [inside, cap.center] {
             let tables = single_star(direction, 1.0);
             let mut caches = RegionCaches::default();
-            let mut frame = Frame::new(401, 401);
+            let mut frame = Frame::square(401);
             render(&mut frame, &mut caches, &tables, &view, 0.0, false);
             results.push(blob(&frame).unwrap());
         }
@@ -630,7 +689,7 @@ mod tests {
             let view = View { center: ViewCenter::Facing { azimuth, tilt }, projection: ProjectionKind::Stereographic, fov_degrees: fov }; // look straight at the star
             let _ = centre_h;
             let mut caches = RegionCaches::default();
-            let mut frame = Frame::new(201, 201);
+            let mut frame = Frame::square(201);
             render(&mut frame, &mut caches, &tables, &view, 0.0, false);
             assert!(frame.star(0, 0).is_empty() && frame.star(200, 200).is_empty());        // the corners lie outside the rendered circle
             let ((row, column), _, total) = blob(&frame).unwrap();
@@ -652,14 +711,14 @@ mod tests {
         let horizon = observe(&site, true, &View::default(), time).to_horizon.apply(direction);
         let view = View { center: ViewCenter::Facing { azimuth: horizon.x.atan2(horizon.y), tilt: horizon.z.asin() }, projection: ProjectionKind::Stereographic, fov_degrees: 180.0 }; // look straight at it
         let mut caches = RegionCaches::default();
-        let mut frame = Frame::new(81, 41);
+        let mut frame = Frame::new(81, 41, SkyArea::centred(81, 41), (10, 20));
         let observation = observe(&site, true, &view, time);
         let selected = select_regions(&tables.stars, &observation);
         refresh_regions(&mut caches, &tables, &selected, time, &RenderOptions { magnitude_threshold: 2.1, ..settings() });
         project_stars_to_screen(&mut frame, &caches, &selected, &observation, &view);
         let (brightest, light) = frame.stars().iter().enumerate().fold((0, 0.0), |best, (index, texel)| if texel.opacity > best.1 { (index, texel.opacity) } else { best });
         let (row, column) = (brightest / 81, brightest % 81);
-        assert!(light > 0.0 && (row as i64 - 20).abs() <= 2 && (column as i64 - 40).abs() <= 3, "brightest pixel at ({row}, {column}) with {light}");
+        assert!(light > 0.0 && (row as i64 - 20).abs() <= 2 && (column as i64 - 40).abs() <= 3, "brightest pixel at ({row}, {column}) with {light}"); // the sky square is the middle 41 columns
     }
 
     /// Release-mode cost of the warp; run with `--ignored --nocapture`.
@@ -670,7 +729,7 @@ mod tests {
         for (width, height) in [(1920, 1100), (1280, 720)] {
             for fov in [10.0, 60.0, 180.0] {
                 let mut caches = RegionCaches::default();
-                let mut frame = Frame::new(width, height);
+                let mut frame = Frame::new(width, height, SkyArea::centred(width, height), (10, 20));
                 let view = view(fov, 1.0, 0.5, ProjectionKind::Stereographic);
                 let time = FrameTime::from_utc(J2000);
                 let observation = observe(&boston(), true, &view, time);

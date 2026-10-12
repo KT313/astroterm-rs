@@ -155,6 +155,36 @@ pub fn draw_text(
     }
 }
 
+/// Draw text onto a transparent, premultiplied RGBA layer (`width` × `height`, four bytes per pixel): glyph coverage
+/// becomes the text's alpha, source-over, so the layer can be composited over anything later. Clipping and the
+/// cell advance are as in `draw_text`.
+pub fn draw_text_over(state: &mut TextRasterizer, layer: &mut [u8], width: usize, height: usize, text: &str, origin: (i32, i32), color: [u8; 3]) {
+    let (right, bottom) = (width as i32, height as i32);
+    let mut pen = origin.0;
+    for ch in text.chars().filter(|ch| !ch.is_control() && !matches!(ch, '\u{fe0f}' | '\u{fe0e}' | '\u{200d}')) {
+        let columns = ch.width().unwrap_or(0);
+        let ch = if state.font.lookup_glyph_index(ch) == 0 { '\u{fffd}' } else { ch };
+        let glyph = if let Some(glyph) = state.glyphs.get(&ch) { glyph } else {
+            if state.glyphs.len() >= MAX_CACHED_GLYPHS { state.glyphs.clear(); }
+            let (metrics, coverage) = state.font.rasterize(ch, state.size);
+            state.glyphs.entry(ch).or_insert(Glyph { metrics, coverage })
+        };
+        let x0 = pen + glyph.metrics.xmin;
+        let y0 = origin.1 + state.baseline.round() as i32 - glyph.metrics.ymin - glyph.metrics.height as i32;
+        for y in y0.max(0)..(y0 + glyph.metrics.height as i32).min(bottom) {
+            for x in x0.max(0)..(x0 + glyph.metrics.width as i32).min(right) {
+                let alpha = u32::from(glyph.coverage[(y - y0) as usize * glyph.metrics.width + (x - x0) as usize]);
+                if alpha == 0 { continue; }
+                let pixel = &mut layer[(y as usize * width + x as usize) * 4..][..4];
+                for (channel, foreground) in pixel.iter_mut().zip(color.into_iter().chain([255])) {
+                    *channel = ((u32::from(foreground) * alpha + u32::from(*channel) * (255 - alpha) + 127) / 255) as u8; // premultiplied source-over, alpha included
+                }
+            }
+        }
+        pen += i32::from(state.cell.0) * columns as i32;
+    }
+}
+
 fn color_rgb(color: ratatui::style::Color) -> Option<[u8; 3]> {
     use ratatui::style::Color::*;
     Some(match color {

@@ -12,7 +12,7 @@ pub use raster::{
     select_star_appearance,
 };
 pub use raster::pixels::draw_pixel_sky;
-pub use text::{begin_text_frame, create_text_rasterizer, draw_metadata_panel, draw_text, paint_text_buffer, set_text_cell_size, TextRasterizer};
+pub use text::{begin_text_frame, create_text_rasterizer, draw_metadata_panel, draw_text, draw_text_over, paint_text_buffer, set_text_cell_size, TextRasterizer};
 pub(crate) use text::Glyph;
 
 pub(crate) use pipeline::draw_characters_with_times;

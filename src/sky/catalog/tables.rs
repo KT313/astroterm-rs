@@ -37,7 +37,7 @@ fn build_tables(prepared: &PreparedCatalog, progress: &mut dyn DatasetProgress, 
     // split, renumber, validate
     let groups = times.measure("Speed group split", || split_groups(catalog, bounds, progress));
     let constellations = times.measure("Constellation table", || build_constellations(catalog))?;
-    let tables = SkyTables { bodies: Bodies::default(), stars: Stars::new(groups), constellations, names: catalog.names.clone() };
+    let tables = SkyTables { bodies: Bodies::default(), stars: Stars::new(groups), constellations, names: catalog.names.clone(), clipping: catalog.stars.magnitude_clipping() };
     progress.set_detail("Checking the group tables");
     times.measure("Group table validation", || tables.validate())?;
     times.describe("Speed group split", || describe(&tables));

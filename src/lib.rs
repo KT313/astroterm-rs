@@ -22,7 +22,8 @@
 //! at a time directly under `src/`: [`solar_system`] (step 1), [`observation`] (step 2), [`selection`] (step 3) and
 //! [`regions`] (step 4: speed groups, simulation caches, sky-fixed group and region images, `refresh_regions`) and
 //! [`projection`] (step 5, `project_stars_to_screen`: the warp of the region tiles onto the screen, beside the
-//! projection geometry it reuses).
+//! projection geometry it reuses), [`points`] (step 6, `draw_points`: bodies, constellation lines, labels and
+//! overlays on the frame) and [`present`] (step 7, `present`: tone mapping and the terminal output).
 //!
 //! Earth is the only production anchor. Common f64 states use equatorial J2000 axes, AU and AU/day, with
 //! a barycentric origin. [`sky`] documents the observer site and apparent-place corrections.
@@ -38,6 +39,8 @@ pub mod controls;
 pub mod metadata;
 pub mod model;
 pub mod observation;
+pub mod points;
+pub mod present;
 pub mod projection;
 pub mod regions;
 pub mod progress;

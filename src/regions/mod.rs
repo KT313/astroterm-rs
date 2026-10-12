@@ -65,6 +65,8 @@ impl RegionCaches {
     pub fn group_image(&self, region: usize, group: usize) -> &GroupImage { &self.groups[region * SPEED_GROUP_COUNT + group] }
     pub fn region_image(&self, region: usize) -> &RegionImage { &self.regions[region] }
     pub fn tile_bytes(&self) -> usize { self.bytes }
+    /// The opacity curve the tiles were drawn with (no zoom boost).
+    pub fn opacities(&self) -> &StarOpacities { &self.opacities }
 }
 
 /// Bring the images of the selected regions and the constellation simulation up to date for this frame.

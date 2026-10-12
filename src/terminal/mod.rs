@@ -4,7 +4,7 @@ mod pipeline;
 mod startup;
 pub use startup::{open_startup_progress, StartupProgress};
 mod rendering;
-mod transport;
+pub(crate) mod transport;
 mod input;
 mod diagnostics;
 pub use diagnostics::{CaptureDisplay, CaptureGeometry, capture_display};

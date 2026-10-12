@@ -4,7 +4,7 @@ mod geometry;
 mod pipeline;
 mod warp;
 
-pub use warp::{Frame, ViewKey, ViewTable, project_stars_to_screen};
+pub use warp::{Frame, SkyArea, ViewKey, ViewTable, project_stars_to_screen};
 
 pub use caching::{borrow_projected, borrow_render_projection};
 pub use pipeline::{project_cached_sky, project_cached_regions};
@@ -13,6 +13,7 @@ pub use geometry::{
     project_camera, project_equidistant_horizontal, project_horizontal, project_light_direction,
     project_sky, project_sky_with_times, project_stereographic_horizontal, project_stereographic_north,
     project_to_cell, rotate_camera_into, select_view_region, zoom_view,
+    project_constellation_segment, project_horizon_labels, project_horizon_line,
 };
 #[cfg(test)]
-pub(crate) use geometry::{compute_visible_horizon_half_range, project_constellation_segment, project_horizon_labels, project_horizon_line};
+pub(crate) use geometry::compute_visible_horizon_half_range;

@@ -185,7 +185,6 @@ pub fn project_light_direction(view: &View, moon: Vector3, sun: Vector3) -> Opti
 
 /// Sample clipped great-circle arcs with at most a quarter-viewport-unit midpoint deviation. Both renderers
 /// consume this geometry; endpoints keep their star markers, while inserted vertices never create markers.
-#[cfg(test)]
 pub fn project_constellation_segment(view: &View, viewport: Viewport, from: Vector3, to: Vector3) -> Vec<ProjectedArc> {
     project_constellation_segment_with_camera(view, viewport, crate::projection::prepare_camera(view), from, to)
 }

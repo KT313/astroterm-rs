@@ -10,9 +10,9 @@ pub use maps::{project_equidistant_horizontal, project_stereographic_horizontal,
 pub use sky::{polar_to_cell, project_light_direction, project_sky, project_sky_with_times, project_to_cell};
 pub(super) use draw_order::prepare_draw_order_with_times;
 pub(super) use sky::{project_bodies, project_constellations};
-pub(crate) use sky::{project_horizon_labels, project_horizon_line};
+pub use sky::{project_constellation_segment, project_horizon_labels, project_horizon_line};
 #[cfg(test)]
-pub(crate) use sky::{compute_visible_horizon_half_range, project_constellation_segment};
+pub(crate) use sky::compute_visible_horizon_half_range;
 
 use crate::model::{ArcPart, Polar, ProjectionKind, View, ViewCenter};
 use std::f64::consts::{FRAC_PI_2, PI, TAU};

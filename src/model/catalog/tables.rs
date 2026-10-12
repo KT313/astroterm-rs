@@ -11,6 +11,7 @@ pub struct SkyTables {
     pub stars: Stars,
     pub constellations: Constellations,
     pub names: StarNames,                  // label text for the name entries of both star tables
+    pub clipping: crate::catalog::MagnitudeClipping, // catalog-wide counts of stored brightness bounds that hit the code range; drives the notice
 }
 
 impl SkyTables {
