@@ -7,7 +7,7 @@ use image::RgbaImage;
 use crate::scene::pipeline::draw_pixel_sky_from_inputs;
 
 pub(in crate::scene) use stars::{initialize_star_layer, prepare_star_opacities, draw_pixel_stars, composite_star_layer};
-pub(crate) use stars::{pixel_star_fits, select_pixel_star_labels};
+pub(crate) use stars::{pixel_star_fits, StarPixel, StarOpacityTable, PixelStarKey};
 use tiny_skia::{FillRule, Paint, PathBuilder, Pixmap, Stroke, Transform};
 
 use crate::model::{RenderOptions, ObservedStarView, PlanetKind, ProjectedSky, ScreenPoint};

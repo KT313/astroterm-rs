@@ -1,23 +1,8 @@
 //! Celestial objects: what they are and where they are. How they look is up to the renderer.
 use crate::rows::row_columns;
-use crate::astro::models::stars::StellarMotion;
 use crate::astro::{Horizontal, MoonPhase, Vector3};
+use crate::model::Star;
 use crate::catalog::{NameId, StarId};
-
-/// A catalog star.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Star {
-    pub id: StarId,
-    /// Display label: proper name when available, otherwise a catalog identifier.
-    pub name: Option<NameId>,
-    pub motion: StellarMotion,
-    /// Catalog magnitude at J2000; evaluated magnitude belongs to ObservedStar.
-    pub magnitude: f64,
-    pub brightness_key: f64,
-    pub display_color: crate::model::StarColor,
-    /// Whether the catalog has data for this star (a few catalog numbers are empty placeholders).
-    pub has_data: bool,
-}
 
 /// Per-frame output for drawable candidates and required constellation endpoints, in catalog-index order.
 /// `drawable` uses the current magnitude; immutable model inputs stay in SkyCatalog.
@@ -172,14 +157,6 @@ impl Moon {
         Horizontal::from_vector(self.position)
     }
 }
-
-/// A constellation figure as segments between indices into the star table.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Constellation {
-    pub abbreviation: &'static str,
-    pub segments: Vec<[usize; 2]>,
-}
-row_columns!(Constellation { abbreviation, segments });
 
 /// The Sun and the planets other than the Earth, ordered from the Sun outwards.
 pub fn create_planets() -> Vec<Planet> {

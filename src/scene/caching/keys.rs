@@ -67,7 +67,7 @@ fn capture_character_keys(
             } else {
                 appearance.ascii
             },
-            color: options.select_color(appearance.color),
+            color: crate::model::select_color(options, appearance.color),
         });
     }
 }

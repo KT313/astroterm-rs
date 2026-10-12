@@ -79,7 +79,7 @@ fn draw_object(
     let Some((row, col)) = cell else {
         return;
     };
-    let color = options.select_color(appearance.color);
+    let color = crate::model::select_color(options, appearance.color);
 
     let glyph = if options.unicode {
         appearance.unicode

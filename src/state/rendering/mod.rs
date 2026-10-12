@@ -1,14 +1,12 @@
 //! Application-owned character/pixel rendering buffers. The terminal writer and cleanup guard live outside state.
-mod shared_memory;
-pub(crate) use shared_memory::SharedMemoryImage;
+pub(crate) use crate::terminal::SharedMemoryImage;                                   // transport resource, owned by the Kitty transport since chunk 3
+pub use crate::scene::TextRasterizer;                                                 // font state, owned by the text drawing code since chunk 3
 
 use crate::astro::Observer;
 use crate::canvas::Canvas;
 use crate::model::{
-    TerminalSettings, MetadataField, ObserverTimeZone, Frame, Glyph, RenderOptions, ProjectionViewport as Viewport,
+    TerminalSettings, MetadataField, ObserverTimeZone, Frame, RenderOptions, ProjectionViewport as Viewport,
 };
-use fontdue::Font;
-use std::collections::HashMap;
 use ratatui::layout::Rect;
 use ratatui_image::{FontSize, picker::ProtocolType};
 
@@ -103,14 +101,4 @@ impl Default for Presenter {
     }
 }
 
-/// Font handle and glyph masks at one cell size. Masks are cleared on resize, bypass, or the existing 512-glyph
-/// bound. Coverage bytes are owned here; fontdue's inaccessible tables are reported as partial.
-pub struct TextRasterizer {
-    pub(crate) font: Font,
-    pub(crate) glyphs: HashMap<char, Glyph>,
-    pub(crate) cell: (u16, u16),
-    pub(crate) size: f32,
-    pub(crate) baseline: f32,
-
-}
 

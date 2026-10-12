@@ -31,6 +31,11 @@ impl DoubleEndedIterator for StarLabels {
 }
 impl ExactSizeIterator for StarLabels {}
 
+/// Keep global label selection independent of regional painting order; omit undrawable edge stars.
+pub(crate) fn select_pixel_star_labels(options: &RenderOptions, sky: &ProjectedSky<'_>) -> StarLabels {
+    select_star_labels(options, sky, |cell| super::pixels::pixel_star_fits(cell, sky.viewport))
+}
+
 pub(crate) fn select_star_labels(options: &RenderOptions, sky: &ProjectedSky<'_>, eligible_cell: impl Fn(Cell) -> bool) -> StarLabels {
     let mut labels = StarLabels { indices: [0; DYNAMIC_NAME_COUNT], start: 0, end: 0, examined: 0, regions: 0, eligible: 0 };
     if !options.dynamic_names || DYNAMIC_NAME_COUNT == 0 { return labels; }

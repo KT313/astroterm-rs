@@ -11,7 +11,7 @@ pub struct LocalTime {
     pub zone: String,
 }
 
-use crate::model::ObserverTimeZone;
+use super::ObserverTimeZone;
 
 pub fn resolve_observer_timezone(observer: &Observer) -> ObserverTimeZone {
     #[cfg(unix)]

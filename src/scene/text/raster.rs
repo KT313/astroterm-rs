@@ -8,9 +8,20 @@ use unicode_width::UnicodeWidthChar;
 
 const FONT: &[u8] = include_bytes!("../../../data/fonts/DejaVuSansMono.ttf");
 
-use crate::model::Glyph;
+/// Font handle and glyph masks at one cell size. Masks are cleared on resize, bypass, or the existing 512-glyph
+/// bound. Coverage bytes are owned here.
+pub struct TextRasterizer {
+    pub(crate) font: Font,
+    pub(crate) glyphs: HashMap<char, Glyph>,
+    pub(crate) cell: (u16, u16),
+    pub(crate) size: f32,
+    pub(crate) baseline: f32,
+}
 
-use crate::state::TextRasterizer;
+pub(crate) struct Glyph {
+    pub(crate) metrics: fontdue::Metrics,
+    pub(crate) coverage: Vec<u8>,
+}
 
 /// Discard computed glyph masks in bypass mode; within-frame reuse remains permitted.
 pub fn begin_text_frame(state: &mut TextRasterizer, reuse_assets: bool) {

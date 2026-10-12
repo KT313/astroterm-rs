@@ -1,10 +1,28 @@
 //! One-shot direct evaluation retained for reference fixtures and library compatibility. The runtime frame loop
 //! owns persistent SimulationState and invokes simulation, observation and projection explicitly.
 use crate::state::{SimulationState};
-use crate::model::{Sky, FrameTime};
-use super::{observe_sky, prepare_observation, update_solar_system};
+use crate::model::{Sky, FrameTime, ObservedSky, ObservedStar};
+use super::{observe_sky, prepare_observation, update_solar_system, prepare_catalog};
 use crate::astro::{Observer, refract_direction};
 use crate::timing::StepTimes;
+use std::sync::Arc;
+
+/// Build a zero-position sky for fixtures, including prepared catalog data.
+pub fn create_sky_from_catalog(catalog: &crate::catalog::Catalog) -> std::io::Result<ObservedSky> {
+    let catalog = Arc::new(prepare_catalog(catalog)?.catalog);
+    let mut sky = ObservedSky::new(catalog);
+    sky.stars = sky
+        .catalog
+        .stars
+        .iter()
+        .enumerate()
+        .map(|(index, star)| {
+            ObservedStar::from_star(&star, index, crate::astro::Horizontal::default().to_unit_vector())
+        })
+        .collect();
+    sky.corrections.evaluated = sky.stars.len();
+    Ok(sky)
+}
 
 pub fn update_sky_positions(
     sky: &mut Sky,

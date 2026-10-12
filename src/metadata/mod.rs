@@ -2,6 +2,8 @@
 //! time and speed, and view settings. How the fields are laid out is up to the renderer.
 
 mod local_time;
+mod records;
+pub use records::{ObserverTimeZone, MetadataField, StarCounts};
 
 use chrono::{Datelike, Timelike};
 
@@ -13,10 +15,7 @@ use crate::model::{ProjectionKind, View, ViewCenter};
 use crate::timing::StepTime;
 
 use local_time::LocalTime;
-use crate::model::ObserverTimeZone;
 pub use local_time::{convert_observer_time, resolve_observer_timezone};
-
-use crate::model::MetadataField;
 
 /// The metadata fields for the simulation time `julian_date_utc`. `unicode` allows symbols such as the zodiac sign's.
 pub fn collect_metadata_fields(
@@ -128,7 +127,7 @@ fn append_metadata_fields(
 }
 
 /// Append the four already-published counters; never inspect catalog or projected rows here.
-pub fn append_star_count_fields(fields: &mut Vec<MetadataField>, counts: &crate::model::StarCounts) {
+pub fn append_star_count_fields(fields: &mut Vec<MetadataField>, counts: &StarCounts) {
     for (label, value) in [("Stars loaded", counts.loaded), ("In candidate regions", counts.candidate_regions),
         ("Passed filter", counts.filtered), ("Passed projection", counts.projected)] {
         fields.push(create_field(label, format!("{} stars", format_star_count(value))));
@@ -230,7 +229,7 @@ mod tests {
         }
         assert_eq!(format_star_count(usize::MAX).replace(',', ""), usize::MAX.to_string());
         let mut fields = Vec::new();
-        append_star_count_fields(&mut fields, &crate::model::StarCounts { loaded: 10221029, candidate_regions: 1000000, filtered: 1000, projected: 0 });
+        append_star_count_fields(&mut fields, &StarCounts { loaded: 10221029, candidate_regions: 1000000, filtered: 1000, projected: 0 });
         assert_eq!(fields.iter().map(|f| (f.label.as_str(), f.value.as_str())).collect::<Vec<_>>(),
             [("Stars loaded", "10,221,029 stars"), ("In candidate regions", "1,000,000 stars"),
             ("Passed filter", "1,000 stars"), ("Passed projection", "0 stars")]);

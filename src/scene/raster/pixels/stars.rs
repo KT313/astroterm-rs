@@ -2,8 +2,35 @@
 use crate::constants::{MAX_IMAGE_PIXELS, MIN_STAR_PIXEL_OPACITY,
     STAR_OPACITY_REFERENCE_MAGNITUDE, STAR_OPACITY_MAGNITUDE_SCALE, MIN_FOV_DEGREES,
     STAR_BRIGHTNESS_REFERENCE_FOV_DEGREES, STAR_BRIGHTNESS_ZOOM_POWER};
-use crate::model::{Cell, PixelStarKey, ProjectedSky, ProjectionViewport, RenderOptions, StarColor, StarOpacityTable, StarPixel};
+use crate::model::{Cell, ProjectionViewport, StarColor};
+use crate::rows::row_columns;
 use tiny_skia::Pixmap;
+
+/// One premultiplied star pixel: each RGB channel is already multiplied by the opacity, so blending needs no division.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct StarPixel {
+    pub(crate) rgb: [f32; 3],
+    pub(crate) opacity: f32,
+}
+row_columns!(StarPixel { rgb, opacity });
+// rgb = red/green/blue times opacity, each in 0..=opacity; opacity = combined star coverage in 0..1.
+
+/// Star opacity per catalog magnitude code (thousandths of a magnitude above -10), built for one zoom boost.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct StarOpacityTable {
+    pub(crate) zoom_boost: f64,                                                        // 0 until built; real boosts are at least 1
+    pub(crate) opacities: Vec<f32>,
+}
+
+/// One star as the pixel raster reads it: compact like the regional drawn records, decoded through the opacity
+/// table and the palette while blending.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PixelStarKey {
+    pub(crate) cell: (i32, i32),
+    pub(crate) magnitude: u16, // catalog magnitude code
+    pub(crate) color: u8,      // palette index
+}
+row_columns!(PixelStarKey { cell, magnitude, color });
 
 /// One opacity per catalog magnitude code: thousandths of a magnitude from -10.000 through 55.535.
 const OPACITY_TABLE_LEN: usize = u16::MAX as usize + 1;
@@ -20,11 +47,6 @@ const UNIT_LEVELS: [f32; 256] = {
 #[inline]
 pub(crate) fn pixel_star_fits((y, x): Cell, viewport: ProjectionViewport) -> bool {
     x > 0 && y > 0 && (x as usize) < viewport.width && (y as usize) < viewport.height
-}
-
-/// Keep global label selection independent of regional painting order; omit undrawable edge stars.
-pub(crate) fn select_pixel_star_labels(options: &RenderOptions, sky: &ProjectedSky<'_>) -> crate::scene::StarLabels {
-    crate::scene::select_star_labels(options, sky, |cell| pixel_star_fits(cell, sky.viewport))
 }
 
 pub(in crate::scene) fn initialize_star_layer(layer: &mut Vec<StarPixel>, viewport: ProjectionViewport) -> Option<()> {

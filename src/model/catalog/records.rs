@@ -1,7 +1,34 @@
-//! Immutable prepared catalog data.
-use crate::model::{Star, StarStorage, Constellation, SkyGrid};
-use crate::catalog::StarNames;
+//! Immutable prepared catalog data and the catalog records it is made of.
+use crate::model::{StarStorage, SkyGrid};
+use crate::astro::models::stars::StellarMotion;
+use crate::catalog::{NameId, StarId, StarNames};
+use crate::rows::row_columns;
 use std::sync::Arc;
+
+/// A catalog star.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Star {
+    pub id: StarId,
+    /// Display label: proper name when available, otherwise a catalog identifier.
+    pub name: Option<NameId>,
+    pub motion: StellarMotion,
+    /// Catalog magnitude at J2000; evaluated magnitude belongs to ObservedStar.
+    pub magnitude: f64,
+    pub brightness_key: f64,
+    pub display_color: crate::model::StarColor,
+    /// Whether the catalog has data for this star (a few catalog numbers are empty placeholders).
+    pub has_data: bool,
+}
+
+
+
+/// A constellation figure as segments between indices into the star table.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Constellation {
+    pub abbreviation: &'static str,
+    pub segments: Vec<[usize; 2]>,
+}
+row_columns!(Constellation { abbreviation, segments });
 
 /// Immutable model inputs and display metadata, shared by all observed skies.
 #[derive(Clone, Debug, PartialEq)]

@@ -1,5 +1,5 @@
 //! Prepare immutable star storage and resolve constellation indices once.
-use crate::model::{ObservedStar, ObservedSky, SkyCatalog, PreparedCatalog, CatalogPreparation};
+use crate::model::{SkyCatalog, PreparedCatalog, CatalogPreparation};
 use super::{grid, preparation::{prepare_compact_stars, sort_stars_by_region_and_brightness, create_sort_pool, index_representative_ids, index_representative_positions, resolve_constellation_figures, collect_constellation_endpoints, collect_endpoint_ids}};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -82,24 +82,6 @@ pub(super) fn finish_catalog_with_pool(mut stars: crate::model::StarStorage, mut
     progress.finish_stage(Outcome::Complete);
     Ok(PreparedCatalog { catalog, preparation: CatalogPreparation { motion_bounds: bounds } })
 }
-
-/// Build a zero-position sky for fixtures, including prepared catalog data.
-pub fn create_sky_from_catalog(catalog: &Catalog) -> std::io::Result<ObservedSky> {
-    let catalog = Arc::new(prepare_catalog(catalog)?.catalog);
-    let mut sky = ObservedSky::new(catalog);
-    sky.stars = sky
-        .catalog
-        .stars
-        .iter()
-        .enumerate()
-        .map(|(index, star)| {
-            ObservedStar::from_star(&star, index, crate::astro::Horizontal::default().to_unit_vector())
-        })
-        .collect();
-    sky.corrections.evaluated = sky.stars.len();
-    Ok(sky)
-}
-
 
 /// Validate custom definitions and derive their endpoint list once before sharing them read-only.
 pub fn prepare_constellation_set(figures: Vec<crate::model::Constellation>, star_count: usize) -> std::io::Result<Arc<crate::model::ConstellationSet>> {

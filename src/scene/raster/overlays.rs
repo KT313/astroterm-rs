@@ -42,7 +42,7 @@ pub fn draw_azimuthal_grid(canvas: &mut Canvas, options: &RenderOptions) {
 
 /// Draw N, E, S and W at the edges of the zenith view. East is on the left, as seen looking up.
 pub fn draw_cardinal_directions(canvas: &mut Canvas, options: &RenderOptions) {
-    let color = options.select_color(Some(Color::Blue));
+    let color = crate::model::select_color(options, Some(Color::Blue));
     let (height, width) = (canvas.height() as i32, canvas.width() as i32);
     let half_rows = (f64::from(height - 1) / 2.0).round() as i32;
     let half_cols = (f64::from(width - 1) / 2.0).round() as i32;
@@ -62,7 +62,7 @@ pub fn draw_horizon_line(canvas: &mut Canvas, options: &RenderOptions, lines: &[
 
 /// Draw prepared compass and vertical labels.
 pub fn draw_horizon_labels(canvas: &mut Canvas, options: &RenderOptions, labels: &[((i32, i32), &'static str)]) {
-    let color = options.select_color(Some(Color::Blue));
+    let color = crate::model::select_color(options, Some(Color::Blue));
     for &((row, col), label) in labels {
         canvas.put_str_truncated(row, col, label, color);
     }

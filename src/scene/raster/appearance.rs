@@ -24,7 +24,7 @@ pub fn select_star_appearance<'a>(star: &Star, names: &'a StarNames) -> Appearan
         ascii: STAR_GLYPHS_ASCII[glyph_index],
         unicode: STAR_GLYPHS_UNICODE[glyph_index],
         label: names.get(star.name()),
-        color: star.display_color().terminal_color(),
+        color: crate::model::terminal_color(star.display_color()),
     }
 }
 
@@ -91,7 +91,7 @@ mod tests {
         let mut entry = load_embedded_catalog().unwrap().stars.remove(0);
         entry.spectral_type = spectral_type;
         entry.color_index = color_index;
-        crate::sky::prepare_star(&entry).display_color.terminal_color()
+        crate::model::terminal_color(crate::sky::prepare_star(&entry).display_color)
     }
 
     #[test]

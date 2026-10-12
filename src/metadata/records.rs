@@ -1,4 +1,4 @@
-//! Stored display fields and loaded observer timezone rules.
+//! The records the metadata module produces: display fields, star counters and loaded observer timezone rules.
 use crate::rows::row_columns;
 
 /// Zone rules loaded once for a fixed observer. Historical/future rules are those provided by the IANA database.

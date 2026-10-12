@@ -1,7 +1,8 @@
 //! Validated application settings, independent of CLI parsing and terminal operations.
 use crate::catalog::datasets::Dataset;
 use crate::astro::Observer;
-use crate::model::{View, RenderOptions};
+mod view;
+pub use view::{ViewCenter, ProjectionKind, View, Cell, ProjectionViewport, RenderOptions};
 
 /// Everything the application needs to run.
 #[derive(Clone, Debug, PartialEq)]

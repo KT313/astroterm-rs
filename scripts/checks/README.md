@@ -1,5 +1,11 @@
 # Terminal and performance checks
 
+Foundation boundary (pipeline restructuring, chunk 3): `python3 scripts/checks/foundation_imports.py` fails when a
+module on the keep list of `dev/pipeline-restructuring-plan.md` section 3 imports from the state, scene, canvas,
+helpers, projection-caching, sky-observation/selection/simulation or model-celestial/presentation modules. Test
+code is skipped (files declared with `#[cfg(test)] mod x;`, `tests.rs`, `*_tests.rs`, and everything after a bare
+`#[cfg(test)]` line). `--list` prints the files it checks. It must pass before every commit on the branch.
+
 Pixel checks and the phase-7 prototype:
 
 ```sh

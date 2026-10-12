@@ -1,7 +1,24 @@
 //! Copy the frame's RGB into a named POSIX object; no mappings or terminal-input reader are needed in the frame loop.
-use std::{io, fmt::Write as _};
-use crate::state::SharedMemoryImage;
+use std::{io, fmt::Write as _, ffi::CString, fs::File};
 use ratatui_image::picker::cap_parser::Parser;
+
+/// One named transport resource. Drop is necessary to unlink the OS name on errors and unwinding.
+pub(crate) struct SharedMemoryImage {
+    pub name: CString,
+    pub file: File,
+    pub bytes: usize,
+}
+
+impl Drop for SharedMemoryImage {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if self.file.metadata().is_ok_and(|metadata| metadata.nlink() == 0) { return; }
+            let _ = rustix::shm::unlink(self.name.as_c_str()); // clean up failed or unconsumed transfers
+        }
+    }
+}
 
 #[cfg(unix)]
 pub(crate) fn create_shared_image(rgb: &[u8]) -> io::Result<SharedMemoryImage> {

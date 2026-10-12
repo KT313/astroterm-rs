@@ -10,6 +10,7 @@ mod diagnostics;
 pub use diagnostics::{CaptureDisplay, CaptureGeometry, capture_display};
 
 pub use rendering::{Renderer, open_terminal_renderer};
+pub(crate) use transport::graphics::kitty::SharedMemoryImage;
 pub use transport::{TerminalSession, open_terminal_session, detect_cell_aspect_ratio, fit_square_viewport};
 pub use input::{FrameInput, poll_frame_input, format_key_bindings_help, key_to_control};
 pub use transport::graphics::{IMAGE_ID, compose_halfblocks, compose_image, encode_image, present_frame,

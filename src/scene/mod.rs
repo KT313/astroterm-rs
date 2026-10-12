@@ -12,12 +12,13 @@ pub use raster::{
     select_star_appearance,
 };
 pub use raster::pixels::draw_pixel_sky;
-pub use text::{begin_text_frame, create_text_rasterizer, draw_metadata_panel, draw_text, paint_text_buffer, set_text_cell_size};
+pub use text::{begin_text_frame, create_text_rasterizer, draw_metadata_panel, draw_text, paint_text_buffer, set_text_cell_size, TextRasterizer};
+pub(crate) use text::Glyph;
 
 pub(crate) use pipeline::draw_characters_with_times;
 pub(crate) use diagnostics::memory::describe_canvas;
 pub(crate) use pipeline::draw_sky_scene_with_times;
-pub(crate) use raster::{select_dynamically_named_stars, select_star_labels, StarLabels};
+pub(crate) use raster::{select_dynamically_named_stars, select_pixel_star_labels};
 pub(crate) use raster::pixels::planet_rgb;
-pub(crate) use raster::pixels::{star_rgb, pixel_star_fits, select_pixel_star_labels};
+pub(crate) use raster::pixels::{star_rgb, pixel_star_fits, StarPixel, StarOpacityTable, PixelStarKey};
 pub(crate) use text::paint_text_buffer_with_times;

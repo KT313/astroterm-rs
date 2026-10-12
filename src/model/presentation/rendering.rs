@@ -1,31 +1,21 @@
 //! Render settings and cached display/key records.
 use crate::rows::row_columns;
 use crate::canvas::{Canvas, Color};
-use crate::model::{ProjectedPlanet, ProjectedMoon, ProjectedConstellation, ProjectionViewport as Viewport};
+use crate::model::{ProjectedPlanet, ProjectedMoon, ProjectedConstellation, ProjectionViewport as Viewport, RenderOptions, StarColor};
+use crate::scene::PixelStarKey;
 
-/// Rendering choices that apply to the whole scene.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct RenderOptions {
-    /// Use Unicode glyphs instead of ASCII.
-    pub unicode: bool,
-    /// Draw constellation lines with braille dots (requires `unicode`).
-    pub braille: bool,
-    /// Use terminal colors.
-    pub color: bool,
-    /// Draw constellation stick figures.
-    pub constellations: bool,
-    /// Draw an azimuthal grid in the overhead view (instead of compass letters).
-    pub grid: bool,
-    /// Only draw stars at least this bright (magnitude at most this value).
-    pub magnitude_threshold: f64,
-    /// Label up to DYNAMIC_NAME_COUNT brightest visible stars, independently of solar-system labels.
-    pub dynamic_names: bool,
+/// The color to draw with, if colors are enabled.
+pub(crate) fn select_color(options: &RenderOptions, color: Option<Color>) -> Option<Color> {
+    if options.color { color } else { None }
 }
 
-impl RenderOptions {
-    /// The color to draw with, if colors are enabled.
-    pub(crate) fn select_color(&self, color: Option<Color>) -> Option<Color> {
-        if self.color { color } else { None }
+/// Terminal colour of a palette entry, for the character renderer.
+pub(crate) fn terminal_color(color: StarColor) -> Option<Color> {
+    match color {
+        StarColor::HotBlue | StarColor::BlueWhite => Some(Color::Cyan),
+        StarColor::Orange => Some(Color::Yellow),
+        StarColor::RedOrange => Some(Color::Red),
+        _ => None,
     }
 }
 
@@ -64,32 +54,6 @@ pub(crate) struct SceneKey {
     pub(crate) labels: Vec<((i32, i32), &'static str)>,
 }
 
-/// One premultiplied star pixel: each RGB channel is already multiplied by the opacity, so blending needs no division.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub(crate) struct StarPixel {
-    pub(crate) rgb: [f32; 3],
-    pub(crate) opacity: f32,
-}
-row_columns!(StarPixel { rgb, opacity });
-// rgb = red/green/blue times opacity, each in 0..=opacity; opacity = combined star coverage in 0..1.
-
-/// Star opacity per catalog magnitude code (thousandths of a magnitude above -10), built for one zoom boost.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub(crate) struct StarOpacityTable {
-    pub(crate) zoom_boost: f64,                                                        // 0 until built; real boosts are at least 1
-    pub(crate) opacities: Vec<f32>,
-}
-
-/// One star as the pixel raster reads it: compact like the regional drawn records, decoded through the opacity
-/// table and the palette while blending.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct PixelStarKey {
-    pub(crate) cell: (i32, i32),
-    pub(crate) magnitude: u16, // catalog magnitude code
-    pub(crate) color: u8,      // palette index
-}
-row_columns!(PixelStarKey { cell, magnitude, color });
-
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct CharacterStarKey {
     pub(crate) cell: (i32, i32),
@@ -114,11 +78,6 @@ pub struct Appearance<'a> {
     pub unicode: char,
     pub label: Option<&'a str>,
     pub color: Option<Color>,
-}
-
-pub(crate) struct Glyph {
-    pub(crate) metrics: fontdue::Metrics,
-    pub(crate) coverage: Vec<u8>,
 }
 
 /// A sealed projection handoff: callers can read its sky but cannot replace data under its versions.

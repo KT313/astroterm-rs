@@ -8,11 +8,11 @@ mod configuration;
 
 pub use catalog::{
     SkyCatalog, CatalogPreparation, PreparedCatalog, ConstellationSet, StarException, SkyRegion, SelectionStats, SkyGrid,
-    hash_direction, STAR_SECTIONS, StarRow, StarRowSlice, StarRowVec, StarStorage,
+    hash_direction, STAR_SECTIONS, StarRow, StarRowSlice, StarRowVec, StarStorage, Star, Constellation, StarColor,
 };
 pub(crate) use catalog::{SelectedRegion, StellarFields, unsupported_star_data};
 pub use celestial::{
-    ObservedSkyView, ObservedPlanets, ObservedStars, RegionData, ApparentFrame, ObservedRegion, Star, SelectedStar, ObservedStar, ObservedStarState, ObservedStarView, PlanetKind, Planet, Moon, Constellation, create_planets, create_moon,
+    ObservedSkyView, ObservedPlanets, ObservedStars, RegionData, ApparentFrame, ObservedRegion, SelectedStar, ObservedStar, ObservedStarState, ObservedStarView, PlanetKind, Planet, Moon, create_planets, create_moon,
     CorrectionStats, ObservedSky, Sky, MoonIllumination, Anchor, ObserverState, FrameTime, ModelFamily, StateRequest,
     SimulationError, InterpolationLimits, PLANET_LIMITS, MOON_LIMITS, ORIENTATION_LIMITS, CachePolicy, RefreshCounts,
 };
@@ -21,16 +21,18 @@ pub(crate) use celestial::{
     ObservationBodyKey, Sample, SolarRequestKey,
 };
 pub use presentation::{
-    ViewCenter, ProjectionKind, ArcPart, View, ScreenPoint, CartesianCamera, Polar, Cell, ProjectionViewport,
+    ArcPart, ScreenPoint, CartesianCamera, Polar,
     ProjectedStar, ProjectedPlanet, ProjectedMoon, ProjectedArc, ProjectedConstellation, ProjectedSky,
-    ProjectionData, ProjectedStars, RenderOptions, TerminalViewport, Frame, Appearance, ObserverTimeZone,
-    MetadataField, StarCounts, StarColor, RenderProjection, RenderOutcome,
+    ProjectionData, ProjectedStars, TerminalViewport, Frame, Appearance, ObserverTimeZone,
+    MetadataField, StarCounts, RenderProjection, RenderOutcome,
 };
+pub(crate) use presentation::{select_color, terminal_color};
 pub(crate) use presentation::{
     DrawnStar, DrawnSpan, RegionalProjectionKey, RegionalOrderKey, RegionalDrawRecord, DrawRecord, StarKey, ProjectionBodyKey, ConstellationKey, HorizonGeometry,
     PixelLabel, PixelLabelKey, PixelTextKey, PixelTextCache, KittyDisplayKey, RenderResultVersion, PixelFrameKey, KittyEncodingKey, ProductionRasterKey, SceneKey, StarPixel, StarOpacityTable, PixelStarKey, CharacterStarKey, StarKeys, Glyph,
 };
-pub use configuration::{FrameBenchmarkConfig, Config, SimulationSettings, TerminalSettings, RendererKind, GraphicsProtocol};
+pub use configuration::{FrameBenchmarkConfig, Config, SimulationSettings, TerminalSettings, RendererKind, GraphicsProtocol,
+    ViewCenter, ProjectionKind, View, Cell, ProjectionViewport, RenderOptions};
 
 #[cfg(test)]
 pub(crate) use catalog::{interleave, direction, build_caps};

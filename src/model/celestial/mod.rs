@@ -8,7 +8,7 @@ mod objects;
 mod observation;
 mod simulation;
 pub use objects::{
-    Star, ObservedStar, ObservedStarState, ObservedStarView, PlanetKind, Planet, Moon, Constellation, create_planets, create_moon,
+    ObservedStar, ObservedStarState, ObservedStarView, PlanetKind, Planet, Moon, create_planets, create_moon,
 };
 pub use observation::{CorrectionStats, ObservedSky, Sky, MoonIllumination, Anchor, ObserverState};
 pub use simulation::{

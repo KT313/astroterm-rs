@@ -5,6 +5,7 @@ use crate::catalog::load_embedded_catalog;
 use crate::model::{Sky, ProjectionData, ProjectionViewport as Viewport, View};
 use crate::projection::project_sky;
 use crate::state::SceneCache;
+use crate::scene::select_pixel_star_labels;
 
 fn options() -> RenderOptions {
     RenderOptions { unicode: true, braille: true, color: true, constellations: true, grid: false,

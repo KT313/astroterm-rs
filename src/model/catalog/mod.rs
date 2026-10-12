@@ -2,7 +2,9 @@
 mod records;
 mod grid;
 mod storage;
-pub use records::{SkyCatalog, CatalogPreparation, PreparedCatalog, ConstellationSet, StarException};
+mod star_color;
+pub use records::{SkyCatalog, CatalogPreparation, PreparedCatalog, ConstellationSet, StarException, Star, Constellation};
+pub use star_color::StarColor;
 pub use grid::{SkyRegion, SelectionStats, SkyGrid, hash_direction};
 pub use storage::{STAR_SECTIONS, StarRow, StarRowSlice, StarRowVec, StarStorage};
 pub(crate) use storage::StellarFields;

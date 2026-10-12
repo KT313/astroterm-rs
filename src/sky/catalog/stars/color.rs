@@ -50,7 +50,7 @@ mod tests {
             for second in 0..=u8::MAX {
                 for value in values {
                     let color = classify_star_color([first, second], value);
-                    assert_eq!((color.rgb(), color.terminal_color()), original(first, value));
+                    assert_eq!((color.rgb(), crate::model::terminal_color(color)), original(first, value));
                     assert_eq!(StarColor::from_index(color.index()), Some(color));
                 }
             }

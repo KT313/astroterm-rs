@@ -3,7 +3,7 @@
 //! Both transports send RGB: a quarter fewer bytes to copy, compress, write and for the terminal to read.
 mod compression;
 mod shared_memory;
-pub(crate) use shared_memory::{create_shared_image, encode_shared_upload, wait_for_shared_consumption};
+pub(crate) use shared_memory::{SharedMemoryImage, create_shared_image, encode_shared_upload, wait_for_shared_consumption};
 
 use std::{
     fmt::Write as _,
