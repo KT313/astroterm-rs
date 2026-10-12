@@ -66,6 +66,10 @@ harness = false
 name = "spatial"
 harness = false
 
+[[bench]]
+name = "warp"
+harness = false
+
 # Debug builds keep file and line information (backtraces, perf) but not variable-level debug info: full debuginfo
 # made every test and example binary over 100 MB (101 MB of 121 MB for one integration test). For stepping through
 # variables in a debugger, build once with CARGO_PROFILE_DEV_DEBUG=full.
