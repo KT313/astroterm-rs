@@ -166,10 +166,11 @@ been removed. Independent accuracy checks are documented in
 Stars use four-texel dots in their sky tiles, enlarged when zoomed in. Within each group, stars blend from dim
 to bright current magnitude (ascending ID for ties); group images merge from slowest to fastest, weighting stored RGB by opacity while opacity accumulates source-over. Zooming in boosts each star’s opacity, capped at full opacity before blending; changing the boost redraws the selected tiles.
 Stars whose complete dot would cross the image boundary are omitted. The Sun, planets and Moon retain their sizes.
-The forward tile-mapping prototype projects four outer corners per merged region tile and draws two textured
-triangles. A temporary area-sum table averages texture rectangles when reducing the image; this keeps small
-stars from disappearing merely because they fall between point samples. Triangle edges retain fractional
-screen-pixel coverage, and overlapping regions blend source-over in their existing order.
+The forward tile-mapping prototype projects four outer corners per merged region tile and paints the
+quadrilateral between them row by row, each half through its own textured triangle. Every screen pixel averages
+the tile texels under its footprint by area; this keeps small stars from disappearing merely because they fall
+between point samples. Pixels on a tile's outline keep their fractional coverage and sample only the covered
+part, and overlapping regions blend source-over in their existing order.
 This prototype approximates curvature across a whole tile and uses rectangular rather than exact rotated
 filter footprints; positions and sharpness can differ from per-texel projection. Tiles crossing the antipodal
 projection singularity, or folding into nonconvex shapes, are skipped.

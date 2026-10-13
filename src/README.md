@@ -19,7 +19,7 @@ Bottom-up. Every module exposes its symbols from its root `mod.rs`; callers use 
 | `observation/` | step 2, `observe` |
 | `selection/` | step 3, `select_regions` |
 | `regions/` | step 4, `refresh_regions`: simulation caches, star appearance, tile geometry, group and region images |
-| `projection/` | step 5, `project_stars_to_screen`: whole-tile prototype (`tile_warp.rs`, `tile_sampling.rs`), triangle rasterizer (`raster.rs`), frame buffers (`frame.rs`), shared projection geometry (`geometry/`) |
+| `projection/` | step 5, `project_stars_to_screen`: whole-tile mapping (`tile_warp.rs`), texel sampling with the lit-bit skip (`tile_sampling.rs`), scanline quad rasterizer (`raster.rs`), frame buffers (`frame.rs`), shared projection geometry (`geometry/`) |
 | `points/` | step 6, `draw_points` |
 | `present/` | step 7, `present`, and `Display` (terminal session, protocol detection, frame layout) |
 | `terminal/` | startup progress display, raw-mode session, key and resize input, graphics encoders and protocol detection |

@@ -50,7 +50,7 @@ fn detail_is_hierarchical_bounded_and_preserves_the_rendered_frame() {
     for name in ["Planet light time", "Observer and orientation", "Brightness prefixes", "Group image rendering", "Region image merging", "Text rasterization", "Frame comparison"] {
         assert_eq!(detailed.steps().iter().filter(|step| step.name == name && step.depth == 1).count(), 1, "{name}");
     }
-    for name in ["Tile corner projection", "Triangle rasterization", "Tile composition"] {
+    for name in ["Tile corner projection", "Tile filter preparation", "Tile rasterization"] {
         assert_eq!(detailed.trace().unwrap().steps.iter().filter(|step| step.name == name).count(), 1, "{name}");
     }
     assert!(detailed.trace().unwrap().steps.len() < 70);                                  // no row per region or texel

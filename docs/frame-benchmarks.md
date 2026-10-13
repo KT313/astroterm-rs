@@ -76,8 +76,8 @@ in effect; use `--overwrite` explicitly. The helper is local development tooling
 
 The seven main stages have child rows in the live `--debug-frametimes` panel, single-frame traces and bounded
 frame captures. Region refresh separates brightness-prefix lookup, simulation caches, image cache decisions,
-group drawing and region merging. Whole-tile forward projection separates allocation, tile geometry, tile-corner
-projection, filter preparation, triangle rasterization, tile composition and scratch release. Output separates composition/comparison, RGB
+group drawing and region merging. Whole-tile forward projection separates the star layer clear, tile geometry,
+tile-corner projection, filter preparation and tile rasterization. Output separates composition/comparison, RGB
 conversion, shared-memory preparation/consumption, or encoding/upload for streaming protocols.
 
 Repeated region and texel passes publish one accumulated child row per pass per frame, in declared pass order,

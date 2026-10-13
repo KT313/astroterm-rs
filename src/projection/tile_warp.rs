@@ -1,16 +1,17 @@
 //! Four-corner forward mapping of each merged region tile. Only the outer corners go through the astronomy
 //! and camera formulas. Two textured triangles interpolate the interior, so curved edges are approximated.
-//! A temporary box filter averages texels during reduction; it approximates rotated pixel footprints by their
-//! texture-space bounding boxes. Region order and premultiplied source-over composition remain unchanged.
+//! The quad is painted row by row straight onto the star layer (`raster`), each pixel sampled once from the
+//! tile (`tile_sampling`): the texels under the pixel's footprint averaged by area, nothing where they are all
+//! empty. Region order and premultiplied source-over composition are unchanged.
 use crate::astro::Vector3;
 use crate::constants::TILE_EDGE_TEXELS;
 use crate::model::{Data, Texel, View};
 use crate::observation::Observation;
 use crate::projection::{CartesianCamera, Frame, SkyArea, prepare_camera, project_camera};
-use crate::regions::TileGeometry;
+use crate::regions::{TileGeometry, blend_star};
 use crate::selection::Selected;
 use crate::timing::StepTimes;
-use super::raster::{Point, TileRaster};
+use super::raster::{Point, scan_quad};
 use super::tile_sampling::TileSampler;
 
 pub(super) fn project_whole_tiles(frame: &mut Frame, data: &Data, selected: &Selected, observation: &Observation, view: &View, times: &mut StepTimes) {
@@ -20,34 +21,27 @@ pub(super) fn project_whole_tiles(frame: &mut Frame, data: &Data, selected: &Sel
     if width == 0 || height == 0 || sky.size < 2 { return; }
     let camera = times.measure_detail("Camera preparation", || prepare_camera(view));
 
-    // Reuse these temporary buffers between regions; no projected result is cached between frames.
-    let mut raster = times.measure_detail("Raster scratch allocation", || TileRaster::new(width, height, sky));
-    let mut sampler = times.measure_detail("Tile filter allocation", || TileSampler::new(TILE_EDGE_TEXELS));
+    // One sampler for every region; no projected result is cached between frames.
+    let mut sampler = TileSampler::new(TILE_EDGE_TEXELS);
     let mut passes = times.detail_batch([
         "Tile geometry",
         "Tile corner projection",
         "Tile filter preparation",
-        "Triangle rasterization",
-        "Tile composition",
+        "Tile rasterization",
     ]);
 
-    // Project each tile once, sample its two triangles, then blend the complete region onto the frame.
+    // Project each tile's corners once, then paint its quad onto the frame.
     for &region in &selected.regions {
         let image = &data.star_regions[region].merged_tile;
         if image.is_empty() || image.lit_rows().iter().all(|&row| row == 0) { continue; }
         let geometry = passes.measure(0, || TileGeometry::new(region));
         let corners = passes.measure(1, || project_tile_corners(&geometry, observation, camera, sky));
         let Some(corners) = corners else { continue; };
-
-        passes.measure(2, || sampler.prepare(image.texels()));
-        passes.measure(3, || draw_tile(&mut raster, corners, &sampler));
-        passes.measure(4, || raster.composite(frame.stars_mut()));
+        let Some(mappings) = texture_mappings(corners) else { continue; };
+        passes.measure(2, || sampler.prepare(image.lit_rows()));
+        passes.measure(3, || draw_tile(frame.stars_mut(), width, height, sky, corners, &mappings, &sampler, image.texels()));
     }
     passes.publish(times);
-
-    // Include buffer release in the timing breakdown.
-    times.measure_detail("Raster scratch release", || drop(raster));
-    times.measure_detail("Tile filter release", || drop(sampler));
 }
 
 /// Project the four outer texture boundaries. Skip tiles crossing the back singularity or folding over
@@ -99,20 +93,48 @@ fn is_convex(corners: [Point; 4]) -> bool {
         && (turns.iter().all(|&turn| turn > 0.0) || turns.iter().all(|&turn| turn < 0.0))
 }
 
-fn draw_tile(raster: &mut TileRaster, corners: [Point; 4], sampler: &TileSampler) {
-    // Match the screen corners to the boundaries of the full texture.
+/// The affine mappings of the quad's two triangles (corners 0, 1, 2 and 0, 2, 3) onto the full texture.
+fn texture_mappings(corners: [Point; 4]) -> Option<[TextureMapping; 2]> {
     let edge = TILE_EDGE_TEXELS as f64;
     let texture = [[0.0, 0.0], [edge, 0.0], [edge, edge], [0.0, edge]];
+    let mapping = |indices: [usize; 3]| TextureMapping::new(indices.map(|index| corners[index]), indices.map(|index| texture[index]));
+    Some([mapping([0, 1, 2])?, mapping([0, 2, 3])?])
+}
 
-    // Accumulate both halves into the same tile layer, avoiding a double blend along the diagonal.
-    for indices in [[0, 1, 2], [0, 2, 3]] {
-        let screen_triangle = indices.map(|index| corners[index]);
-        let texture_triangle = indices.map(|index| texture[index]);
-        let Some(mapping) = TextureMapping::new(screen_triangle, texture_triangle) else { continue; };
-        raster.draw_textured_triangle(screen_triangle, |pixel| {
-            sampler.sample(mapping.texture_position(pixel), mapping.footprint)
-        });
-    }
+/// Paint the quad row by row: every pixel samples the tile once, through the mapping of the triangle it lies
+/// in, and blends source-over onto the star layer with its coverage. Whole pixels step through the tile at a
+/// constant pace along the row; outline pixels are resolved only when a lit texel lies under them at all.
+#[allow(clippy::too_many_arguments)]
+fn draw_tile(stars: &mut [Texel], width: usize, height: usize, sky: SkyArea, corners: [Point; 4], mappings: &[TextureMapping; 2], sampler: &TileSampler, texels: &[Texel]) {
+    scan_quad(corners, width, height, sky, |span| {
+        let row = &mut stars[span.row * width..][..width];
+        for (columns, triangle) in span.runs() {
+            if columns.is_empty() { continue; }
+            let mapping = &mappings[triangle];
+            let [mut u, mut v] = mapping.texture_position([columns.start as f64, span.row as f64]);
+            for column in columns {
+                if let Some(rgba) = sampler.sample(texels, [u, v], mapping.footprint) {          // the whole pixel; outline pixels use it as a quick rejection
+                    let (rgba, coverage) = if span.is_whole(column) { (rgba, 1.0) } else {
+                        match span.edge_pixel(column) {
+                            Some(edge) => match sampler.sample(texels, mapping.texture_position(edge.centre), mapping.footprint_of(edge.size)) {
+                                Some(rgba) => (rgba, edge.coverage),
+                                None => (rgba, 0.0),
+                            },
+                            None => (rgba, 0.0),
+                        }
+                    };
+                    if coverage > 0.0 {
+                        let texel = &mut row[column];
+                        blend_star(texel, [rgba[0] * coverage, rgba[1] * coverage, rgba[2] * coverage], rgba[3] * coverage);
+                        texel.rgb = texel.rgb.map(|value| value.min(1.0));                        // absorb last-bit rounding of the blend at opaque pixels
+                        texel.opacity = texel.opacity.min(1.0);
+                    }
+                }
+                u += mapping.per_screen_x[0];
+                v += mapping.per_screen_x[1];
+            }
+        }
+    });
 }
 
 /// Affine screen-to-texture mapping for one triangle. Derivatives are calculated once per triangle, not pixel.
@@ -145,6 +167,11 @@ impl TextureMapping {
         if footprint.iter().any(|value: &f64| !value.is_finite()) { return None; }
 
         Some(Self { screen_origin: screen[0], texture_origin: texture[0], per_screen_x, per_screen_y, footprint })
+    }
+
+    /// The texture box of a screen rectangle of `size` pixels (the footprint is that of a whole pixel).
+    fn footprint_of(&self, size: Point) -> Point {
+        std::array::from_fn(|axis| self.per_screen_x[axis].abs() * size[0] + self.per_screen_y[axis].abs() * size[1])
     }
 
     fn texture_position(&self, pixel: Point) -> Point {
@@ -191,36 +218,51 @@ mod tests {
         assert!(!is_convex([[0.0, 0.0], [1.0, 1.0], [0.0, 1.0], [1.0, 0.0]]));
     }
 
+    /// Paint one tile onto a 9 × 9 all-sky frame.
+    fn paint(frame: &mut [Texel], corners: [Point; 4], texels: &[Texel]) {
+        let mappings = texture_mappings(corners).unwrap();
+        let mut sampler = TileSampler::new(TILE_EDGE_TEXELS);
+        sampler.prepare(&super::super::tile_sampling::lit_rows_of(texels, TILE_EDGE_TEXELS));
+        draw_tile(frame, 9, 9, SkyArea { x: 0, y: 0, size: 9 }, corners, &mappings, &sampler, texels);
+    }
+    fn close(actual: Texel, expected: Texel) {
+        for (a, b) in actual.rgb.into_iter().chain([actual.opacity]).zip(expected.rgb.into_iter().chain([expected.opacity])) {
+            assert!((a - b).abs() < 1e-6, "{actual:?} != {expected:?}");
+        }
+    }
+
     #[test]
     fn a_whole_tile_reduced_to_one_pixel_keeps_off_center_star_light() {
         let edge = TILE_EDGE_TEXELS;
         let mut texels = vec![Texel::default(); edge * edge];
         texels[0] = Texel { rgb: [0.8, 0.4, 0.2], opacity: 0.8 };
-        let mut sampler = TileSampler::new(edge);
-        sampler.prepare(&texels);
-        let mut raster = TileRaster::new(9, 9, SkyArea { x: 0, y: 0, size: 9 });
         let mut frame = vec![Texel::default(); 81];
-        draw_tile(&mut raster, [[3.5, 3.5], [4.5, 3.5], [4.5, 4.5], [3.5, 4.5]], &sampler);
-        raster.composite(&mut frame);
-        let expected = texels[0].scaled(1.0 / (edge * edge) as f32);
-        assert_eq!(frame[40], expected);
+        paint(&mut frame, [[3.5, 3.5], [4.5, 3.5], [4.5, 4.5], [3.5, 4.5]], &texels);
+        close(frame[40], texels[0].scaled(1.0 / (edge * edge) as f32));
         assert_eq!(frame.iter().filter(|texel| !texel.is_empty()).count(), 1);
     }
 
     #[test]
-    fn two_triangles_cover_once_and_region_layers_keep_source_over_order() {
+    fn a_quad_covers_each_pixel_once_and_region_layers_keep_source_over_order() {
         let edge = TILE_EDGE_TEXELS;
-        let mut sampler = TileSampler::new(edge);
-        let mut raster = TileRaster::new(9, 9, SkyArea { x: 0, y: 0, size: 9 });
         let mut frame = vec![Texel::default(); 81];
         let corners = [[2.5, 2.5], [5.5, 2.5], [5.5, 5.5], [2.5, 5.5]];
         for color in [[0.5, 0.0, 0.0], [0.0, 0.0, 0.5]] {
-            sampler.prepare(&vec![Texel { rgb: color, opacity: 0.5 }; edge * edge]);
-            draw_tile(&mut raster, corners, &sampler);
-            raster.composite(&mut frame);
+            paint(&mut frame, corners, &vec![Texel { rgb: color, opacity: 0.5 }; edge * edge]);
         }
-        assert_eq!(frame[40], Texel { rgb: [0.25, 0.0, 0.5], opacity: 0.75 });
+        close(frame[40], Texel { rgb: [0.25, 0.0, 0.5], opacity: 0.75 });                  // the second tile over the first, not four half-blends
+        assert_eq!(frame.iter().filter(|texel| !texel.is_empty()).count(), 9);
         assert!(frame[0].is_empty());
+
+        let mut magnified = vec![Texel::default(); 81];
+        let mut texels = vec![Texel::default(); edge * edge];
+        texels[32 * edge + 31] = Texel { rgb: [1.0, 1.0, 1.0], opacity: 1.0 };              // one lit texel just left of and below the middle
+        paint(&mut magnified, [[-100.0, -100.0], [108.0, -100.0], [108.0, 108.0], [-100.0, 108.0]], &texels); // 3.25 pixels per texel
+        let lit: Vec<_> = magnified.iter().enumerate().filter(|(_, texel)| !texel.is_empty()).map(|(index, _)| (index / 9, index % 9)).collect();
+        assert!(!lit.is_empty() && lit.iter().all(|&(row, column)| (2..=8).contains(&row) && (0..=5).contains(&column)), "{lit:?}"); // the texel, spread one texel wide by the filter
+        let brightest = magnified.iter().enumerate().max_by(|a, b| a.1.opacity.total_cmp(&b.1.opacity)).map(|(index, _)| (index / 9, index % 9)).unwrap();
+        assert!((5..=6).contains(&brightest.0) && (2..=3).contains(&brightest.1), "{brightest:?}");   // the texel's centre lands at (5.6, 2.4)
+        assert!(magnified.iter().all(|texel| texel.opacity <= 1.0 && texel.rgb.iter().all(|&c| c <= 1.0)));
     }
 
     #[test]
@@ -254,7 +296,8 @@ mod tests {
             assert!(total > 0.0);
             assert!((center[0] / total - expected[0]).abs() < 3.0 && (center[1] / total - expected[1]).abs() < 3.0,
                 "{fov}: center {center:?} / {total}, expected {expected:?}");
-            assert!(frame.stars().iter().all(|texel| texel.opacity.is_finite() && texel.opacity <= 1.0));
+            let worst = frame.stars().iter().enumerate().filter(|(_, texel)| !(texel.opacity.is_finite() && texel.opacity <= 1.0)).map(|(index, texel)| (index / 401, index % 401, *texel)).next();
+            assert!(worst.is_none(), "{fov}: {worst:?}");
 
             project_whole_tiles(&mut frame, &data, &Selected { regions: Vec::new(), whole_sky: false }, &observation, &view, &mut StepTimes::default());
             assert!(frame.stars().iter().all(|texel| texel.is_empty()));
@@ -299,3 +342,4 @@ mod tests {
         }
     }
 }
+
