@@ -18,17 +18,11 @@ use super::raster::Point;
 use super::tile_sampling::TileSampler;
 use super::tile_warp::{contains_antipode, is_convex};
 
-/// Select adaptive stereographic geometry; equidistant retains its existing straight renderer.
+/// Adapt tile meshes using the selected stereographic or equidistant camera formula.
 #[allow(dead_code)] // backend selection is one call in projection/mod.rs
 pub(super) fn project_adaptive_tiles(
     frame: &mut Frame, data: &Data, selected: &Selected, observation: &Observation, view: &View, times: &mut StepTimes,
 ) {
-    // Keep -e outside the scope of this prototype.
-    if view.projection != ProjectionKind::Stereographic {
-        super::tile_warp::project_whole_tiles(frame, data, selected, observation, view, times);
-        return;
-    }
-
     // Prepare one camera and reuse temporary allocations across regions in this frame.
     times.measure_detail("Star layer clear", || frame.stars_mut().fill(Texel::default()));
     let (width, height, sky) = (frame.width(), frame.height(), frame.sky());
@@ -69,7 +63,7 @@ pub(super) fn project_adaptive_tiles(
     }
     passes.publish(times);
     times.describe("Adaptive mesh preparation", || format!(
-        "{} sky projections; maximum {}x{} cells per region; {} cells above target at limit; {} singular/folded cells omitted",
+        "{} sky projections; maximum {}x{} cells per region; {} cells above target at limit; {} unsafe cells omitted",
         totals.projections, totals.divisions, totals.divisions, totals.capped_cells, totals.skipped_cells,
     ));
 }
@@ -117,7 +111,13 @@ fn sample_vertex(projector: &TileProjector<'_>, samples: &mut HashMap<[usize; 2]
         let catalog = projector.tile.direction_of(key[0] as f64 * scale - 0.5, key[1] as f64 * scale - 0.5);
         let apparent = projector.observation.apparent_star_direction(catalog);
         let radius = (projector.sky.size as f64 - 1.0) * 0.5;
-        let screen = project_camera(projector.camera, apparent).and_then(|point| {
+        // The point renderer gives the exact equidistant antipode an arbitrary rim position. A tile vertex
+        // must not use that convention: approaching the same direction can reach any point on the rim.
+        let antipodal_vertex = projector.camera.kind == ProjectionKind::Equidistant
+            && projector.camera.forward.dot(apparent) < 0.0
+            && projector.camera.right.dot(apparent).hypot(projector.camera.up.dot(apparent)) < 1e-12;
+        let projected = if antipodal_vertex { None } else { project_camera(projector.camera, apparent) };
+        let screen = projected.and_then(|point| {
             let screen = [projector.sky.x as f64 + radius + radius * point.x, projector.sky.y as f64 + radius - radius * point.y];
             screen.iter().all(|value| value.is_finite()).then_some(screen)
         });
@@ -142,7 +142,8 @@ fn is_outside_view(projector: &TileProjector<'_>, corners: [Vertex; 4], center: 
 }
 
 /// Produce a conforming grid for one region. Reuse previously projected vertices while doubling resolution.
-/// Invalid cells are refined too; at the limit only those cells are omitted, preserving the rest of the tile.
+/// Invalid cells are refined too; at the limit they are omitted individually. Equidistant also omits cells
+/// still above the error target there, avoiding chords across its rear discontinuity.
 fn build_mesh(projector: &TileProjector<'_>, samples: &mut HashMap<[usize; 2], Vertex>, mesh: &mut Vec<Triangle>) -> MeshStats {
     // Refine per region rather than mixing cell sizes, so neighboring pieces cannot disagree along an edge.
     let mut divisions = 1;
@@ -188,6 +189,12 @@ fn build_mesh(projector: &TileProjector<'_>, samples: &mut HashMap<[usize; 2], V
                 if error > ADAPTIVE_WARP_ERROR_PIXELS {
                     refine = true;
                     stats.capped_cells += 1;
+                    // At 360 degrees the equidistant antipode is an entire rim, not one screen point.
+                    // Never bridge an unresolved piece with a large chord when the work limit is reached.
+                    if divisions == ADAPTIVE_WARP_MAX_SUBDIVISIONS && projector.camera.kind == ProjectionKind::Equidistant {
+                        stats.skipped_cells += 1;
+                        continue;
+                    }
                 }
 
                 // Keep texture coordinates in the full original image; no sub-images are copied or redrawn.
@@ -349,12 +356,11 @@ mod tests {
         project_adaptive_tiles(&mut frame, &data, &Selected { regions: vec![], whole_sky: false }, &observation, &view, &mut StepTimes::default());
         assert!(frame.stars().iter().all(|texel| texel.is_empty()));
 
-        // The unchanged -e branch still renders byte-for-byte like the straight backend.
+        // Equidistant uses the same adaptive drawing path and still produces finite, bounded pixels.
         let equidistant = View { projection: ProjectionKind::Equidistant, ..view };
         project_adaptive_tiles(&mut frame, &data, &selected, &observation, &equidistant, &mut StepTimes::default());
-        let expected = frame.stars().to_vec();
-        super::super::tile_warp::project_whole_tiles(&mut frame, &data, &selected, &observation, &equidistant, &mut StepTimes::default());
-        assert_eq!(frame.stars(), expected);
+        assert!(frame.stars().iter().any(|texel| texel.opacity > 0.0));
+        assert!(frame.stars().iter().all(|texel| texel.opacity.is_finite() && texel.opacity <= 1.0));
     }
     #[test]
     #[ignore = "timing only; uses embedded BSC5 and synthetic dense tiles, never external datasets"]
@@ -393,6 +399,83 @@ mod tests {
                 for step in detail.steps().iter().filter(|step| matches!(step.name, "Adaptive mesh preparation" | "Tile filter preparation" | "Tile rasterization" | "Tile composition")) {
                     eprintln!("  {}: {:.3}ms (separate traced frame)", step.name, step.average_seconds * 1000.0);
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn equidistant_geometry_covers_normal_and_full_sky_views() {
+        // Audit both a normal view and the full-sky rim using the exact equidistant formula as the oracle.
+        for (fov, atmosphere) in [(10.0, false), (60.0, true), (180.0, false), (351.6, false), (359.9, false), (360.0, false), (360.0, true)] {
+            let (mut view, previous, _, sky) = fixture(fov, atmosphere);
+            view.projection = ProjectionKind::Equidistant;
+            let observation = observe(&Observer { latitude: 35.69_f64.to_radians(), longitude: 139.69_f64.to_radians() }, atmosphere, &view, previous.time, &mut StepTimes::default());
+            let camera = prepare_camera(&view);
+            let mut samples = HashMap::new();
+            let mut mesh = Vec::new();
+            let (mut worst, mut probes, mut lost, mut skipped, mut capped) = (0.0_f64, 0, 0, 0, 0);
+            for region in 0..region_caps().len() {
+                samples.clear();
+                let projector = projector(region, &observation, camera, sky, &view);
+                let stats = build_mesh(&projector, &mut samples, &mut mesh);
+                skipped += stats.skipped_cells;
+                capped += stats.capped_cells;
+                assert!(stats.projections <= (grid_size() + 1).pow(2));
+                let visible = [0.1, 0.5, 0.9].into_iter().any(|u| [0.1, 0.5, 0.9].into_iter().any(|v| {
+                    exact_position(&projector, [u * TILE_EDGE_TEXELS as f64, v * TILE_EDGE_TEXELS as f64]).is_some_and(|point| is_visible(point, sky))
+                }));
+                if visible && mesh.is_empty() { lost += 1; }
+                for triangle in &mesh {
+                    let interpolate = |points: [Point; 3]| -> Point { std::array::from_fn(|axis| points.iter().map(|point| point[axis]).sum::<f64>() / 3.0) };
+                    let uv = interpolate(triangle.texture);
+                    let expected = exact_position(&projector, uv).unwrap();
+                    if !is_visible(expected, sky) { continue; }
+                    let actual = interpolate(triangle.screen);
+                    worst = worst.max((expected[0] - actual[0]).hypot(expected[1] - actual[1]));
+                    probes += 1;
+                }
+            }
+            eprintln!("Equidistant fov={fov} atmosphere={atmosphere}: probes={probes}, worst={worst:.6}px, lost_regions={lost}, skipped_cells={skipped}, capped_cells={capped}");
+            assert!(probes > 0);
+            assert_eq!(lost, 0);
+            assert!(worst < 1.0, "equidistant interpolation error {worst}px at {fov} degrees");
+        }
+    }
+
+    #[test]
+    fn an_exact_equidistant_antipode_does_not_anchor_a_tile_to_one_rim_point() {
+        // Aim the camera so one tile corner lies exactly behind it. Point markers keep their existing
+        // arbitrary-pole convention, but a surface vertex must be treated as singular.
+        let (_, observation, _, _) = fixture(360.0, false);
+        let region = hash_direction(GRID_DEPTH, observation.patch.center);
+        let tile = TileGeometry::new(region);
+        let apparent = observation.apparent_star_direction(tile.direction_of(-0.5, -0.5));
+        let facing = crate::astro::Horizontal::from_vector(-apparent);
+        let view = View { center: ViewCenter::Facing { azimuth: facing.azimuth, tilt: facing.altitude },
+            projection: ProjectionKind::Equidistant, fov_degrees: 360.0 };
+        let camera = prepare_camera(&view);
+        let sky = SkyArea { x: 0, y: 0, size: 201 };
+        let projector = projector(region, &observation, camera, sky, &view);
+        assert!(project_camera(camera, apparent).is_some());
+        assert!(sample_vertex(&projector, &mut HashMap::new(), [0, 0]).screen.is_none());
+
+        // A fully illuminated rear tile must stay at the outer rim, never draw a chord through the center.
+        let mut data = Data::default();
+        let image = &mut data.star_regions[region].merged_tile;
+        image.tile.texels = vec![Texel { rgb: [1.0; 3], opacity: 1.0 }; TILE_EDGE_TEXELS.pow(2)];
+        image.lit_rows = vec![u64::MAX; TILE_EDGE_TEXELS];
+        let selected = Selected { regions: vec![region], whole_sky: true };
+        let mut frame = Frame::square(201);
+        let mut times = StepTimes::with_trace(true);
+        project_adaptive_tiles(&mut frame, &data, &selected, &observation, &view, &mut times);
+        assert!(times.steps().iter().any(|step| step.name == "Adaptive mesh preparation"));
+        assert!(frame.stars().iter().any(|texel| texel.opacity > 0.0));
+        for (index, texel) in frame.stars().iter().enumerate() {
+            assert!(texel.opacity.is_finite() && texel.opacity <= 1.0);
+            if texel.opacity > 0.0 {
+                let radius = (index % 201) as f64 - 100.0;
+                let vertical = (index / 201) as f64 - 100.0;
+                assert!(radius.hypot(vertical) > 90.0, "rear tile stretched into the disc at {index}");
             }
         }
     }

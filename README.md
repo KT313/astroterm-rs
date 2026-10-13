@@ -166,25 +166,27 @@ been removed. Independent accuracy checks are documented in
 Stars use four-texel dots in their sky tiles, enlarged when zoomed in. Within each group, stars blend from dim
 to bright current magnitude (ascending ID for ties); group images merge from slowest to fastest, weighting stored RGB by opacity while opacity accumulates source-over. Zooming in boosts each star’s opacity, capped at full opacity before blending; changing the boost redraws the selected tiles.
 Stars whose complete dot would cross the image boundary are omitted. The Sun, planets and Moon retain their sizes.
-The stereographic forward warp projects tile corners and checks the real projected positions of edge
+The stereographic and equidistant (`-e`) forward warp projects tile corners and checks the real projected positions of edge
 midpoints and the center against straight interpolation. Regions that exceed the sampled error target use a
 finer uniform grid; previously projected vertices are reused during refinement. Singular or folded pieces are
 subdivided too, instead of immediately discarding their entire region. Angular cap bounds discard pieces that
 cannot enter the view, including the hidden neighborhood of the stereographic antipode. No screen rays or fitted
-curved surfaces are used. The equidistant (`-e`) view still uses the straight four-corner renderer.
+curved surfaces are used.
 A region's pieces share grid vertices to avoid internal cracks. Pixel coverage comes from triangle/pixel
 intersections, and all pieces accumulate before that region is blended source-over. The rasterizer scans row
 spans, clips only outline pixels, and skips footprints known to contain no light. Texture footprints remain
 rectangular area averages; the cached tile resolution is unchanged, so extreme magnification can still look
 blurry. Neighboring regions retain their existing overlapping tiles and drawing order.
 This is a bounded prototype: midpoint checks are not a proof of a global error bound. At the subdivision cap,
-finite pieces may exceed the target and singular/folded pieces are omitted individually. The detailed trace
+stereographic pieces may exceed the target; singular/folded pieces are omitted individually. Equidistant also
+omits pieces still above the error target at the cap, avoiding long chords across the rear discontinuity.
+At a full 360° field, unresolved pieces can therefore leave gaps at the extreme outer rim. The detailed trace
 reports projection counts, maximum subdivision, capped cells and omitted cells.
 The backend is selected by one call in `src/projection/mod.rs`:
 
 - `adaptive_warp::project_adaptive_tiles` selects real-projection adaptive subdivision (current default).
-- `hermite_warp::project_hermite_tiles` retains the bicubic Hermite experiment, disabled by default.
-- `coons_warp::project_coons_tiles` retains the Coons experiment, disabled by default.
+- `hermite_warp::project_hermite_tiles` retains the stereographic-only bicubic Hermite experiment, disabled by default.
+- `coons_warp::project_coons_tiles` retains the stereographic-only Coons experiment, disabled by default.
 - `tile_warp::project_whole_tiles` restores the straight renderer.
 
 Adaptive, Coons and Hermite share triangle coverage and composition in `patch_warp.rs`. The adaptive backend
