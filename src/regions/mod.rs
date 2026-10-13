@@ -79,35 +79,86 @@ pub fn refresh_regions(caches: &mut RegionCaches, tables: &SkyTables, selected: 
     times.measure_detail("Constellation simulation", || caches.simulations.update_constellations(tables.constellations.table(), tt));
     let mut passes = times.detail_batch(["Tile geometry", "Brightness prefixes", "Simulation caches", "Image cache decisions", "Group image rendering", "Region image merging"]);
 
-    // per selected region: simulate and draw each group whose key changed, then re-merge the region if any did
     for &region in &selected.regions {
+        // Prepare the sky-to-tile mapping shared by this region's groups.
         let tile = passes.measure(0, || TileGeometry::new(region));
-        for (group, table) in tables.stars.region(region).iter().enumerate() {
-            let slot = region * SPEED_GROUP_COUNT + group;
-            let rows = passes.measure(1, || rows_wanted(table, tt, threshold));
-            if rows == 0 {
-                caches.bytes -= caches.groups[slot].bytes();
-                passes.measure(4, || caches.groups[slot].render(ImageKey::EMPTY, &tile, table, &[], &[], &caches.opacities));
+        let group_tables = tables.stars.region(region);
+
+        for (group, table) in group_tables.iter().enumerate() {
+            // Find the stars that could be bright enough to draw.
+            let cache_index = region * SPEED_GROUP_COUNT + group;
+            let star_count = passes.measure(1, || rows_wanted(table, tt, threshold));
+
+            // Clear the old image if this group has no stars to draw.
+            if star_count == 0 {
+                caches.bytes -= caches.groups[cache_index].bytes();
+                passes.measure(4, || {
+                    caches.groups[cache_index].render(ImageKey::EMPTY, &tile, table, &[], &[], &caches.opacities);
+                });
                 continue;
             }
-            if passes.measure(2, || caches.simulations.update_group(table, region, group, tt, threshold)) != Refresh::Unchanged { report.simulated += 1; }
+
+            // Reuse star samples, or calculate them when missing or expired.
+            let refresh = passes.measure(2, || {
+                caches.simulations.update_group(table, region, group, tt, threshold)
+            });
+            if refresh != Refresh::Unchanged {
+                report.simulated += 1;
+            }
             let simulation = caches.simulations.group(region, group);
-            let key = passes.measure(3, || ImageKey { epoch: simulation.epoch().expect("a simulated group has an epoch"), rows, threshold: threshold_code, zoom_boost });
-            let image = &mut caches.groups[slot];
-            if passes.measure(3, || image.key() == Some(key)) { continue; }
+
+            // Describe the inputs used to draw this group's image.
+            let image_key = passes.measure(3, || {
+                ImageKey {
+                    epoch: simulation.epoch().expect("a simulated group has an epoch"),
+                    rows: star_count,
+                    threshold: threshold_code,
+                    zoom_boost,
+                }
+            });
+
+            // Keep the existing image when those inputs have not changed.
+            let image = &mut caches.groups[cache_index];
+            let image_is_current = passes.measure(3, || image.key() == Some(image_key));
+            if image_is_current {
+                continue;
+            }
+
+            // Redraw the image and account for any change in its memory use.
             caches.bytes -= image.bytes();
-            passes.measure(4, || image.render(key, &tile, table, simulation.directions(), simulation.magnitudes(), &caches.opacities));
+            passes.measure(4, || {
+                image.render(
+                    image_key,
+                    &tile,
+                    table,
+                    simulation.directions(),
+                    simulation.magnitudes(),
+                    &caches.opacities,
+                );
+            });
             caches.bytes += image.bytes();
             report.rendered += 1;
         }
-        let groups = &caches.groups[region * SPEED_GROUP_COUNT..(region + 1) * SPEED_GROUP_COUNT];
-        let image = &mut caches.regions[region];
-        if passes.measure(3, || image.is_current(groups)) { continue; }
-        caches.bytes -= image.bytes();
-        passes.measure(5, || image.merge(groups));
-        caches.bytes += image.bytes();
+
+        // Find this region's group images and its previously merged image.
+        let first_group = region * SPEED_GROUP_COUNT;
+        let end_group = (region + 1) * SPEED_GROUP_COUNT;
+        let group_images = &caches.groups[first_group..end_group];
+        let region_image = &mut caches.regions[region];
+
+        // Keep the merged image when all of its group images are unchanged.
+        let region_is_current = passes.measure(3, || region_image.is_current(group_images));
+        if region_is_current {
+            continue;
+        }
+
+        // Merge the updated group images and account for their combined image.
+        caches.bytes -= region_image.bytes();
+        passes.measure(5, || region_image.merge(group_images));
+        caches.bytes += region_image.bytes();
         report.merged += 1;
     }
+
     passes.publish(times);
     report
 }
