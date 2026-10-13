@@ -34,7 +34,7 @@ fn supported_fast_motion_prepares_without_exceptions_and_is_filed_in_its_region(
     assert!(prepared.catalog.star_exceptions.is_empty());
     assert_eq!(prepared.catalog.singular_count, 0);
     let tables = astroterm::sky::build_sky_tables(&prepared, &mut astroterm::progress::Report::quiet()).unwrap();
-    let (region, group, table) = tables.stars.iter().find(|(_, _, table)| !table.is_empty()).unwrap();
+    let (region, group, table) = tables.star_tables().find(|(_, _, table)| !table.is_empty()).unwrap();
     assert_eq!(table.len(), 1);
     assert_eq!(region, hash_direction(GRID_DEPTH, table.stored_direction(0)));                 // filed by its catalog-epoch direction
     assert_eq!(group, speed_group(table.motion_bound(0)));

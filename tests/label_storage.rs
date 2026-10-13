@@ -50,7 +50,7 @@ fn identifiers_and_proper_names_follow_the_same_label_rule() {
     let prepared = prepare_catalog(&source, &mut astroterm::progress::Report::quiet()).unwrap();
     let tables = build_sky_tables(&prepared, &mut astroterm::progress::Report::live(&mut NoProgress(std::io::sink()), &mut StepTimes::default())).unwrap();
     for (id, unicode, expected) in [(0, false, "Named 星"), (1, false, "Alp2 Cen"), (1, true, "α² Cen"), (2, false, "HIP 42")] {
-        let (table, row) = tables.stars.iter()
+        let (table, row) = tables.star_tables()
             .find_map(|(_, _, table)| (0..table.len()).find(|&row| table.id(row) == StarId(id)).map(|row| (table, row)))
             .unwrap_or_else(|| panic!("star {id} is in a group table"));
         assert_eq!(star_label(table.labels(), row, &tables.names, unicode), expected);            // the text step 6 draws

@@ -1,6 +1,6 @@
 # Offline stellar hold accuracy
 
-This opt-in test compares directions held by `GroupSimulation` with fresh evaluations of the same motion
+This opt-in test compares directions held by `SimulationCache` with fresh evaluations of the same motion
 model at the requested date. It does not change the speed groups, TTLs, calculation epochs or rendering.
 It reports each group's sample count, number of violations and worst error, with the internal star ID,
 region, cached calculation time and requested time (TT Julian dates). Constellation stars are audited separately.

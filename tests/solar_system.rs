@@ -1,7 +1,7 @@
 //! Steps 1 and 2 of the rebuilt frame (`simulate_solar_system`, `observe`) against the behaviour the old
 //! simulation tests established: sites, Moon phase, refraction once, and the aberration formula.
 use astroterm::astro::{FrameTime, J2000, MoonPhase, Observer, Vector3, apply_aberration, name_moon_phase, refract_direction};
-use astroterm::model::{Bodies, View};
+use astroterm::model::{Data, View};
 use astroterm::observation::observe;
 use astroterm::solar_system::simulate_solar_system;
 
@@ -12,7 +12,7 @@ fn angle_arcseconds(a: Vector3, b: Vector3) -> f64 {
 #[test]
 fn the_moon_shifts_by_its_parallax_between_sites() {
     let time = FrameTime::from_utc(J2000);
-    let system = simulate_solar_system(&Bodies::default(), time, &mut astroterm::timing::StepTimes::default());
+    let system = simulate_solar_system(&Data::default(), time, &mut astroterm::timing::StepTimes::default());
     let a = observe(&Observer::default(), false, &View::default(), time, &mut astroterm::timing::StepTimes::default());
     let b = observe(&Observer { latitude: 0.7, longitude: 1.1 }, false, &View::default(), time, &mut astroterm::timing::StepTimes::default());
     let moon_a = a.apparent_direction(system.moon_position(0, a.observer.position));
@@ -22,13 +22,13 @@ fn the_moon_shifts_by_its_parallax_between_sites() {
     assert!(angle_arcseconds(geocentric, topocentric) > 1000.0, "parallax");           // up to about 1°
     assert!(angle_arcseconds(a.to_catalog.apply(moon_a), b.to_catalog.apply(moon_b)) > 1000.0); // two sites see the Moon against different stars
     assert!(angle_arcseconds(moon_a, moon_b) > 3600.0);
-    assert_eq!(simulate_solar_system(&Bodies::default(), time, &mut astroterm::timing::StepTimes::default()), system);                 // nothing about the observer changes the simulation
+    assert_eq!(simulate_solar_system(&Data::default(), time, &mut astroterm::timing::StepTimes::default()), system);                 // nothing about the observer changes the simulation
 }
 
 #[test]
 fn continuous_moon_phase_matches_horizons_and_original_reference_dates() {
     let references: serde_json::Value = serde_json::from_str(include_str!("fixtures/reference/moon_phase.json")).unwrap();
-    let bodies = Bodies::default();
+    let bodies = Data::default();
     for row in references["rows"].as_array().unwrap() {
         let tt = row["Date_________JDTT"].as_str().unwrap().parse::<f64>().unwrap();
         let expected = row["Illu%"].as_str().unwrap().parse::<f64>().unwrap() / 100.0;
@@ -47,7 +47,7 @@ fn continuous_moon_phase_matches_horizons_and_original_reference_dates() {
 fn refraction_is_applied_once_and_the_sun_follows_the_aberration_formula() {
     let time = FrameTime::from_utc(2459146.0);
     let site = Observer { latitude: 0.74, longitude: -1.24 };
-    let system = simulate_solar_system(&Bodies::default(), time, &mut astroterm::timing::StepTimes::default());
+    let system = simulate_solar_system(&Data::default(), time, &mut astroterm::timing::StepTimes::default());
     let airless = observe(&site, false, &View::default(), time, &mut astroterm::timing::StepTimes::default());
     let refracted = observe(&site, true, &View::default(), time, &mut astroterm::timing::StepTimes::default());
     let sun = airless.apparent_direction(system.sun);
@@ -63,7 +63,7 @@ fn refraction_is_applied_once_and_the_sun_follows_the_aberration_formula() {
 #[test]
 #[ignore = "timing only"]
 fn time_the_first_two_steps() {
-    let bodies = Bodies::default();
+    let bodies = Data::default();
     let site = Observer { latitude: 0.74, longitude: -1.24 };
     let started = std::time::Instant::now();
     let frames = 1000;

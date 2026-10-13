@@ -7,17 +7,17 @@ mod baseline;
 
 use astroterm::astro::{FrameTime, Horizontal, ObjectClass, Observer, Vector3, accuracy_target_arcseconds, models::stars::years_since_j2000};
 use astroterm::catalog::load_embedded_catalog;
-use astroterm::model::{Bodies, PreparedCatalog, View};
+use astroterm::model::{Data, PreparedCatalog, View};
 use astroterm::observation::{Observation, observe};
 use astroterm::solar_system::{SolarSystem, simulate_solar_system};
 
-struct BostonSky { catalog: PreparedCatalog, bodies: Bodies, system: SolarSystem, observation: Observation }
+struct BostonSky { catalog: PreparedCatalog, bodies: Data, system: SolarSystem, observation: Observation }
 
 fn boston_sky(julian_date_ut1: f64) -> BostonSky {
     let catalog = astroterm::sky::prepare_owned_catalog(load_embedded_catalog(&mut astroterm::progress::Report::quiet()).unwrap(), &mut astroterm::progress::Report::quiet()).unwrap();
     let site = Observer { latitude: 42.3601_f64.to_radians(), longitude: -71.0589_f64.to_radians() };
     let time = FrameTime::from_utc(julian_date_ut1);
-    let bodies = Bodies::default();
+    let bodies = Data::default();
     let system = simulate_solar_system(&bodies, time, &mut astroterm::timing::StepTimes::default());
     let observation = observe(&site, false, &View::default(), time, &mut astroterm::timing::StepTimes::default());
     BostonSky { catalog, bodies, system, observation }
@@ -29,7 +29,7 @@ fn find_position(sky: &BostonSky, name: &str) -> Horizontal {
         sky.observation.apparent_direction(sky.system.moon_position(0, sky.observation.observer.position))
     } else if name == "Sun" {
         sky.observation.apparent_direction(sky.system.sun)
-    } else if let Some(index) = sky.bodies.planets.iter().position(|planet| planet.name == name) {
+    } else if let Some(index) = sky.bodies.solar_system_planets.planets.iter().position(|planet| planet.name == name) {
         sky.observation.apparent_direction(sky.system.planets[index])
     } else {
         let catalog = &sky.catalog.catalog;

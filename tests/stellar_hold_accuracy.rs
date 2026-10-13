@@ -3,9 +3,10 @@
 use astroterm::astro::{COMPUTATIONAL_INTERVAL, J2000, JULIAN_YEAR_DAYS, Vector3, models::stars::{StellarMotion, years_since_j2000}};
 use astroterm::catalog::{decode_magnitude, encode_brightness_bound, magnitude_code};
 use astroterm::constants::{FAST_GROUP_HOLD_SECONDS, HELD_DIRECTION_ERROR, SPEED_GROUP_COUNT};
-use astroterm::model::{GroupTable, LabelColumn, SkyTables, StarRow, StarRowVec, speed_group, speed_group_hold_seconds};
+use astroterm::model::{StarTable, StarLabels, Data, StarRow, StarRowVec, speed_group, speed_group_hold_seconds};
 use astroterm::progress::Report;
-use astroterm::regions::{GroupSimulation, Refresh};
+use astroterm::regions::{Refresh};
+use astroterm::model::{SimulationCache};
 
 const NUMERIC_SLACK: f64 = 1e-12;                                                           // radians: tolerate f64 roundoff, not physical drift
 
@@ -60,13 +61,13 @@ impl Audit {
 fn arcseconds(radians: f64) -> f64 { radians.to_degrees() * 3600.0 }
 
 /// Borrow one catalog row and copy its compact fields into a one-row table, so its closest-approach epoch can be
-/// audited independently through the real GroupSimulation cache. Label text is irrelevant to direction holding.
-fn copy_row(table: &GroupTable, row: usize) -> GroupTable {
+/// audited independently through the real SimulationCache cache. Label text is irrelevant to direction holding.
+fn copy_row(table: &StarTable, row: usize) -> StarTable {
     let c = table.columns();
     let mut columns = StarRowVec::with_capacity(1);
     columns.push(StarRow { u0: c.u0[row], w: c.w[row], magnitude: c.magnitude[row], brightness_key: c.brightness_key[row],
         distance: c.distance[row], id: c.id[row], name: 0, display_color: c.display_color[row] }.into());
-    GroupTable::new(columns, LabelColumn::Names(vec![0]))
+    StarTable::new(columns, StarLabels::Names(vec![0]))
 }
 
 /// Both ends of the supported interval, representative interior dates, and dates around closest approach.
@@ -85,7 +86,7 @@ fn sample_epochs(motion: StellarMotion, hold_days: f64) -> Vec<f64> {
 }
 
 /// Exercise forward and backward reuse, the exact floating-point hold edge, and its immediate neighbours.
-fn audit_star(table: &GroupTable, row: usize, region: Option<usize>, hold_seconds: f64, report: &mut GroupReport) {
+fn audit_star(table: &StarTable, row: usize, region: Option<usize>, hold_seconds: f64, report: &mut GroupReport) {
     let table = copy_row(table, row);
     let hold_days = hold_seconds / 86_400.0;
     report.stars += 1;
@@ -94,7 +95,7 @@ fn audit_star(table: &GroupTable, row: usize, region: Option<usize>, hold_second
             let edge = epoch + sign * hold_days;
             let (inside, outside) = if sign > 0.0 { (edge.next_down(), edge.next_up()) } else { (edge.next_up(), edge.next_down()) };
             let dates = [epoch, epoch + sign * hold_days * 0.5, inside, edge, outside];
-            let mut simulation = GroupSimulation::default();
+            let mut simulation = SimulationCache::default();
             simulation.update(&table, epoch, 1, hold_seconds);
             for requested_tt in dates.into_iter().filter(|&tt| COMPUTATIONAL_INTERVAL.contains(tt)) {
                 let refreshed = simulation.update(&table, requested_tt, 1, hold_seconds);
@@ -109,7 +110,7 @@ fn audit_star(table: &GroupTable, row: usize, region: Option<usize>, hold_second
     }
 }
 
-fn measure_error(table: &GroupTable, simulation: &GroupSimulation, requested_tt: f64, region: Option<usize>) -> Worst {
+fn measure_error(table: &StarTable, simulation: &SimulationCache, requested_tt: f64, region: Option<usize>) -> Worst {
     let current = table.motion(0).evaluate(years_since_j2000(requested_tt), decode_magnitude(table.columns().magnitude[0]));
     let held = simulation.directions()[0];
     let radians = held.cross(current.direction).length().atan2(held.dot(current.direction));
@@ -117,14 +118,14 @@ fn measure_error(table: &GroupTable, simulation: &GroupSimulation, requested_tt:
     Worst { id: table.id(0).0, region, calculated_tt: simulation.epoch().unwrap(), requested_tt, radians }
 }
 
-fn audit_catalog(tables: &SkyTables, limit_per_group: usize) -> Audit {
+fn audit_catalog(tables: &Data, limit_per_group: usize) -> Audit {
     let mut audit = Audit::default();
-    for (region, group, table) in tables.stars.iter() {
+    for (region, group, table) in tables.star_tables() {
         let report = &mut audit.groups[group];
         let count = table.len().min(limit_per_group.saturating_sub(report.stars));
         for row in 0..count { audit_star(table, row, Some(region), speed_group_hold_seconds(group), report); }
     }
-    let table = tables.constellations.table();
+    let table = &tables.constellation_stars;
     for row in 0..table.len().min(limit_per_group) {
         audit_star(table, row, None, FAST_GROUP_HOLD_SECONDS, &mut audit.groups[SPEED_GROUP_COUNT]);
     }
@@ -132,17 +133,17 @@ fn audit_catalog(tables: &SkyTables, limit_per_group: usize) -> Audit {
 }
 
 /// Synthetic catalog inputs: one unit reference direction, motion in units of reference distance per year.
-fn synthetic_star(id: u32, velocity: Vector3, physical_distance: bool) -> GroupTable {
+fn synthetic_star(id: u32, velocity: Vector3, physical_distance: bool) -> StarTable {
     let pack = |v: Vector3| [v.x as f32, v.y as f32, v.z as f32];
     let motion = StellarMotion { u0: Vector3 { x: 1.0, y: 0.0, z: 0.0 }, w: velocity, distance_pc: physical_distance.then_some(1.0) };
     let mut columns = StarRowVec::new();
     columns.push(StarRow { u0: pack(motion.u0), w: pack(motion.w), magnitude: magnitude_code(5.0),
         brightness_key: encode_brightness_bound(motion.brightest_magnitude(5.0)).0, distance: if physical_distance { 1.0 } else { 0.0 },
         id, name: 0, display_color: 0 }.into());
-    GroupTable::new(columns, LabelColumn::Names(vec![0]))
+    StarTable::new(columns, StarLabels::Names(vec![0]))
 }
 
-fn synthetic_catalog() -> Vec<GroupTable> {
+fn synthetic_catalog() -> Vec<StarTable> {
     let mut tables: Vec<_> = [0.0_f64, 0.01, 0.1, 1.0, 100.0].into_iter().enumerate()
         .map(|(id, rate)| synthetic_star(id as u32, Vector3 { x: 0.0, y: (rate / 3600.0).to_radians(), z: 0.0 }, false)).collect();
     tables.push(synthetic_star(5, Vector3 { x: -0.00009, y: 1e-8, z: 0.0 }, true));             // approaches near the far end; slow by the current grouping rule
@@ -156,7 +157,7 @@ fn offline_check_detects_the_known_slow_group_counterexample() {
     assert_eq!(speed_group(table.motion_bound(0)), 0);
     let epoch = J2000 + 10000.0 * JULIAN_YEAR_DAYS;
     let requested = epoch + 9.49 * JULIAN_YEAR_DAYS;
-    let mut simulation = GroupSimulation::default();
+    let mut simulation = SimulationCache::default();
     simulation.update(&table, epoch, 1, speed_group_hold_seconds(0));
     assert_eq!(simulation.update(&table, requested, 1, speed_group_hold_seconds(0)), Refresh::Unchanged);
     let worst = measure_error(&table, &simulation, requested, Some(0));

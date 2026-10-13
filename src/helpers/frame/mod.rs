@@ -2,9 +2,9 @@
 use astroterm::astro::{FrameTime, Observer, SimulationClock, name_moon_phase};
 use astroterm::controls::{Control, apply_control};
 use astroterm::metadata::{MetadataField, ObserverTimeZone, append_step_time_fields, fill_metadata_fields, format_star_count, resolve_observer_timezone};
-use astroterm::model::{Config, SkyTables, View};
+use astroterm::model::{Config, Data, View};
 use astroterm::present::{DisplayInfo, describe_compression};
-use astroterm::regions::{RefreshReport, RegionCaches};
+use astroterm::regions::RefreshReport;
 use astroterm::selection::Selected;
 use astroterm::solar_system::SolarSystem;
 use astroterm::terminal::FrameInput;
@@ -43,38 +43,37 @@ pub(crate) struct PanelFrame<'a> {
     pub clock: &'a SimulationClock,
     pub solar_system: &'a SolarSystem,
     pub selected: &'a Selected,
-    pub caches: &'a RegionCaches,
     pub refreshed: RefreshReport,
     pub display: DisplayInfo,
 }
 
 impl Panel {
-    pub(crate) fn new(config: &Config, tables: &SkyTables) -> Self {
+    pub(crate) fn new(config: &Config, data: &Data) -> Self {
         let enabled = config.terminal.metadata_panel;
         Self {
             frame_times: config.terminal.frame_times,
             unicode: config.render.unicode,
             time_zone: enabled.then(|| resolve_observer_timezone(&config.simulation.observer)),
-            stars_loaded: tables.stars.len() + tables.constellations.len(),
+            stars_loaded: data.region_star_count() + data.constellation_stars.len(),
             lines: Vec::new(),
         }
     }
 
     /// Rebuild the lines for this frame: local time and view (as before), the catalog and region counts, the
     /// display, and the step timings when requested.
-    pub(crate) fn lines(&mut self, frame: &PanelFrame<'_>, observer: &Observer, view: &View, tables: &SkyTables, times: &StepTimes) -> &[MetadataField] {
+    pub(crate) fn lines(&mut self, frame: &PanelFrame<'_>, observer: &Observer, view: &View, data: &Data, times: &StepTimes) -> &[MetadataField] {
         self.lines.clear();
         let Some(time_zone) = &self.time_zone else { return &self.lines; };
         let phase = name_moon_phase(frame.solar_system.moon_illumination(0));
         fill_metadata_fields(&mut self.lines, frame.time.utc, frame.clock, phase, observer, view, self.unicode, time_zone);
 
         // stars and regions
-        let in_regions: usize = frame.selected.regions.iter().map(|&region| tables.stars.region(region).iter().map(|table| table.len()).sum::<usize>()).sum();
+        let in_regions: usize = frame.selected.regions.iter().map(|&region| data.star_regions[region].speed_groups.iter().map(|group| &group.stars).map(|table| table.len()).sum::<usize>()).sum();
         let field = |label: &str, value: String| MetadataField { label: label.into(), value };
         self.lines.push(field("Stars loaded", format!("{} stars", format_star_count(self.stars_loaded))));
         self.lines.push(field("In selected regions", format!("{} stars", format_star_count(in_regions))));
         self.lines.push(field("Regions selected", format!("{}{}", frame.selected.regions.len(), if frame.selected.whole_sky { " (whole sky)" } else { "" })));
-        self.lines.push(field("Tile memory", format!("{:.1} MiB", frame.caches.tile_bytes() as f64 / (1024.0 * 1024.0))));
+        self.lines.push(field("Tile memory", format!("{:.1} MiB", data.tile_bytes as f64 / (1024.0 * 1024.0))));
 
         // the display
         let display = frame.display;

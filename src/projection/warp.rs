@@ -1,6 +1,6 @@
 //! Step 5 of the frame: the inverse ray-sampling implementation.
 //!
-//! Inputs: the frame (its star layer and its per-view ray table), the region caches, the selected regions, the
+//! Inputs: the frame (its star layer and its per-view ray table), the region data, the selected regions, the
 //! observation and the view. Output: the star layer of the frame, the light of the region tiles under every
 //! screen pixel. Runs every frame; the cost is proportional to the screen pixels, never to the star count.
 //!
@@ -17,7 +17,9 @@ use crate::constants::{CELL_COUNT, GRID_DEPTH, STELLAR_DRIFT_MARGIN, TILE_EDGE_T
 use crate::model::{ProjectionKind, View};
 use crate::observation::Observation;
 use crate::projection::prepare_camera;
-use crate::regions::{RegionCaches, STAR_GLYPH_RADIUS, Texel, TileFrame, TileGeometry, tile_frames};
+use crate::model::Data;
+use crate::regions::{STAR_GLYPH_RADIUS, TileFrame, TileGeometry, tile_frames};
+use crate::model::{Texel};
 use crate::text::{TextRasterizer, create_text_rasterizer, set_text_cell_size};
 use crate::selection::Selected;
 use std::f64::consts::FRAC_PI_2;
@@ -227,7 +229,7 @@ impl RefractionTable {
 
 /// Fill the frame's star layer from the region tiles for this observation and view. Returns whether the ray
 /// table had to be rebuilt.
-pub(super) fn project_tiles_inverse(frame: &mut Frame, caches: &RegionCaches, selected: &Selected, observation: &Observation, view: &View, times: &mut StepTimes) -> bool {
+pub(super) fn project_tiles_inverse(frame: &mut Frame, data: &Data, selected: &Selected, observation: &Observation, view: &View, times: &mut StepTimes) -> bool {
     let rebuilt = times.measure_detail("View ray table", || frame.rays.prepare(view, frame.width, frame.height, frame.sky));
     let (in_view, camera) = times.measure_detail("Warp preparation", || {
         let camera = prepare_camera(view);
@@ -237,7 +239,7 @@ pub(super) fn project_tiles_inverse(frame: &mut Frame, caches: &RegionCaches, se
     });
     let pack = |v: Vector3| [v.x as f32, v.y as f32, v.z as f32];
     let warp = Warp {
-        caches,
+        data,
         in_view: &in_view,
         frames: tile_frames(),
         spread: spread_table(),
@@ -256,7 +258,7 @@ pub(super) fn project_tiles_inverse(frame: &mut Frame, caches: &RegionCaches, se
 
 /// The per-frame constants of the warp.
 struct Warp<'a> {
-    caches: &'a RegionCaches,
+    data: &'a Data,
     in_view: &'a [bool],                    // per region: selected this frame, so its tiles are current
     frames: &'a [TileFrame],
     spread: &'static [u16; EDGE],
@@ -330,7 +332,7 @@ impl Warp<'_> {
     #[inline]
     fn sample(&self, region: usize, catalog: [f32; 3], footprint: Option<[[f32; 3]; 2]>, out: &mut Texel) {
         if !self.in_view[region] { return; }
-        let image = self.caches.region_image(region);
+        let image = &self.data.star_regions[region].merged_tile;
         let texels = image.texels();
         if texels.is_empty() { return; }
         let tile = &self.frames[region];
@@ -488,20 +490,20 @@ mod tests {
     use super::*;
     use crate::astro::{FrameTime, J2000, Observer, refract_direction};
     use crate::catalog::{SpaceMotion, StarId, load_embedded_catalog};
-    use crate::model::{RenderOptions, SkyTables, ViewCenter, hash_direction, region_caps};
+    use crate::model::{RenderOptions, Data, ViewCenter, hash_direction, region_caps};
     use crate::observation::observe;
     use crate::projection::{project_camera, project_to_cell};
     use crate::regions::{refresh_regions, zoom_opacity_boost};
     use crate::selection::select_regions;
 
-    fn tables_of(catalog: crate::catalog::Catalog) -> SkyTables {
+    fn tables_of(catalog: crate::catalog::Catalog) -> Data {
         let prepared = crate::sky::prepare_owned_catalog(catalog, &mut crate::progress::Report::quiet()).unwrap();
         crate::sky::build_sky_tables(&prepared, &mut crate::progress::Report::quiet()).unwrap()
     }
-    fn bsc5() -> SkyTables { tables_of(load_embedded_catalog(&mut crate::progress::Report::quiet()).unwrap()) }
+    fn bsc5() -> Data { tables_of(load_embedded_catalog(&mut crate::progress::Report::quiet()).unwrap()) }
 
     /// One star at the unit catalog `direction`, as a catalog of its own.
-    fn single_star(direction: Vector3, magnitude: f64) -> SkyTables {
+    fn single_star(direction: Vector3, magnitude: f64) -> Data {
         let mut parsed = load_embedded_catalog(&mut crate::progress::Report::quiet()).unwrap();
         let mut star = parsed.stars[0].clone();
         parsed.stars.clear();
@@ -522,11 +524,11 @@ mod tests {
     fn settings() -> RenderOptions { RenderOptions { unicode: true, braille: false, color: true, constellations: true, grid: false, magnitude_threshold: 9.0, dynamic_names: true } }
 
     /// Observe, select, refresh and project one frame.
-    fn render(frame: &mut Frame, caches: &mut RegionCaches, tables: &SkyTables, view: &View, days: f64, atmosphere: bool) -> (Observation, bool) {
+    fn render(frame: &mut Frame, caches: &mut Data, tables: &Data, view: &View, days: f64, atmosphere: bool) -> (Observation, bool) {
         let time = FrameTime::from_utc(J2000 + days);
         let observation = observe(&boston(), atmosphere, view, time, &mut crate::timing::StepTimes::default());
-        let selected = select_regions(&tables.stars, &observation, &mut crate::timing::StepTimes::default());
-        refresh_regions(caches, tables, &selected, time, view, &settings(), &mut crate::timing::StepTimes::default());
+        let selected = select_regions(&tables.star_regions, &observation, &mut crate::timing::StepTimes::default());
+        refresh_regions(caches, &selected, time, view, &settings(), &mut crate::timing::StepTimes::default());
         let rebuilt = project_tiles_inverse(frame, caches, &selected, &observation, view, &mut crate::timing::StepTimes::default());
         (observation, rebuilt)
     }
@@ -584,7 +586,7 @@ mod tests {
     #[test]
     fn the_ray_table_is_reused_across_frames_and_rebuilt_on_zoom_resize_or_projection_change() {
         let tables = bsc5();
-        let mut caches = RegionCaches::default();
+        let mut caches = tables.clone();
         let mut frame = Frame::square(120);
         let wide = view(90.0, 1.0, 0.5, ProjectionKind::Stereographic);
         assert!(render(&mut frame, &mut caches, &tables, &wide, 0.0, true).1);
@@ -623,7 +625,7 @@ mod tests {
             let offset = observation.to_catalog.apply(Vector3 { x: 0.0, y: 0.0, z: 1.0 }).cross(observation.patch.center).normalized();
             let direction = (observation.patch.center + offset * (0.25 * fov.to_radians() / 2.0)).normalized(); // a quarter of the way to the edge
             let tables = single_star(direction, 2.0);
-            let mut caches = RegionCaches::default();
+            let mut caches = tables.clone();
             let mut frame = Frame::square(width);
             render(&mut frame, &mut caches, &tables, &view, days, atmosphere);
             let ((row, column), count, total) = blob(&frame).unwrap_or_else(|| panic!("{fov}°: no star drawn"));
@@ -666,7 +668,7 @@ mod tests {
         let mut results = Vec::new();
         for direction in [inside, cap.center] {
             let tables = single_star(direction, 1.0);
-            let mut caches = RegionCaches::default();
+            let mut caches = tables.clone();
             let mut frame = Frame::square(401);
             render(&mut frame, &mut caches, &tables, &view, 0.0, false);
             results.push(blob(&frame).unwrap());
@@ -690,7 +692,7 @@ mod tests {
             let tilt = star_h.z.asin();
             let view = View { center: ViewCenter::Facing { azimuth, tilt }, projection: ProjectionKind::Stereographic, fov_degrees: fov }; // look straight at the star
             let _ = centre_h;
-            let mut caches = RegionCaches::default();
+            let mut caches = tables.clone();
             let mut frame = Frame::square(201);
             render(&mut frame, &mut caches, &tables, &view, 0.0, false);
             assert!(frame.star(0, 0).is_empty() && frame.star(200, 200).is_empty());        // the corners lie outside the rendered circle
@@ -705,18 +707,18 @@ mod tests {
     #[test]
     fn the_brightest_region_star_is_the_brightest_pixel_at_the_centre_of_a_small_frame() {
         let tables = bsc5();
-        let (region, group, row) = tables.stars.iter().flat_map(|(region, group, table)| (0..table.len()).map(move |row| (region, group, row)))
-            .min_by_key(|&(region, group, row)| tables.stars.group(region, group).columns().magnitude[row]).unwrap(); // Polaris and the other endpoints are points, not tiles
-        let direction = tables.stars.group(region, group).stored_direction(row);
+        let (region, group, row) = tables.star_tables().flat_map(|(region, group, table)| (0..table.len()).map(move |row| (region, group, row)))
+            .min_by_key(|&(region, group, row)| tables.star_table(region, group).columns().magnitude[row]).unwrap(); // Polaris and the other endpoints are points, not tiles
+        let direction = tables.star_table(region, group).stored_direction(row);
         let time = FrameTime::from_utc(2_460_678.0);                                        // 2025-01-02T12:00Z
         let site = Observer { latitude: direction.z.asin(), longitude: 0.0 };
         let horizon = observe(&site, true, &View::default(), time, &mut crate::timing::StepTimes::default()).to_horizon.apply(direction);
         let view = View { center: ViewCenter::Facing { azimuth: horizon.x.atan2(horizon.y), tilt: horizon.z.asin() }, projection: ProjectionKind::Stereographic, fov_degrees: 180.0 }; // look straight at it
-        let mut caches = RegionCaches::default();
+        let mut caches = tables.clone();
         let mut frame = Frame::new(81, 41, SkyArea::centred(81, 41), (10, 20));
         let observation = observe(&site, true, &view, time, &mut crate::timing::StepTimes::default());
-        let selected = select_regions(&tables.stars, &observation, &mut crate::timing::StepTimes::default());
-        refresh_regions(&mut caches, &tables, &selected, time, &view, &RenderOptions { magnitude_threshold: 2.1, ..settings() }, &mut crate::timing::StepTimes::default());
+        let selected = select_regions(&tables.star_regions, &observation, &mut crate::timing::StepTimes::default());
+        refresh_regions(&mut caches, &selected, time, &view, &RenderOptions { magnitude_threshold: 2.1, ..settings() }, &mut crate::timing::StepTimes::default());
         project_tiles_inverse(&mut frame, &caches, &selected, &observation, &view, &mut crate::timing::StepTimes::default());
         let (brightest, light) = frame.stars().iter().enumerate().fold((0, 0.0), |best, (index, texel)| if texel.opacity > best.1 { (index, texel.opacity) } else { best });
         let (row, column) = (brightest / 81, brightest % 81);
@@ -730,13 +732,13 @@ mod tests {
         let tables = bsc5();
         for (width, height) in [(1920, 1100), (1280, 720)] {
             for fov in [10.0, 60.0, 180.0] {
-                let mut caches = RegionCaches::default();
+                let mut caches = tables.clone();
                 let mut frame = Frame::new(width, height, SkyArea::centred(width, height), (10, 20));
                 let view = view(fov, 1.0, 0.5, ProjectionKind::Stereographic);
                 let time = FrameTime::from_utc(J2000);
                 let observation = observe(&boston(), true, &view, time, &mut crate::timing::StepTimes::default());
-                let selected = select_regions(&tables.stars, &observation, &mut crate::timing::StepTimes::default());
-                refresh_regions(&mut caches, &tables, &selected, time, &view, &settings(), &mut crate::timing::StepTimes::default());
+                let selected = select_regions(&tables.star_regions, &observation, &mut crate::timing::StepTimes::default());
+                refresh_regions(&mut caches, &selected, time, &view, &settings(), &mut crate::timing::StepTimes::default());
                 let started = std::time::Instant::now();
                 project_tiles_inverse(&mut frame, &caches, &selected, &observation, &view, &mut crate::timing::StepTimes::default());
                 let first = started.elapsed();

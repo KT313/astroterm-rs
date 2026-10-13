@@ -1,12 +1,14 @@
 //! Shared records: the catalog data model of the sky tables and the validated configuration.
 //! Each submodule exposes its public symbols here; callers use `crate::model::X`.
+mod data;
 mod catalog;
+pub use data::{Data, Region, StarGroup, StarTable, StarColumns, StarColumn, StarRowVec, StarRowSlice, StarLabels,
+    Body, Satellite, SunTable, PlanetsTable, MoonsTable, SimulationCache, GroupTileKey, GroupTileCache, RegionTileCache, Tile, Texel, StarOpacities};
 mod configuration;
 
 pub use catalog::{
     SkyCatalog, CatalogPreparation, PreparedCatalog, ConstellationSet, StarException, SkyGrid,
-    hash_direction, speed_group, speed_group_hold_seconds, drift_bound_for_rate, STAR_SECTIONS, StarRow, StarRowSlice, StarRowVec, StarStorage, Star, Constellation, StarColor,
-    Stars, GroupTable, LabelColumn, Constellations, Bodies, Body, Satellite, SkyTables,
+    hash_direction, speed_group, speed_group_hold_seconds, drift_bound_for_rate, STAR_SECTIONS, StarRow, StarStorage, Star, Constellation, StarColor,
 };
 pub(crate) use catalog::{unsupported_star_data, CellCap, build_caps, region_caps};
 #[cfg(test)]

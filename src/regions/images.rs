@@ -2,56 +2,33 @@
 //! screen would draw it) and one per region (its group images composited). Per-star zoom brightness is applied before blending; tone mapping
 //! happens in the frame output.
 use crate::astro::Vector3;
-use crate::constants::{SPEED_GROUP_COUNT, TILE_EDGE_TEXELS};
-use crate::regions::appearance::{StarOpacities, Texel, blend_star, order_star_rows, premultiplied_color};
-use crate::regions::tiles::TileGeometry;
-use crate::model::GroupTable;
+use crate::constants::TILE_EDGE_TEXELS;
+use crate::model::{StarOpacities, Texel, StarTable, GroupTileKey, GroupTileCache, RegionTileCache, StarGroup};
+use crate::regions::{TileGeometry, blend_star, order_star_rows, premultiplied_color};
 
-/// What a group image was rendered from. Two renders with equal keys are identical.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ImageKey {
-    pub zoom_boost: f64,                    // opacity boost applied per star before blending
-    pub epoch: f64,                         // simulated epoch (TT) of the rows drawn
-    pub rows: usize,                        // the brightness prefix drawn (the threshold and the computational interval decide it)
-    pub threshold: u16,                     // magnitude threshold as a catalog code; a row is drawn only when its current code is at most this
-}
-
-impl ImageKey {
+impl GroupTileKey {
     /// The key of an image whose prefix is empty: nothing to draw, whatever the threshold.
-    pub const EMPTY: ImageKey = ImageKey { epoch: 0.0, rows: 0, threshold: 0, zoom_boost: 1.0 };
+    pub const EMPTY: GroupTileKey = GroupTileKey { simulated_at: 0.0, star_count: 0, magnitude_threshold: 0, zoom_boost: 1.0 };
 }
 
-/// The image cache of one group (plan section 4, "Group image"): the group's brightness prefix at its simulation
-/// epoch, drawn into the region's fixed-size tile.
-///
-/// **Key:** `ImageKey`: the simulation epoch, the prefix length, magnitude threshold and zoom boost. **Invalidated by:**
-/// any key change; the image is then drawn again from the simulation cache. Rotation, panning, resize and
-/// simulated time inside the group's hold change no key and so re-render nothing. A group whose prefix is empty
-/// holds no texels. Images are never dropped: a region that leaves the view keeps its images for its return.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct GroupImage {
-    key: Option<ImageKey>,
-    texels: Vec<Texel>,                     // `TileGeometry::texel_count()` entries, or none for an empty prefix
-}
+impl GroupTileCache {
+    pub fn key(&self) -> Option<GroupTileKey> { self.key }
+    pub fn texels(&self) -> &[Texel] { &self.tile.texels }
+    pub fn is_empty(&self) -> bool { self.tile.texels.is_empty() }
+    pub fn bytes(&self) -> usize { self.tile.texels.len() * Texel::SIZE }
 
-impl GroupImage {
-    pub fn key(&self) -> Option<ImageKey> { self.key }
-    pub fn texels(&self) -> &[Texel] { &self.texels }
-    pub fn is_empty(&self) -> bool { self.texels.is_empty() }
-    pub fn bytes(&self) -> usize { self.texels.len() * Texel::SIZE }
-
-    /// Draw rows `0..key.rows` of the simulation (`directions` and `magnitudes` at `key.epoch`) into the tile: each
+    /// Draw rows `0..key.star_count` of the simulation (`directions` and `magnitudes` at `key.simulated_at`) into the tile: each
     /// row brighter than the threshold becomes the four-texel glyph of its colour, blended source-over from dim
     /// to bright current magnitude, then ascending ID. Catalog brightness-bound order is unchanged. Rows the model
     /// could not place and rows outside the tile are skipped.
-    pub fn render(&mut self, key: ImageKey, tile: &TileGeometry, table: &GroupTable, directions: &[Vector3], magnitudes: &[u16], opacities: &StarOpacities) {
+    pub fn render(&mut self, key: GroupTileKey, tile: &TileGeometry, table: &StarTable, directions: &[Vector3], magnitudes: &[u16], opacities: &StarOpacities) {
         self.key = Some(key);
-        if key.rows == 0 { self.texels = Vec::new(); return; }
+        if key.star_count == 0 { self.tile.texels = Vec::new(); return; }
         let size = TileGeometry::size();
-        self.texels.clear();
-        self.texels.resize(TileGeometry::texel_count(), Texel::default());
+        self.tile.texels.clear();
+        self.tile.texels.resize(TileGeometry::texel_count(), Texel::default());
         let columns = table.columns();
-        let rows = order_star_rows(&magnitudes[..key.rows], &columns.id[..key.rows], key.threshold);
+        let rows = order_star_rows(&magnitudes[..key.star_count], &columns.id[..key.star_count], key.magnitude_threshold);
         for row in rows {
             let (direction, code) = (directions[row], magnitudes[row]);
             let Some((column, line)) = tile.project(direction) else { continue };
@@ -61,11 +38,11 @@ impl GroupImage {
             let premultiplied = premultiplied_color(columns.display_color[row], opacity);
             let bottom_right = y as usize * size + x as usize;
             for offset in [bottom_right - size - 1, bottom_right - size, bottom_right - 1, bottom_right] {
-                blend_star(&mut self.texels[offset], premultiplied, opacity);
+                blend_star(&mut self.tile.texels[offset], premultiplied, opacity);
             }
         }
         #[cfg(feature = "pixel-debug")]
-        for texel in &self.texels { texel.check("GroupImage::render output", 1.0); }
+        for texel in &self.tile.texels { texel.check("GroupTileCache::render output", 1.0); }
     }
 }
 
@@ -73,45 +50,33 @@ impl GroupImage {
 #[inline]
 fn round_half_away(v: f64) -> i64 { (v + 0.5_f64.copysign(v)) as i64 }
 
-/// The image cache of one region: its group images merged slowest to fastest, weighting stored RGB by opacity.
-///
-/// **Key:** the keys of the region's group images. **Invalidated by:** any group image of the region being
-/// rendered again (its key changed); the merge is then rebuilt from the group images. Group 0 is the base;
-/// each subsequent (faster) group mixes with the accumulated result. Never dropped, like the group images.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct RegionImage {
-    keys: Option<[Option<ImageKey>; SPEED_GROUP_COUNT]>, // the group keys as merged; None before the first merge
-    texels: Vec<Texel>,                     // the tile, or none when every group image is empty
-    lit: Vec<u64>,                          // per tile row, bit x set when texel x of that row holds light; lets the warp skip empty areas
-}
-
-impl RegionImage {
-    pub fn texels(&self) -> &[Texel] { &self.texels }
-    pub fn is_empty(&self) -> bool { self.texels.is_empty() }
-    pub fn bytes(&self) -> usize { self.texels.len() * Texel::SIZE }
-    pub fn is_merged(&self) -> bool { self.keys.is_some() }
+impl RegionTileCache {
+    pub fn texels(&self) -> &[Texel] { &self.tile.texels }
+    pub fn is_empty(&self) -> bool { self.tile.texels.is_empty() }
+    pub fn bytes(&self) -> usize { self.tile.texels.len() * Texel::SIZE }
+    pub fn is_merged(&self) -> bool { self.group_keys.is_some() }
     /// One bit per texel, a word per tile row: which texels hold light. Empty when the image is.
-    pub fn lit_rows(&self) -> &[u64] { &self.lit }
+    pub fn lit_rows(&self) -> &[u64] { &self.lit_rows }
 
     /// Whether the merge still matches the group images.
-    pub fn is_current(&self, groups: &[GroupImage]) -> bool {
-        self.keys.as_ref().is_some_and(|keys| keys.iter().zip(groups).all(|(key, group)| *key == group.key()))
+    pub fn is_current(&self, groups: &[StarGroup]) -> bool {
+        self.group_keys.as_ref().is_some_and(|keys| keys.iter().zip(groups).all(|(key, group)| *key == group.tile.key()))
     }
 
     /// Merge `groups` in ascending speed order, weighting their already-premultiplied RGB by opacity again.
-    pub fn merge(&mut self, groups: &[GroupImage]) {
-        self.keys = Some(std::array::from_fn(|group| groups[group].key()));
-        let mut parts = groups.iter().filter(|group| !group.is_empty());
-        let Some(first) = parts.next() else { self.texels = Vec::new(); self.lit = Vec::new(); return; };
+    pub fn merge(&mut self, groups: &[StarGroup]) {
+        self.group_keys = Some(std::array::from_fn(|group| groups[group].tile.key()));
+        let mut parts = groups.iter().map(|group| &group.tile).filter(|image| !image.is_empty());
+        let Some(first) = parts.next() else { self.tile.texels = Vec::new(); self.lit_rows = Vec::new(); return; };
         #[cfg(feature = "pixel-debug")]
-        for texel in first.texels() { texel.check("RegionImage::merge base", 1.0); }
-        self.texels.clear();
-        self.texels.extend_from_slice(first.texels());
+        for texel in first.texels() { texel.check("RegionTileCache::merge base", 1.0); }
+        self.tile.texels.clear();
+        self.tile.texels.extend_from_slice(first.texels());
         for part in parts {
-            for (merged, texel) in self.texels.iter_mut().zip(part.texels()) { merge_group_texel(merged, *texel); }
+            for (merged, texel) in self.tile.texels.iter_mut().zip(part.texels()) { merge_group_texel(merged, *texel); }
         }
-        self.lit.clear();
-        self.lit.extend(self.texels.chunks_exact(TILE_EDGE_TEXELS).map(|row| row.iter().enumerate().filter(|(_, texel)| !texel.is_empty()).fold(0_u64, |bits, (x, _)| bits | 1 << x)));
+        self.lit_rows.clear();
+        self.lit_rows.extend(self.tile.texels.chunks_exact(TILE_EDGE_TEXELS).map(|row| row.iter().enumerate().filter(|(_, texel)| !texel.is_empty()).fold(0_u64, |bits, (x, _)| bits | 1 << x)));
     }
 }
 
@@ -145,11 +110,11 @@ mod tests {
     const MIDDLE: usize = 32;                                                               // the region centre at 31.5 rounds up: its glyph covers texels 31 and 32
 
     fn region() -> usize { hash_direction(GRID_DEPTH, Vector3 { x: 1.0, y: 0.0, z: 0.0 }) }
-    fn table(rows: &[StarRow]) -> GroupTable {
+    fn table(rows: &[StarRow]) -> StarTable {
         let stars = fixtures::layout(&rows.iter().map(|row| (region(), 0, *row)).collect::<Vec<_>>());
-        stars.group(region(), 0).clone()
+        stars.star_table(region(), 0).clone()
     }
-    fn key(rows: usize, threshold: f64) -> ImageKey { ImageKey { epoch: J2000, rows, threshold: magnitude_code(threshold), zoom_boost: 1.0 } }
+    fn key(rows: usize, threshold: f64) -> GroupTileKey { GroupTileKey { simulated_at: J2000, star_count: rows, magnitude_threshold: magnitude_code(threshold), zoom_boost: 1.0 } }
     fn opacities() -> StarOpacities { let mut table = StarOpacities::default(); table.prepare(1.0); table }
     fn lit(texels: &[Texel]) -> Vec<(usize, Texel)> { texels.iter().copied().enumerate().filter(|(_, texel)| !texel.is_empty()).collect() }
 
@@ -159,7 +124,7 @@ mod tests {
         let mut row = fixtures::row(tile.center(), 0.0, 3.0, 7);
         row.display_color = StarColor::RedOrange.index();
         let table = table(&[row]);
-        let mut image = GroupImage::default();
+        let mut image = GroupTileCache::default();
         image.render(key(1, 6.0), &tile, &table, &[tile.center()], &[magnitude_code(3.0)], &opacities());
         let lit = lit(image.texels());
         assert_eq!(lit.iter().map(|(index, _)| *index).collect::<Vec<_>>(), [(MIDDLE - 1) * SIZE + MIDDLE - 1, (MIDDLE - 1) * SIZE + MIDDLE, MIDDLE * SIZE + MIDDLE - 1, MIDDLE * SIZE + MIDDLE]);
@@ -182,14 +147,14 @@ mod tests {
         let table = table(&rows);
         let directions = [tile.center(), inside, outside, inside, inside];
         let codes = [magnitude_code(3.0), magnitude_code(3.0), magnitude_code(3.0), magnitude_code(7.0), UNPLACED];
-        let mut image = GroupImage::default();
+        let mut image = GroupTileCache::default();
         image.render(key(5, 6.0), &tile, &table, &directions, &codes, &opacities());
         assert_eq!(lit(image.texels()).len(), 8);                                            // the centre star and the inside star; the rest skipped
         image.render(key(1, 6.0), &tile, &table, &directions, &codes, &opacities());
         assert_eq!(lit(image.texels()).len(), 4);                                            // a shorter prefix
         image.render(key(5, 2.0), &tile, &table, &directions, &codes, &opacities());
         assert!(image.texels().iter().all(|texel| texel.is_empty()));                       // a brighter threshold: everything too faint, the tile still allocated
-        image.render(ImageKey::EMPTY, &tile, &table, &directions, &codes, &opacities());
+        image.render(GroupTileKey::EMPTY, &tile, &table, &directions, &codes, &opacities());
         assert!(image.is_empty() && image.bytes() == 0);                                     // an empty prefix holds no texels
     }
 
@@ -198,7 +163,7 @@ mod tests {
         let tile = TileGeometry::new(region());
         let faint = STAR_OPACITY_REFERENCE_MAGNITUDE + 1.0 / STAR_OPACITY_MAGNITUDE_SCALE;  // opacity 0.1
         let table = table(&[fixtures::row(tile.center(), 0.0, faint, 1), fixtures::row(tile.center(), 0.0, faint, 2)]);
-        let mut image = GroupImage::default();
+        let mut image = GroupTileCache::default();
         image.render(key(2, faint + 1.0), &tile, &table, &[tile.center(); 2], &[magnitude_code(faint); 2], &opacities());
         let texel = image.texels()[MIDDLE * SIZE + MIDDLE];
         assert!((texel.opacity - 0.19).abs() < 1e-3, "{}", texel.opacity);                   // 0.1 over 0.1, not 0.2 (the code rounds the magnitude to a thousandth)
@@ -218,7 +183,7 @@ mod tests {
         let opacities = opacities();
         for (magnitudes, expected_order) in [([3.0, 0.0, 6.0], [2, 0, 1]), ([3.0; 3], [1, 2, 0])] {
             let codes = magnitudes.map(magnitude_code);
-            let mut image = GroupImage::default();
+            let mut image = GroupTileCache::default();
             image.render(key(3, 9.0), &tile, &table, &[tile.center(); 3], &codes, &opacities);
             let mut expected = Texel::default();
             for row in expected_order {
@@ -234,25 +199,25 @@ mod tests {
 
     #[test]
     fn group_rgb_is_weighted_by_opacity_in_slow_to_fast_order() {
-        let group = |rgb: [f32; 3], opacity: f32| GroupImage {
-            key: Some(key(1, 9.0)),
-            texels: vec![Texel { rgb: rgb.map(|c| c * opacity), opacity }; SIZE * SIZE],
+        let group = |rgb: [f32; 3], opacity: f32| StarGroup {
+            tile: GroupTileCache { key: Some(key(1, 9.0)), tile: crate::model::Tile { texels: vec![Texel { rgb: rgb.map(|c| c * opacity), opacity }; SIZE * SIZE] } },
+            ..StarGroup::default()
         };
         let groups = [group([1.0, 0.0, 0.0], 0.2), group([0.0, 1.0, 0.0], 0.5), group([0.0, 0.0, 1.0], 0.25)];
-        let mut image = RegionImage::default();
+        let mut image = RegionTileCache::default();
         image.merge(&groups);
         let actual = image.texels()[0];                                                  // red base, green over red, then blue over both
         let expected = Texel { rgb: [0.040336136, 0.25210086, 0.073529415], opacity: 0.7 };
         for (a, b) in actual.rgb.into_iter().chain([actual.opacity]).zip(expected.rgb.into_iter().chain([expected.opacity])) {
             assert!((a - b).abs() < 1e-6, "{actual:?} != {expected:?}");
         }
-        let mut reversed = RegionImage::default();
+        let mut reversed = RegionTileCache::default();
         reversed.merge(&[groups[2].clone(), groups[1].clone(), groups[0].clone()]);
         assert_ne!(reversed.texels()[0].rgb, actual.rgb);                                 // speed order affects colour
 
         let transparent = group([0.0; 3], 0.0);
-        image.merge(&[groups[0].clone(), GroupImage::default(), transparent]);
-        assert_eq!(image.texels(), groups[0].texels());                                  // empty or transparent groups leave the base intact
+        image.merge(&[groups[0].clone(), StarGroup::default(), transparent]);
+        assert_eq!(image.texels(), groups[0].tile.texels());                                  // empty or transparent groups leave the base intact
         let opaque = group([0.0, 0.0, 1.0], 1.0);
         image.merge(&[groups[0].clone(), groups[1].clone(), opaque.clone()]);
         assert_eq!(image.texels()[0].opacity, 1.0);
@@ -279,25 +244,25 @@ mod tests {
         let tile = TileGeometry::new(region());
         let faint = STAR_OPACITY_REFERENCE_MAGNITUDE + 1.0 / STAR_OPACITY_MAGNITUDE_SCALE;
         let table = table(&[fixtures::row(tile.center(), 0.0, faint, 1)]);
-        let mut groups = vec![GroupImage::default(), GroupImage::default(), GroupImage::default()];
-        groups[0].render(key(1, faint + 1.0), &tile, &table, &[tile.center()], &[magnitude_code(faint)], &opacities());
-        groups[2].render(key(1, faint + 1.0), &tile, &table, &[tile.center()], &[magnitude_code(faint)], &opacities());
-        let mut region_image = RegionImage::default();
+        let mut groups = vec![StarGroup::default(), StarGroup::default(), StarGroup::default()];
+        groups[0].tile.render(key(1, faint + 1.0), &tile, &table, &[tile.center()], &[magnitude_code(faint)], &opacities());
+        groups[2].tile.render(key(1, faint + 1.0), &tile, &table, &[tile.center()], &[magnitude_code(faint)], &opacities());
+        let mut region_image = RegionTileCache::default();
         assert!(!region_image.is_current(&groups) && !region_image.is_merged());
         region_image.merge(&groups);
         assert!(region_image.is_current(&groups) && region_image.is_merged());
         let middle = MIDDLE * SIZE + MIDDLE;
         assert!((region_image.texels()[middle].opacity - 0.19).abs() < 1e-3);                 // source-over: 0.1 + 0.1 × (1 - 0.1)
-        let base = groups[0].texels()[middle];
+        let base = groups[0].tile.texels()[middle];
         assert_eq!(region_image.texels()[middle].rgb, base.rgb);                          // identical stored RGB averages to itself
         let lit: Vec<(usize, u32)> = region_image.lit_rows().iter().enumerate().filter(|(_, bits)| **bits != 0).map(|(y, bits)| (y, bits.count_ones())).collect();
         assert_eq!(lit, [(MIDDLE - 1, 2), (MIDDLE, 2)]);                                     // the glyph's two rows, two texels each
         assert_eq!(region_image.lit_rows()[MIDDLE] & (1 << MIDDLE), 1 << MIDDLE);
-        groups[2].render(key(1, 2.0), &tile, &table, &[tile.center()], &[magnitude_code(faint)], &opacities());
+        groups[2].tile.render(key(1, 2.0), &tile, &table, &[tile.center()], &[magnitude_code(faint)], &opacities());
         assert!(!region_image.is_current(&groups));                                          // a group key changed
         region_image.merge(&groups);
         assert!((region_image.texels()[middle].opacity - 0.1).abs() < 1e-3);
-        region_image.merge(&[GroupImage::default(), GroupImage::default(), GroupImage::default()]);
+        region_image.merge(&[StarGroup::default(), StarGroup::default(), StarGroup::default()]);
         assert!(region_image.is_empty() && region_image.bytes() == 0 && region_image.is_merged() && region_image.lit_rows().is_empty()); // only empty groups: no texels
     }
 }

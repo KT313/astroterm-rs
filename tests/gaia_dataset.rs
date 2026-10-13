@@ -28,7 +28,7 @@ fn real_gaia_prefix_converts_and_reuses_prepared_cache() {
 #[test]
 #[ignore = "requires ASTROTERM_GAIA_DATA with the first MAST parquet block; at most the first row group"]
 fn mast_first_block_builds_validated_group_tables() {
-    use astroterm::model::LabelColumn;
+    use astroterm::model::StarLabels;
     let data = std::env::var_os("ASTROTERM_GAIA_DATA").expect("set the astroterm data directory");
     let cache = tempfile::tempdir().unwrap();
     let dirs = DatasetDirectories { data: Some(data.into()), cache: Some(cache.path().into()) };
@@ -38,10 +38,10 @@ fn mast_first_block_builds_validated_group_tables() {
     println!("{}", String::from_utf8_lossy(&notices));
     assert!(prepared.catalog.stars.source_ids().is_some());
     let tables = astroterm::sky::build_sky_tables(&prepared, &mut astroterm::progress::Report::quiet()).unwrap();
-    assert_eq!(tables.stars.len(), prepared.catalog.stars.len());
-    assert!(tables.constellations.is_empty());
-    assert!(tables.stars.iter().all(|(_, _, table)| matches!(table.labels(), LabelColumn::SourceIds(_))));
-    let labelled: usize = tables.stars.iter().map(|(_, _, table)| table.labels().len()).sum();
-    assert_eq!(labelled, tables.stars.len());
-    println!("Gaia group tables validated: {} stars", tables.stars.len());
+    assert_eq!(tables.region_star_count(), prepared.catalog.stars.len());
+    assert!(tables.constellation_stars.is_empty());
+    assert!(tables.star_tables().all(|(_, _, table)| matches!(table.labels(), StarLabels::SourceIds(_))));
+    let labelled: usize = tables.star_tables().map(|(_, _, table)| table.labels().len()).sum();
+    assert_eq!(labelled, tables.region_star_count());
+    println!("Gaia group tables validated: {} stars", tables.region_star_count());
 }

@@ -1,10 +1,10 @@
-//! Validate inputs, load the selected catalog into the sky tables and open the terminal.
+//! Validate inputs, load the selected catalog into the sky data and open the terminal.
 use std::io;
 use std::process::ExitCode;
 use astroterm::catalog::datasets::{Dataset, DatasetDirectories};
 use astroterm::catalog::{City, load_embedded_cities};
 use astroterm::cli::{Arguments, build_config, write_bash_completions};
-use astroterm::model::{Config, GraphicsProtocol, SkyTables};
+use astroterm::model::{Config, GraphicsProtocol, Data};
 use astroterm::present::Display;
 use astroterm::timing::StepTimes;
 use ratatui_image::picker::ProtocolType;
@@ -33,9 +33,9 @@ pub(crate) fn validate_arguments(arguments: Arguments, cities: &[City]) -> Resul
     build_config(arguments, cities).map_err(report_failure)
 }
 
-/// Load the selected catalog, split it into the sky tables of the frame loop and record the startup
-/// diagnostics. The prepared catalog is dropped once the tables are built: the tables are the only copy.
-pub(crate) fn load_catalog(config: &Config, directories: &DatasetDirectories, times: &mut StepTimes) -> Result<SkyTables, ExitCode> {
+/// Load the selected catalog, split it into the sky data of the frame loop and record the startup
+/// diagnostics. The prepared catalog is dropped once the data are built: the data are the only copy.
+pub(crate) fn load_catalog(config: &Config, directories: &DatasetDirectories, times: &mut StepTimes) -> Result<Data, ExitCode> {
     let loaded = {
         let mut progress = astroterm::terminal::open_startup_progress(config.no_progress);
         let result = times.measure_steps("Dataset loading", |times| {
@@ -43,7 +43,7 @@ pub(crate) fn load_catalog(config: &Config, directories: &DatasetDirectories, ti
         });
         let result = result.and_then(|catalog| {
             catalog.catalog.validate_exception_support()?;                                                // reject unsupported sparse data before the frame loop
-            times.measure_steps("Group tables", |times| astroterm::sky::build_sky_tables(&catalog, &mut astroterm::progress::Report::live(&mut progress, times))).map(|tables| (catalog, tables))
+            times.measure_steps("Group data", |times| astroterm::sky::build_sky_tables(&catalog, &mut astroterm::progress::Report::live(&mut progress, times))).map(|data| (catalog, data))
         });
         progress.finish(result.is_ok()); // stop all startup drawing before terminal setup or error reporting
         result
@@ -54,7 +54,7 @@ pub(crate) fn load_catalog(config: &Config, directories: &DatasetDirectories, ti
         Ok(loaded) => Ok(loaded),
         Err(error) => Err(io::Error::other(error)),
     };
-    let (catalog, tables) = match loaded {
+    let (catalog, data) = match loaded {
         Ok(loaded) => loaded,
         Err(error) => return Err(finish_requested_report(Err(error), config, times, &mut io::stdout().lock(), &mut io::stderr().lock())),
     };
@@ -64,12 +64,12 @@ pub(crate) fn load_catalog(config: &Config, directories: &DatasetDirectories, ti
     let catalog = &catalog.catalog;
     if config.dataset.is_some() { eprintln!("Catalog: {} stars loaded.", catalog.stars.len()); } // the embedded catalog loads silently, as before
     times.describe("Dataset loading", || format!(
-        "output stars={}; constellation figures={}; unique endpoints={}; tangential fallbacks={}; group tables={}; constellation stars={}",
+        "output stars={}; constellation figures={}; unique endpoints={}; tangential fallbacks={}; group data={}; constellation stars={}",
         catalog.stars.len(), catalog.constellations().len(), catalog.endpoint_indices().len(), catalog.singular_count,
-        tables.stars.iter().filter(|(_, _, table)| !table.is_empty()).count(), tables.constellations.len(),
+        data.star_tables().filter(|(_, _, table)| !table.is_empty()).count(), data.constellation_stars.len(),
     ));
     eprintln!("Catalog: {} stars use tangential motion after near-collision checks.", catalog.singular_count);
-    Ok(tables)                                                                                              // the prepared catalog is dropped here
+    Ok(data)                                                                                              // the prepared catalog is dropped here
 }
 
 /// Open the terminal with the configured or detected graphics protocol and describe the setup.

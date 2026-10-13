@@ -3,7 +3,7 @@ use astroterm::{
     catalog::{Catalog, StarNames, load_athyg_catalog, MagnitudeClipping, decode_magnitude, magnitude_code},
     catalog::datasets::{Dataset, DatasetDirectories},
     constants::MAST_PARALLEL_BLOCKS,
-    model::{PreparedCatalog, SkyTables},
+    model::{PreparedCatalog, Data},
     progress::NoProgress,
     sky::{build_sky_tables, prepare_owned_catalog, load_cached_catalog, write_cached_catalog, catalog_fingerprint},
     timing::StepTimes,
@@ -14,7 +14,7 @@ fn load_sky_catalog(dataset: Option<&Dataset>, dirs: &DatasetDirectories, notice
     astroterm::sky::load_sky_catalog(dataset, MAST_PARALLEL_BLOCKS, dirs, &mut astroterm::progress::Report::live(&mut NoProgress(notices), &mut StepTimes::default()))
 }
 
-fn tables(prepared: &PreparedCatalog) -> SkyTables {
+fn tables(prepared: &PreparedCatalog) -> Data {
     build_sky_tables(prepared, &mut astroterm::progress::Report::live(&mut NoProgress(std::io::sink()), &mut StepTimes::default())).unwrap()
 }
 
@@ -87,7 +87,8 @@ fn quantization_changes_ties_but_keeps_id_order_and_decoded_runtime_values() {
 #[test]
 fn clipped_minimum_passes_the_brightness_prefix_before_the_saturating_current_magnitude() {
     use astroterm::astro::{J2000, JULIAN_YEAR_DAYS};
-    use astroterm::regions::{Simulations, UNPLACED, rows_wanted};
+    use astroterm::model::speed_group_hold_seconds;
+    use astroterm::regions::{UNPLACED, rows_wanted};
     let parsed = load_csv("ra,dec,mag,dist,rv\n0,0,-9.9,10,-100\n0,0,-10,,\n").unwrap();
     let prepared = prepare_owned_catalog(parsed, &mut astroterm::progress::Report::quiet()).unwrap();
     // Both encoded-zero rows pass an arbitrarily bright early threshold; the current magnitude still decides.
@@ -95,13 +96,13 @@ fn clipped_minimum_passes_the_brightness_prefix_before_the_saturating_current_ma
     let tables = tables(&prepared);
     for (years, drawn) in [(0.0, 1), (9000.0, 2)] {                                        // the current magnitude saturates at -10.000, so the threshold -10 draws it
         let tt = J2000 + years * JULIAN_YEAR_DAYS;
-        let mut simulations = Simulations::default();
+        let mut simulations = tables.clone();
         let mut codes = Vec::new();
-        for (region, group, table) in tables.stars.iter() {
+        for (region, group, table) in tables.star_tables() {
             let rows = rows_wanted(table, tt, -10.0);
             assert_eq!(rows, table.len());                                                   // the stored bounds admit both rows at every date
-            simulations.update_group(table, region, group, tt, -10.0);
-            codes.extend(simulations.group(region, group).magnitudes().iter().take(rows).copied().filter(|&code| code != UNPLACED));
+            (simulations.star_regions[region].speed_groups[group].simulation.update(table, tt, rows_wanted(table, tt, -10.0), speed_group_hold_seconds(group)));
+            codes.extend(simulations.star_regions[region].speed_groups[group].simulation.magnitudes().iter().take(rows).copied().filter(|&code| code != UNPLACED));
         }
         assert_eq!(codes.iter().filter(|&&code| code <= magnitude_code(-10.0)).count(), drawn);
         if drawn == 2 { assert!(codes.iter().all(|&code| code == 0)); }                      // the approaching star is calculated brighter and saturates at -10.000
@@ -116,20 +117,20 @@ fn clipping_notice_coexists_with_date_notice_and_the_tables_carry_it() {
     use astroterm::observation::observe;
     use astroterm::points::{PointInputs, draw_points};
     use astroterm::projection::{Frame, SkyArea};
-    use astroterm::regions::{RegionCaches, refresh_regions};
+    use astroterm::regions::refresh_regions;
     use astroterm::selection::select_regions;
     use astroterm::solar_system::simulate_solar_system;
-    let notices = |tables: &SkyTables, utc: f64| {
+    let notices = |tables: &Data, utc: f64| {
         let time = FrameTime::from_utc(utc);
         let view = View::default();
         let settings = RenderOptions { unicode: true, braille: false, color: false, constellations: false, grid: false, magnitude_threshold: -50.0, dynamic_names: false };
-        let solar_system = simulate_solar_system(&tables.bodies, time, &mut astroterm::timing::StepTimes::default());
+        let solar_system = simulate_solar_system(tables, time, &mut astroterm::timing::StepTimes::default());
         let observation = observe(&Observer::default(), false, &view, time, &mut astroterm::timing::StepTimes::default());
-        let selected = select_regions(&tables.stars, &observation, &mut astroterm::timing::StepTimes::default());
-        let mut caches = RegionCaches::default();
-        refresh_regions(&mut caches, tables, &selected, time, &view, &settings, &mut astroterm::timing::StepTimes::default());
+        let selected = select_regions(&tables.star_regions, &observation, &mut astroterm::timing::StepTimes::default());
+        let mut caches = tables.clone();
+        refresh_regions(&mut caches, &selected, time, &view, &settings, &mut astroterm::timing::StepTimes::default());
         let mut frame = Frame::new(140, 60, SkyArea::centred(140, 60), (10, 20));
-        let inputs = PointInputs { solar_system: &solar_system, tables, caches: &caches, selected: &selected, panel: &[], notice: None };
+        let inputs = PointInputs { solar_system: &solar_system, data: &caches, selected: &selected, panel: &[], notice: None };
         draw_points(&mut frame, &inputs, &observation, &view, &settings, &mut astroterm::timing::StepTimes::default()).notices
     };
     let clipped = tables(&prepare_owned_catalog(load_csv("ra,dec,mag,dist,rv\n0,0,-9.9,10,-100\n").unwrap(), &mut astroterm::progress::Report::quiet()).unwrap());

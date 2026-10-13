@@ -238,7 +238,7 @@ fn mast_loading_does_not_count_a_block_that_fails_during_assembly() {
 
 #[test]
 fn gaia_source_ids_survive_sort_cache_and_label_consumers_without_name_storage() {
-    use crate::{sky::{write_cached_catalog, load_cached_catalog, catalog_fingerprint}, model::LabelColumn};
+    use crate::{sky::{write_cached_catalog, load_cached_catalog, catalog_fingerprint}, model::StarLabels};
     let root = tempfile::tempdir().unwrap();
     let mut groups = vec![vec![row((1 << 55) + 7), row((1 << 55) + 99), row((1 << 55) + 31)]];
     groups[0][0].values[0] = Some(270f64.to_bits());
@@ -262,7 +262,7 @@ fn gaia_source_ids_survive_sort_cache_and_label_consumers_without_name_storage()
             catalog.stars.write_label(index, &catalog.names, unicode, &mut label);
             assert_eq!(label, format!("Gaia DR3 {id}"));
             assert_eq!(label.as_ptr(), buffer);
-            let labels = LabelColumn::SourceIds(catalog.stars.source_ids().unwrap().to_vec());
+            let labels = StarLabels::SourceIds(catalog.stars.source_ids().unwrap().to_vec());
             assert_eq!(crate::points::star_label(&labels, index, &catalog.names, unicode), label); // the frame loop's label text
         }
     }

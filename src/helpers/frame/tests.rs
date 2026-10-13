@@ -15,7 +15,7 @@ fn config(flags: &[&str]) -> Config {
         &astroterm::catalog::load_embedded_cities().unwrap()).unwrap()
 }
 
-fn tables() -> SkyTables {
+fn tables() -> Data {
     let prepared = astroterm::sky::prepare_owned_catalog(astroterm::catalog::load_embedded_catalog(&mut astroterm::progress::Report::quiet()).unwrap(), &mut astroterm::progress::Report::quiet()).unwrap();
     astroterm::sky::build_sky_tables(&prepared, &mut astroterm::progress::Report::quiet()).unwrap()
 }
@@ -38,17 +38,16 @@ fn controls_change_the_view_and_the_clock_and_quit_is_detected() {
 
 #[test]
 fn the_panel_is_empty_when_off_and_lists_time_counts_display_and_timings_when_on() {
-    let tables = tables();
+    let mut tables = tables();
     let time = FrameTime::from_utc(config(&[]).simulation.start_julian_date);
     let clock = SimulationClock::start(time.utc, 0.0);
     let view = View { center: ViewCenter::Zenith, fov_degrees: 360.0, projection: ProjectionKind::Equidistant };     // the whole sky, as chunk 10 tests it
     let observation = observe(&config(&[]).simulation.observer, false, &view, time, &mut astroterm::timing::StepTimes::default());
-    let solar_system = simulate_solar_system(&tables.bodies, time, &mut astroterm::timing::StepTimes::default());
-    let selected = select_regions(&tables.stars, &observation, &mut astroterm::timing::StepTimes::default());
-    let mut caches = RegionCaches::default();
-    let refreshed = refresh_regions(&mut caches, &tables, &selected, time, &view, &config(&[]).render, &mut astroterm::timing::StepTimes::default());
+    let solar_system = simulate_solar_system(&tables, time, &mut astroterm::timing::StepTimes::default());
+    let selected = select_regions(&tables.star_regions, &observation, &mut astroterm::timing::StepTimes::default());
+    let refreshed = refresh_regions(&mut tables, &selected, time, &view, &config(&[]).render, &mut astroterm::timing::StepTimes::default());
     let display = DisplayInfo { protocol: ProtocolType::Kitty, tmux: false, compression: CompressionSupport::Unknown, shared_memory: false, screen: Rect::new(0, 0, 100, 40), font: (10, 20), image: (1000, 800), text_cell: (9, 17) };
-    let frame = PanelFrame { time, clock: &clock, solar_system: &solar_system, selected: &selected, caches: &caches, refreshed, display };
+    let frame = PanelFrame { time, clock: &clock, solar_system: &solar_system, selected: &selected, refreshed, display };
     let mut times = StepTimes::default();
     times.measure("Projection", || {});
 
@@ -65,7 +64,7 @@ fn the_panel_is_empty_when_off_and_lists_time_counts_display_and_timings_when_on
         assert!(labels.contains(&label), "{label} missing from {labels:?}");
     }
     let value = |label: &str| lines.iter().find(|field| field.label == label).unwrap().value.clone();
-    assert_eq!(value("Stars loaded"), format!("{} stars", format_star_count(tables.stars.len() + tables.constellations.len())));
+    assert_eq!(value("Stars loaded"), format!("{} stars", format_star_count(tables.region_star_count() + tables.constellation_stars.len())));
     assert!(value("Regions selected").ends_with("(whole sky)"));
     assert!(value("Graphics").contains("1000×800"));
     assert!(value("Groups refreshed").starts_with(&format!("{} simulated", refreshed.simulated)));

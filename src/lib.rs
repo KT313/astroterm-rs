@@ -1,33 +1,20 @@
 //! astroterm: a terminal star map.
 //!
-//! The frame loop is the binary's `pipeline.rs`: the seven steps of `dev/pipeline-restructuring-plan.md` section 6,
-//! called by name and in order (chunk 13, 2026-10-12). The old spine described below is no longer run by the
-//! binary and goes in chunk 14.
+//! The binary's `pipeline.rs` calls seven frame steps in order: [`solar_system`], [`observation`], [`selection`],
+//! [`regions`], [`projection`], [`points`] and [`present`]. [`sky`] loads and prepares catalogs before that loop.
 //!
-//! Pure foundations ([`astro`], [`canvas`], [`catalog`], [`cache`], [`rows`], [`progress`] and [`timing`]) support the shared records in
-//! [`model`]. Catalog and observed data, view settings, projected geometry and validated configuration live there;
-//! representation accessors and constructors do not depend on higher processing modules. [`sky`], [`projection`]
-//! and [`scene`] contain preparation, correction, geometric and drawing algorithms over restricted borrowed inputs.
-//! [`state::ApplicationState`] owns the catalog, processing caches, rendering buffers and designated scratch from
-//! startup; the prepared catalog is installed through `replace_catalog`. Only the terminal writer/restoration guard
-//! stays scoped outside it.
+//! [`model::Data`] owns the solar-system tables, constellation stars and figures, shared names, and ordinary
+//! sky regions. Each region owns its speed groups and merged tile; each group owns its original star columns,
+//! calculated samples and rendered tile. Definitions are collected in `model/data.rs`; processing algorithms
+//! remain in the step modules. Catalog columns stay unchanged during frames, while their caches update in place.
 //!
-//! [`astro::models`] keeps independent star, planet, Moon and orientation formulas. [`controls`] changes views and
-//! the simulation clock; [`cli`] parses/validates input, and [`terminal`] owns scoped I/O and restoration. Shared data uses canonical `model`/`state` paths;
-//! preparation and geometric operations are explicit free functions. Each of these modules exposes its API
-//! through `mod.rs`; optional `pipeline.rs` files show ordered processing while private supporting folders hold
-//! implementation details. Callers import root symbols instead of depending on those folders.
+//! Pure foundations ([`astro`], [`catalog`], [`rows`], [`progress`], [`timing`] and [`text`]) support the model.
+//! [`astro::models`] supplies astronomy formulas. [`controls`] changes the view and simulation clock; [`cli`]
+//! validates options; [`terminal`] handles input, transport and terminal restoration. Callers import public
+//! symbols from each module's root, not its implementation folders.
 //!
-//! The frame pipeline is being rebuilt (`dev/pipeline-restructuring-plan.md`). The new spine grows one step module
-//! at a time directly under `src/`: [`solar_system`] (step 1), [`observation`] (step 2), [`selection`] (step 3) and
-//! [`regions`] (step 4: speed groups, simulation caches, sky-fixed group and region images, `refresh_regions`) and
-//! [`projection`] (step 5, `project_stars_to_screen`: the warp of the region tiles onto the screen, beside the
-//! projection geometry it reuses), [`points`] (step 6, `draw_points`: bodies, constellation lines, labels and
-//! overlays on the frame) and [`present`] (step 7, `present`: tone mapping and the terminal output; its
-//! `Display` opens the terminal and sizes the frame).
-//!
-//! Earth is the only production anchor. Common f64 states use equatorial J2000 axes, AU and AU/day, with
-//! a barycentric origin. [`sky`] documents the observer site and apparent-place corrections.
+//! Earth is the production observer anchor. Positions use equatorial J2000 axes, AU and AU/day, with a
+//! barycentric origin. The frame buffer and terminal session have their own lifetimes outside Data.
 
 /// Tunable defaults, resource limits and cache durations; independent of all application layers.
 pub mod constants;

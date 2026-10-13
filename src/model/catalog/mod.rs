@@ -8,10 +8,8 @@ mod stars;
 mod constellations;
 mod bodies;
 mod tables;
-pub use stars::{Stars, GroupTable, LabelColumn};
-pub use constellations::Constellations;
-pub use bodies::{Bodies, Body, Satellite};
-pub use tables::SkyTables;
+use crate::model::{StarRowVec, StarRowSlice};
+
 pub use records::{SkyCatalog, CatalogPreparation, PreparedCatalog, ConstellationSet, StarException, Star, Constellation};
 pub use star_color::StarColor;
 pub use grid::{SkyGrid, hash_direction};
@@ -19,7 +17,7 @@ pub use groups::{speed_group, speed_group_hold_seconds, drift_bound_for_rate};
 pub(crate) use grid::region_caps;
 #[cfg(test)]
 pub(crate) use stars::fixtures;
-pub use storage::{STAR_SECTIONS, StarRow, StarRowSlice, StarRowVec, StarStorage};
+pub use storage::{STAR_SECTIONS, StarRow, StarStorage};
 pub(crate) use grid::{CellCap, build_caps};
 
 #[cfg(test)]

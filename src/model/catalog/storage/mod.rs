@@ -1,11 +1,12 @@
 //! Immutable structure-of-arrays storage. Arithmetic is f64 after expanding the compact inputs; only a sparse
 //! exception-table skeleton reserves future support; unsupported trajectories fail preparation explicitly.
-//! The per-star columns are declared once in `columns.rs`; `columns()` borrows all of them for one pass.
+//! The per-star columns are declared once in model/data.rs; columns.rs supplies prepared-row conversion.
 use crate::constants::{MAX_DIRECTION_ERROR, QUANTIZATION_MARGIN};
 mod columns;
 mod views;
 mod reordering;
-pub use columns::{STAR_SECTIONS, StarRow, StarRowSlice, StarRowVec};
+pub use columns::{STAR_SECTIONS, StarRow};
+use crate::model::{StarRowSlice, StarRowVec};
 #[cfg(test)]
 use columns::section;
 use crate::model::Star;

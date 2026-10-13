@@ -183,7 +183,7 @@ fn strip_alpha(rgba: &[u8], rgb: &mut Vec<u8>) {
 mod tests {
     use super::*;
     use crate::projection::SkyArea;
-    use crate::regions::Texel;
+    use crate::model::Texel;
 
     fn frame(width: usize, height: usize) -> Frame { Frame::new(width, height, SkyArea::centred(width, height), (10, 20)) }
     fn pixel(out: &[u8], frame: &Frame, row: usize, column: usize) -> [u8; 4] { out[(row * frame.width() + column) * 4..][..4].try_into().unwrap() }
@@ -303,7 +303,7 @@ mod tests {
 mod shared_tests {
     use super::*;
     use crate::projection::SkyArea;
-    use crate::regions::Texel;
+    use crate::model::Texel;
     use std::{ffi::CString, io::Read};
 
     /// A Kitty terminal stand-in: decodes shared-memory uploads and either consumes (reads and unlinks) them or not.

@@ -1,21 +1,18 @@
-//! Build the rebuilt pipeline's `SkyTables` from a prepared catalog (plan section 4, chunk 6). The prepared rows
-//! are sorted by region and brightness; splitting each region's rows by speed group in that order keeps every
-//! group table brightest first, so no new sort is needed. The constellation region becomes the constellation
-//! table and the figures are renumbered to its rows. The result is validated before it is returned.
-//!
-//! Until the frame loop takes the tables over (chunk 13), the prepared catalog stays in memory as well; after
-//! that, the split consumes it.
+//! Build Data from a prepared catalog. Split each brightness-sorted region into its speed groups without
+//! sorting again, and create empty simulation/image caches beside each group's original columns.
+//! Constellation figures index rows of the separate endpoint table. The loader drops the prepared catalog
+//! after startup, leaving Data as the only runtime owner of the stars.
 use std::io;
 
 use crate::catalog::cache::invalid;
 use crate::constants::{CELL_COUNT, CONSTELLATION_REGION, SIMULATION_REGION_COUNT, SPEED_GROUP_COUNT};
-use crate::model::{Bodies, Constellation, Constellations, GroupTable, LabelColumn, PreparedCatalog, SkyCatalog, SkyTables, StarRow, StarRowVec, Stars};
+use crate::model::{Constellation, Region, StarGroup, StarTable, StarLabels, PreparedCatalog, SkyCatalog, Data, StarRow, StarRowVec};
 use crate::progress::{DatasetProgress, Outcome, Report, Stage, Unit};
 use crate::model::speed_group;
 use crate::timing::StepTimes;
 
 /// Split a prepared catalog into the per-group tables and the constellation table, then validate them.
-pub fn build_sky_tables(prepared: &PreparedCatalog, report: &mut Report<'_>) -> io::Result<SkyTables> {
+pub fn build_sky_tables(prepared: &PreparedCatalog, report: &mut Report<'_>) -> io::Result<Data> {
     let (progress, times) = report.parts();
     let count = prepared.catalog.stars.len();
     progress.begin_stage(Stage::Group, "", Unit::Stars, Some(count as u64));
@@ -24,7 +21,7 @@ pub fn build_sky_tables(prepared: &PreparedCatalog, report: &mut Report<'_>) -> 
     result
 }
 
-fn build_tables(prepared: &PreparedCatalog, progress: &mut dyn DatasetProgress, times: &mut StepTimes) -> io::Result<SkyTables> {
+fn build_tables(prepared: &PreparedCatalog, progress: &mut dyn DatasetProgress, times: &mut StepTimes) -> io::Result<Data> {
     // the inputs: brightness-sorted regions and the startup-only motion bounds
     let catalog = &prepared.catalog;
     let bounds = prepared.preparation.motion_bounds();
@@ -36,9 +33,21 @@ fn build_tables(prepared: &PreparedCatalog, progress: &mut dyn DatasetProgress, 
     }
 
     // split, renumber, validate
-    let groups = times.measure("Speed group split", || split_groups(catalog, bounds, progress));
-    let constellations = times.measure("Constellation table", || build_constellations(catalog))?;
-    let tables = SkyTables { bodies: Bodies::default(), stars: Stars::new(groups), constellations, names: catalog.names.clone(), clipping: catalog.stars.magnitude_clipping() };
+    let star_regions = times.measure("Speed group split", || split_groups(catalog, bounds, progress));
+    let (constellation_stars, constellation_figures) = times.measure("Constellation table", || build_constellations(catalog))?;
+    let tables = Data {
+        solar_system_sun: Default::default(),
+        solar_system_planets: Default::default(),
+        solar_system_moons: Default::default(),
+        constellation_stars,
+        constellation_simulation: Default::default(),
+        constellation_figures,
+        star_regions,
+        names: catalog.names.clone(),
+        clipping: catalog.stars.magnitude_clipping(),
+        star_opacities: Default::default(),
+        tile_bytes: 0,
+    };
     progress.set_detail("Checking the group tables");
     times.measure("Group table validation", || tables.validate())?;
     times.describe("Speed group split", || describe(&tables));
@@ -46,40 +55,41 @@ fn build_tables(prepared: &PreparedCatalog, progress: &mut dyn DatasetProgress, 
 }
 
 /// One table per region and group, filled in the prepared order so that each table is brightest first.
-fn split_groups(catalog: &SkyCatalog, bounds: &[f32], progress: &mut dyn DatasetProgress) -> Vec<GroupTable> {
+fn split_groups(catalog: &SkyCatalog, bounds: &[f32], progress: &mut dyn DatasetProgress) -> Box<[Region]> {
     let columns = catalog.stars.columns();
     let names = catalog.stars.name_entries();
     let source_ids = catalog.stars.source_ids();
     let offsets = &catalog.grid.offsets;
-    let mut tables = Vec::with_capacity(CELL_COUNT * SPEED_GROUP_COUNT);
+    let mut tables = Vec::with_capacity(CELL_COUNT);
     let mut groups: Vec<u8> = Vec::new();                                  // the group of every row of the current region
     for region in 0..CELL_COUNT {
         let range = offsets[region]..offsets[region + 1];
         groups.clear();
         groups.extend(range.clone().map(|row| speed_group(bounds[row]) as u8));
-        for group in 0..SPEED_GROUP_COUNT {
+        let speed_groups = std::array::from_fn(|group| {
             let members = || range.clone().zip(&groups).filter(move |&(_, &member)| usize::from(member) == group).map(|(row, _)| row);
             let size = members().count();
             let mut rows = StarRowVec::with_capacity(size);
-            let mut labels = match source_ids { Some(_) => LabelColumn::SourceIds(Vec::with_capacity(size)), None => LabelColumn::Names(Vec::with_capacity(size)) };
+            let mut labels = match source_ids { Some(_) => StarLabels::SourceIds(Vec::with_capacity(size)), None => StarLabels::Names(Vec::with_capacity(size)) };
             for row in members() {
                 rows.push(star_row(&columns, row).into());
                 match (&mut labels, source_ids) {
-                    (LabelColumn::SourceIds(ids), Some(source)) => ids.push(source[row]),
-                    (LabelColumn::Names(entries), None) => entries.push(names[row]),
+                    (StarLabels::SourceIds(ids), Some(source)) => ids.push(source[row]),
+                    (StarLabels::Names(entries), None) => entries.push(names[row]),
                     _ => unreachable!("label kind chosen from the same catalog"),
                 }
             }
-            tables.push(GroupTable::new(rows, labels));
-        }
+            StarGroup { stars: StarTable::new(rows, labels), ..StarGroup::default() }
+        });
+        tables.push(Region { speed_groups, ..Region::default() });
         if region % 1024 == 1023 { progress.set_position(range.end as u64); }
     }
     progress.set_position(offsets[CELL_COUNT] as u64);
-    tables
+    tables.into_boxed_slice()
 }
 
 /// The constellation region as its own table, with the figures renumbered to its rows.
-fn build_constellations(catalog: &SkyCatalog) -> io::Result<Constellations> {
+fn build_constellations(catalog: &SkyCatalog) -> io::Result<(StarTable, Vec<Constellation>)> {
     let columns = catalog.stars.columns();
     let names = catalog.stars.name_entries();
     let (start, end) = (catalog.grid.offsets[CONSTELLATION_REGION], catalog.grid.offsets[CONSTELLATION_REGION + 1]);
@@ -95,7 +105,7 @@ fn build_constellations(catalog: &SkyCatalog) -> io::Result<Constellations> {
         let segments = figure.segments.iter().map(|&[a, b]| Ok([renumber(a)?, renumber(b)?])).collect::<io::Result<Vec<_>>>()?;
         Ok(Constellation { abbreviation: figure.abbreviation, segments })
     }).collect::<io::Result<Vec<_>>>()?;
-    Ok(Constellations::new(rows, entries, figures))
+    Ok((StarTable::new(rows, StarLabels::Names(entries)), figures))
 }
 
 fn star_row(columns: &crate::model::StarRowSlice<'_>, row: usize) -> StarRow {
@@ -105,15 +115,15 @@ fn star_row(columns: &crate::model::StarRowSlice<'_>, row: usize) -> StarRow {
     }
 }
 
-fn describe(tables: &SkyTables) -> String {
+fn describe(tables: &Data) -> String {
     let mut per_group = [0usize; SPEED_GROUP_COUNT];
     let mut filled = 0;
-    for (_, group, table) in tables.stars.iter() {
+    for (_, group, table) in tables.star_tables() {
         per_group[group] += table.len();
         filled += usize::from(!table.is_empty());
     }
     format!("slow={}; medium={}; fast={}; constellation={}; filled group tables={filled} of {}", per_group[0], per_group[1], per_group[2],
-        tables.constellations.len(), CELL_COUNT * SPEED_GROUP_COUNT)
+        tables.constellation_stars.len(), CELL_COUNT * SPEED_GROUP_COUNT)
 }
 
 #[cfg(test)]
@@ -126,18 +136,18 @@ mod tests {
         crate::sky::prepare_owned_catalog(load_embedded_catalog(&mut crate::progress::Report::quiet()).unwrap(), &mut crate::progress::Report::quiet()).unwrap()
     }
 
-    fn build(prepared: &PreparedCatalog) -> io::Result<SkyTables> {
+    fn build(prepared: &PreparedCatalog) -> io::Result<Data> {
         build_sky_tables(prepared, &mut crate::progress::Report::live(&mut NoProgress(io::sink()), &mut StepTimes::default()))
     }
 
     /// Where the named star is: its speed group, or `None` for the constellation table.
-    fn group_of(tables: &SkyTables, name: &str) -> Option<usize> {
+    fn group_of(tables: &Data, name: &str) -> Option<usize> {
         let named = |entry: u32| tables.names.get(NameId::from_entry(entry)) == Some(name);
-        for (_, group, table) in tables.stars.iter() {
-            let LabelColumn::Names(entries) = table.labels() else { panic!("stored catalog") };
+        for (_, group, table) in tables.star_tables() {
+            let StarLabels::Names(entries) = table.labels() else { panic!("stored catalog") };
             if entries.iter().any(|&entry| named(entry)) { return Some(group); }
         }
-        assert!(tables.constellations.names().iter().any(|&entry| named(entry)), "{name} is in no table");
+        assert!(tables.constellation_stars.name_entries().iter().any(|&entry| named(entry)), "{name} is in no table");
         None
     }
 
@@ -146,15 +156,15 @@ mod tests {
         let prepared = embedded();
         let tables = build(&prepared).unwrap();
         let catalog = &prepared.catalog;
-        assert_eq!(tables.stars.len() + tables.constellations.len(), catalog.stars.len());
-        assert_eq!(tables.constellations.len(), catalog.endpoint_indices().len());
-        assert_eq!(tables.constellations.figures().len(), catalog.constellations().len());
+        assert_eq!(tables.region_star_count() + tables.constellation_stars.len(), catalog.stars.len());
+        assert_eq!(tables.constellation_stars.len(), catalog.endpoint_indices().len());
+        assert_eq!(tables.constellation_figures.len(), catalog.constellations().len());
         assert_eq!(tables.names, catalog.names);
         for region in 0..CELL_COUNT {                                                   // every region keeps its stars, split over its three tables
-            let total: usize = tables.stars.region(region).iter().map(GroupTable::len).sum();
+            let total: usize = tables.star_regions[region].speed_groups.iter().map(|group| &group.stars).map(StarTable::len).sum();
             assert_eq!(total, catalog.grid.offsets[region + 1] - catalog.grid.offsets[region], "region {region}");
         }
-        assert_eq!(tables.bodies.planets.len(), 8);
+        assert_eq!(tables.solar_system_planets.planets.len(), 8);
     }
 
     #[test]
@@ -169,7 +179,7 @@ mod tests {
         assert_eq!(group_of(&tables, "Toliman"), Some(2));                              // 1.9″/yr, α Centauri
         assert_eq!(group_of(&tables, "Keid"), Some(2));                                 // 4.1″/yr
         for endpoint in ["Sirius", "Polaris", "Deneb", "Arcturus"] { assert_eq!(group_of(&tables, endpoint), None, "{endpoint}"); } // constellation stars are in no group
-        let counts = (0..SPEED_GROUP_COUNT).map(|g| tables.stars.iter().filter(|&(_, group, _)| group == g).map(|(_, _, t)| t.len()).sum::<usize>()).collect::<Vec<_>>();
+        let counts = (0..SPEED_GROUP_COUNT).map(|g| tables.star_tables().filter(|&(_, group, _)| group == g).map(|(_, _, t)| t.len()).sum::<usize>()).collect::<Vec<_>>();
         assert_eq!(counts, [4069, 4096, 239]);                                         // BSC5 without the 706 constellation endpoints
     }
 
@@ -195,7 +205,7 @@ mod tests {
     fn empty_catalog_gives_empty_tables() {
         let prepared = crate::sky::prepare_owned_catalog(crate::catalog::Catalog::new(Vec::new(), crate::catalog::StarNames::default(), Vec::new()), &mut crate::progress::Report::quiet()).unwrap();
         let tables = build(&prepared).unwrap();
-        assert!(tables.stars.is_empty() && tables.constellations.is_empty());
+        assert!(tables.region_star_count() == 0 && tables.constellation_stars.is_empty());
         assert_eq!(describe(&tables), format!("slow=0; medium=0; fast=0; constellation=0; filled group tables=0 of {}", CELL_COUNT * SPEED_GROUP_COUNT));
     }
 }

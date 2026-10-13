@@ -1,16 +1,16 @@
-//! Phase-6 model/correction probe. Reads TT/UT1 epochs from stdin; never an independent reference. Bodies and
+//! Phase-6 model/correction probe. Reads TT/UT1 epochs from stdin; never an independent reference. Data and
 //! stars go through the frame loop's steps 1 and 2 and the stellar motion model, airless.
 use astroterm::astro::{
     FrameTime, Observer, Vector3,
     models::{BodyId, moons::evaluate_moon, orientation::*, planets::evaluate_planets, stars::years_since_j2000},
 };
-use astroterm::model::{Bodies, View};
+use astroterm::model::{Data, View};
 use astroterm::observation::observe;
 use astroterm::solar_system::simulate_solar_system;
 use std::io::{self, BufRead};
 fn main() {
     let catalog = astroterm::sky::prepare_owned_catalog(astroterm::catalog::load_embedded_catalog(&mut astroterm::progress::Report::quiet()).unwrap(), &mut astroterm::progress::Report::quiet()).unwrap().catalog;
-    let bodies = Bodies::default();
+    let bodies = Data::default();
     let site = Observer {
         latitude: 42.3601_f64.to_radians(),
         longitude: -71.0589_f64.to_radians(),
@@ -32,7 +32,7 @@ fn main() {
             .chain([moon])
             .map(|s| vec![s.position.x, s.position.y, s.position.z, s.velocity.x, s.velocity.y, s.velocity.z])
             .collect();
-        let body: Vec<_> = bodies.planets.iter().zip(&system.planets)
+        let body: Vec<_> = bodies.solar_system_planets.planets.iter().zip(&system.planets)
             .filter(|(planet, _)| planet.id != BodyId::Earth)
             .map(|(planet, &position)| (planet.name, components(observation.apparent_direction(position))))
             .chain([("Moon", components(observation.apparent_direction(system.moon_position(0, observation.observer.position))))])

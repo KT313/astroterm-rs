@@ -7,7 +7,7 @@ use astroterm::astro::{
     models::{BodyId, orientation::*, stars::years_since_j2000},
 };
 use astroterm::catalog::load_embedded_catalog;
-use astroterm::model::{Bodies, PreparedCatalog, View};
+use astroterm::model::{Data, PreparedCatalog, View};
 use astroterm::observation::{Observation, observe as observe_sky};
 use astroterm::solar_system::{SolarSystem, simulate_solar_system};
 use serde_json::Value;
@@ -24,7 +24,7 @@ fn angle(a: Vector3, b: Vector3) -> f64 {
 }
 
 /// The Boston sky at one time: the solar system as its light arrives, the observer's orientation, the catalog.
-struct Sky { bodies: Bodies, system: SolarSystem, observation: Observation, catalog: PreparedCatalog }
+struct Sky { bodies: Data, system: SolarSystem, observation: Observation, catalog: PreparedCatalog }
 
 fn observe(tt: f64, ut1: f64) -> Sky {
     let time = FrameTime { utc: ut1, ut1, tt };
@@ -32,7 +32,7 @@ fn observe(tt: f64, ut1: f64) -> Sky {
         latitude: 42.3601_f64.to_radians(),
         longitude: -71.0589_f64.to_radians(),
     };
-    let bodies = Bodies::default();
+    let bodies = Data::default();
     let system = simulate_solar_system(&bodies, time, &mut astroterm::timing::StepTimes::default());
     let observation = observe_sky(&site, false, &View::default(), time, &mut astroterm::timing::StepTimes::default());
     let catalog = astroterm::sky::prepare_owned_catalog(load_embedded_catalog(&mut astroterm::progress::Report::quiet()).unwrap(), &mut astroterm::progress::Report::quiet()).unwrap();
@@ -45,7 +45,7 @@ fn body(sky: &Sky, name: &str) -> Vector3 {
     } else if name == "Sun" {
         sky.observation.apparent_direction(sky.system.sun)
     } else {
-        let index = sky.bodies.planets.iter().position(|planet| planet.name == name).unwrap_or_else(|| panic!("{name}"));
+        let index = sky.bodies.solar_system_planets.planets.iter().position(|planet| planet.name == name).unwrap_or_else(|| panic!("{name}"));
         sky.observation.apparent_direction(sky.system.planets[index])
     }
 }

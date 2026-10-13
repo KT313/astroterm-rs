@@ -5,7 +5,7 @@
 use astroterm::astro::{COMPUTATIONAL_INTERVAL, FrameTime, J2000, JULIAN_YEAR_DAYS, Matrix3, Observer, Vector3, refract_direction};
 use astroterm::catalog::{CatalogStar, SpaceMotion, StarId, decode_magnitude, load_embedded_catalog};
 use astroterm::constants::{GRID_DEPTH, STELLAR_DRIFT_MARGIN};
-use astroterm::model::{ProjectionKind, SkyTables, View, ViewCenter, hash_direction};
+use astroterm::model::{ProjectionKind, Data, View, ViewCenter, hash_direction};
 use astroterm::observation::{Observation, observe};
 use astroterm::projection::{prepare_camera, project_camera};
 use astroterm::selection::select_regions;
@@ -13,14 +13,14 @@ use proptest::prelude::*;
 use std::collections::BTreeSet;
 use std::sync::{Arc, OnceLock};
 
-fn build(catalog: astroterm::catalog::Catalog) -> SkyTables {
+fn build(catalog: astroterm::catalog::Catalog) -> Data {
     let prepared = astroterm::sky::prepare_owned_catalog(catalog, &mut astroterm::progress::Report::quiet()).unwrap();
     astroterm::sky::build_sky_tables(&prepared, &mut astroterm::progress::Report::quiet()).unwrap()
 }
 
 /// BSC5 plus 4000 random stars, a tenth of them fast movers, as in the old fixture.
-fn tables() -> Arc<SkyTables> {
-    static TABLES: OnceLock<Arc<SkyTables>> = OnceLock::new();
+fn tables() -> Arc<Data> {
+    static TABLES: OnceLock<Arc<Data>> = OnceLock::new();
     TABLES.get_or_init(|| {
         let mut catalog = load_embedded_catalog(&mut astroterm::progress::Report::quiet()).unwrap();
         let mut seed = 17_u64;
@@ -45,32 +45,32 @@ fn tables() -> Arc<SkyTables> {
 }
 
 /// Every star of every table: id, motion, catalog magnitude.
-fn all_stars(tables: &SkyTables) -> Vec<(u32, astroterm::astro::models::stars::StellarMotion, f64)> {
+fn all_stars(tables: &Data) -> Vec<(u32, astroterm::astro::models::stars::StellarMotion, f64)> {
     let mut stars = Vec::new();
-    for (_, _, table) in tables.stars.iter() {
+    for (_, _, table) in tables.star_tables() {
         for row in 0..table.len() { stars.push((table.id(row).0, table.motion(row), decode_magnitude(table.columns().magnitude[row]))); }
     }
-    let constellations = &tables.constellations;
+    let constellations = &tables.constellation_stars;
     for row in 0..constellations.len() { stars.push((constellations.id(row).0, constellations.motion(row), decode_magnitude(constellations.columns().magnitude[row]))); }
     stars
 }
 
 /// The stars the selection offers: the brightness prefixes of the selected regions plus the constellation table.
-fn candidates(tables: &SkyTables, observation: &Observation, threshold: f64) -> (BTreeSet<u32>, bool) {
-    let selected = select_regions(&tables.stars, observation, &mut astroterm::timing::StepTimes::default());
+fn candidates(tables: &Data, observation: &Observation, threshold: f64) -> (BTreeSet<u32>, bool) {
+    let selected = select_regions(&tables.star_regions, observation, &mut astroterm::timing::StepTimes::default());
     let mut ids = BTreeSet::new();
     for &region in &selected.regions {
-        for table in tables.stars.region(region) {
+        for table in tables.star_regions[region].speed_groups.iter().map(|group| &group.stars) {
             for row in 0..table.bright_count(threshold) { ids.insert(table.id(row).0); }
         }
     }
-    for row in 0..tables.constellations.len() { ids.insert(tables.constellations.id(row).0); }
+    for row in 0..tables.constellation_stars.len() { ids.insert(tables.constellation_stars.id(row).0); }
     (ids, selected.whole_sky)
 }
 
 /// The stars a full scan places inside the view at or above the threshold; `drift_limited` drops stars that moved
 /// more than the drift margin, the documented limit of region selection in views under 300°.
-fn visible_by_full_scan(tables: &SkyTables, observation: &Observation, view: &View, threshold: f64, drift_limited: bool) -> BTreeSet<u32> {
+fn visible_by_full_scan(tables: &Data, observation: &Observation, view: &View, threshold: f64, drift_limited: bool) -> BTreeSet<u32> {
     let years = (observation.time.tt - J2000) / JULIAN_YEAR_DAYS;
     let camera = prepare_camera(view);
     all_stars(tables).into_iter().filter_map(|(id, motion, magnitude)| {
@@ -203,10 +203,10 @@ fn fast_stars_use_ordinary_regions_and_large_drift_has_no_special_selection() {
     source.constellations.clear();
     source.hr_representatives.clear();
     let tables = build(source);
-    let place = |id: u32| tables.stars.iter().find_map(|(region, group, table)| (0..table.len()).find(|&row| table.id(row).0 == id).map(|row| (region, group, row))).unwrap();
+    let place = |id: u32| tables.star_tables().find_map(|(region, group, table)| (0..table.len()).find(|&row| table.id(row).0 == id).map(|row| (region, group, row))).unwrap();
     let ((region, group, row), (slow_region, slow_group, _)) = (place(1), place(2));
     assert_eq!((region, group, slow_group), (slow_region, 2, 0));                               // same region, one fast and one slow table
-    let motion = tables.stars.group(region, group).motion(row);
+    let motion = tables.star_table(region, group).motion(row);
     assert_eq!(hash_direction(GRID_DEPTH, motion.u0), region);                                   // speed does not change the region
     assert!(motion.motion_bound() > STELLAR_DRIFT_MARGIN);
 

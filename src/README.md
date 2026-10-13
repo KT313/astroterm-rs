@@ -12,7 +12,7 @@ Bottom-up. Every module exposes its symbols from its root `mod.rs`; callers use 
 | `progress/` | the startup progress trait and `Report`, the one value that carries progress and timings through the loaders |
 | `timing/` | `StepTimes`: smoothed step durations and the opt-in execution trace |
 | `text/` | the fontdue text rasterizer used for labels and the panel |
-| `model/catalog` | the data model: `SkyTables` (per-region, per-group star tables, constellation table, bodies, names), the cube-map grid, speed-group rules, packed storage |
+| `model/catalog` | the data model: `Data` (definitions in `model/data.rs`: regions own groups; groups own star tables, simulation caches and tiles; constellation stars, bodies and names share this owner), the cube-map grid, speed-group rules, packed storage |
 | `model/configuration` | `Config`, `View`, `RenderOptions`, `TerminalSettings` |
 | `sky/catalog` | loading: resolve or download a dataset, prepare and cache it, build the sky tables |
 | `solar_system/` | step 1, `simulate_solar_system` |
@@ -28,6 +28,6 @@ Bottom-up. Every module exposes its symbols from its root `mod.rs`; callers use 
 | `cli/` | argument parsing and validation, Bash completions |
 | `main.rs`, `pipeline.rs`, `helpers/` | the binary: startup, the seven-step frame loop, controls, panel lines, diagnostics and the frame benchmark |
 
-Owned data at runtime: the `SkyTables` (immutable after startup), the `RegionCaches` of step 4, the `Frame`
+Owned data at runtime: `Data` (immutable catalog columns beside mutable group/region caches), the `Frame`
 (star layer, overlay, ray table), the `Display` with its `Terminal`, and the `StepTimes`. All are created in
 `main.rs` or at the top of the frame loop and passed by reference to the steps.

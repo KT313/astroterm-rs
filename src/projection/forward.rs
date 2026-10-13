@@ -11,13 +11,15 @@ use crate::constants::TILE_EDGE_TEXELS;
 use crate::model::View;
 use crate::observation::Observation;
 use crate::projection::{CartesianCamera, Frame, SkyArea, prepare_camera, project_camera};
-use crate::regions::{RegionCaches, Texel, TileGeometry, blend_star};
+use crate::model::Data;
+use crate::regions::{TileGeometry, blend_star};
+use crate::model::{Texel};
 use crate::selection::Selected;
 
 type Point = [f64; 2];
 
 /// Draw all nonempty texels of each selected tile; scratch storage is reused between tiles, never cached.
-pub(super) fn project_tiles_forward(frame: &mut Frame, caches: &RegionCaches, selected: &Selected, observation: &Observation, view: &View, times: &mut StepTimes) {
+pub(super) fn project_tiles_forward(frame: &mut Frame, data: &Data, selected: &Selected, observation: &Observation, view: &View, times: &mut StepTimes) {
     times.measure_detail("Star layer clear", || frame.stars_mut().fill(Texel::default()));
     let (width, height, sky) = (frame.width(), frame.height(), frame.sky());
     if width == 0 || height == 0 || sky.size < 2 { return; }
@@ -25,7 +27,7 @@ pub(super) fn project_tiles_forward(frame: &mut Frame, caches: &RegionCaches, se
     let mut raster = times.measure_detail("Raster scratch allocation", || TileRaster { pixels: vec![[0.0; 4]; width * height], touched: Vec::new(), width, height, sky });
     let mut passes = times.detail_batch(["Tile geometry", "Texel projection", "Triangle rasterization", "Tile composition"]);
     for &region in &selected.regions {
-        let image = caches.region_image(region);
+        let image = &data.star_regions[region].merged_tile;
         if image.is_empty() { continue; }
         let geometry = passes.measure(0, || TileGeometry::new(region));
         for (row, &lit) in image.lit_rows().iter().enumerate() {
@@ -165,7 +167,7 @@ fn triangle_coverage(triangle: [Point; 3], pixel: Point) -> f64 {
 mod tests {
     use super::*;
     use crate::astro::{FrameTime, J2000, Observer};
-    use crate::model::{ProjectionKind, RenderOptions, SkyTables, ViewCenter, fixtures, hash_direction};
+    use crate::model::{ProjectionKind, RenderOptions, ViewCenter, fixtures, hash_direction};
     use crate::observation::observe;
     use crate::regions::refresh_regions;
 
@@ -258,10 +260,10 @@ mod tests {
             let direction = observation.patch.center;
             let region = hash_direction(crate::constants::GRID_DEPTH, direction);
             let row = fixtures::row(direction, 0.0, 3.0, 1);
-            let tables = SkyTables { stars: fixtures::layout(&[(region, 0, row)]), ..SkyTables::default() };
+            let tables = fixtures::layout(&[(region, 0, row)]);
             let selected = Selected { regions: vec![region], whole_sky: false };
-            let mut caches = RegionCaches::default();
-            refresh_regions(&mut caches, &tables, &selected, time, &view, &RenderOptions { magnitude_threshold: 6.0, unicode: true, braille: false, color: true, constellations: false, grid: false, dynamic_names: false }, &mut crate::timing::StepTimes::default());
+            let mut caches = tables.clone();
+            refresh_regions(&mut caches, &selected, time, &view, &RenderOptions { magnitude_threshold: 6.0, unicode: true, braille: false, color: true, constellations: false, grid: false, dynamic_names: false }, &mut crate::timing::StepTimes::default());
             let mut frame = Frame::square(401);
             project_tiles_forward(&mut frame, &caches, &selected, &observation, &view, &mut crate::timing::StepTimes::default());
             let expected = project_camera(prepare_camera(&view), observation.apparent_star_direction(direction)).unwrap();

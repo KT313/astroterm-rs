@@ -67,6 +67,7 @@ pub fn catalog_fingerprint() -> [u8; 32] {
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/catalog/cache/codec/mod.rs")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/model/catalog/storage/mod.rs")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/model/catalog/storage/columns.rs")).as_slice(),
+        include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/model/data.rs")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/model/catalog/storage/views.rs")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/model/catalog/storage/reordering.rs")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/model/catalog/grid.rs")).as_slice(),
@@ -363,7 +364,7 @@ fn decode_figures(bytes: &[u8]) -> io::Result<Vec<Constellation>> {
 mod tests {
     use super::*;
     use crate::catalog::{load_embedded_catalog, datasets::{Dataset, DatasetDirectories}};
-    use crate::model::SkyTables;
+    use crate::model::Data;
     use crate::progress::NoProgress;
     use crate::timing::StepTimes;
 
@@ -374,7 +375,7 @@ mod tests {
     fn load_sky_catalog(dataset: Option<&Dataset>, dirs: &DatasetDirectories, notices: &mut Vec<u8>) -> io::Result<PreparedCatalog> {
         crate::sky::load_sky_catalog(dataset, crate::constants::MAST_PARALLEL_BLOCKS, dirs, &mut crate::progress::Report::live(&mut NoProgress(notices), &mut StepTimes::default()))
     }
-    fn tables(prepared: &PreparedCatalog) -> SkyTables {
+    fn tables(prepared: &PreparedCatalog) -> Data {
         crate::sky::build_sky_tables(prepared, &mut crate::progress::Report::quiet()).unwrap()
     }
     #[test]

@@ -16,10 +16,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let start = Instant::now();
     let tables = build_sky_tables(&catalog, &mut astroterm::progress::Report::live(&mut progress, &mut StepTimes::default()))?;
     let tables_elapsed = start.elapsed().as_secs_f64();
-    let filled = tables.stars.iter().filter(|(_, _, table)| !table.is_empty()).count();
+    let filled = tables.star_tables().filter(|(_, _, table)| !table.is_empty()).count();
     println!(
         "load_seconds={elapsed:.6} tables_seconds={tables_elapsed:.6} stars={} constellation_stars={} group_tables={filled}",
-        tables.stars.len(), tables.constellations.len()
+        tables.region_star_count(), tables.constellation_stars.len()
     );
     Ok(())
 }

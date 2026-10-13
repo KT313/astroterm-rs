@@ -13,7 +13,7 @@ use std::sync::OnceLock;
 
 use crate::astro::COMPUTATIONAL_INTERVAL;
 use crate::constants::{CELL_COUNT, GRID_CHILDREN_PER_COARSE_CELL, GRID_COARSE_DEPTH};
-use crate::model::{CellCap, GroupTable, Stars, build_caps, region_caps};
+use crate::model::{CellCap, Region, build_caps, region_caps};
 use crate::observation::Observation;
 
 /// The regions a frame works on. The constellation table is always included and is not listed here.
@@ -24,10 +24,10 @@ pub struct Selected {
 }
 
 /// The regions whose caps intersect the observed patch, or every non-empty region for a wide view.
-pub fn select_regions(stars: &Stars, observation: &Observation, times: &mut StepTimes) -> Selected {
+pub fn select_regions(stars: &[Region], observation: &Observation, times: &mut StepTimes) -> Selected {
     let patch = observation.patch;
     let whole_sky = !COMPUTATIONAL_INTERVAL.contains(observation.time.tt) || patch.radius >= 150_f64.to_radians();
-    let has_stars = |region: usize| stars.region(region).iter().any(|table: &GroupTable| !table.is_empty());
+    let has_stars = |region: usize| stars[region].speed_groups.iter().any(|group| !group.stars.is_empty());
     let mut regions = Vec::new();
     if whole_sky {
         times.measure_detail("Populated regions", || regions.extend((0..CELL_COUNT).filter(|&region| has_stars(region))));
@@ -64,10 +64,10 @@ mod tests {
     use super::*;
     use crate::astro::{FrameTime, J2000, Observer};
     use crate::constants::GRID_DEPTH;
-    use crate::model::{ProjectionKind, SkyTables, View, ViewCenter, hash_direction};
+    use crate::model::{ProjectionKind, Data, View, ViewCenter, hash_direction};
     use crate::observation::observe;
 
-    fn bsc5() -> SkyTables {
+    fn bsc5() -> Data {
         let prepared = crate::sky::prepare_owned_catalog(crate::catalog::load_embedded_catalog(&mut crate::progress::Report::quiet()).unwrap(), &mut crate::progress::Report::quiet()).unwrap();
         crate::sky::build_sky_tables(&prepared, &mut crate::progress::Report::quiet()).unwrap()
     }
@@ -75,9 +75,9 @@ mod tests {
     fn facing(fov_degrees: f64) -> View { View { center: ViewCenter::Facing { azimuth: 2.0, tilt: 0.5 }, projection: ProjectionKind::Stereographic, fov_degrees } }
 
     /// Every region that holds a star inside the patch cone must be selected.
-    fn check_covers_the_patch(tables: &SkyTables, selected: &Selected, observation: &Observation) {
+    fn check_covers_the_patch(tables: &Data, selected: &Selected, observation: &Observation) {
         let patch = observation.patch;
-        for (region, _, table) in tables.stars.iter() {
+        for (region, _, table) in tables.star_tables() {
             for row in 0..table.len() {
                 if table.stored_direction(row).dot(patch.center) >= patch.radius.cos() {
                     assert!(selected.regions.binary_search(&region).is_ok(), "region {region} holds star {} inside the patch", table.id(row).0);
@@ -89,7 +89,7 @@ mod tests {
     #[test]
     fn empty_tables_select_nothing() {
         let observation = observe(&boston(), false, &facing(360.0), FrameTime::from_utc(J2000), &mut crate::timing::StepTimes::default());
-        let selected = select_regions(&Stars::default(), &observation, &mut crate::timing::StepTimes::default());
+        let selected = select_regions(&Data::default().star_regions, &observation, &mut crate::timing::StepTimes::default());
         assert_eq!(selected, Selected { regions: Vec::new(), whole_sky: true });
     }
 
@@ -97,11 +97,11 @@ mod tests {
     fn narrow_views_select_few_regions_that_cover_the_patch() {
         let tables = bsc5();
         let observation = observe(&boston(), true, &facing(5.0), FrameTime::from_utc(J2000), &mut crate::timing::StepTimes::default());
-        let selected = select_regions(&tables.stars, &observation, &mut crate::timing::StepTimes::default());
+        let selected = select_regions(&tables.star_regions, &observation, &mut crate::timing::StepTimes::default());
         assert!(!selected.whole_sky);
         assert!(!selected.regions.is_empty() && selected.regions.len() < 60, "{}", selected.regions.len());
         assert!(selected.regions.windows(2).all(|pair| pair[0] < pair[1]));
-        assert!(selected.regions.iter().all(|&region| region < CELL_COUNT && tables.stars.region(region).iter().any(|table| !table.is_empty())));
+        assert!(selected.regions.iter().all(|&region| region < CELL_COUNT && tables.star_regions[region].speed_groups.iter().map(|group| &group.stars).any(|table| !table.is_empty())));
         check_covers_the_patch(&tables, &selected, &observation);
     }
 
@@ -110,7 +110,7 @@ mod tests {
         let tables = bsc5();
         for fov in [60.0, 120.0, 180.0, 240.0] {
             let observation = observe(&boston(), false, &facing(fov), FrameTime::from_utc(J2000), &mut crate::timing::StepTimes::default());
-            let selected = select_regions(&tables.stars, &observation, &mut crate::timing::StepTimes::default());
+            let selected = select_regions(&tables.star_regions, &observation, &mut crate::timing::StepTimes::default());
             assert!(!selected.whole_sky, "{fov}");
             check_covers_the_patch(&tables, &selected, &observation);
             let parents: std::collections::BTreeSet<_> = selected.regions.iter().map(|region| region / GRID_CHILDREN_PER_COARSE_CELL).collect();
@@ -121,11 +121,11 @@ mod tests {
     #[test]
     fn wide_views_and_times_outside_the_interval_select_the_whole_sky() {
         let tables = bsc5();
-        let filled: Vec<_> = (0..CELL_COUNT).filter(|&region| tables.stars.region(region).iter().any(|table| !table.is_empty())).collect();
-        let wide = select_regions(&tables.stars, &observe(&boston(), true, &facing(300.0), FrameTime::from_utc(J2000), &mut crate::timing::StepTimes::default()), &mut crate::timing::StepTimes::default());
+        let filled: Vec<_> = (0..CELL_COUNT).filter(|&region| tables.star_regions[region].speed_groups.iter().map(|group| &group.stars).any(|table| !table.is_empty())).collect();
+        let wide = select_regions(&tables.star_regions, &observe(&boston(), true, &facing(300.0), FrameTime::from_utc(J2000), &mut crate::timing::StepTimes::default()), &mut crate::timing::StepTimes::default());
         assert_eq!(wide, Selected { regions: filled.clone(), whole_sky: true });
         let outside = FrameTime::from_utc(COMPUTATIONAL_INTERVAL.end_tt + 1.0);
-        let late = select_regions(&tables.stars, &observe(&boston(), false, &facing(1.0), outside, &mut crate::timing::StepTimes::default()), &mut crate::timing::StepTimes::default());
+        let late = select_regions(&tables.star_regions, &observe(&boston(), false, &facing(1.0), outside, &mut crate::timing::StepTimes::default()), &mut crate::timing::StepTimes::default());
         assert_eq!(late, Selected { regions: filled, whole_sky: true });
     }
 
@@ -135,9 +135,9 @@ mod tests {
         for (azimuth, tilt) in [(0.0, 0.1), (1.0, 1.2), (3.0, -0.4), (5.5, 0.9)] {
             let view = View { center: ViewCenter::Facing { azimuth, tilt }, ..facing(2.0) };
             let observation = observe(&boston(), false, &view, FrameTime::from_utc(J2000), &mut crate::timing::StepTimes::default());
-            let selected = select_regions(&tables.stars, &observation, &mut crate::timing::StepTimes::default());
+            let selected = select_regions(&tables.star_regions, &observation, &mut crate::timing::StepTimes::default());
             let centre = hash_direction(GRID_DEPTH, observation.patch.center);
-            let holds_stars = tables.stars.region(centre).iter().any(|table| !table.is_empty());
+            let holds_stars = tables.star_regions[centre].speed_groups.iter().map(|group| &group.stars).any(|table| !table.is_empty());
             assert_eq!(selected.regions.binary_search(&centre).is_ok(), holds_stars, "{azimuth} {tilt}");
         }
     }

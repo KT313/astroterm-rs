@@ -10,7 +10,7 @@ use clap::Parser;
 
 use astroterm::catalog::datasets::DatasetDirectories;
 use astroterm::cli::Arguments;
-use astroterm::model::{Config, SkyTables};
+use astroterm::model::{Config, Data};
 use astroterm::timing::StepTimes;
 
 use helpers::{
@@ -19,7 +19,7 @@ use helpers::{
 };
 use pipeline::run_frame_loop;
 
-/// Parse options, build the sky tables, and render until the user quits.
+/// Parse options, build the sky data, and render until the user quits.
 fn main() -> ExitCode {
 
     let arguments = Arguments::parse();
@@ -31,15 +31,15 @@ fn main() -> ExitCode {
 
     let Ok(mut benchmark) = open_frame_benchmark(&config) else { return ExitCode::FAILURE; };       // create a separate timing file only when requested
     let directories = DatasetDirectories::for_user();                                               // locate dataset and cache on disk
-    let Ok(tables) = load_catalog(&config, &directories, &mut times) else { return ExitCode::FAILURE; }; // load the dataset and split it into the sky tables
+    let Ok(mut data) = load_catalog(&config, &directories, &mut times) else { return ExitCode::FAILURE; }; // load the dataset and split it into the sky data
 
-    let result = render_in_terminal(&config, &tables, &mut times, &mut benchmark);                  // run frames within the terminal's cleanup scope
+    let result = render_in_terminal(&config, &mut data, &mut times, &mut benchmark);                  // run frames within the terminal's cleanup scope
     let result = finish_benchmark_report(&mut benchmark, result);                                   // mark completion after terminal cleanup
     finish_rendering(result, &config, &times)                                                       // report results after the terminal is restored
 }
 
 /// Keep the display alive through the frame loop and restore the terminal before main prints the result.
-fn render_in_terminal(config: &Config, tables: &SkyTables, times: &mut StepTimes, benchmark: &mut Option<BenchmarkSession>) -> io::Result<()> {
+fn render_in_terminal(config: &Config, data: &mut Data, times: &mut StepTimes, benchmark: &mut Option<BenchmarkSession>) -> io::Result<()> {
     let mut display = open_display(config, times)?;             // open the terminal and detect its graphics protocol
-    run_frame_loop(config, tables, &mut display, times, benchmark) // run frames until the requested limit, quit or an error; the display restores the terminal as this scope ends
+    run_frame_loop(config, data, &mut display, times, benchmark) // run frames until the requested limit, quit or an error; the display restores the terminal as this scope ends
 }

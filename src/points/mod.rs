@@ -1,7 +1,7 @@
 //! Step 6 of the frame: `draw_points`.
 //!
-//! Inputs: the frame (star layer and overlay), the simulated solar system, the sky tables, the region caches
-//! (constellation simulation and the label candidates), the selected regions, the observation, the view and the
+//! Inputs: the frame (star layer and overlay), the simulated solar system, the unified catalog and caches
+//! (including constellation simulation and label candidates), the selected regions, the observation, the view and the
 //! render settings. Output: the complete frame buffer: the few point objects drawn over the star layer, the
 //! constellation endpoint stars added to the star layer, and the text (labels, compass and horizon labels, the
 //! metadata panel, the notices) on the overlay. Runs every frame; few objects, so it is cheap. It draws into the
@@ -15,10 +15,10 @@ use crate::astro::accuracy::{ACCURACY_WARNING, needs_accuracy_warning};
 use crate::catalog::{MAGNITUDE_CLIPPING_WARNING, NameId, magnitude_code};
 use crate::constants::{DYNAMIC_NAME_COUNT, PIXEL_BACKGROUND_RGBA};
 use crate::metadata::MetadataField;
-use crate::model::{LabelColumn, RenderOptions, SkyTables, StarColor, View};
+use crate::model::{StarLabels, RenderOptions, Data, StarColor, View};
 use crate::observation::Observation;
 use crate::projection::{Frame, ProjectedArc, ScreenPoint, SkyArea, prepare_camera, project_camera, project_constellation_segment, project_horizon_labels, project_horizon_line, project_light_direction, project_to_cell};
-use crate::regions::{RegionCaches, UNPLACED, blend_star, order_star_rows, premultiplied_color, rows_wanted};
+use crate::regions::{UNPLACED, blend_star, order_star_rows, premultiplied_color, rows_wanted};
 use crate::text::draw_text_over;
 use crate::selection::Selected;
 use crate::solar_system::SolarSystem;
@@ -28,8 +28,7 @@ use tiny_skia::{FillRule, Paint, PathBuilder, PixmapMut, Stroke, Transform};
 /// What step 6 reads besides the observation, the view and the settings.
 pub struct PointInputs<'a> {
     pub solar_system: &'a SolarSystem,
-    pub tables: &'a SkyTables,
-    pub caches: &'a RegionCaches,            // constellation simulation and the simulated prefixes the labels are chosen from
+    pub data: &'a Data,
     pub selected: &'a Selected,
     pub panel: &'a [MetadataField],          // metadata lines for the top left corner; empty when the panel is off
     pub notice: Option<&'static str>,        // the display's transport notice, shown above the warnings; none for a headless frame
@@ -80,8 +79,8 @@ pub fn draw_points(frame: &mut Frame, inputs: &PointInputs<'_>, observation: &Ob
     let tt = observation.time.tt;
 
     // constellation endpoint stars join the star layer as glyphs, like the tiles' stars
-    let constellations = inputs.tables.constellations.table();
-    let simulation = inputs.caches.simulations().constellations();
+    let constellations = &inputs.data.constellation_stars;
+    let simulation = &inputs.data.constellation_simulation;
     let rows = simulation.len().min(constellations.len());
     let endpoint_pixels = times.measure_detail("Constellation stars", || {
         let mut endpoint_pixels = Vec::with_capacity(constellations.len());
@@ -92,7 +91,7 @@ pub fn draw_points(frame: &mut Frame, inputs: &PointInputs<'_>, observation: &Ob
             let code = simulation.magnitudes()[row];
             let Some(pixel) = endpoint_pixels[row] else { continue };
             if !sky.glyph_fits((pixel.0 - sky.y as i32, pixel.1 - sky.x as i32)) { continue; }
-            let opacity = inputs.caches.opacities().of(code);
+            let opacity = inputs.data.star_opacities.of(code);
             let premultiplied = premultiplied_color(constellations.columns().display_color[row], opacity);
             let (width, stars) = (frame.width(), frame.stars_mut());
             let bottom_right = pixel.0 as usize * width + pixel.1 as usize;
@@ -133,7 +132,7 @@ pub fn draw_points(frame: &mut Frame, inputs: &PointInputs<'_>, observation: &Ob
     times.measure_detail("Label selection", || {
         drawn.star_labels = select_star_labels(inputs, observation, settings, &pixel_of, sky, &endpoint_pixels);
         drawn.direction_labels = direction_labels(sky, view, settings, viewport);
-        drawn.notices = [needs_accuracy_warning(tt).then_some(ACCURACY_WARNING), inputs.tables.clipping.any().then_some(MAGNITUDE_CLIPPING_WARNING), inputs.notice].into_iter().flatten().collect();
+        drawn.notices = [needs_accuracy_warning(tt).then_some(ACCURACY_WARNING), inputs.data.clipping.any().then_some(MAGNITUDE_CLIPPING_WARNING), inputs.notice].into_iter().flatten().collect();
     });
     let cell = frame.text_cell();
     let (cell_width, cell_height) = (i32::from(cell.0), i32::from(cell.1));
@@ -162,10 +161,10 @@ pub fn draw_points(frame: &mut Frame, inputs: &PointInputs<'_>, observation: &Ob
 
 /// Sun, planets (outermost first, the Sun on top) and moons, with their labels.
 fn draw_bodies(canvas: &mut PixmapMut<'_>, pixel_of: &dyn Fn(Vector3) -> Option<(i32, i32)>, inputs: &PointInputs<'_>, observation: &Observation, view: &View, labels: &mut Vec<Label>) -> usize {
-    let bodies = &inputs.tables.bodies;
+    let data = inputs.data;
     let system = inputs.solar_system;
     let mut count = 0;
-    for (body, &position) in bodies.planets.iter().zip(&system.planets).rev() {
+    for (body, &position) in data.solar_system_planets.planets.iter().zip(&system.planets).rev() {
         if body.id == crate::astro::models::BodyId::Earth { continue; }
         let Some(pixel) = pixel_of(observation.apparent_direction(position)) else { continue };
         let radius = if body.id == crate::astro::models::BodyId::Jupiter { JUPITER_RADIUS } else { PLANET_RADIUS };
@@ -175,12 +174,12 @@ fn draw_bodies(canvas: &mut PixmapMut<'_>, pixel_of: &dyn Fn(Vector3) -> Option<
         count += 1;
     }
     if let Some(pixel) = pixel_of(observation.apparent_direction(system.sun)) {
-        let rgb = body_rgb(bodies.sun.id);
+        let rgb = body_rgb(data.solar_system_sun.sun.id);
         fill_disc(canvas, pixel, SUN_RADIUS, rgb);
-        labels.push(Label { text: bodies.sun.name.to_string(), pixel, rgb });
+        labels.push(Label { text: data.solar_system_sun.sun.name.to_string(), pixel, rgb });
         count += 1;
     }
-    for (index, moon) in bodies.moons.iter().enumerate() {
+    for (index, moon) in data.solar_system_moons.moons.iter().enumerate() {
         let moon_horizon = observation.apparent_direction(system.moon_position(index, observation.observer.position));
         let Some(pixel) = pixel_of(moon_horizon) else { continue };
         let illumination = system.moon_illumination(index);
@@ -210,11 +209,11 @@ pub fn body_rgb(id: crate::astro::models::BodyId) -> [u8; 3] {
 }
 
 /// Stroke every figure whose endpoints are all bright enough, each arc its own subpath, one stroke call.
-fn stroke_constellations(canvas: &mut PixmapMut<'_>, sky: SkyArea, observation: &Observation, view: &View, inputs: &PointInputs<'_>, simulation: &crate::regions::GroupSimulation, threshold: u16) -> usize {
+fn stroke_constellations(canvas: &mut PixmapMut<'_>, sky: SkyArea, observation: &Observation, view: &View, inputs: &PointInputs<'_>, simulation: &crate::model::SimulationCache, threshold: u16) -> usize {
     let viewport = sky.viewport();
     let mut path = PathBuilder::new();
     let mut arcs = 0;
-    for figure in inputs.tables.constellations.figures() {
+    for figure in &inputs.data.constellation_figures {
         let rows = figure.segments.iter().flatten().copied();
         let bright_enough = rows.clone().all(|row| simulation.magnitudes().get(row).is_some_and(|&code| code <= threshold && code != UNPLACED));
         if !bright_enough { continue; }
@@ -245,13 +244,13 @@ fn select_star_labels(inputs: &PointInputs<'_>, observation: &Observation, setti
     let threshold = magnitude_code(settings.magnitude_threshold);
     let tt = observation.time.tt;
     let mut best = Candidates::default();
-    let names = &inputs.tables.names;
+    let names = &inputs.data.names;
     let unicode = settings.unicode;
     for &region in &inputs.selected.regions {
-        for (group, table) in inputs.tables.stars.region(region).iter().enumerate() {
+        for (group, table) in inputs.data.star_regions[region].speed_groups.iter().map(|group| &group.stars).enumerate() {
             let rows = rows_wanted(table, tt, settings.magnitude_threshold);
             if rows == 0 { continue; }
-            let simulation = inputs.caches.simulations().group(region, group);
+            let simulation = &inputs.data.star_regions[region].speed_groups[group].simulation;
             let columns = table.columns();
             for row in 0..rows.min(simulation.len()) {
                 if best.full_above(columns.brightness_key[row]) { break; }                 // the key bounds the current magnitude, and keys ascend
@@ -264,8 +263,8 @@ fn select_star_labels(inputs: &PointInputs<'_>, observation: &Observation, setti
             }
         }
     }
-    let constellations = inputs.tables.constellations.table();
-    let simulation = inputs.caches.simulations().constellations();
+    let constellations = &inputs.data.constellation_stars;
+    let simulation = &inputs.data.constellation_simulation;
     for (row, &pixel) in endpoint_pixels.iter().enumerate().take(simulation.len().min(constellations.len())) {
         let code = simulation.magnitudes()[row];
         if code > threshold || code == UNPLACED { continue; }
@@ -307,10 +306,10 @@ fn compare_rank(a: (u16, u32), b: (u16, u32)) -> Ordering {
 
 /// A star's label: its name entry in the requested mode (a proper name, or the designation the loader stored in
 /// both scripts), a Gaia designation from the source id, or nothing, as the old renderer labelled stars.
-pub fn star_label(labels: &LabelColumn, row: usize, names: &crate::catalog::StarNames, unicode: bool) -> String {
+pub fn star_label(labels: &StarLabels, row: usize, names: &crate::catalog::StarNames, unicode: bool) -> String {
     match labels {
-        LabelColumn::Names(entries) => names.get_for_mode(NameId::from_entry(entries[row]), unicode).map_or_else(String::new, str::to_string),
-        LabelColumn::SourceIds(ids) => format!("Gaia DR3 {}", ids[row]),
+        StarLabels::Names(entries) => names.get_for_mode(NameId::from_entry(entries[row]), unicode).map_or_else(String::new, str::to_string),
+        StarLabels::SourceIds(ids) => format!("Gaia DR3 {}", ids[row]),
     }
 }
 
@@ -417,16 +416,16 @@ mod tests {
     use crate::selection::select_regions;
     use crate::solar_system::simulate_solar_system;
 
-    fn tables_of(catalog: crate::catalog::Catalog) -> SkyTables {
+    fn tables_of(catalog: crate::catalog::Catalog) -> Data {
         let prepared = crate::sky::prepare_owned_catalog(catalog, &mut crate::progress::Report::quiet()).unwrap();
         crate::sky::build_sky_tables(&prepared, &mut crate::progress::Report::quiet()).unwrap()
     }
-    fn bsc5() -> SkyTables { tables_of(load_embedded_catalog(&mut crate::progress::Report::quiet()).unwrap()) }
+    fn bsc5() -> Data { tables_of(load_embedded_catalog(&mut crate::progress::Report::quiet()).unwrap()) }
     fn boston() -> Observer { Observer { latitude: 42.3601_f64.to_radians(), longitude: -71.0589_f64.to_radians() } }
     fn settings() -> RenderOptions { RenderOptions { unicode: true, braille: false, color: true, constellations: true, grid: false, magnitude_threshold: 6.5, dynamic_names: true } }
 
     /// A catalog of the given stars (unit direction, magnitude, id, optional name), nothing else.
-    fn stars(entries: &[(Vector3, f64, u32, Option<&str>)]) -> SkyTables {
+    fn stars(entries: &[(Vector3, f64, u32, Option<&str>)]) -> Data {
         let mut parsed = load_embedded_catalog(&mut crate::progress::Report::quiet()).unwrap();
         let template = parsed.stars[0].clone();
         parsed.stars.clear();
@@ -449,14 +448,14 @@ mod tests {
     }
 
     /// The whole frame for `tables` at `view`: steps 1 to 4 and 6 (the star layer stays empty unless asked).
-    fn draw(tables: &SkyTables, view: &View, days: f64, settings: &RenderOptions, frame: &mut Frame) -> (Drawn, Observation) {
+    fn draw(tables: &Data, view: &View, days: f64, settings: &RenderOptions, frame: &mut Frame) -> (Drawn, Observation) {
         let time = FrameTime::from_utc(J2000 + days);
         let observation = observe(&boston(), false, view, time, &mut crate::timing::StepTimes::default());
-        let solar_system = simulate_solar_system(&tables.bodies, time, &mut crate::timing::StepTimes::default());
-        let selected = select_regions(&tables.stars, &observation, &mut crate::timing::StepTimes::default());
-        let mut caches = RegionCaches::default();
-        refresh_regions(&mut caches, tables, &selected, time, view, settings, &mut crate::timing::StepTimes::default());
-        let inputs = PointInputs { solar_system: &solar_system, tables, caches: &caches, selected: &selected, panel: &[], notice: None };
+        let solar_system = simulate_solar_system(tables, time, &mut crate::timing::StepTimes::default());
+        let selected = select_regions(&tables.star_regions, &observation, &mut crate::timing::StepTimes::default());
+        let mut caches = tables.clone();
+        refresh_regions(&mut caches, &selected, time, view, settings, &mut crate::timing::StepTimes::default());
+        let inputs = PointInputs { solar_system: &solar_system, data: &caches, selected: &selected, panel: &[], notice: None };
         (draw_points(frame, &inputs, &observation, view, settings, &mut crate::timing::StepTimes::default()), observation)
     }
 
@@ -483,9 +482,9 @@ mod tests {
             let code = row.magnitude;
             let mut columns = crate::model::StarRowVec::new();
             columns.push(row.into());
-            let tables = SkyTables { constellations: crate::model::Constellations::new(columns, vec![0], Vec::new()), ..SkyTables::default() };
+            let tables = Data { constellation_stars: crate::model::StarTable::new(columns, StarLabels::Names(vec![0])), ..Data::default() };
             let mut frame = Frame::square(201);
-            let background = crate::regions::Texel { rgb: [0.1, 0.2, 0.3], opacity: 0.5 };
+            let background = crate::model::Texel { rgb: [0.1, 0.2, 0.3], opacity: 0.5 };
             frame.stars_mut().fill(background);
             let (drawn, _) = draw(&tables, &view, 0.0, &RenderOptions { magnitude_threshold: magnitude + 1.0, ..settings() }, &mut frame);
             assert_eq!(drawn.endpoint_stars, 1);
@@ -511,10 +510,10 @@ mod tests {
                     w: [0.0; 3], distance: 0.0, magnitude: code, brightness_key: code, id, name: 0,
                     display_color: colors[i].index() }.into());
             }
-            let tables = SkyTables { constellations: crate::model::Constellations::new(columns, vec![0; 3], Vec::new()), ..SkyTables::default() };
+            let tables = Data { constellation_stars: crate::model::StarTable::new(columns, StarLabels::Names(vec![0; 3])), ..Data::default() };
             let mut frame = Frame::square(201);
             let (drawn, _) = draw(&tables, &View::default(), 0.0, &settings(), &mut frame);
-            let mut expected = crate::regions::Texel::default();
+            let mut expected = crate::model::Texel::default();
             for row in expected_order {
                 let opacity = crate::regions::star_opacity(magnitudes[row], 1.0);
                 blend_star(&mut expected, premultiplied_color(colors[row].index(), opacity), opacity);
@@ -573,8 +572,8 @@ mod tests {
         assert_eq!(unicode.star_labels[0].text, "α² Cen");
         let (ascii, _) = draw(&tables, &View::default(), 0.0, &RenderOptions { unicode: false, ..settings() }, &mut frame);
         assert_eq!(ascii.star_labels[0].text, "Alp2 Cen");
-        assert_eq!(star_label(&LabelColumn::SourceIds(vec![4295806720]), 0, &tables.names, true), "Gaia DR3 4295806720");
-        assert_eq!(star_label(&LabelColumn::Names(vec![0]), 0, &tables.names, true), "");       // no name, no designation: an empty label, as before
+        assert_eq!(star_label(&StarLabels::SourceIds(vec![4295806720]), 0, &tables.names, true), "Gaia DR3 4295806720");
+        assert_eq!(star_label(&StarLabels::Names(vec![0]), 0, &tables.names, true), "");       // no name, no designation: an empty label, as before
     }
 
     #[test]
@@ -585,13 +584,13 @@ mod tests {
         let (drawn, observation) = draw(&tables, &view, 3000.0, &settings(), &mut frame);
         assert_eq!(drawn.star_labels.len(), DYNAMIC_NAME_COUNT);
         assert!(drawn.bodies >= 1 && drawn.body_labels.len() == drawn.bodies);
-        let solar_system = simulate_solar_system(&tables.bodies, observation.time, &mut crate::timing::StepTimes::default());
+        let solar_system = simulate_solar_system(&tables, observation.time, &mut crate::timing::StepTimes::default());
         let camera = prepare_camera(&view);
         for label in &drawn.body_labels {
             let position = match label.text.as_str() {
                 "Sun" => solar_system.sun,
                 "Moon" => solar_system.moon_position(0, observation.observer.position),
-                name => solar_system.planets[tables.bodies.planets.iter().position(|body| body.name == name).unwrap()],
+                name => solar_system.planets[tables.solar_system_planets.planets.iter().position(|body| body.name == name).unwrap()],
             };
             let point = project_camera(camera, observation.apparent_direction(position)).unwrap();
             let expected = project_to_cell(frame.sky().viewport(), point);
@@ -690,7 +689,7 @@ mod tests {
         let mut frame = Frame::square(201);
         let (_, _) = draw(&tables, &View::default(), 0.0, &RenderOptions { dynamic_names: false, ..settings() }, &mut frame);
         let overlay_without = frame.overlay().to_vec();
-        frame.stars_mut().iter_mut().for_each(|texel| *texel = crate::regions::Texel { rgb: [0.5; 3], opacity: 0.5 });
+        frame.stars_mut().iter_mut().for_each(|texel| *texel = crate::model::Texel { rgb: [0.5; 3], opacity: 0.5 });
         let (_, _) = draw(&tables, &View::default(), 0.0, &RenderOptions { dynamic_names: false, ..settings() }, &mut frame);
         assert_eq!(frame.overlay(), overlay_without.as_slice());                            // the overlay is drawn over whatever the stars are
         assert!(frame.stars().iter().all(|texel| texel.opacity >= 0.5));                       // and never erases them
@@ -708,11 +707,11 @@ mod tests {
         assert!(none.notices.is_empty());
         let time = FrameTime::from_utc(J2000 + 30000.0 * 365.25);
         let observation = observe(&boston(), false, &View::default(), time, &mut crate::timing::StepTimes::default());
-        let solar_system = simulate_solar_system(&clipped.bodies, time, &mut crate::timing::StepTimes::default());
-        let selected = select_regions(&clipped.stars, &observation, &mut crate::timing::StepTimes::default());
-        let mut caches = RegionCaches::default();
-        refresh_regions(&mut caches, &clipped, &selected, time, &View::default(), &settings(), &mut crate::timing::StepTimes::default());
-        let inputs = PointInputs { solar_system: &solar_system, tables: &clipped, caches: &caches, selected: &selected, panel: &[], notice: Some("Shared memory unavailable; using streaming.") };
+        let solar_system = simulate_solar_system(&clipped, time, &mut crate::timing::StepTimes::default());
+        let selected = select_regions(&clipped.star_regions, &observation, &mut crate::timing::StepTimes::default());
+        let mut caches = clipped.clone();
+        refresh_regions(&mut caches, &selected, time, &View::default(), &settings(), &mut crate::timing::StepTimes::default());
+        let inputs = PointInputs { solar_system: &solar_system, data: &caches, selected: &selected, panel: &[], notice: Some("Shared memory unavailable; using streaming.") };
         let streaming = draw_points(&mut frame, &inputs, &observation, &View::default(), &settings(), &mut crate::timing::StepTimes::default());
         assert_eq!(streaming.notices, [ACCURACY_WARNING, MAGNITUDE_CLIPPING_WARNING, "Shared memory unavailable; using streaming."]); // the display's notice on top
     }
@@ -725,13 +724,13 @@ mod tests {
         let view = View { center: ViewCenter::Facing { azimuth: 3.5, tilt: 0.6 }, projection: ProjectionKind::Stereographic, fov_degrees: 120.0 };
         let time = FrameTime::from_utc(J2000);
         let observation = observe(&boston(), true, &view, time, &mut crate::timing::StepTimes::default());
-        let solar_system = simulate_solar_system(&tables.bodies, time, &mut crate::timing::StepTimes::default());
-        let selected = select_regions(&tables.stars, &observation, &mut crate::timing::StepTimes::default());
-        let mut caches = RegionCaches::default();
+        let solar_system = simulate_solar_system(&tables, time, &mut crate::timing::StepTimes::default());
+        let selected = select_regions(&tables.star_regions, &observation, &mut crate::timing::StepTimes::default());
+        let mut caches = tables.clone();
         let settings = RenderOptions { magnitude_threshold: 9.0, ..settings() };
-        refresh_regions(&mut caches, &tables, &selected, time, &view, &settings, &mut crate::timing::StepTimes::default());
+        refresh_regions(&mut caches, &selected, time, &view, &settings, &mut crate::timing::StepTimes::default());
         let fields = vec![MetadataField { label: "Date".into(), value: "2000-01-01".into() }; 12];
-        let inputs = PointInputs { solar_system: &solar_system, tables: &tables, caches: &caches, selected: &selected, panel: &fields, notice: None };
+        let inputs = PointInputs { solar_system: &solar_system, data: &caches, selected: &selected, panel: &fields, notice: None };
         let mut frame = Frame::new(1920, 1100, SkyArea::centred(1920, 1100), (9, 17));
         draw_points(&mut frame, &inputs, &observation, &view, &settings, &mut crate::timing::StepTimes::default());
         let started = std::time::Instant::now();
@@ -746,12 +745,12 @@ mod tests {
         let tables = stars(&[]);
         let time = FrameTime::from_utc(J2000);
         let observation = observe(&boston(), true, &View::default(), time, &mut crate::timing::StepTimes::default());
-        let solar_system = simulate_solar_system(&tables.bodies, time, &mut crate::timing::StepTimes::default());
-        let selected = select_regions(&tables.stars, &observation, &mut crate::timing::StepTimes::default());
-        let caches = RegionCaches::default();
+        let solar_system = simulate_solar_system(&tables, time, &mut crate::timing::StepTimes::default());
+        let selected = select_regions(&tables.star_regions, &observation, &mut crate::timing::StepTimes::default());
+        let caches = tables.clone();
         let fields = [MetadataField { label: "Date".into(), value: "2000-01-01".into() }, MetadataField { label: "Site".into(), value: "Boston".into() }];
         let mut frame = Frame::new(301, 201, SkyArea::centred(301, 201), (10, 20));
-        let inputs = PointInputs { solar_system: &solar_system, tables: &tables, caches: &caches, selected: &selected, panel: &fields, notice: None };
+        let inputs = PointInputs { solar_system: &solar_system, data: &caches, selected: &selected, panel: &fields, notice: None };
         draw_points(&mut frame, &inputs, &observation, &View::default(), &RenderOptions { dynamic_names: false, ..settings() }, &mut crate::timing::StepTimes::default());
         let line = |row: i32| (0..301).filter(|&column| overlay_pixel(&frame, row, column)[3] > 0).count();
         assert!(line(10) > 20 && line(30) > 20, "two text lines at rows 0..40");

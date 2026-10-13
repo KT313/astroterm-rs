@@ -4,7 +4,7 @@
 use crate::catalog::decode_magnitude;
 use crate::constants::{MIN_FOV_DEGREES, STAR_BRIGHTNESS_REFERENCE_FOV_DEGREES, STAR_BRIGHTNESS_ZOOM_POWER,
     STAR_OPACITY_MAGNITUDE_SCALE, STAR_OPACITY_REFERENCE_MAGNITUDE};
-use crate::model::StarColor;
+use crate::model::{StarColor, Texel, StarOpacities};
 
 /// Rows to paint, dimmest current magnitude first, then ascending ID so the brighter/higher-ID star covers it.
 /// The input slices borrow one table's simulated prefix; only row indices are allocated and sorted.
@@ -20,14 +20,6 @@ pub fn order_star_rows(magnitudes: &[u16], ids: &[u32], threshold: u16) -> Vec<u
 /// How far the glyph reaches from the star's rounded position, in texels: the four texels around the rounded
 /// position (the cell and the three above and to the left), plus the half texel of rounding.
 pub const STAR_GLYPH_RADIUS: usize = 2;
-
-/// One texel of a sky tile: the colour share each star contributed (palette level / 255 × opacity, premultiplied)
-/// and the combined opacity. Group layers weight stored RGB by opacity; the warp sums sampled light before final tone mapping.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct Texel {
-    pub rgb: [f32; 3],
-    pub opacity: f32,
-}
 
 impl Texel {
     pub const SIZE: usize = std::mem::size_of::<Texel>();
@@ -73,12 +65,6 @@ pub fn star_opacity(magnitude: f64, zoom_boost: f64) -> f32 {
 }
 
 /// The opacity of every catalog magnitude code for one zoom boost, so that a star costs one table read.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct StarOpacities {
-    zoom_boost: f64,                        // 0 until built; real boosts are at least 1
-    opacities: Vec<f32>,
-}
-
 impl StarOpacities {
     pub fn zoom_boost(&self) -> f64 { self.zoom_boost }
 
