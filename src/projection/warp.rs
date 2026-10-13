@@ -1,4 +1,4 @@
-//! Step 5 of the frame: `project_stars_to_screen`.
+//! Step 5 of the frame: the inverse ray-sampling implementation.
 //!
 //! Inputs: the frame (its star layer and its per-view ray table), the region caches, the selected regions, the
 //! observation and the view. Output: the star layer of the frame, the light of the region tiles under every
@@ -226,7 +226,7 @@ impl RefractionTable {
 
 /// Fill the frame's star layer from the region tiles for this observation and view. Returns whether the ray
 /// table had to be rebuilt.
-pub fn project_stars_to_screen(frame: &mut Frame, caches: &RegionCaches, selected: &Selected, observation: &Observation, view: &View) -> bool {
+pub(super) fn project_tiles_inverse(frame: &mut Frame, caches: &RegionCaches, selected: &Selected, observation: &Observation, view: &View) -> bool {
     let rebuilt = frame.rays.prepare(view, frame.width, frame.height, frame.sky);
     let camera = prepare_camera(view);
     let pack = |v: Vector3| [v.x as f32, v.y as f32, v.z as f32];
@@ -521,7 +521,7 @@ mod tests {
         let observation = observe(&boston(), atmosphere, view, time);
         let selected = select_regions(&tables.stars, &observation);
         refresh_regions(caches, tables, &selected, time, view, &settings());
-        let rebuilt = project_stars_to_screen(frame, caches, &selected, &observation, view);
+        let rebuilt = project_tiles_inverse(frame, caches, &selected, &observation, view);
         (observation, rebuilt)
     }
 
@@ -711,7 +711,7 @@ mod tests {
         let observation = observe(&site, true, &view, time);
         let selected = select_regions(&tables.stars, &observation);
         refresh_regions(&mut caches, &tables, &selected, time, &view, &RenderOptions { magnitude_threshold: 2.1, ..settings() });
-        project_stars_to_screen(&mut frame, &caches, &selected, &observation, &view);
+        project_tiles_inverse(&mut frame, &caches, &selected, &observation, &view);
         let (brightest, light) = frame.stars().iter().enumerate().fold((0, 0.0), |best, (index, texel)| if texel.opacity > best.1 { (index, texel.opacity) } else { best });
         let (row, column) = (brightest / 81, brightest % 81);
         assert!(light > 0.0 && (row as i64 - 20).abs() <= 2 && (column as i64 - 40).abs() <= 3, "brightest pixel at ({row}, {column}) with {light}"); // the sky square is the middle 41 columns
@@ -732,11 +732,11 @@ mod tests {
                 let selected = select_regions(&tables.stars, &observation);
                 refresh_regions(&mut caches, &tables, &selected, time, &view, &settings());
                 let started = std::time::Instant::now();
-                project_stars_to_screen(&mut frame, &caches, &selected, &observation, &view);
+                project_tiles_inverse(&mut frame, &caches, &selected, &observation, &view);
                 let first = started.elapsed();
                 let started = std::time::Instant::now();
                 let frames = 5;
-                for _ in 0..frames { project_stars_to_screen(&mut frame, &caches, &selected, &observation, &view); }
+                for _ in 0..frames { project_tiles_inverse(&mut frame, &caches, &selected, &observation, &view); }
                 let steady = started.elapsed() / frames;
                 let lit = frame.stars().iter().filter(|texel| !texel.is_empty()).count();
                 eprintln!("{width}×{height} {fov:>5}°  table+warp {first:>10.3?}  warp {steady:>10.3?}  regions={} lit pixels={lit}", selected.regions.len());

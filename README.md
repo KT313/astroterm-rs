@@ -165,6 +165,10 @@ been removed. Independent accuracy checks are documented in
 Stars use four-texel dots in their sky tiles, enlarged when zoomed in. Within each group, stars blend from dim
 to bright current magnitude (ascending ID for ties); group images merge from slowest to fastest, weighting stored RGB by opacity while opacity accumulates source-over. Zooming in boosts each star’s opacity, capped at full opacity before blending; changing the boost redraws the selected tiles.
 Stars whose complete dot would cross the image boundary are omitted. The Sun, planets and Moon retain their sizes.
+The forward tile-mapping prototype projects each lit texel's corners, integrates triangle coverage over screen
+pixels, and blends overlapping region tiles source-over. Set `FORWARD_TILE_PROJECTION` to `false` in
+`src/constants.rs` and rebuild to compare with the inverse warp. Curvature is evaluated at texel corners;
+texels crossing the antipodal projection singularity are skipped in this prototype.
 With the azimuthal grid on, its angle labels replace the compass letters.
 
 <details>

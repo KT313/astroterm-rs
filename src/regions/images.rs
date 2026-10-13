@@ -199,7 +199,7 @@ mod tests {
         let faint = STAR_OPACITY_REFERENCE_MAGNITUDE + 1.0 / STAR_OPACITY_MAGNITUDE_SCALE;  // opacity 0.1
         let table = table(&[fixtures::row(tile.center(), 0.0, faint, 1), fixtures::row(tile.center(), 0.0, faint, 2)]);
         let mut image = GroupImage::default();
-        image.render(key(2, 9.0), &tile, &table, &[tile.center(); 2], &[magnitude_code(faint); 2], &opacities());
+        image.render(key(2, faint + 1.0), &tile, &table, &[tile.center(); 2], &[magnitude_code(faint); 2], &opacities());
         let texel = image.texels()[MIDDLE * SIZE + MIDDLE];
         assert!((texel.opacity - 0.19).abs() < 1e-3, "{}", texel.opacity);                   // 0.1 over 0.1, not 0.2 (the code rounds the magnitude to a thousandth)
     }
@@ -280,8 +280,8 @@ mod tests {
         let faint = STAR_OPACITY_REFERENCE_MAGNITUDE + 1.0 / STAR_OPACITY_MAGNITUDE_SCALE;
         let table = table(&[fixtures::row(tile.center(), 0.0, faint, 1)]);
         let mut groups = vec![GroupImage::default(), GroupImage::default(), GroupImage::default()];
-        groups[0].render(key(1, 9.0), &tile, &table, &[tile.center()], &[magnitude_code(faint)], &opacities());
-        groups[2].render(key(1, 9.0), &tile, &table, &[tile.center()], &[magnitude_code(faint)], &opacities());
+        groups[0].render(key(1, faint + 1.0), &tile, &table, &[tile.center()], &[magnitude_code(faint)], &opacities());
+        groups[2].render(key(1, faint + 1.0), &tile, &table, &[tile.center()], &[magnitude_code(faint)], &opacities());
         let mut region_image = RegionImage::default();
         assert!(!region_image.is_current(&groups) && !region_image.is_merged());
         region_image.merge(&groups);

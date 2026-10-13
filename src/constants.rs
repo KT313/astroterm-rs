@@ -23,7 +23,7 @@ pub const FAST_GROUP_HOLD_SECONDS: f64 = 10.0 * 86_400.0;                       
 const ARCSECOND: f64 = PI / (180.0 * 3600.0);                                             // one arcsecond in radians, for the settings above
 
 // Sky regions and storage accuracy (angles are stored in radians)
-pub const GRID_DEPTH: u8 = 6;                                                             // split each cube face into 64 × 64 sky regions at depth 6
+pub const GRID_DEPTH: u8 = 5;                                                             // split each cube face into 32 × 32 sky regions at depth 5
 pub const GRID_COARSE_DEPTH: u8 = 4;                                                      // use larger sky regions first to quickly reject areas outside the view
 pub const GRID_CHILDREN_PER_COARSE_CELL: usize = 1 << (2 * (GRID_DEPTH - GRID_COARSE_DEPTH)); // number of small regions inside one large region; calculated automatically
 pub const CELL_COUNT: usize = 6 << (2 * GRID_DEPTH);                                      // total ordinary sky regions across six cube faces; calculated automatically
@@ -62,12 +62,13 @@ pub const KITTY_SHARED_MEMORY_POLL_MS: u64 = 1;                                 
 pub const KITTY_COMPRESSION_GROWTH_BYTES: usize = 32 * 1024;                              // grow compressed output by at least this much when its buffer fills
 pub const MAX_IMAGE_PIXELS: usize = 16_777_216;                                           // maximum width × height allowed for a pixel image
 pub const PIXEL_BACKGROUND_RGBA: [u8; 4] = [3, 6, 14, 255];                               // dark sky background; the last value must stay 255 for full opacity
-pub const STAR_OPACITY_REFERENCE_MAGNITUDE: f64 = 0.0;                                    // stars this bright or brighter start at full opacity
+pub const STAR_OPACITY_REFERENCE_MAGNITUDE: f64 = 3.0;                                    // stars this bright or brighter start at full opacity
 pub const STAR_OPACITY_MAGNITUDE_SCALE: f64 = 0.12;                                        // larger values make opacity fall faster as stars get dimmer
 pub const STAR_BRIGHTNESS_REFERENCE_FOV_DEGREES: f64 = 180.0;                            // keep the base star brightness at this view width or wider
 pub const STAR_BRIGHTNESS_ZOOM_POWER: f64 = 0.8;                                          // halving the field of view multiplies opacity by 2 raised to this power
 pub const MIN_STAR_PIXEL_OPACITY: f32 = 0.05;                                             // raise nonempty star pixels to this opacity after all stars are blended
 pub const TILE_EDGE_TEXELS: usize = 64;                                                   // every sky tile (one per speed group and per region) is this many texels wide and high, whatever the zoom
+pub const FORWARD_TILE_PROJECTION: bool = true;                                         // prototype; false restores the inverse ray-sampling warp
 pub const DYNAMIC_NAME_COUNT: usize = 5;                                                  // label at most this many visible stars; planets and Moon are separate
 pub const MAX_CACHED_GLYPHS: usize = 512;                                                 // maximum saved character images before clearing the glyph cache
 pub const METADATA_PANEL_WIDTH: usize = 45;                                               // width of the metadata text panel, in character columns
