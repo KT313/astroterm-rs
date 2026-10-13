@@ -11,6 +11,7 @@
 //! plan section 4). Within the drift and glyph margin of a region edge the neighbouring regions' tiles are sampled
 //! too, so that a star that straddles a border or drifted across it is complete. The tiles already include the per-star zoom boost;
 //! tone mapping is left to the frame output.
+use crate::timing::StepTimes;
 use crate::astro::{Horizontal, Vector3, apply_refraction};
 use crate::constants::{CELL_COUNT, GRID_DEPTH, STELLAR_DRIFT_MARGIN, TILE_EDGE_TEXELS};
 use crate::model::{ProjectionKind, View};
@@ -226,12 +227,15 @@ impl RefractionTable {
 
 /// Fill the frame's star layer from the region tiles for this observation and view. Returns whether the ray
 /// table had to be rebuilt.
-pub(super) fn project_tiles_inverse(frame: &mut Frame, caches: &RegionCaches, selected: &Selected, observation: &Observation, view: &View) -> bool {
-    let rebuilt = frame.rays.prepare(view, frame.width, frame.height, frame.sky);
-    let camera = prepare_camera(view);
+pub(super) fn project_tiles_inverse(frame: &mut Frame, caches: &RegionCaches, selected: &Selected, observation: &Observation, view: &View, times: &mut StepTimes) -> bool {
+    let rebuilt = times.measure_detail("View ray table", || frame.rays.prepare(view, frame.width, frame.height, frame.sky));
+    let (in_view, camera) = times.measure_detail("Warp preparation", || {
+        let camera = prepare_camera(view);
+        let mut in_view = vec![false; CELL_COUNT];
+        for &region in &selected.regions { in_view[region] = true; }
+        (in_view, camera)
+    });
     let pack = |v: Vector3| [v.x as f32, v.y as f32, v.z as f32];
-    let mut in_view = vec![false; CELL_COUNT];
-    for &region in &selected.regions { in_view[region] = true; }
     let warp = Warp {
         caches,
         in_view: &in_view,
@@ -244,7 +248,9 @@ pub(super) fn project_tiles_inverse(frame: &mut Frame, caches: &RegionCaches, se
         finest_density: tile_frames().iter().map(|tile| tile.density).fold(0.0, f32::max),
     };
     let (rays, width) = (frame.rays.rays.as_slice(), frame.width);
-    for (index, pixel) in frame.stars.iter_mut().enumerate() { *pixel = warp.pixel(rays, index, width); }
+    times.measure_detail("Inverse pixel sampling", || {
+        for (index, pixel) in frame.stars.iter_mut().enumerate() { *pixel = warp.pixel(rays, index, width); }
+    });
     rebuilt
 }
 
@@ -518,10 +524,10 @@ mod tests {
     /// Observe, select, refresh and project one frame.
     fn render(frame: &mut Frame, caches: &mut RegionCaches, tables: &SkyTables, view: &View, days: f64, atmosphere: bool) -> (Observation, bool) {
         let time = FrameTime::from_utc(J2000 + days);
-        let observation = observe(&boston(), atmosphere, view, time);
-        let selected = select_regions(&tables.stars, &observation);
-        refresh_regions(caches, tables, &selected, time, view, &settings());
-        let rebuilt = project_tiles_inverse(frame, caches, &selected, &observation, view);
+        let observation = observe(&boston(), atmosphere, view, time, &mut crate::timing::StepTimes::default());
+        let selected = select_regions(&tables.stars, &observation, &mut crate::timing::StepTimes::default());
+        refresh_regions(caches, tables, &selected, time, view, &settings(), &mut crate::timing::StepTimes::default());
+        let rebuilt = project_tiles_inverse(frame, caches, &selected, &observation, view, &mut crate::timing::StepTimes::default());
         (observation, rebuilt)
     }
 
@@ -613,7 +619,7 @@ mod tests {
         for (fov, azimuth, tilt, days, atmosphere) in [(10.0, 1.0, 0.5, 0.0, true), (60.0, 2.5, 0.2, 100.0, true), (180.0, 4.0, 0.9, 4000.0, false), (120.0, 0.3, 0.1, 0.5, true)] {
             let view = view(fov, azimuth, tilt, ProjectionKind::Stereographic);
             let time = FrameTime::from_utc(J2000 + days);
-            let observation = observe(&boston(), atmosphere, &view, time);
+            let observation = observe(&boston(), atmosphere, &view, time, &mut crate::timing::StepTimes::default());
             let offset = observation.to_catalog.apply(Vector3 { x: 0.0, y: 0.0, z: 1.0 }).cross(observation.patch.center).normalized();
             let direction = (observation.patch.center + offset * (0.25 * fov.to_radians() / 2.0)).normalized(); // a quarter of the way to the edge
             let tables = single_star(direction, 2.0);
@@ -640,7 +646,7 @@ mod tests {
     fn a_glyph_straddling_a_region_border_renders_complete() {
         let view = view(45.0, 1.0, 0.5, ProjectionKind::Stereographic);                 // about one texel per pixel
         let time = FrameTime::from_utc(J2000);
-        let observation = observe(&boston(), false, &view, time);
+        let observation = observe(&boston(), false, &view, time, &mut crate::timing::StepTimes::default());
         let centre = observation.patch.center;
         let region = hash_direction(GRID_DEPTH, centre);
         let cap = region_caps()[region];
@@ -678,7 +684,7 @@ mod tests {
         for fov in [180.0, 90.0] {
             let time = FrameTime::from_utc(J2000);
             let centre_h = Vector3 { x: 0.0, y: 0.0, z: 1.0 };
-            let observation = observe(&boston(), false, &View::default(), time);
+            let observation = observe(&boston(), false, &View::default(), time, &mut crate::timing::StepTimes::default());
             let star_h = observation.to_horizon.apply(direction);
             let azimuth = star_h.x.atan2(star_h.y);
             let tilt = star_h.z.asin();
@@ -704,14 +710,14 @@ mod tests {
         let direction = tables.stars.group(region, group).stored_direction(row);
         let time = FrameTime::from_utc(2_460_678.0);                                        // 2025-01-02T12:00Z
         let site = Observer { latitude: direction.z.asin(), longitude: 0.0 };
-        let horizon = observe(&site, true, &View::default(), time).to_horizon.apply(direction);
+        let horizon = observe(&site, true, &View::default(), time, &mut crate::timing::StepTimes::default()).to_horizon.apply(direction);
         let view = View { center: ViewCenter::Facing { azimuth: horizon.x.atan2(horizon.y), tilt: horizon.z.asin() }, projection: ProjectionKind::Stereographic, fov_degrees: 180.0 }; // look straight at it
         let mut caches = RegionCaches::default();
         let mut frame = Frame::new(81, 41, SkyArea::centred(81, 41), (10, 20));
-        let observation = observe(&site, true, &view, time);
-        let selected = select_regions(&tables.stars, &observation);
-        refresh_regions(&mut caches, &tables, &selected, time, &view, &RenderOptions { magnitude_threshold: 2.1, ..settings() });
-        project_tiles_inverse(&mut frame, &caches, &selected, &observation, &view);
+        let observation = observe(&site, true, &view, time, &mut crate::timing::StepTimes::default());
+        let selected = select_regions(&tables.stars, &observation, &mut crate::timing::StepTimes::default());
+        refresh_regions(&mut caches, &tables, &selected, time, &view, &RenderOptions { magnitude_threshold: 2.1, ..settings() }, &mut crate::timing::StepTimes::default());
+        project_tiles_inverse(&mut frame, &caches, &selected, &observation, &view, &mut crate::timing::StepTimes::default());
         let (brightest, light) = frame.stars().iter().enumerate().fold((0, 0.0), |best, (index, texel)| if texel.opacity > best.1 { (index, texel.opacity) } else { best });
         let (row, column) = (brightest / 81, brightest % 81);
         assert!(light > 0.0 && (row as i64 - 20).abs() <= 2 && (column as i64 - 40).abs() <= 3, "brightest pixel at ({row}, {column}) with {light}"); // the sky square is the middle 41 columns
@@ -728,15 +734,15 @@ mod tests {
                 let mut frame = Frame::new(width, height, SkyArea::centred(width, height), (10, 20));
                 let view = view(fov, 1.0, 0.5, ProjectionKind::Stereographic);
                 let time = FrameTime::from_utc(J2000);
-                let observation = observe(&boston(), true, &view, time);
-                let selected = select_regions(&tables.stars, &observation);
-                refresh_regions(&mut caches, &tables, &selected, time, &view, &settings());
+                let observation = observe(&boston(), true, &view, time, &mut crate::timing::StepTimes::default());
+                let selected = select_regions(&tables.stars, &observation, &mut crate::timing::StepTimes::default());
+                refresh_regions(&mut caches, &tables, &selected, time, &view, &settings(), &mut crate::timing::StepTimes::default());
                 let started = std::time::Instant::now();
-                project_tiles_inverse(&mut frame, &caches, &selected, &observation, &view);
+                project_tiles_inverse(&mut frame, &caches, &selected, &observation, &view, &mut crate::timing::StepTimes::default());
                 let first = started.elapsed();
                 let started = std::time::Instant::now();
                 let frames = 5;
-                for _ in 0..frames { project_tiles_inverse(&mut frame, &caches, &selected, &observation, &view); }
+                for _ in 0..frames { project_tiles_inverse(&mut frame, &caches, &selected, &observation, &view, &mut crate::timing::StepTimes::default()); }
                 let steady = started.elapsed() / frames;
                 let lit = frame.stars().iter().filter(|texel| !texel.is_empty()).count();
                 eprintln!("{width}×{height} {fov:>5}°  table+warp {first:>10.3?}  warp {steady:>10.3?}  regions={} lit pixels={lit}", selected.regions.len());

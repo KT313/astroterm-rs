@@ -1,5 +1,6 @@
 //! Step 5 of the frame (`project_stars_to_screen`, the warp of the region tiles onto the screen) beside the
 //! projection geometry it and step 6 reuse: cameras, maps, arcs, the horizon and the view controls.
+use crate::timing::StepTimes;
 mod geometry;
 mod forward;
 mod warp;
@@ -16,11 +17,11 @@ pub use geometry::{
 /// Step 5: project selected region images into the star layer. The forward prototype is selected in constants;
 /// disabling it restores inverse sampling. Returns whether the inverse ray table was rebuilt (false for forward).
 pub fn project_stars_to_screen(frame: &mut Frame, caches: &crate::regions::RegionCaches, selected: &crate::selection::Selected,
-    observation: &crate::observation::Observation, view: &crate::model::View) -> bool {
+    observation: &crate::observation::Observation, view: &crate::model::View, times: &mut StepTimes) -> bool {
     if crate::constants::FORWARD_TILE_PROJECTION {
-        forward::project_tiles_forward(frame, caches, selected, observation, view);
+        forward::project_tiles_forward(frame, caches, selected, observation, view, times);
         false
     } else {
-        warp::project_tiles_inverse(frame, caches, selected, observation, view)
+        warp::project_tiles_inverse(frame, caches, selected, observation, view, times)
     }
 }

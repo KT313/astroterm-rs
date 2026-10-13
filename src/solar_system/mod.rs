@@ -6,6 +6,7 @@
 //! three position evaluations per body for the two light-time iterations, about 4 ms in all in release builds
 //! (`dev/pipeline-restructuring-results/7/steps-1-2.md`). Light time is iterated against the geocentre; `moon_position` moves a
 //! moon by the few milliseconds the observer's site changes its light time, which matters only for the Moon.
+use crate::timing::StepTimes;
 use crate::astro::models::orientation::j2000_ecliptic_north;
 use crate::astro::models::{BodyId, BodyState, moons::evaluate_moon, planets::{compute_barycentric_position, evaluate_planet}};
 use crate::astro::{FrameTime, LIGHT_SPEED_AU_DAY, MoonIllumination, Vector3, compute_moon_illumination};
@@ -22,15 +23,15 @@ pub struct SolarSystem {
 }
 
 /// Evaluate every body of the tables for light arriving at the geocentre at `time`.
-pub fn simulate_solar_system(bodies: &Bodies, time: FrameTime) -> SolarSystem {
-    let earth = evaluate_planet(BodyId::Earth, time.tt);
+pub fn simulate_solar_system(bodies: &Bodies, time: FrameTime, times: &mut StepTimes) -> SolarSystem {
+    let earth = times.measure_detail("Earth state", || evaluate_planet(BodyId::Earth, time.tt));
     let emitted = |id: BodyId| emission_position(id, time.tt, earth.position);
     SolarSystem {
         time,
         earth,
-        sun: emitted(bodies.sun.id),
-        moons: bodies.moons.iter().map(|moon| { let position = emitted(moon.id); BodyState { position, velocity: velocity_at(moon.id, time.tt, position, earth.position) } }).collect(),
-        planets: bodies.planets.iter().map(|planet| if planet.id == BodyId::Earth { earth.position } else { emitted(planet.id) }).collect(),
+        sun: times.measure_detail("Sun light time", || emitted(bodies.sun.id)),
+        moons: times.measure_detail("Moon light time", || bodies.moons.iter().map(|moon| { let position = emitted(moon.id); BodyState { position, velocity: velocity_at(moon.id, time.tt, position, earth.position) } }).collect()),
+        planets: times.measure_detail("Planet light time", || bodies.planets.iter().map(|planet| if planet.id == BodyId::Earth { earth.position } else { emitted(planet.id) }).collect()),
     }
 }
 
@@ -84,7 +85,7 @@ mod tests {
     use super::*;
     use crate::astro::J2000;
 
-    fn at_j2000() -> SolarSystem { simulate_solar_system(&Bodies::default(), FrameTime::from_utc(J2000)) }
+    fn at_j2000() -> SolarSystem { simulate_solar_system(&Bodies::default(), FrameTime::from_utc(J2000), &mut crate::timing::StepTimes::default()) }
 
     #[test]
     fn bodies_are_taken_at_their_emission_times() {

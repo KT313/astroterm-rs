@@ -6,6 +6,8 @@ mod pipeline;
 mod averages;
 mod trace;
 mod capture;
+mod details;
+pub use details::DetailBatch;
 pub use capture::CaptureSteps;
 pub use trace::{PipelineTrace, TraceStep};
 
@@ -27,6 +29,7 @@ pub struct StepTimes {
     parents: Vec<&'static str>,
     per_frame: bool,
     trace: Option<PipelineTrace>,
+    detailed: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]

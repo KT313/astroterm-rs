@@ -16,7 +16,9 @@ use ratatui_image::picker::ProtocolType;
 
 /// Capture startup timings for the requested diagnostic mode.
 pub(crate) fn start_step_times(arguments: &Arguments) -> StepTimes {
-    StepTimes::with_trace(arguments.debug_singleframe || arguments.debug_frames.is_some())
+    let mut times = StepTimes::with_trace(arguments.debug_singleframe || arguments.debug_frames.is_some());
+    times.enable_details(arguments.debug_frametimes);
+    times
 }
 
 /// Report diagnostics and the original rendering result after the terminal scope has dropped its guard.

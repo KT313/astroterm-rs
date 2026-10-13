@@ -45,17 +45,17 @@ pub(super) fn run_frame_loop(config: &Config, tables: &SkyTables, display: &mut 
         validate_benchmark_time(benchmark, time)?;
 
         // the seven steps
-        let solar_system = times.measure("Solar system", || simulate_solar_system(&tables.bodies, time));                      // 1  Sun, Moon, planets
-        let observation = times.measure("Observation", || observe(&observer, atmosphere, &view, time));                        // 2  rotation, observed patch, aberration, refraction
-        let selected = times.measure("Selection", || select_regions(&tables.stars, &observation));                             // 3  overlapping regions; the constellation table is always included
-        let refreshed = times.measure("Regions", || refresh_regions(&mut caches, tables, &selected, time, &view, settings));          // 4  per group: simulate if hold expired, draw if key changed, re-merge region
-        times.measure("Projection", || project_stars_to_screen(&mut frame, &caches, &selected, &observation, &view));          // 5  project cached region images, no per-star work
+        let solar_system = times.measure_steps("Solar system", |times| simulate_solar_system(&tables.bodies, time, times));                      // 1  Sun, Moon, planets
+        let observation = times.measure_steps("Observation", |times| observe(&observer, atmosphere, &view, time, times));                        // 2  rotation, observed patch, aberration, refraction
+        let selected = times.measure_steps("Selection", |times| select_regions(&tables.stars, &observation, times));                             // 3  overlapping regions; the constellation table is always included
+        let refreshed = times.measure_steps("Regions", |times| refresh_regions(&mut caches, tables, &selected, time, &view, settings, times));          // 4  per group: simulate if hold expired, draw if key changed, re-merge region
+        times.measure_steps("Projection", |times| project_stars_to_screen(&mut frame, &caches, &selected, &observation, &view, times));          // 5  project cached region images, no per-star work
         describe_steps(times, &observation, &selected, refreshed, &caches);
         let info = display.info();                                                                                                 // the transport as it is now: it can fall back mid-run
         let lines = panel.lines(&PanelFrame { time, clock: &clock, solar_system: &solar_system, selected: &selected, caches: &caches, refreshed, display: info }, &observer, &view, tables, times);
         let inputs = PointInputs { solar_system: &solar_system, tables, caches: &caches, selected: &selected, panel: lines, notice: transport_notice(&info) };
-        times.measure("Points", || draw_points(&mut frame, &inputs, &observation, &view, settings));                         // 6  planets, Moon, Sun, constellation lines, labels, overlays
-        let presented = times.measure("Present", || present(&frame, display.terminal()))?;                                    // 7  tone map, encode, send; nothing for an unchanged frame
+        times.measure_steps("Points", |times| draw_points(&mut frame, &inputs, &observation, &view, settings, times));                         // 6  planets, Moon, Sun, constellation lines, labels, overlays
+        let presented = times.measure_steps("Present", |times| present(&frame, display.terminal(), times))?;                                    // 7  tone map, encode, send; nothing for an unchanged frame
 
         // after the frame: timings, benchmark, pacing
         let elapsed = finish_frame_diagnostics(config, frame_start, time, presented, times);

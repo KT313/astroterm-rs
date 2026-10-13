@@ -5,6 +5,7 @@
 //! Texels contribute premultiplied RGBA in proportion to covered screen-pixel area (ordinary image reduction,
 //! not a sum of texel energy). Pieces within a tile accumulate before the tile blends source-over onto the frame.
 //! Region order is selection order. The original inverse warp remains available through the constant switch.
+use crate::timing::StepTimes;
 use crate::astro::Vector3;
 use crate::constants::TILE_EDGE_TEXELS;
 use crate::model::View;
@@ -16,29 +17,34 @@ use crate::selection::Selected;
 type Point = [f64; 2];
 
 /// Draw all nonempty texels of each selected tile; scratch storage is reused between tiles, never cached.
-pub(super) fn project_tiles_forward(frame: &mut Frame, caches: &RegionCaches, selected: &Selected, observation: &Observation, view: &View) {
-    frame.stars_mut().fill(Texel::default());
+pub(super) fn project_tiles_forward(frame: &mut Frame, caches: &RegionCaches, selected: &Selected, observation: &Observation, view: &View, times: &mut StepTimes) {
+    times.measure_detail("Star layer clear", || frame.stars_mut().fill(Texel::default()));
     let (width, height, sky) = (frame.width(), frame.height(), frame.sky());
     if width == 0 || height == 0 || sky.size < 2 { return; }
-    let camera = prepare_camera(view);
-    let mut raster = TileRaster { pixels: vec![[0.0; 4]; width * height], touched: Vec::new(), width, height, sky };
+    let camera = times.measure_detail("Camera preparation", || prepare_camera(view));
+    let mut raster = times.measure_detail("Raster scratch allocation", || TileRaster { pixels: vec![[0.0; 4]; width * height], touched: Vec::new(), width, height, sky });
+    let mut passes = times.detail_batch(["Tile geometry", "Texel projection", "Triangle rasterization", "Tile composition"]);
     for &region in &selected.regions {
         let image = caches.region_image(region);
         if image.is_empty() { continue; }
-        let geometry = TileGeometry::new(region);
+        let geometry = passes.measure(0, || TileGeometry::new(region));
         for (row, &lit) in image.lit_rows().iter().enumerate() {
             let mut bits = lit;
             while bits != 0 {
                 let column = bits.trailing_zeros() as usize;
                 bits &= bits - 1;
                 let texel = image.texels()[row * TILE_EDGE_TEXELS + column];
-                let Some(corners) = project_texel(&geometry, column, row, observation, camera, sky) else { continue; };
-                raster.draw_triangle([corners[0], corners[1], corners[2]], texel);
-                raster.draw_triangle([corners[0], corners[2], corners[3]], texel);
+                let Some(corners) = passes.measure(1, || project_texel(&geometry, column, row, observation, camera, sky)) else { continue; };
+                passes.measure(2, || {
+                    raster.draw_triangle([corners[0], corners[1], corners[2]], texel);
+                    raster.draw_triangle([corners[0], corners[2], corners[3]], texel);
+                });
             }
         }
-        raster.composite(frame.stars_mut());
+        passes.measure(3, || raster.composite(frame.stars_mut()));
     }
+    passes.publish(times);
+    times.measure_detail("Raster scratch release", || drop(raster));
 }
 
 /// Evaluate the full nonlinear mapping at a texel's corners, rather than interpolating from a whole tile's
@@ -248,16 +254,16 @@ mod tests {
         for (fov, atmosphere, projection) in [(180.0, false, ProjectionKind::Stereographic), (60.0, true, ProjectionKind::Stereographic),
             (10.0, true, ProjectionKind::Equidistant)] {
             let view = View { center: ViewCenter::Facing { azimuth: 1.0, tilt: 0.02 }, projection, fov_degrees: fov };
-            let observation = observe(&site, atmosphere, &view, time);
+            let observation = observe(&site, atmosphere, &view, time, &mut crate::timing::StepTimes::default());
             let direction = observation.patch.center;
             let region = hash_direction(crate::constants::GRID_DEPTH, direction);
             let row = fixtures::row(direction, 0.0, 3.0, 1);
             let tables = SkyTables { stars: fixtures::layout(&[(region, 0, row)]), ..SkyTables::default() };
             let selected = Selected { regions: vec![region], whole_sky: false };
             let mut caches = RegionCaches::default();
-            refresh_regions(&mut caches, &tables, &selected, time, &view, &RenderOptions { magnitude_threshold: 6.0, unicode: true, braille: false, color: true, constellations: false, grid: false, dynamic_names: false });
+            refresh_regions(&mut caches, &tables, &selected, time, &view, &RenderOptions { magnitude_threshold: 6.0, unicode: true, braille: false, color: true, constellations: false, grid: false, dynamic_names: false }, &mut crate::timing::StepTimes::default());
             let mut frame = Frame::square(401);
-            project_tiles_forward(&mut frame, &caches, &selected, &observation, &view);
+            project_tiles_forward(&mut frame, &caches, &selected, &observation, &view, &mut crate::timing::StepTimes::default());
             let expected = project_camera(prepare_camera(&view), observation.apparent_star_direction(direction)).unwrap();
             let expected = [200.0 + expected.x * 200.0, 200.0 - expected.y * 200.0];
             let mut total = 0.0;
@@ -272,7 +278,7 @@ mod tests {
             assert!((centre[0] / total - expected[0]).abs() < 3.0 && (centre[1] / total - expected[1]).abs() < 3.0, "{fov}: {centre:?} / {total}, expected {expected:?}");
             assert!(frame.stars().iter().all(|texel| texel.opacity <= 1.0 && texel.opacity.is_finite()));
             assert!(frame.rays().key().is_none());                                         // forward mapping did not prepare screen-to-sky rays
-            project_tiles_forward(&mut frame, &caches, &Selected { regions: Vec::new(), whole_sky: false }, &observation, &view);
+            project_tiles_forward(&mut frame, &caches, &Selected { regions: Vec::new(), whole_sky: false }, &observation, &view, &mut crate::timing::StepTimes::default());
             assert!(frame.stars().iter().all(|texel| texel.is_empty()));
         }
     }

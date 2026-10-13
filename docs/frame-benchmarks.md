@@ -71,3 +71,17 @@ are not fabricated as zero. The helper preserves all raw frame samples in saved-
 loads v1 first-frame results. Legacy comparisons disclose missing metadata and different terminal recording
 conditions. New captures do not log the graphics transcript to disk. Named-result overwrite protection stays
 in effect; use `--overwrite` explicitly. The helper is local development tooling and is not shipped in Git.
+
+### Frame sub-step timings
+
+The seven main stages have child rows in the live `--debug-frametimes` panel, single-frame traces and bounded
+frame captures. Region refresh separates brightness-prefix lookup, simulation caches, image cache decisions,
+group drawing and region merging. Forward projection separates allocation, tile geometry, texel projection,
+triangle rasterization, tile composition and scratch release. Output separates composition/comparison, RGB
+conversion, shared-memory preparation/consumption, or encoding/upload for streaming protocols.
+
+Repeated region and texel passes publish one accumulated child row per pass per frame, in declared pass order,
+not one trace row per iteration. Unexecuted passes stay absent from raw captures; the panel's existing averages
+decay when work is skipped. Parent durations include children and timing overhead: do not add parents to their
+children. Fine-grained timers have a cost, especially for texel loops. They run only for the timing panel, traces
+or benchmark capture; ordinary rendering retains the seven top-level measurements without reading sub-step clocks.

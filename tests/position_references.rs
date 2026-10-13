@@ -18,8 +18,8 @@ fn boston_sky(julian_date_ut1: f64) -> BostonSky {
     let site = Observer { latitude: 42.3601_f64.to_radians(), longitude: -71.0589_f64.to_radians() };
     let time = FrameTime::from_utc(julian_date_ut1);
     let bodies = Bodies::default();
-    let system = simulate_solar_system(&bodies, time);
-    let observation = observe(&site, false, &View::default(), time);
+    let system = simulate_solar_system(&bodies, time, &mut astroterm::timing::StepTimes::default());
+    let observation = observe(&site, false, &View::default(), time, &mut astroterm::timing::StepTimes::default());
     BostonSky { catalog, bodies, system, observation }
 }
 
