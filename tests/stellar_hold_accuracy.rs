@@ -96,10 +96,11 @@ fn audit_star(table: &StarTable, row: usize, region: Option<usize>, hold_seconds
             let (inside, outside) = if sign > 0.0 { (edge.next_down(), edge.next_up()) } else { (edge.next_up(), edge.next_down()) };
             let dates = [epoch, epoch + sign * hold_days * 0.5, inside, edge, outside];
             let mut simulation = SimulationCache::default();
-            simulation.update(&table, epoch, 1, hold_seconds);
+            let mut last_update = None;
+            simulation.update(&table, epoch, 1, hold_seconds, &mut last_update);
             for requested_tt in dates.into_iter().filter(|&tt| COMPUTATIONAL_INTERVAL.contains(tt)) {
-                let refreshed = simulation.update(&table, requested_tt, 1, hold_seconds);
-                let actual = measure_error(&table, &simulation, requested_tt, region);
+                let refreshed = simulation.update(&table, requested_tt, 1, hold_seconds, &mut last_update);
+                let actual = measure_error(&table, &simulation, requested_tt, region, last_update.unwrap());
                 report.comparisons += 1;
                 report.held += usize::from(refreshed == Refresh::Unchanged);
                 report.refreshed += usize::from(matches!(refreshed, Refresh::Refreshed(_)));
@@ -110,12 +111,12 @@ fn audit_star(table: &StarTable, row: usize, region: Option<usize>, hold_seconds
     }
 }
 
-fn measure_error(table: &StarTable, simulation: &SimulationCache, requested_tt: f64, region: Option<usize>) -> Worst {
+fn measure_error(table: &StarTable, simulation: &SimulationCache, requested_tt: f64, region: Option<usize>, calculated_tt: f64) -> Worst {
     let current = table.motion(0).evaluate(years_since_j2000(requested_tt), decode_magnitude(table.columns().magnitude[0]));
     let held = simulation.directions()[0];
     let radians = held.cross(current.direction).length().atan2(held.dot(current.direction));
     assert!(radians.is_finite(), "nonfinite direction comparison for star {} at TT JD {requested_tt}", table.id(0).0);
-    Worst { id: table.id(0).0, region, calculated_tt: simulation.epoch().unwrap(), requested_tt, radians }
+    Worst { id: table.id(0).0, region, calculated_tt, requested_tt, radians }
 }
 
 fn audit_catalog(tables: &Data, limit_per_group: usize) -> Audit {
@@ -159,9 +160,10 @@ fn offline_check_detects_the_old_long_hold_counterexample() {
     let requested = epoch + 9.49 * JULIAN_YEAR_DAYS;
     let old_hold_seconds = 9.5 * JULIAN_YEAR_DAYS * 86_400.0;
     let mut simulation = SimulationCache::default();
-    simulation.update(&table, epoch, 1, old_hold_seconds);
-    assert_eq!(simulation.update(&table, requested, 1, old_hold_seconds), Refresh::Unchanged);
-    let worst = measure_error(&table, &simulation, requested, Some(0));
+    let mut last_update = None;
+    simulation.update(&table, epoch, 1, old_hold_seconds, &mut last_update);
+    assert_eq!(simulation.update(&table, requested, 1, old_hold_seconds, &mut last_update), Refresh::Unchanged);
+    let worst = measure_error(&table, &simulation, requested, Some(0), last_update.unwrap());
     assert!((1.9..2.1).contains(&arcseconds(worst.radians)));
     assert_eq!(worst.calculated_tt, epoch);
     let mut audit = Audit::default();

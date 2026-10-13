@@ -10,7 +10,7 @@
 use crate::astro::models::stars::years_since_j2000;
 use crate::astro::{COMPUTATIONAL_INTERVAL, Vector3};
 use crate::catalog::decode_magnitude;
-use crate::model::{StarTable, SimulationCache};
+use crate::model::{StarGroup, StarTable, SimulationCache};
 
 /// A row the motion model cannot place (its straight line passes through the Sun); never drawn.
 pub const UNPLACED: u16 = u16::MAX;
@@ -23,32 +23,45 @@ pub enum Refresh {
     Refreshed(usize),                       // rows evaluated at the new epoch
 }
 
+impl StarGroup {
+    /// Update this group's samples and their timestamp together, using its stored TTL.
+    pub fn update_simulation(&mut self, tt: f64, rows: usize) -> Refresh {
+        // Pass the group's original stars, cache and validity information to the shared update routine.
+        self.simulation.update(
+            &self.stars,
+            tt,
+            rows,
+            self.ttl,
+            &mut self.last_update,
+        )
+    }
+}
+
 impl SimulationCache {
-    pub fn epoch(&self) -> Option<f64> { self.last_update }
     pub fn len(&self) -> usize { self.directions.len() }
     pub fn is_empty(&self) -> bool { self.directions.is_empty() }
     pub fn directions(&self) -> &[Vector3] { &self.directions }
     pub fn magnitudes(&self) -> &[u16] { &self.magnitudes }
 
-    /// Whether the rows must be evaluated again for `tt`: never refreshed, or `tt` more than `hold_seconds` away
-    /// from the epoch. The boundary itself is still inside the hold.
-    pub fn expired(&self, tt: f64, hold_seconds: f64) -> bool {
-        self.last_update.is_none_or(|epoch| (tt - epoch).abs() > hold_seconds / 86_400.0)
-    }
-
     /// Bring the first `rows` rows of `table` up to date for `tt`: evaluate everything at `tt` when the hold has
-    /// expired, otherwise append the rows that are missing, at the stored epoch.
-    pub fn update(&mut self, table: &StarTable, tt: f64, rows: usize, hold_seconds: f64) -> Refresh {
-        if self.expired(tt, hold_seconds) {
-            self.last_update = Some(tt);
+    /// expired, otherwise append missing rows at the stored date. `last_update` belongs to the owner and must
+    /// describe these samples. The exact TTL boundary remains valid, in either time direction.
+    pub fn update(&mut self, table: &StarTable, tt: f64, rows: usize, hold_seconds: f64, last_update: &mut Option<f64>) -> Refresh {
+        // Recalculate all requested rows if this is the first simulation or the stored date is too old.
+        let expired = last_update.is_none_or(|epoch| (tt - epoch).abs() > hold_seconds / 86_400.0);
+        if expired {
+            *last_update = Some(tt);
             self.directions.clear();
             self.magnitudes.clear();
             self.evaluate_rows(table, tt, rows);
             return Refresh::Refreshed(rows);
         }
+
+        // Keep complete valid samples, or append missing rows at their existing simulation date.
         let missing = rows.saturating_sub(self.len());
         if missing == 0 { return Refresh::Unchanged; }
-        self.evaluate_rows(table, self.last_update.expect("an epoch exists once the hold did not expire"), rows);
+        let stored_date = last_update.expect("an epoch exists once the hold did not expire");
+        self.evaluate_rows(table, stored_date, rows);
         Refresh::Extended(missing)
     }
 
@@ -115,16 +128,17 @@ mod tests {
             let (region, _, table) = tables.star_tables().find(|&(_, g, table)| g == group && table.len() >= 2).unwrap();
             let hold_days = get_ttl_of_speed_group(group) / 86_400.0;
             let mut simulations = tables.clone();
-            assert_eq!((simulations.star_regions[region].speed_groups[group].simulation.update(table, J2000, rows_wanted(table, J2000, 6.5), get_ttl_of_speed_group(group))), Refresh::Refreshed(table.len()));
+            assert_eq!((simulations.star_regions[region].speed_groups[group].update_simulation(J2000, rows_wanted(table, J2000, 6.5))), Refresh::Refreshed(table.len()));
             let before = simulations.star_regions[region].speed_groups[group].simulation.clone();
             for inside in [0.0, 0.9 * hold_days, -0.9 * hold_days, hold_days, -hold_days] {
-                assert_eq!((simulations.star_regions[region].speed_groups[group].simulation.update(table, J2000 + inside, rows_wanted(table, J2000 + inside, 6.5), get_ttl_of_speed_group(group))), Refresh::Unchanged, "group {group} at {inside} days");
+                assert_eq!((simulations.star_regions[region].speed_groups[group].update_simulation(J2000 + inside, rows_wanted(table, J2000 + inside, 6.5))), Refresh::Unchanged, "group {group} at {inside} days");
+                assert_eq!(simulations.star_regions[region].speed_groups[group].last_update, Some(J2000));
                 assert_eq!((&simulations.star_regions[region].speed_groups[group].simulation), &before);                      // rows stay as evaluated at the epoch
             }
             for expired in [(J2000 + hold_days).next_up(), (J2000 - hold_days).next_down()] {
                 let mut fresh = simulations.clone();
-                assert_eq!((fresh.star_regions[region].speed_groups[group].simulation.update(table, expired, rows_wanted(table, expired, 6.5), get_ttl_of_speed_group(group))), Refresh::Refreshed(table.len()), "group {group}");
-                assert_eq!(fresh.star_regions[region].speed_groups[group].simulation.epoch(), Some(expired));
+                assert_eq!((fresh.star_regions[region].speed_groups[group].update_simulation(expired, rows_wanted(table, expired, 6.5))), Refresh::Refreshed(table.len()), "group {group}");
+                assert_eq!(fresh.star_regions[region].speed_groups[group].last_update, Some(expired));
                 assert_ne!(fresh.star_regions[region].speed_groups[group].simulation.directions(), before.directions());
             }
         }
@@ -135,9 +149,10 @@ mod tests {
         let tables = bsc5();
         let (_, _, table) = tables.star_tables().find(|&(_, _, table)| table.len() >= 2).unwrap();
         let mut simulation = SimulationCache::default();
-        assert_eq!(simulation.update(table, J2000, table.len(), 0.0), Refresh::Refreshed(table.len()));
-        assert_eq!(simulation.update(table, J2000, table.len(), 0.0), Refresh::Unchanged);
-        assert_eq!(simulation.update(table, J2000.next_up(), table.len(), 0.0), Refresh::Refreshed(table.len()));
+        let mut last_update = None;
+        assert_eq!(simulation.update(table, J2000, table.len(), 0.0, &mut last_update), Refresh::Refreshed(table.len()));
+        assert_eq!(simulation.update(table, J2000, table.len(), 0.0, &mut last_update), Refresh::Unchanged);
+        assert_eq!(simulation.update(table, J2000.next_up(), table.len(), 0.0, &mut last_update), Refresh::Refreshed(table.len()));
     }
 
     #[test]
@@ -147,20 +162,20 @@ mod tests {
         let columns = table.columns();
         let (faint, bright) = (decode_magnitude(columns.magnitude[table.len() - 1]), decode_magnitude(columns.magnitude[0]));
         let mut simulations = tables.clone();
-        let first = simulations.star_regions[region].speed_groups[group].simulation.update(table, J2000, rows_wanted(table, J2000, bright), get_ttl_of_speed_group(group));
+        let first = simulations.star_regions[region].speed_groups[group].update_simulation(J2000, rows_wanted(table, J2000, bright));
         let Refresh::Refreshed(rows) = first else { panic!("{first:?}") };
         assert!(rows >= 1 && rows < table.len());
         let later = J2000 + 1.0;                                                            // inside every hold
-        let extended = simulations.star_regions[region].speed_groups[group].simulation.update(table, later, rows_wanted(table, later, faint), get_ttl_of_speed_group(group));
+        let extended = simulations.star_regions[region].speed_groups[group].update_simulation(later, rows_wanted(table, later, faint));
         assert_eq!(extended, Refresh::Extended(table.len() - rows));
         let simulation = &simulations.star_regions[region].speed_groups[group].simulation;
-        assert_eq!((simulation.epoch(), simulation.len()), (Some(J2000), table.len()));
+        assert_eq!((simulations.star_regions[region].speed_groups[group].last_update, simulation.len()), (Some(J2000), table.len()));
         let years = years_since_j2000(J2000);
         for row in 0..table.len() {                                                           // every row, old and new, is the model's value at the epoch
             let sample = table.motion(row).evaluate(years, decode_magnitude(columns.magnitude[row]));
             assert_eq!((simulation.directions()[row], simulation.magnitudes()[row]), (sample.direction, sample.magnitude), "row {row}");
         }
-        assert_eq!((simulations.star_regions[region].speed_groups[group].simulation.update(table, later, rows_wanted(table, later, bright), get_ttl_of_speed_group(group))), Refresh::Unchanged);
+        assert_eq!((simulations.star_regions[region].speed_groups[group].update_simulation(later, rows_wanted(table, later, bright))), Refresh::Unchanged);
         assert_eq!(simulations.star_regions[region].speed_groups[group].simulation.len(), table.len());
     }
 
@@ -171,7 +186,7 @@ mod tests {
         let time = tt(5000.0 * JULIAN_YEAR_DAYS);
         let mut simulations = tables.clone();
         for (group, table) in tables.star_regions[region].speed_groups.iter().map(|group| &group.stars).enumerate() {
-            (simulations.star_regions[region].speed_groups[group].simulation.update(table, time, rows_wanted(table, time, 6.5), get_ttl_of_speed_group(group)));
+            (simulations.star_regions[region].speed_groups[group].update_simulation(time, rows_wanted(table, time, 6.5)));
             let simulation = &simulations.star_regions[region].speed_groups[group].simulation;
             assert_eq!(simulation.len(), table.len());
             for row in 0..table.len() {
@@ -187,15 +202,16 @@ mod tests {
         let tables = single_star(Vector3 { x: 0.0, y: 0.0, z: 1.0 }, Vector3 { x: 0.0, y: 0.0, z: -0.00005 }, 5.5); // approaching along the line of sight
         let (table, group) = only_table(&tables);
         let mut simulation = SimulationCache::default();
+        let mut last_update = None;
         for (years, drawn) in [(0.0, false), (3000.0, false), (5000.0, true), (15000.0, true)] {
             let time = tt(years * JULIAN_YEAR_DAYS);
             let rows = rows_wanted(table, time, 5.0);
             assert_eq!(rows, 1, "{years}: the key says it may brighten past 5.0");
-            simulation.update(table, time, rows, 0.0);
+            simulation.update(table, time, rows, 0.0, &mut last_update);
             assert_eq!(simulation.magnitudes()[0] <= magnitude_code(5.0), drawn, "{years} years");
         }
         let time = tt(20000.0 * JULIAN_YEAR_DAYS);                                           // the straight line passes the Sun: singular
-        simulation.update(table, time, rows_wanted(table, time, 5.0), 0.0);
+        simulation.update(table, time, rows_wanted(table, time, 5.0), 0.0, &mut last_update);
         assert_eq!(simulation.magnitudes(), [UNPLACED]);
         let sample = table.motion(0).evaluate(20000.0, 5.5);
         assert!(sample.used_singular_fallback && sample.magnitude_value() == 5.5);           // the model falls back to the catalog brightness
@@ -211,7 +227,8 @@ mod tests {
         let outside = tt(24000.0 * JULIAN_YEAR_DAYS);
         assert_eq!(rows_wanted(table, outside, 4.0), 1);
         let mut simulation = SimulationCache::default();
-        simulation.update(table, outside, 1, 0.0);
+        let mut last_update = None;
+        simulation.update(table, outside, 1, 0.0, &mut last_update);
         assert!(simulation.magnitudes()[0] < magnitude_code(4.0));                             // much closer, so much brighter
     }
 
@@ -221,10 +238,10 @@ mod tests {
         let mut simulations = tables.clone();
         let table = &tables.constellation_stars;
         let hold_days = get_ttl_of_speed_group(SPEED_GROUP_COUNT - 1) / 86_400.0;
-        assert_eq!(simulations.constellation_simulation.update(&tables.constellation_stars, J2000, table.len(), get_ttl_of_speed_group(SPEED_GROUP_COUNT - 1)), Refresh::Refreshed(table.len()));
+        assert_eq!(simulations.constellation_simulation.update(&tables.constellation_stars, J2000, table.len(), get_ttl_of_speed_group(SPEED_GROUP_COUNT - 1), &mut simulations.constellation_last_update), Refresh::Refreshed(table.len()));
         assert_eq!(simulations.constellation_simulation.len(), table.len());
-        assert_eq!(simulations.constellation_simulation.update(&tables.constellation_stars, J2000 + hold_days, table.len(), get_ttl_of_speed_group(SPEED_GROUP_COUNT - 1)), Refresh::Unchanged);
-        assert_eq!(simulations.constellation_simulation.update(&tables.constellation_stars, (J2000 + hold_days).next_up(), table.len(), get_ttl_of_speed_group(SPEED_GROUP_COUNT - 1)), Refresh::Refreshed(table.len()));
+        assert_eq!(simulations.constellation_simulation.update(&tables.constellation_stars, J2000 + hold_days, table.len(), get_ttl_of_speed_group(SPEED_GROUP_COUNT - 1), &mut simulations.constellation_last_update), Refresh::Unchanged);
+        assert_eq!(simulations.constellation_simulation.update(&tables.constellation_stars, (J2000 + hold_days).next_up(), table.len(), get_ttl_of_speed_group(SPEED_GROUP_COUNT - 1), &mut simulations.constellation_last_update), Refresh::Refreshed(table.len()));
     }
 
     /// Release-mode cost of one star evaluation; run with `--ignored --nocapture`.
@@ -238,7 +255,7 @@ mod tests {
         for pass in 0..20 {
             let time = tt(f64::from(pass) * 400.0);                                          // every pass expires every hold
             for (region, group, table) in tables.star_tables() {
-                if let Refresh::Refreshed(n) = simulations.star_regions[region].speed_groups[group].simulation.update(table, time, rows_wanted(table, time, 99.0), get_ttl_of_speed_group(group)) { rows += n; }
+                if let Refresh::Refreshed(n) = simulations.star_regions[region].speed_groups[group].update_simulation(time, rows_wanted(table, time, 99.0)) { rows += n; }
             }
         }
         let elapsed = started.elapsed();

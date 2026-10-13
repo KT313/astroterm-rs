@@ -10,6 +10,7 @@ impl Default for Data {
             solar_system_planets: PlanetsTable::default(),
             solar_system_moons: MoonsTable::default(),
             constellation_stars: Default::default(),
+            constellation_last_update: None,
             constellation_simulation: Default::default(),
             constellation_figures: Vec::new(),
             star_regions: (0..CELL_COUNT).map(|_| Region::default()).collect(),
@@ -45,11 +46,11 @@ mod tests {
         assert_eq!(tables.solar_system_planets, PlanetsTable::default());
         assert_eq!(tables.star_regions.len(), CELL_COUNT);
         assert_eq!(tables.tile_bytes, 0);
-        assert_eq!(tables.constellation_simulation.last_update, None);
+        assert_eq!(tables.constellation_last_update, None);
         for region in &tables.star_regions {
             assert_eq!(region.merged_tile.group_keys, None);
             for group in &region.speed_groups {
-                assert_eq!(group.simulation.last_update, None);
+                assert_eq!(group.last_update, None);
                 assert!(group.simulation.directions.is_empty());
                 assert_eq!(group.tile.key, None);
                 assert!(group.tile.tile.texels.is_empty());

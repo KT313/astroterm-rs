@@ -62,6 +62,7 @@ pub fn refresh_regions(data: &mut Data, selected: &Selected, time: FrameTime, vi
             tt,
             star_count,
             ttl_seconds,
+            &mut data.constellation_last_update,
         )
     });
 
@@ -96,17 +97,18 @@ pub fn refresh_regions(data: &mut Data, selected: &Selected, time: FrameTime, vi
 
             // Reuse star samples, or calculate them when missing or expired.
             let refresh = passes.measure(2, || {
-                group.simulation.update(table, tt, rows_wanted(table, tt, threshold), group.ttl)
+                group.update_simulation(tt, rows_wanted(&group.stars, tt, threshold))
             });
             if refresh != Refresh::Unchanged {
                 report.simulated += 1;
             }
+            let table = &group.stars;
             let simulation = &group.simulation;
 
             // Describe the inputs used to draw this group's image.
             let image_key = passes.measure(3, || {
                 GroupTileKey {
-                    simulated_at: simulation.epoch().expect("a simulated group has an epoch"),
+                    simulated_at: group.last_update.expect("a simulated group has an epoch"),
                     star_count,
                     magnitude_threshold: threshold_code,
                     zoom_boost,
@@ -226,7 +228,7 @@ mod tests {
         let expired = FrameTime { tt: start.tt + 61.0 / 86_400.0, ..start };
         let refreshed = refresh_regions(&mut data, &selected, expired, &view, &settings, &mut times);
         assert_eq!(refreshed, first);
-        assert_eq!(data.star_regions[region].speed_groups[0].simulation.last_update, Some(expired.tt));
+        assert_eq!(data.star_regions[region].speed_groups[0].last_update, Some(expired.tt));
     }
 
     #[test]
