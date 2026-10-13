@@ -72,7 +72,7 @@ fn project_tile_corners(tile: &TileGeometry, observation: &Observation, camera: 
 
 /// Test the small spherical quad against the direction directly behind the camera. Boundary points count as
 /// inside: the projection is singular there too. Texels away from the back hemisphere take the quick exit.
-fn contains_antipode(corners: [Vector3; 4], forward: Vector3) -> bool {
+pub(super) fn contains_antipode(corners: [Vector3; 4], forward: Vector3) -> bool {
     if corners.iter().any(|corner| corner.dot(forward) >= 0.0) { return false; }
     let centre = corners.into_iter().fold(Vector3::default(), |sum, corner| sum + corner);
     (0..4).all(|i| {
@@ -81,7 +81,7 @@ fn contains_antipode(corners: [Vector3; 4], forward: Vector3) -> bool {
     })
 }
 
-fn is_convex(corners: [Point; 4]) -> bool {
+pub(super) fn is_convex(corners: [Point; 4]) -> bool {
     // Each consecutive pair of edges must turn in the same direction.
     let turns: [f64; 4] = std::array::from_fn(|index| {
         let a = corners[index];
@@ -138,7 +138,7 @@ fn draw_tile(stars: &mut [Texel], width: usize, height: usize, sky: SkyArea, cor
 }
 
 /// Affine screen-to-texture mapping for one triangle. Derivatives are calculated once per triangle, not pixel.
-struct TextureMapping {
+pub(super) struct TextureMapping {
     screen_origin: Point,
     texture_origin: Point,
     per_screen_x: Point,
@@ -147,7 +147,7 @@ struct TextureMapping {
 }
 
 impl TextureMapping {
-    fn new(screen: [Point; 3], texture: [Point; 3]) -> Option<Self> {
+    pub(super) fn new(screen: [Point; 3], texture: [Point; 3]) -> Option<Self> {
         // Invert the triangle's two screen-space edges; a collapsed triangle has no usable mapping.
         let screen_first = [screen[1][0] - screen[0][0], screen[1][1] - screen[0][1]];
         let screen_second = [screen[2][0] - screen[0][0], screen[2][1] - screen[0][1]];
@@ -170,11 +170,11 @@ impl TextureMapping {
     }
 
     /// The texture box of a screen rectangle of `size` pixels (the footprint is that of a whole pixel).
-    fn footprint_of(&self, size: Point) -> Point {
+    pub(super) fn footprint_of(&self, size: Point) -> Point {
         std::array::from_fn(|axis| self.per_screen_x[axis].abs() * size[0] + self.per_screen_y[axis].abs() * size[1])
     }
 
-    fn texture_position(&self, pixel: Point) -> Point {
+    pub(super) fn texture_position(&self, pixel: Point) -> Point {
         // Interpolate inside this triangle instead of repeating sky and camera calculations per texel.
         let delta_x = pixel[0] - self.screen_origin[0];
         let delta_y = pixel[1] - self.screen_origin[1];

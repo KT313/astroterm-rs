@@ -4,6 +4,11 @@ use crate::timing::StepTimes;
 mod geometry;
 mod raster;
 mod tile_warp;
+mod coons_warp;
+mod hermite_warp;
+mod adaptive_warp;
+mod patch_warp;
+mod triangle_rows;
 mod tile_sampling;
 mod frame;
 
@@ -16,9 +21,9 @@ pub use geometry::{
     project_constellation_segment, project_horizon_labels, project_horizon_line,
 };
 
-/// Step 5: project each selected region's merged image as two textured triangles using its four outer corners.
+/// Step 5: forward-map merged tiles onto the screen. The selected backend owns projection and rasterization.
 pub fn project_stars_to_screen(frame: &mut Frame, data: &crate::model::Data, selected: &crate::selection::Selected,
     observation: &crate::observation::Observation, view: &crate::model::View, times: &mut StepTimes) {
     // Map the whole region tiles onto the frame's star layer.
-    tile_warp::project_whole_tiles(frame, data, selected, observation, view, times);
+    adaptive_warp::project_adaptive_tiles(frame, data, selected, observation, view, times);
 }

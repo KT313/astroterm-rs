@@ -63,6 +63,18 @@ pub fn observe(site: &Observer, atmosphere: bool, view: &View, time: FrameTime, 
 }
 
 impl Observation {
+    /// Apparent corner direction including the mixed derivative needed by bicubic Hermite interpolation.
+    pub fn apparent_star_derivatives(&self, direction: crate::astro::DirectionDerivatives) -> Option<crate::astro::DirectionDerivatives> {
+        // Apply the existing observer corrections and their derivatives in the astronomy layer.
+        crate::astro::transform_direction_derivatives(direction, self.observer.velocity, self.to_horizon, self.atmosphere)
+    }
+
+    /// Apparent direction and changes along both tile axes, evaluated only at one tile corner.
+    pub fn apparent_star_tangents(&self, direction: Vector3, tangents: [Vector3; 2]) -> Option<(Vector3, [Vector3; 2])> {
+        // Keep the astronomy and its analytic derivatives in the astronomy module.
+        crate::astro::transform_direction_tangents(direction, tangents, self.observer.velocity, self.to_horizon, self.atmosphere)
+    }
+
     /// How a point at barycentric `position` (where its light left it) appears: a unit East, North, Up direction
     /// with aberration and, with an atmosphere, refraction.
     pub fn apparent_direction(&self, position: Vector3) -> Vector3 {

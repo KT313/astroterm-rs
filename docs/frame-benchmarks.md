@@ -77,7 +77,7 @@ in effect; use `--overwrite` explicitly. The helper is local development tooling
 The seven main stages have child rows in the live `--debug-frametimes` panel, single-frame traces and bounded
 frame captures. Region refresh separates brightness-prefix lookup, simulation caches, image cache decisions,
 group drawing and region merging. Whole-tile forward projection separates the star layer clear, tile geometry,
-tile-corner projection, filter preparation and tile rasterization. Output separates composition/comparison, RGB
+tile-corner projection, Adaptive mesh preparation (or Hermite/Coons when selected), filter preparation, tile rasterization and region composition. Output separates composition/comparison, RGB
 conversion, shared-memory preparation/consumption, or encoding/upload for streaming protocols.
 
 Repeated region and texel passes publish one accumulated child row per pass per frame, in declared pass order,
@@ -85,3 +85,16 @@ not one trace row per iteration. Unexecuted passes stay absent from raw captures
 decay when work is skipped. Parent durations include children and timing overhead: do not add parents to their
 children. Fine-grained timers have a cost, especially for texel loops. They run only for the timing panel, traces
 or benchmark capture; ordinary rendering retains the seven top-level measurements without reading sub-step clocks.
+
+The straight, Coons and Hermite backends can be compared without external catalog downloads with:
+`cargo test --release --lib compare_coons_mapping -- --ignored --nocapture`.
+This uses embedded BSC5 plus a synthetic dense-tile variant; it does not measure terminal upload or AT-HYG.
+
+The adaptive prototype has a normal/extreme-view timing fixture:
+`cargo test --release --lib time_adaptive_mapping -- --ignored --nocapture`.
+It uses the screenshot camera/date at 180 and 351.6 degrees, no refraction, embedded BSC5 and synthetic dense tiles.
+Detailed frame traces also report the number of real sky projections, maximum subdivision and cells hitting
+limits. These counts describe mesh construction; they do not certify all screen pixels against the real formula.
+
+The adaptive timing fixture prints three untraced projection times per case (averaged after warmup), followed
+by child-stage times from a separate traced frame. The child times are not components of that untraced average.

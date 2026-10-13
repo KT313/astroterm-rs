@@ -49,6 +49,32 @@ impl TileGeometry {
         Some((middle + direction.dot(self.east) * scale, middle - direction.dot(self.north) * scale))
     }
 
+    /// Direction, first derivatives and mixed derivative over the full 0..1 tile square.
+    pub fn direction_derivatives(&self, column: f64, row: f64) -> crate::astro::DirectionDerivatives {
+        // The tangent plane is linear; normalization supplies the spherical mixed derivative.
+        let middle = Self::middle();
+        let scale = TILE_EDGE_TEXELS as f64 / self.density;
+        crate::astro::DirectionDerivatives {
+            value: self.center + self.east * ((column - middle) / self.density) + self.north * ((middle - row) / self.density),
+            along_u: self.east * scale,
+            along_v: self.north * -scale,
+            mixed: Vector3::default(),
+        }.normalize()
+    }
+
+    /// Direction and derivatives per unit tile coordinate (0..1 across the full image). This supplies edge
+    /// tangents for a curved forward warp without evaluating any extra positions on the sky.
+    pub fn direction_tangents(&self, column: f64, row: f64) -> (Vector3, [Vector3; 2]) {
+        // Construct the tangent-plane vector at the requested corner and its two constant derivatives.
+        let middle = Self::middle();
+        let vector = self.center + self.east * ((column - middle) / self.density) + self.north * ((middle - row) / self.density);
+        let scale = TILE_EDGE_TEXELS as f64 / self.density;
+        let tangents = [self.east * scale, self.north * -scale];
+
+        // Account for the normalization that places this vector on the unit sphere.
+        crate::astro::normalize_direction_tangents(vector, tangents)
+    }
+
     /// The unit catalog direction at tile pixel coordinates (column, row): the inverse of `project`.
     pub fn direction_of(&self, column: f64, row: f64) -> Vector3 {
         let middle = Self::middle();

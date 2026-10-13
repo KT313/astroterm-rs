@@ -6,6 +6,8 @@
 use crate::constants::TILE_EDGE_TEXELS;
 use crate::model::Texel;
 
+/// Frame-local light masks for the tile most recently supplied to prepare. The supplied rows are the key;
+/// every prepare call replaces all derived data, and the owner drops the scratch at frame end.
 pub(super) struct TileSampler {
     edge: usize,
     lit: [u64; TILE_EDGE_TEXELS],           // one bit per texel per row: which texels hold light
@@ -19,12 +21,36 @@ impl TileSampler {
         Self { edge, lit: [0; TILE_EDGE_TEXELS], lit_columns: 0, lit_rows: 0 }
     }
 
-    /// Adopt a tile's lit rows.
+    /// Adopt a tile's lit rows, replacing the preceding tile's masks completely.
     pub(super) fn prepare(&mut self, lit_rows: &[u64]) {
         assert_eq!(lit_rows.len(), self.edge);
         self.lit[..self.edge].copy_from_slice(lit_rows);
         self.lit_columns = lit_rows.iter().fold(0, |all, &row| all | row);
         self.lit_rows = lit_rows.iter().enumerate().fold(0, |any, (index, &row)| if row != 0 { any | 1 << index } else { any });
+
+    }
+
+    /// Conservative rejection before clipping an outline pixel. A clipped fragment may move its sampling
+    /// center by half the full footprint and keeps a minimum one-texel filter. Include both before rejecting.
+    pub(super) fn may_cover_light(&self, position: [f64; 2], footprint: [f64; 2]) -> bool {
+        // Clamp is non-expansive, so this expanded box contains every possible clipped-fragment filter box.
+        let edge = self.edge as f64;
+        let center = position.map(|value| value.clamp(0.0, edge));
+        let radius = footprint.map(|value| value + 0.5);
+        let first_column = (center[0] - radius[0]).max(0.0) as usize;
+        let last_column = ((center[0] + radius[0]).min(edge).ceil() as usize - 1).min(self.edge - 1);
+        let first_row = (center[1] - radius[1]).max(0.0) as usize;
+        let last_row = ((center[1] + radius[1]).min(edge).ceil() as usize - 1).min(self.edge - 1);
+        self.has_lit_texels(first_column, last_column, first_row, last_row)
+    }
+
+    fn has_lit_texels(&self, first_column: usize, last_column: usize, first_row: usize, last_row: usize) -> bool {
+        // Check broad column/row masks first, then only the rows that the footprint overlaps.
+        let columns = (u64::MAX >> (63 - (last_column - first_column))) << first_column;
+        if columns & self.lit_columns == 0 { return false; }
+        let rows = (u64::MAX >> (63 - (last_row - first_row))) << first_row;
+        if rows & self.lit_rows == 0 { return false; }
+        self.lit[first_row..=last_row].iter().any(|bits| bits & columns != 0)
     }
 
     /// Average the box of `footprint` texels (at least one) centred at `position`, in texture coordinates from
@@ -43,11 +69,7 @@ impl TileSampler {
         let last = self.edge - 1;
         let (first_column, last_column) = (left as usize, (right.ceil() as usize - 1).min(last));
         let (first_row, last_row) = (top as usize, (bottom.ceil() as usize - 1).min(last));
-        let columns = (u64::MAX >> (63 - (last_column - first_column))) << first_column;
-        if columns & self.lit_columns == 0 { return None; }
-        let rows = (u64::MAX >> (63 - (last_row - first_row))) << first_row;
-        if rows & self.lit_rows == 0 { return None; }
-        if self.lit[first_row..=last_row].iter().all(|bits| bits & columns == 0) { return None; }
+        if !self.has_lit_texels(first_column, last_column, first_row, last_row) { return None; }
 
         let rgba = average(texels, self.edge, [left, right], [top, bottom], (first_column, last_column), (first_row, last_row));
         #[cfg(feature = "pixel-debug")]
@@ -58,18 +80,33 @@ impl TileSampler {
 
 /// The area average of the texels under a box: each texel weighted by the box area inside it over the box area.
 fn average(texels: &[Texel], edge: usize, [left, right]: [f64; 2], [top, bottom]: [f64; 2], (first_column, last_column): (usize, usize), (first_row, last_row): (usize, usize)) -> [f32; 4] {
+    // Only the first and last columns can have fractional widths. Interior columns share one row weight.
     let area = (right - left) * (bottom - top);
-    let mut rgba = [0.0_f32; 4];
+    let first_width = right.min(first_column as f64 + 1.0) - left;
+    let last_width = right - last_column as f64;
+    let mut rgba = [0.0_f64; 4];
     for row in first_row..=last_row {
         let height = bottom.min(row as f64 + 1.0) - top.max(row as f64);
-        for column in first_column..=last_column {
-            let width = right.min(column as f64 + 1.0) - left.max(column as f64);
-            let weight = (width * height / area) as f32;
-            let texel = texels[row * edge + column];
-            for (sum, value) in rgba.iter_mut().zip(texel.rgb.into_iter().chain([texel.opacity])) { *sum += value * weight; }
+        let offset = row * edge;
+        add_weighted_texel(&mut rgba, texels[offset + first_column], first_width * height / area);
+        if first_column == last_column { continue; }
+
+        // Preserve the original accumulation order, avoiding a division for every full-width texel.
+        let weight = height / area;
+        for column in first_column + 1..last_column {
+            add_weighted_texel(&mut rgba, texels[offset + column], weight);
         }
+        add_weighted_texel(&mut rgba, texels[offset + last_column], last_width * height / area);
     }
-    rgba
+    rgba.map(|value| value as f32)
+}
+
+#[inline]
+fn add_weighted_texel(sum: &mut [f64; 4], texel: Texel, weight: f64) {
+    // RGB and opacity use the same area weight, with f64 accumulation to keep dense averages bounded.
+    for (sum, value) in sum.iter_mut().zip(texel.rgb.into_iter().chain([texel.opacity])) {
+        *sum += f64::from(value) * weight;
+    }
 }
 
 /// The lit-row bits of a tile, as the region cache computes them.
@@ -120,6 +157,14 @@ mod tests {
     }
 
     #[test]
+    fn dense_reductions_stay_within_the_opacity_range() {
+        let texels = vec![Texel { rgb: [1.0; 3], opacity: 1.0 }; 64 * 64];
+        let mut sampler = TileSampler::new(64);
+        sampler.prepare(&[u64::MAX; 64]);
+        assert_eq!(sampler.sample(&texels, [32.0, 32.0], [40.0, 40.0]), Some([1.0; 4]));
+    }
+
+    #[test]
     fn boxes_of_any_size_match_direct_texel_area_averages_including_clipped_ones() {
         let texels = gradient();
         let sampler = sampler(&texels);
@@ -146,4 +191,63 @@ mod tests {
         let empty = vec![Texel::default(); 16];
         assert_eq!(self::sampler(&empty).sample(&empty, [2.0, 2.0], [4.0, 4.0]), None);
     }
+    #[test]
+    fn row_weight_reuse_matches_direct_averages_even_at_tiny_borders() {
+        // Exercise full and fractional rectangles, including nearly zero overlap with an illuminated texel.
+        let edge = 64;
+        let mut texels: Vec<_> = (0..edge * edge).map(|index| {
+            let alpha = if index % 7 == 0 { 0.0 } else { (index % 19 + 1) as f32 / 21.0 };
+            Texel { rgb: [alpha * 0.2, alpha * 0.7, alpha], opacity: alpha }
+        }).collect();
+        let mut sampler = TileSampler::new(edge);
+        sampler.prepare(&lit_rows_of(&texels, edge));
+        for position in [[32.0, 32.0], [0.0, 0.0], [62.99, 0.25], [31.3, 24.7]] {
+            for footprint in [[64.0, 64.0], [7.5, 13.2], [1.0, 0.1], [12.0, 5.0]] {
+                let expected = direct(&texels, edge, position, footprint);
+                let actual = sampler.sample(&texels, position, footprint).unwrap_or([0.0; 4]);
+                for axis in 0..4 { assert!((f64::from(actual[axis]) - expected[axis]).abs() < 1e-7); }
+            }
+        }
+
+        // Bright data before the queried rectangle must not leak into an empty interior through cancellation.
+        for row in 16..48 { for column in 16..48 { texels[row * edge + column] = Texel::default(); } }
+        sampler.prepare(&lit_rows_of(&texels, edge));
+        assert_eq!(sampler.sample(&texels, [32.0, 32.0], [20.0, 20.0]), None);
+        for epsilon in [0.0, 1e-12, 1e-9, 1e-6] {
+            let position = [32.0, 32.0];
+            let footprint = [32.0 + epsilon, 32.0 + epsilon];
+            let expected = direct(&texels, edge, position, footprint);
+            let actual = sampler.sample(&texels, position, footprint).unwrap_or([0.0; 4]);
+            for axis in 0..4 {
+                let tolerance = 1e-6 * expected[axis].abs().max(1e-30);
+                assert!((f64::from(actual[axis]) - expected[axis]).abs() <= tolerance, "{epsilon}: {actual:?} != {expected:?}");
+            }
+        }
+
+        // Replacing a dense tile with an empty one invalidates all light masks.
+        texels.fill(Texel::default());
+        sampler.prepare(&lit_rows_of(&texels, edge));
+        assert_eq!(sampler.sample(&texels, [32.0, 32.0], [64.0; 2]), None);
+    }
+
+    #[test]
+    fn early_rejection_contains_minimum_filters_of_shifted_pixel_fragments() {
+        // The minimum one-texel filter can move beyond the full pixel's original filter box after clipping.
+        let mut texels = vec![Texel::default(); 16];
+        texels[10] = Texel { rgb: [0.5; 3], opacity: 0.5 };
+        let sampler = sampler(&texels);
+        for u in [-1.0, 0.0, 1.49, 1.51, 2.3, 4.0, 5.0] {
+            for v in [-1.0, 0.0, 1.49, 1.51, 2.3, 4.0, 5.0] {
+                for footprint in [[0.1, 0.2], [1.0, 1.0], [3.0, 2.0], [8.0, 8.0]] {
+                    for offset in [-0.5, 0.0, 0.5] {
+                        let part = [u + offset * footprint[0], v + offset * footprint[1]];
+                        if sampler.sample(&texels, part, footprint.map(|value| value * 0.25)).is_some() {
+                            assert!(sampler.may_cover_light([u, v], footprint));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
 }

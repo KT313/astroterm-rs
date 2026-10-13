@@ -118,6 +118,76 @@ pub fn refract_direction(direction: Vector3) -> Vector3 {
     }
 }
 
+/// Normalize a direction and propagate two derivatives through normalization. Derivatives describe changes
+/// along the two coordinates of a sky tile; they are not additional sampled directions.
+pub fn normalize_direction_tangents(vector: Vector3, tangents: [Vector3; 2]) -> (Vector3, [Vector3; 2]) {
+    // Remove the part of each derivative that points along the normalized vector.
+    let length = vector.length();
+    let direction = vector.normalized();
+    let derivatives = tangents.map(|tangent| (tangent - direction * direction.dot(tangent)) * (1.0 / length));
+    (direction, derivatives)
+}
+
+/// Apply the same aberration, horizon rotation and optional refraction as the observer, including analytic
+/// first derivatives. At the refraction clamps use the derivative of the active branch. At an exact pole
+/// where the refraction convention has no unique azimuth, return None rather than inventing a tangent.
+pub fn transform_direction_tangents(
+    direction: Vector3,
+    tangents: [Vector3; 2],
+    velocity: Vector3,
+    rotation: crate::astro::Matrix3,
+    atmosphere: bool,
+) -> Option<(Vector3, [Vector3; 2])> {
+    // Follow the two normalizations in apply_aberration, then rotate the value and its derivatives together.
+    let (unit, tangents) = normalize_direction_tangents(direction, tangents);
+    let (apparent, tangents) = normalize_direction_tangents(unit + velocity * (1.0 / crate::astro::LIGHT_SPEED_AU_DAY), tangents);
+    let horizon = rotation.apply(apparent);
+    let tangents = tangents.map(|tangent| rotation.apply(tangent));
+    if !atmosphere { return Some((horizon, tangents)); }
+
+    // Evaluate the existing refraction formula and its altitude derivative at this one direction.
+    let horizontal = horizon.x.hypot(horizon.y);
+    if horizontal < 1e-12 { return None; }
+    let altitude = horizon.z.atan2(horizontal);
+    let corrected = apply_refraction(Horizontal { azimuth: 0.0, altitude }).altitude;
+    let (altitude_slope, _) = refraction_derivatives(altitude);
+
+    // Differentiate the horizontal scale and vertical component used by refract_direction.
+    let (sine, cosine) = corrected.sin_cos();
+    let derivatives = tangents.map(|tangent| {
+        let horizontal_change = (horizon.x * tangent.x + horizon.y * tangent.y) / horizontal;
+        let altitude_change = (horizontal * tangent.z - horizon.z * horizontal_change) / horizon.dot(horizon);
+        let corrected_change = altitude_slope * altitude_change;
+        let scale = cosine / horizontal;
+        let scale_change = -sine * corrected_change / horizontal - cosine * horizontal_change / horizontal.powi(2);
+        Vector3 {
+            x: tangent.x * scale + horizon.x * scale_change,
+            y: tangent.y * scale + horizon.y * scale_change,
+            z: cosine * corrected_change,
+        }
+    });
+    Some((refract_direction(horizon), derivatives))
+}
+
+/// First and second derivatives of corrected altitude with respect to geometric altitude (radians).
+/// The clamped lift is constant below -1 degree and after its positive part reaches zero.
+pub(super) fn refraction_derivatives(altitude: f64) -> (f64, f64) {
+    // Use the same clamp and positive-lift branches as apply_refraction.
+    let degrees = altitude.to_degrees();
+    let clamped_degrees = degrees.max(-1.0);
+    let argument = (clamped_degrees + 10.3 / (clamped_degrees + 5.11)).to_radians();
+    if degrees <= -1.0 || 1.02 / argument.tan() <= 0.0 { return (1.0, 0.0); }
+
+    // Differentiate the cotangent lift, taking care that the formula's coefficients use degrees.
+    let coefficient = (1.02_f64 / 60.0).to_radians();
+    let argument_slope = 1.0 - 10.3 / (clamped_degrees + 5.11).powi(2);
+    let argument_curvature = (20.6 / (clamped_degrees + 5.11).powi(3)).to_degrees();
+    let cosecant_squared = 1.0 / argument.sin().powi(2);
+    let slope = 1.0 - coefficient * argument_slope / argument.sin().powi(2);
+    let curvature = coefficient * cosecant_squared * (2.0 * argument_slope.powi(2) / argument.tan() - argument_curvature);
+    (slope, curvature)
+}
+
 /// Great-circle offset on unit vectors, retaining the legacy degenerate-arc convention.
 pub fn offset_vector_towards(from: Vector3, to: Vector3, angle: f64) -> Vector3 {
     let tangent = to - from * from.dot(to);
