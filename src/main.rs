@@ -10,6 +10,7 @@ use clap::Parser;
 
 use astroterm::catalog::datasets::DatasetDirectories;
 use astroterm::cli::Arguments;
+use astroterm::constants::{SPEED_GROUP_BOUNDS, SPEED_GROUP_TTL_SECONDS};
 use astroterm::model::{Config, Data};
 use astroterm::timing::StepTimes;
 
@@ -21,6 +22,13 @@ use pipeline::run_frame_loop;
 
 /// Parse options, build the sky data, and render until the user quits.
 fn main() -> ExitCode {
+
+    // Each speed group needs a TTL, including the group above the final speed threshold.
+    assert_eq!(
+        SPEED_GROUP_TTL_SECONDS.len(),
+        SPEED_GROUP_BOUNDS.len() + 1,
+        "SPEED_GROUP_TTL_SECONDS must have exactly one more entry than SPEED_GROUP_BOUNDS",
+    );
 
     let arguments = Arguments::parse();
     let mut times = start_step_times(&arguments);                                                   // capture startup timings when diagnostics are requested

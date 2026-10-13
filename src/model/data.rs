@@ -61,7 +61,7 @@ pub struct Satellite {
 }
 
 /// One fixed sky patch. All regions use the same SPEED_GROUP_BOUNDS; thresholds are not copied per region.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Region {
     pub speed_groups: [StarGroup; SPEED_GROUP_COUNT], // SPEED_GROUP_COUNT = SPEED_GROUP_BOUNDS.len() + 1
     pub merged_tile: RegionTileCache,
@@ -70,6 +70,7 @@ pub struct Region {
 /// One group's original stars, calculated samples and rendered image, with no separate flat cache arrays.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct StarGroup {
+    pub ttl: f64,                              // simulated seconds; shorter for faster groups, assigned at startup
     pub stars: StarTable,
     pub simulation: SimulationCache,
     pub tile: GroupTileCache,
@@ -111,7 +112,7 @@ pub enum StarLabels {
 ///
 /// Key: last_update is the simulated Julian date in TT for every sample, not the wall-clock calculation time.
 /// It starts as None. Refresh when absent or when abs(current_tt - last_update) exceeds the group's hold in
-/// days. Hold durations come from speed_group_hold_seconds(group_index), not a separate per-cache TTL field.
+/// days. Ordinary groups pass their owning StarGroup.ttl; constellation stars use the fastest configured TTL.
 /// If more rows are needed within that hold, append them at the stored date without changing last_update.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SimulationCache {

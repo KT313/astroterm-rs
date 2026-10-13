@@ -1,13 +1,14 @@
 //! Speed groups: every star of a region belongs to one of `SPEED_GROUP_COUNT` groups by its proper motion, and
-//! each group holds its computed directions for `HELD_DIRECTION_ERROR / upper motion bound` (plan section 5).
+//! receives a configured TTL at startup: longest for the slowest group, shortest for the fastest.
 //!
 //! A star carries no rate, only the stored motion bound: the largest angle between its catalog direction and its
 //! straight-line position at either end of the computational interval, plus the quantization margin. That angle is
 //! compared with the displacement of each rate threshold over the shorter half of the interval. This is a
 //! grouping policy, not a bound on angular speed at every date: approaching stars can move faster later.
 //! `tests/stellar_hold_accuracy.rs` audits the resulting fixed holds without changing runtime behavior.
-use crate::astro::{JULIAN_YEAR_DAYS, models::stars::computational_years};
-use crate::constants::{FAST_GROUP_HOLD_SECONDS, HELD_DIRECTION_ERROR, SPEED_GROUP_BOUNDS, SPEED_GROUP_COUNT};
+use crate::astro::models::stars::computational_years;
+use crate::constants::{SPEED_GROUP_TTL_SECONDS, SPEED_GROUP_BOUNDS, SPEED_GROUP_COUNT};
+use crate::model::{Region, StarGroup, StarTable};
 
 /// The group of a star from its stored motion bound (radians over the computational interval). Stars without
 /// motion data have a bound of the quantization margin only and land in group 0, the slow group.
@@ -16,13 +17,38 @@ pub fn speed_group(motion_bound: f32) -> usize {
     SPEED_GROUP_BOUNDS.iter().filter(|&&rate| drift_bound_for_rate(rate) <= bound).count()
 }
 
-/// Configured hold in simulated seconds: the target error divided by the group's upper rate, with a fixed
-/// 10 days for the fast group. These holds do not guarantee the target for every trajectory and date.
-pub fn speed_group_hold_seconds(group: usize) -> f64 {
-    assert!(group < SPEED_GROUP_COUNT, "speed group {group} does not exist");
-    match SPEED_GROUP_BOUNDS.get(group) {
-        Some(upper_rate) => HELD_DIRECTION_ERROR / upper_rate * JULIAN_YEAR_DAYS * 86_400.0,
-        None => FAST_GROUP_HOLD_SECONDS,
+/// Configured TTL in simulated seconds. Sorting the values assigns the longest to group 0 (slowest),
+/// regardless of their order in the constants array. Runtime expiration reads the value stored in StarGroup.
+pub fn get_ttl_of_speed_group(group_index: usize) -> f64 {
+    // Reject an index that does not identify a configured speed group.
+    assert!(
+        group_index < SPEED_GROUP_COUNT,
+        "speed group {group_index} does not exist",
+    );
+
+    // Copy the configured TTLs and put the longest first, matching the slow-to-fast group order.
+    let mut ttls_slowest_to_fastest = SPEED_GROUP_TTL_SECONDS;
+    ttls_slowest_to_fastest.sort_by(|left_ttl, right_ttl| {
+        right_ttl.total_cmp(left_ttl) // Comparing right against left puts larger TTLs first.
+    });
+
+    // Return this group's TTL in simulated seconds.
+    ttls_slowest_to_fastest[group_index]
+}
+
+impl StarGroup {
+    /// Build a group with its configured TTL and empty simulation/image caches.
+    pub fn new(stars: StarTable, speed_group: usize) -> Self {
+        Self { ttl: get_ttl_of_speed_group(speed_group), stars, ..Self::default() }
+    }
+}
+
+impl Default for Region {
+    fn default() -> Self {
+        Self {
+            speed_groups: std::array::from_fn(|group| StarGroup::new(StarTable::default(), group)),
+            merged_tile: Default::default(),
+        }
     }
 }
 
@@ -64,21 +90,20 @@ mod tests {
     }
 
     #[test]
-    fn hold_times_follow_the_error_limit() {
-        let year = JULIAN_YEAR_DAYS * 86_400.0;
-        assert!((speed_group_hold_seconds(0) - 9.5 * year).abs() < 1e-3);
-        assert!((speed_group_hold_seconds(1) - 0.95 * year).abs() < 1e-3);
-        assert_eq!(speed_group_hold_seconds(2), 10.0 * 86_400.0);
-        for (group, upper_rate) in SPEED_GROUP_BOUNDS.iter().enumerate() {   // held error at the upper rate is exactly the limit
-            let error = upper_rate * speed_group_hold_seconds(group) / year;
-            assert!((error - HELD_DIRECTION_ERROR).abs() < 1e-12);
+    fn configured_ttls_are_assigned_from_slowest_to_fastest() {
+        let region = Region::default();
+        let actual = region.speed_groups.map(|group| group.ttl);
+        assert_eq!(actual, [365.0 * 86_400.0, 10.0 * 86_400.0, 86_400.0]);
+        assert!(actual.windows(2).all(|pair| pair[0] > pair[1]));
+        for (group, ttl) in actual.into_iter().enumerate() {
+            assert_eq!(StarGroup::new(StarTable::default(), group).ttl, ttl);
         }
     }
 
     #[test]
     #[should_panic(expected = "speed group 3 does not exist")]
     fn hold_time_rejects_unknown_groups() {
-        speed_group_hold_seconds(SPEED_GROUP_COUNT);
+        get_ttl_of_speed_group(SPEED_GROUP_COUNT);
     }
 
     #[test]

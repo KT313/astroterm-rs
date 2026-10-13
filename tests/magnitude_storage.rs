@@ -87,7 +87,7 @@ fn quantization_changes_ties_but_keeps_id_order_and_decoded_runtime_values() {
 #[test]
 fn clipped_minimum_passes_the_brightness_prefix_before_the_saturating_current_magnitude() {
     use astroterm::astro::{J2000, JULIAN_YEAR_DAYS};
-    use astroterm::model::speed_group_hold_seconds;
+    use astroterm::model::get_ttl_of_speed_group;
     use astroterm::regions::{UNPLACED, rows_wanted};
     let parsed = load_csv("ra,dec,mag,dist,rv\n0,0,-9.9,10,-100\n0,0,-10,,\n").unwrap();
     let prepared = prepare_owned_catalog(parsed, &mut astroterm::progress::Report::quiet()).unwrap();
@@ -101,7 +101,7 @@ fn clipped_minimum_passes_the_brightness_prefix_before_the_saturating_current_ma
         for (region, group, table) in tables.star_tables() {
             let rows = rows_wanted(table, tt, -10.0);
             assert_eq!(rows, table.len());                                                   // the stored bounds admit both rows at every date
-            (simulations.star_regions[region].speed_groups[group].simulation.update(table, tt, rows_wanted(table, tt, -10.0), speed_group_hold_seconds(group)));
+            (simulations.star_regions[region].speed_groups[group].simulation.update(table, tt, rows_wanted(table, tt, -10.0), get_ttl_of_speed_group(group)));
             codes.extend(simulations.star_regions[region].speed_groups[group].simulation.magnitudes().iter().take(rows).copied().filter(|&code| code != UNPLACED));
         }
         assert_eq!(codes.iter().filter(|&&code| code <= magnitude_code(-10.0)).count(), drawn);

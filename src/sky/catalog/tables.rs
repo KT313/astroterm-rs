@@ -79,9 +79,9 @@ fn split_groups(catalog: &SkyCatalog, bounds: &[f32], progress: &mut dyn Dataset
                     _ => unreachable!("label kind chosen from the same catalog"),
                 }
             }
-            StarGroup { stars: StarTable::new(rows, labels), ..StarGroup::default() }
+            StarGroup::new(StarTable::new(rows, labels), group)
         });
-        tables.push(Region { speed_groups, ..Region::default() });
+        tables.push(Region { speed_groups, merged_tile: Default::default() });
         if region % 1024 == 1023 { progress.set_position(range.end as u64); }
     }
     progress.set_position(offsets[CELL_COUNT] as u64);
@@ -163,6 +163,9 @@ mod tests {
         for region in 0..CELL_COUNT {                                                   // every region keeps its stars, split over its three tables
             let total: usize = tables.star_regions[region].speed_groups.iter().map(|group| &group.stars).map(StarTable::len).sum();
             assert_eq!(total, catalog.grid.offsets[region + 1] - catalog.grid.offsets[region], "region {region}");
+            for (group, entry) in tables.star_regions[region].speed_groups.iter().enumerate() {
+                assert_eq!(entry.ttl, crate::model::get_ttl_of_speed_group(group));
+            }
         }
         assert_eq!(tables.solar_system_planets.planets.len(), 8);
     }

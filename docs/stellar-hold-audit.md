@@ -11,11 +11,17 @@ Run the small synthetic audit:
 cargo test --test stellar_hold_accuracy audit_synthetic_holds -- --ignored --nocapture
 ```
 
-**The synthetic audit currently fails qualification intentionally:** it includes an approaching star that the
-current rule assigns to the slow group, and a star too fast for the fixed ten-day hold. The test exits nonzero
+The catalog audit reads the TTL stored on each `StarGroup`; synthetic groups use the same configured defaults.
+`SPEED_GROUP_TTL_SECONDS` is assigned longest to slowest and shortest to fastest, currently 365, 10 and 1 days.
+Constellation stars use the fastest group's TTL. The former error-derived hold formula is no longer used.
+
+**The synthetic audit currently fails qualification intentionally:** it includes an approaching star whose
+motion is too fast even for the one-day fast-group hold. The test exits nonzero
 after reporting every sampled group if any error exceeds the 0.285-arcsecond target (plus 1e-12 radians of
 numerical slack). Ordinary `cargo test` skips the qualification audits and instead runs small regression tests
-that check the detector against passing cases and the known violation.
+that check the detector against passing cases and the historical slow-group violation using an explicit
+9.5-year hold. With the current defaults, the sampled slow group passes (worst 0.216 arcseconds), while the
+fast group and constellation sample reach 11.295 arcseconds. These are synthetic results, not catalog-wide bounds.
 
 Audit every star in the embedded BSC5 catalog, without network access:
 

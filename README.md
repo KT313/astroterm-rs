@@ -147,8 +147,9 @@ Optional [frame timing captures](docs/frame-benchmarks.md) run a fixed number of
 Catalog brightness is stored in steps of 0.001 magnitude; values very close to a display threshold may round across it.
 Stars are filed by their catalog-epoch sky regions with a fixed motion allowance of 0.25°. At distant dates,
 fast-moving stars may be missing from a view; special handling for them is currently deferred.
-Each region's stars are sorted into three speed groups and simulated per group with fixed holds (10 days for the
-fastest group, longer for the others); the drawn stars of a region are kept as a 64 × 64 sky-fixed tile that is
+Each region's stars are sorted into three speed groups with TTLs assigned from `SPEED_GROUP_TTL_SECONDS` at
+startup: longest for the slowest group, shortest for the fastest (currently 365, 10 and 1 simulated days).
+Constellation stars use the fastest group's TTL. The drawn stars of a region are kept as a 64 × 64 sky-fixed tile that is
 re-rendered only when its simulation or the brightness threshold changes, and the screen is produced by mapping
 every pixel back to its tile. Tiles of regions that leave the view stay in memory for their return.
 The fixed holds have known direction-error exceptions; the opt-in [offline hold audit](docs/stellar-hold-audit.md)

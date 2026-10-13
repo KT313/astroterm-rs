@@ -2,8 +2,8 @@
 //! These audits may fail under the current fixed holds. They never change TTLs, download data or write caches.
 use astroterm::astro::{COMPUTATIONAL_INTERVAL, J2000, JULIAN_YEAR_DAYS, Vector3, models::stars::{StellarMotion, years_since_j2000}};
 use astroterm::catalog::{decode_magnitude, encode_brightness_bound, magnitude_code};
-use astroterm::constants::{FAST_GROUP_HOLD_SECONDS, HELD_DIRECTION_ERROR, SPEED_GROUP_COUNT};
-use astroterm::model::{StarTable, StarLabels, Data, StarRow, StarRowVec, speed_group, speed_group_hold_seconds};
+use astroterm::constants::{HELD_DIRECTION_ERROR, SPEED_GROUP_COUNT};
+use astroterm::model::{StarTable, StarLabels, Data, StarRow, StarRowVec, speed_group, get_ttl_of_speed_group};
 use astroterm::progress::Report;
 use astroterm::regions::{Refresh};
 use astroterm::model::{SimulationCache};
@@ -123,11 +123,11 @@ fn audit_catalog(tables: &Data, limit_per_group: usize) -> Audit {
     for (region, group, table) in tables.star_tables() {
         let report = &mut audit.groups[group];
         let count = table.len().min(limit_per_group.saturating_sub(report.stars));
-        for row in 0..count { audit_star(table, row, Some(region), speed_group_hold_seconds(group), report); }
+        for row in 0..count { audit_star(table, row, Some(region), tables.star_regions[region].speed_groups[group].ttl, report); }
     }
     let table = &tables.constellation_stars;
     for row in 0..table.len().min(limit_per_group) {
-        audit_star(table, row, None, FAST_GROUP_HOLD_SECONDS, &mut audit.groups[SPEED_GROUP_COUNT]);
+        audit_star(table, row, None, get_ttl_of_speed_group(SPEED_GROUP_COUNT - 1), &mut audit.groups[SPEED_GROUP_COUNT]);
     }
     audit
 }
@@ -152,19 +152,20 @@ fn synthetic_catalog() -> Vec<StarTable> {
 }
 
 #[test]
-fn offline_check_detects_the_known_slow_group_counterexample() {
+fn offline_check_detects_the_old_long_hold_counterexample() {
     let table = synthetic_star(5, Vector3 { x: -0.00009, y: 1e-8, z: 0.0 }, true);
     assert_eq!(speed_group(table.motion_bound(0)), 0);
     let epoch = J2000 + 10000.0 * JULIAN_YEAR_DAYS;
     let requested = epoch + 9.49 * JULIAN_YEAR_DAYS;
+    let old_hold_seconds = 9.5 * JULIAN_YEAR_DAYS * 86_400.0;
     let mut simulation = SimulationCache::default();
-    simulation.update(&table, epoch, 1, speed_group_hold_seconds(0));
-    assert_eq!(simulation.update(&table, requested, 1, speed_group_hold_seconds(0)), Refresh::Unchanged);
+    simulation.update(&table, epoch, 1, old_hold_seconds);
+    assert_eq!(simulation.update(&table, requested, 1, old_hold_seconds), Refresh::Unchanged);
     let worst = measure_error(&table, &simulation, requested, Some(0));
     assert!((1.9..2.1).contains(&arcseconds(worst.radians)));
     assert_eq!(worst.calculated_tt, epoch);
     let mut audit = Audit::default();
-    audit_star(&table, 0, Some(0), speed_group_hold_seconds(0), &mut audit.groups[0]);
+    audit_star(&table, 0, Some(0), old_hold_seconds, &mut audit.groups[0]);
     assert!(!audit.qualified());
     assert!(audit.groups[0].held > 0 && audit.groups[0].refreshed > 0);
 }
@@ -175,12 +176,12 @@ fn offline_check_accepts_stationary_and_moderate_tangential_motion_in_each_group
     assert!(!audit.qualified());                                                           // no comparisons must never count as qualification
     for table in synthetic_catalog().iter().take(4) {
         let group = speed_group(table.motion_bound(0));
-        audit_star(table, 0, Some(0), speed_group_hold_seconds(group), &mut audit.groups[group]);
+        audit_star(table, 0, Some(0), get_ttl_of_speed_group(group), &mut audit.groups[group]);
     }
     assert!(audit.qualified());
     assert!(audit.groups[..SPEED_GROUP_COUNT].iter().all(|group| group.comparisons > 0));
     let table = &synthetic_catalog()[3];
-    audit_star(table, 0, None, FAST_GROUP_HOLD_SECONDS, &mut audit.groups[SPEED_GROUP_COUNT]);
+    audit_star(table, 0, None, get_ttl_of_speed_group(SPEED_GROUP_COUNT - 1), &mut audit.groups[SPEED_GROUP_COUNT]);
     assert!(audit.qualified());
 }
 
@@ -190,8 +191,8 @@ fn audit_synthetic_holds() {
     let mut audit = Audit::default();
     for table in synthetic_catalog() {
         let group = speed_group(table.motion_bound(0));
-        audit_star(&table, 0, Some(0), speed_group_hold_seconds(group), &mut audit.groups[group]);
-        audit_star(&table, 0, None, FAST_GROUP_HOLD_SECONDS, &mut audit.groups[SPEED_GROUP_COUNT]);
+        audit_star(&table, 0, Some(0), get_ttl_of_speed_group(group), &mut audit.groups[group]);
+        audit_star(&table, 0, None, get_ttl_of_speed_group(SPEED_GROUP_COUNT - 1), &mut audit.groups[SPEED_GROUP_COUNT]);
     }
     audit.report("synthetic stars");
     assert!(audit.qualified(), "held-direction errors exceed the target; see the audit above");
