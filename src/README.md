@@ -5,6 +5,7 @@ Bottom-up. Every module exposes its symbols from its root `mod.rs`; callers use 
 | Module | Holds |
 |---|---|
 | `constants.rs` | tunable defaults, hold times, resource limits |
+| `pixel_debug.rs` | optional channel checks and accumulated-light report (`pixel-debug` feature only) |
 | `astro/` | time scales, coordinates, Earth orientation, VSOP87 planets, Moon, stellar motion, refraction, accuracy intervals |
 | `catalog/` | BSC5, AT-HYG and Gaia parsers, MAST downloads and blob store, names and designations, magnitude coding, the prepared-catalog codec |
 | `rows/` | the column-table macros the catalog and timing records use |

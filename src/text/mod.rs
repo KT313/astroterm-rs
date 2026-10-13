@@ -139,9 +139,12 @@ pub fn draw_text(
             for x in left.max(x0)..right.min(x0 + glyph.metrics.width as i32) {
                 let alpha = u32::from(glyph.coverage[(y - y0) as usize * glyph.metrics.width + (x - x0) as usize]);
                 let pixel = image.get_pixel_mut(x as u32, y as u32);
-                for (channel, foreground) in pixel.0[..3].iter_mut().zip(color) {
-                    *channel =
-                        ((u32::from(foreground) * alpha + u32::from(*channel) * (255 - alpha) + 127) / 255) as u8;
+                for (index, (channel, foreground)) in pixel.0[..3].iter_mut().zip(color).enumerate() {
+                    let value = (u32::from(foreground) * alpha + u32::from(*channel) * (255 - alpha) + 127) / 255;
+                    #[cfg(feature = "pixel-debug")]
+                    crate::pixel_debug::check_channel("draw_text before u8 conversion", index, value as f64, 255.0);
+                    let _ = index;
+                    *channel = value as u8;
                 }
             }
         }
@@ -170,9 +173,17 @@ pub fn draw_text_over(state: &mut TextRasterizer, layer: &mut [u8], width: usize
                 let alpha = u32::from(glyph.coverage[(y - y0) as usize * glyph.metrics.width + (x - x0) as usize]);
                 if alpha == 0 { continue; }
                 let pixel = &mut layer[(y as usize * width + x as usize) * 4..][..4];
-                for (channel, foreground) in pixel.iter_mut().zip(color.into_iter().chain([255])) {
-                    *channel = ((u32::from(foreground) * alpha + u32::from(*channel) * (255 - alpha) + 127) / 255) as u8; // premultiplied source-over, alpha included
+                #[cfg(feature = "pixel-debug")]
+                crate::pixel_debug::check_overlay("draw_text_over input", pixel);
+                for (index, (channel, foreground)) in pixel.iter_mut().zip(color.into_iter().chain([255])).enumerate() {
+                    let value = (u32::from(foreground) * alpha + u32::from(*channel) * (255 - alpha) + 127) / 255;
+                    #[cfg(feature = "pixel-debug")]
+                    crate::pixel_debug::check_channel("draw_text_over before u8 conversion", index, value as f64, 255.0);
+                    let _ = index;
+                    *channel = value as u8;                                               // premultiplied source-over, alpha included
                 }
+                #[cfg(feature = "pixel-debug")]
+                crate::pixel_debug::check_overlay("draw_text_over output", pixel);
             }
         }
         pen += i32::from(state.cell.0) * columns as i32;

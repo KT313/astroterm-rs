@@ -4,8 +4,8 @@
 //! up-to-date group images and region images for every selected region, and the constellation table's
 //! simulation. Real work happens per group only when a cache key changed (plan section 4): a group is simulated
 //! again when its hold time has expired, its image is drawn again when its key changed, and a region image is
-//! summed again when one of its group images was. Rotation, panning, zoom, resize and simulated time inside the
-//! holds do nothing. Images are never dropped: a region that leaves the view keeps its images for its return
+//! merged again when one of its group images was. Zoom changes redraw selected tiles with boosted per-star opacity. Rotation, panning, resize and time inside
+//! the holds do not change existing image keys. Images are never dropped: a region that leaves the view keeps its images for its return
 //! (owner's decision of 2026-10-12; the memory is bounded by the fixed tile size times the region count).
 //!
 //! The module holds the simulation caches (`simulation`), the star appearance
@@ -22,7 +22,7 @@ pub use tiles::{TileFrame, TileGeometry, tile_frames};
 use crate::astro::FrameTime;
 use crate::catalog::magnitude_code;
 use crate::constants::{CELL_COUNT, SPEED_GROUP_COUNT};
-use crate::model::{RenderOptions, SkyTables};
+use crate::model::{RenderOptions, SkyTables, View};
 use crate::selection::Selected;
 
 /// Everything step 4 keeps between frames: the simulation cache and the image cache of every group, the image of
@@ -32,7 +32,7 @@ pub struct RegionCaches {
     simulations: Simulations,
     groups: Vec<GroupImage>,                // CELL_COUNT × SPEED_GROUP_COUNT, region-major, like `Stars`
     regions: Vec<RegionImage>,              // CELL_COUNT
-    opacities: StarOpacities,               // the curve without zoom boost; the boost is applied in the frame output
+    opacities: StarOpacities,               // the per-star curve for the current zoom, clamped before blending
     bytes: usize,                           // texel bytes held by all images
 }
 
@@ -41,7 +41,7 @@ pub struct RegionCaches {
 pub struct RefreshReport {
     pub simulated: usize,                   // groups whose simulation was refreshed or extended
     pub rendered: usize,                    // group images drawn again (empty prefixes do not count)
-    pub summed: usize,                      // region images summed again
+    pub merged: usize,                      // region images merged again
 }
 
 impl Default for RegionCaches {
@@ -63,19 +63,21 @@ impl RegionCaches {
     pub fn group_image(&self, region: usize, group: usize) -> &GroupImage { &self.groups[region * SPEED_GROUP_COUNT + group] }
     pub fn region_image(&self, region: usize) -> &RegionImage { &self.regions[region] }
     pub fn tile_bytes(&self) -> usize { self.bytes }
-    /// The opacity curve the tiles were drawn with (no zoom boost).
+    /// The per-star opacity curve prepared for this frame's zoom.
     pub fn opacities(&self) -> &StarOpacities { &self.opacities }
 }
 
 /// Bring the images of the selected regions and the constellation simulation up to date for this frame.
-pub fn refresh_regions(caches: &mut RegionCaches, tables: &SkyTables, selected: &Selected, time: FrameTime, settings: &RenderOptions) -> RefreshReport {
+pub fn refresh_regions(caches: &mut RegionCaches, tables: &SkyTables, selected: &Selected, time: FrameTime, view: &View, settings: &RenderOptions) -> RefreshReport {
     let mut report = RefreshReport::default();
     let tt = time.tt;
+    let zoom_boost = zoom_opacity_boost(view.fov_degrees);
+    caches.opacities.prepare(zoom_boost);
     let threshold = settings.magnitude_threshold;
     let threshold_code = magnitude_code(threshold);
     caches.simulations.update_constellations(tables.constellations.table(), tt);
 
-    // per selected region: simulate and draw each group whose key changed, then re-sum the region if any did
+    // per selected region: simulate and draw each group whose key changed, then re-merge the region if any did
     for &region in &selected.regions {
         let tile = TileGeometry::new(region);
         for (group, table) in tables.stars.region(region).iter().enumerate() {
@@ -88,7 +90,7 @@ pub fn refresh_regions(caches: &mut RegionCaches, tables: &SkyTables, selected: 
             }
             if caches.simulations.update_group(table, region, group, tt, threshold) != Refresh::Unchanged { report.simulated += 1; }
             let simulation = caches.simulations.group(region, group);
-            let key = ImageKey { epoch: simulation.epoch().expect("a simulated group has an epoch"), rows, threshold: threshold_code };
+            let key = ImageKey { epoch: simulation.epoch().expect("a simulated group has an epoch"), rows, threshold: threshold_code, zoom_boost };
             let image = &mut caches.groups[slot];
             if image.key() == Some(key) { continue; }
             caches.bytes -= image.bytes();
@@ -100,9 +102,9 @@ pub fn refresh_regions(caches: &mut RegionCaches, tables: &SkyTables, selected: 
         let image = &mut caches.regions[region];
         if image.is_current(groups) { continue; }
         caches.bytes -= image.bytes();
-        image.sum(groups);
+        image.merge(groups);
         caches.bytes += image.bytes();
-        report.summed += 1;
+        report.merged += 1;
     }
     report
 }
@@ -130,7 +132,7 @@ mod tests {
     fn frame(caches: &mut RegionCaches, tables: &SkyTables, days: f64, view: &View, threshold: f64) -> (Selected, RefreshReport) {
         let observation = observe(&boston(), true, view, time(days));
         let selected = select_regions(&tables.stars, &observation);
-        let report = refresh_regions(caches, tables, &selected, time(days), &settings(threshold));
+        let report = refresh_regions(caches, tables, &selected, time(days), view, &settings(threshold));
         (selected, report)
     }
 
@@ -149,6 +151,53 @@ mod tests {
     }
 
     #[test]
+    fn zoom_redraws_tiles_without_resimulation_and_hidden_regions_refresh_on_return() {
+        let mut placed = Vec::new();
+        for region in [0, 1] {
+            placed.push((region, 0, crate::model::fixtures::row(TileGeometry::new(region).center(), 0.0, 6.0, region as u32)));
+        }
+        let tables = SkyTables { stars: crate::model::fixtures::layout(&placed), ..SkyTables::default() };
+        let mut caches = RegionCaches::default();
+        let both = Selected { regions: vec![0, 1], whole_sky: false };
+        let wide = view(180.0, 1.0);
+        let narrow = view(60.0, 1.0);
+        refresh_regions(&mut caches, &tables, &both, time(0.0), &wide, &settings(9.0));
+        let original = [caches.region_image(0).clone(), caches.region_image(1).clone()];
+        for region in [0, 1] {
+            let selected = Selected { regions: vec![region], whole_sky: false };
+            let changed = refresh_regions(&mut caches, &tables, &selected, time(0.0), &narrow, &settings(9.0));
+            assert_eq!(changed, RefreshReport { simulated: 0, rendered: 1, merged: 1 });
+            assert_eq!(caches.group_image(region, 0).key().unwrap().zoom_boost, zoom_opacity_boost(60.0));
+            assert_ne!(caches.region_image(region), &original[region]);
+            if region == 0 { assert_eq!(caches.region_image(1), &original[1]); }            // hidden tile retains its old key until selected again
+            assert_eq!(refresh_regions(&mut caches, &tables, &selected, time(0.0), &narrow, &settings(9.0)), RefreshReport::default());
+        }
+        let restored = refresh_regions(&mut caches, &tables, &both, time(0.0), &wide, &settings(9.0));
+        assert_eq!(restored, RefreshReport { simulated: 0, rendered: 2, merged: 2 });
+        for (region, image) in original.iter().enumerate() { assert_eq!(caches.region_image(region), image); }
+        assert_eq!(refresh_regions(&mut caches, &tables, &both, time(0.0), &view(360.0, 2.0), &settings(9.0)), RefreshReport::default()); // same boost, no redraw
+    }
+
+    #[test]
+    fn zoom_is_clamped_per_star_before_overlapping_stars_blend_in_a_tile() {
+        let region = 0;
+        let tile = TileGeometry::new(region);
+        let magnitude = crate::constants::STAR_OPACITY_REFERENCE_MAGNITUDE + 2_f64.log10() / crate::constants::STAR_OPACITY_MAGNITUDE_SCALE; // about half opacity before zoom
+        let mut slow = crate::model::fixtures::row(tile.center(), 0.0, magnitude, 1);
+        let mut top = crate::model::fixtures::row(tile.center(), 0.0, magnitude, 2);
+        slow.display_color = crate::model::StarColor::RedOrange.index();
+        top.display_color = crate::model::StarColor::BlueWhite.index();
+        let tables = SkyTables { stars: crate::model::fixtures::layout(&[(region, 0, slow), (region, 0, top)]), ..SkyTables::default() };
+        let mut caches = RegionCaches::default();
+        let selected = Selected { regions: vec![region], whole_sky: false };
+        refresh_regions(&mut caches, &tables, &selected, time(0.0), &view(60.0, 1.0), &settings(magnitude + 1.0));
+        let expected = Texel { rgb: premultiplied_color(top.display_color, 1.0), opacity: 1.0 };
+        let lit: Vec<_> = caches.region_image(region).texels().iter().filter(|texel| !texel.is_empty()).collect();
+        assert_eq!(lit.len(), 4);
+        assert!(lit.into_iter().all(|texel| *texel == expected));                           // the last opaque star replaces the earlier colour, before any merging or warp
+    }
+
+    #[test]
     fn the_invalidation_matrix_over_the_whole_sky() {
         let tables = bsc5();
         let mut caches = RegionCaches::default();
@@ -158,7 +207,7 @@ mod tests {
         let drawn = drawn_groups(&tables, &selected, 0.0, 6.0);
         assert_eq!(first.rendered, drawn.iter().sum::<usize>());
         assert_eq!(first.simulated, first.rendered);
-        assert_eq!(first.summed, selected.regions.len());                                    // every selected region is summed once, even those with only empty groups
+        assert_eq!(first.merged, selected.regions.len());                                    // every selected region is merged once, even those with only empty groups
         let snapshot = caches.clone();
 
         // nothing: the same frame, Earth rotation, panning, and time inside every hold
@@ -170,7 +219,7 @@ mod tests {
 
         // the fast hold: only the fast groups and their regions
         let (_, fast) = frame(&mut caches, &tables, FAST_GROUP_HOLD_SECONDS / 86_400.0 + 1.0, &wide, 6.0);
-        assert_eq!((fast.simulated, fast.rendered, fast.summed), (drawn[2], drawn[2], regions_with(&tables, &selected, 11.0, 6.0, 2)));
+        assert_eq!((fast.simulated, fast.rendered, fast.merged), (drawn[2], drawn[2], regions_with(&tables, &selected, 11.0, 6.0, 2)));
         assert!(fast.rendered > 0);
         for (region, group, table) in tables.stars.iter() {
             if group < 2 && !table.is_empty() { assert_eq!(caches.group_image(region, group), snapshot.group_image(region, group)); }
@@ -209,7 +258,7 @@ mod tests {
         assert!(!entered.is_empty());
         let expected: usize = entered.iter().map(|&region| tables.stars.region(region).iter().filter(|table| rows_wanted(table, time(0.0).tt, 6.5) > 0).count()).sum();
         assert_eq!(second.rendered, expected);
-        assert_eq!(second.summed, entered.len());
+        assert_eq!(second.merged, entered.len());
         for (&region, image) in before.regions.iter().zip(&kept) { assert_eq!(caches.region_image(region), image); } // regions that left the view keep their images
         let (_, third) = frame(&mut caches, &tables, 1.0 / 24.0, &narrow, 6.5);
         assert_eq!(third, RefreshReport::default());
@@ -239,19 +288,19 @@ mod tests {
         let (region, group, table) = tables.stars.iter().find(|(_, _, table)| table.len() == 1).unwrap();
         let mut caches = RegionCaches::default();
         let selected = Selected { regions: vec![region], whole_sky: false };
-        refresh_regions(&mut caches, &tables, &selected, time(0.0), &settings(9.0));
+        refresh_regions(&mut caches, &tables, &selected, time(0.0), &View::default(), &settings(9.0));
         let image = caches.group_image(region, group);
         let tile = TileGeometry::new(region);
         let simulation = caches.simulations().group(region, group);
         let (column, row) = tile.project(simulation.directions()[0]).unwrap();
         let (row, column) = (row.round() as usize, column.round() as usize);                 // the glyph's bottom right texel
-        let opacity = caches.opacities().of(simulation.magnitudes()[0]);                     // no zoom boost in the tiles
+        let opacity = caches.opacities().of(simulation.magnitudes()[0]);                     // per-star opacity, including the view's boost
         let expected = Texel { rgb: premultiplied_color(table.columns().display_color[0], opacity), opacity };
         let size = TileGeometry::size();
         let lit: Vec<usize> = image.texels().iter().enumerate().filter(|(_, texel)| texel.opacity > 0.0).map(|(index, _)| index).collect();
         assert_eq!(lit, [(row - 1) * size + column - 1, (row - 1) * size + column, row * size + column - 1, row * size + column]);
         for index in lit { assert_eq!(image.texels()[index], expected); }
-        assert_eq!(caches.region_image(region).texels(), image.texels());                 // one group: the sum is the image
+        assert_eq!(caches.region_image(region).texels(), image.texels());                 // one group: the merge is the image
     }
 
     /// Release-mode cost of the images; run with `--ignored --nocapture`.
@@ -266,9 +315,9 @@ mod tests {
                 let observation = observe(&boston(), true, &view, time(days));
                 let selected = select_regions(&tables.stars, &observation);
                 let started = std::time::Instant::now();
-                let report = refresh_regions(caches, &tables, &selected, time(days), &settings(threshold));
+                let report = refresh_regions(caches, &tables, &selected, time(days), &view, &settings(threshold));
                 let elapsed = started.elapsed();
-                eprintln!("{fov:>5}° {what:<14} {elapsed:>10.3?}  regions={} rendered={} summed={} simulated={} tile bytes={}", selected.regions.len(), report.rendered, report.summed, report.simulated, caches.tile_bytes());
+                eprintln!("{fov:>5}° {what:<14} {elapsed:>10.3?}  regions={} rendered={} merged={} simulated={} tile bytes={}", selected.regions.len(), report.rendered, report.merged, report.simulated, caches.tile_bytes());
             };
             timed(&mut caches, 0.0, 6.0, "first frame");
             timed(&mut caches, 1.0 / 24.0, 6.0, "an hour later");

@@ -9,14 +9,14 @@
 //! aberration shift is removed; the cube-map lookup names the region, whose tile is sampled bilinearly when a
 //! texel covers at least a pixel and otherwise by adding up the texels under the pixel (tiles have a fixed size,
 //! plan section 4). Within the drift and glyph margin of a region edge the neighbouring regions' tiles are sampled
-//! too, so that a star that straddles a border or drifted across it is complete. The zoom boost of the old
-//! renderer multiplies the result; tone mapping is left to the frame output.
+//! too, so that a star that straddles a border or drifted across it is complete. The tiles already include the per-star zoom boost;
+//! tone mapping is left to the frame output.
 use crate::astro::{Horizontal, Vector3, apply_refraction};
 use crate::constants::{CELL_COUNT, GRID_DEPTH, STELLAR_DRIFT_MARGIN, TILE_EDGE_TEXELS};
 use crate::model::{ProjectionKind, View};
 use crate::observation::Observation;
 use crate::projection::prepare_camera;
-use crate::regions::{RegionCaches, STAR_GLYPH_RADIUS, Texel, TileFrame, TileGeometry, tile_frames, zoom_opacity_boost};
+use crate::regions::{RegionCaches, STAR_GLYPH_RADIUS, Texel, TileFrame, TileGeometry, tile_frames};
 use crate::text::{TextRasterizer, create_text_rasterizer, set_text_cell_size};
 use crate::selection::Selected;
 use std::f64::consts::FRAC_PI_2;
@@ -241,7 +241,6 @@ pub fn project_stars_to_screen(frame: &mut Frame, caches: &RegionCaches, selecte
         to_catalog: observation.to_catalog.0.map(|row| row.map(|v| v as f32)),
         beta: pack(observation.beta),
         refraction: observation.atmosphere.then(refraction_table),
-        boost: zoom_opacity_boost(view.fov_degrees) as f32,
         finest_density: tile_frames().iter().map(|tile| tile.density).fold(0.0, f32::max),
     };
     let (rays, width) = (frame.rays.rays.as_slice(), frame.width);
@@ -259,7 +258,6 @@ struct Warp<'a> {
     to_catalog: [[f32; 3]; 3],
     beta: [f32; 3],
     refraction: Option<&'static RefractionTable>,
-    boost: f32,
     finest_density: f32,                    // the highest texels per radian of any tile: above it a pixel never covers a whole texel
 }
 
@@ -307,7 +305,7 @@ impl Warp<'_> {
         if dx != 0 { self.sample(self.neighbour(located, catalog, dx, 0, shift), catalog, footprint, &mut out); }
         if dy != 0 { self.sample(self.neighbour(located, catalog, 0, dy, shift), catalog, footprint, &mut out); }
         if dx != 0 && dy != 0 { self.sample(self.neighbour(located, catalog, dx, dy, shift), catalog, footprint, &mut out); }
-        out.scaled(self.boost)
+        out
     }
 
     /// A camera-frame ray as a catalog direction: camera basis, refraction removed, rotation, aberration removed.
@@ -487,7 +485,7 @@ mod tests {
     use crate::model::{RenderOptions, SkyTables, ViewCenter, hash_direction, region_caps};
     use crate::observation::observe;
     use crate::projection::{project_camera, project_to_cell};
-    use crate::regions::refresh_regions;
+    use crate::regions::{refresh_regions, zoom_opacity_boost};
     use crate::selection::select_regions;
 
     fn tables_of(catalog: crate::catalog::Catalog) -> SkyTables {
@@ -522,7 +520,7 @@ mod tests {
         let time = FrameTime::from_utc(J2000 + days);
         let observation = observe(&boston(), atmosphere, view, time);
         let selected = select_regions(&tables.stars, &observation);
-        refresh_regions(caches, tables, &selected, time, &settings());
+        refresh_regions(caches, tables, &selected, time, view, &settings());
         let rebuilt = project_stars_to_screen(frame, caches, &selected, &observation, view);
         (observation, rebuilt)
     }
@@ -633,7 +631,7 @@ mod tests {
             let distance = ((row - expected.0).powi(2) + (column - expected.1).powi(2)).sqrt();
             assert!(distance <= tolerance, "{fov}°: blob at ({row:.1}, {column:.1}), old projection at ({:.1}, {:.1}), {distance:.2} px apart, tolerance {tolerance:.2}", expected.0, expected.1);
             assert!(count >= 1 && total > 0.0);
-            let glyph_opacity = f64::from(crate::regions::star_opacity(2.0, 1.0)) * zoom_opacity_boost(fov);
+            let glyph_opacity = f64::from(crate::regions::star_opacity(2.0, zoom_opacity_boost(fov)));
             assert!(total >= 0.9 * 4.0 * glyph_opacity && total <= 1.5 * 4.0 * glyph_opacity * pixels_per_texel * pixels_per_texel, "{fov}°: total light {total}, glyph {glyph_opacity}"); // the light of the four texels, spread when a texel covers several pixels
         }
     }
@@ -712,7 +710,7 @@ mod tests {
         let mut frame = Frame::new(81, 41, SkyArea::centred(81, 41), (10, 20));
         let observation = observe(&site, true, &view, time);
         let selected = select_regions(&tables.stars, &observation);
-        refresh_regions(&mut caches, &tables, &selected, time, &RenderOptions { magnitude_threshold: 2.1, ..settings() });
+        refresh_regions(&mut caches, &tables, &selected, time, &view, &RenderOptions { magnitude_threshold: 2.1, ..settings() });
         project_stars_to_screen(&mut frame, &caches, &selected, &observation, &view);
         let (brightest, light) = frame.stars().iter().enumerate().fold((0, 0.0), |best, (index, texel)| if texel.opacity > best.1 { (index, texel.opacity) } else { best });
         let (row, column) = (brightest / 81, brightest % 81);
@@ -732,7 +730,7 @@ mod tests {
                 let time = FrameTime::from_utc(J2000);
                 let observation = observe(&boston(), true, &view, time);
                 let selected = select_regions(&tables.stars, &observation);
-                refresh_regions(&mut caches, &tables, &selected, time, &settings());
+                refresh_regions(&mut caches, &tables, &selected, time, &view, &settings());
                 let started = std::time::Instant::now();
                 project_stars_to_screen(&mut frame, &caches, &selected, &observation, &view);
                 let first = started.elapsed();

@@ -35,7 +35,7 @@ fn run_frame(tables: &SkyTables, caches: &mut RegionCaches, frame: &mut Frame, v
     let solar_system = simulate_solar_system(&tables.bodies, time);                                  // 1
     let observation = observe(&TOKYO, true, view, time);                                              // 2
     let selected = select_regions(&tables.stars, &observation);                                       // 3
-    refresh_regions(caches, tables, &selected, time, settings);                                       // 4
+    refresh_regions(caches, tables, &selected, time, view, settings);                                       // 4
     project_stars_to_screen(frame, caches, &selected, &observation, view);                            // 5
     let inputs = PointInputs { solar_system: &solar_system, tables, caches, selected: &selected, panel: &[], notice: None };
     let drawn = draw_points(frame, &inputs, &observation, view, settings);                            // 6

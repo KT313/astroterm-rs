@@ -48,7 +48,7 @@ pub(super) fn run_frame_loop(config: &Config, tables: &SkyTables, display: &mut 
         let solar_system = times.measure("Solar system", || simulate_solar_system(&tables.bodies, time));                      // 1  Sun, Moon, planets
         let observation = times.measure("Observation", || observe(&observer, atmosphere, &view, time));                        // 2  rotation, observed patch, aberration, refraction
         let selected = times.measure("Selection", || select_regions(&tables.stars, &observation));                             // 3  overlapping regions; the constellation table is always included
-        let refreshed = times.measure("Regions", || refresh_regions(&mut caches, tables, &selected, time, settings));          // 4  per group: simulate if hold expired, draw if key changed, re-sum region
+        let refreshed = times.measure("Regions", || refresh_regions(&mut caches, tables, &selected, time, &view, settings));          // 4  per group: simulate if hold expired, draw if key changed, re-merge region
         times.measure("Projection", || project_stars_to_screen(&mut frame, &caches, &selected, &observation, &view));          // 5  warp region images; per screen pixel, no per-star work
         describe_steps(times, &observation, &selected, refreshed, &caches);
         let info = display.info();                                                                                                 // the transport as it is now: it can fall back mid-run
@@ -67,5 +67,5 @@ pub(super) fn run_frame_loop(config: &Config, tables: &SkyTables, display: &mut 
 /// Attach the selection and refresh results to the single-frame trace; nothing happens without tracing.
 fn describe_steps(times: &mut StepTimes, observation: &Observation, selected: &Selected, refreshed: RefreshReport, caches: &RegionCaches) {
     times.describe("Selection", || format!("regions={}; whole sky={}; patch radius={:.2}°", selected.regions.len(), selected.whole_sky, observation.patch.radius.to_degrees()));
-    times.describe("Regions", || format!("groups simulated={}; images drawn={}; regions summed={}; tile bytes={}", refreshed.simulated, refreshed.rendered, refreshed.summed, caches.tile_bytes()));
+    times.describe("Regions", || format!("groups simulated={}; images drawn={}; regions merged={}; tile bytes={}", refreshed.simulated, refreshed.rendered, refreshed.merged, caches.tile_bytes()));
 }

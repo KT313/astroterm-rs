@@ -1,6 +1,7 @@
 # Shortcuts for building and running astroterm.
 #
 #   make build                          build the release binary
+#   make build-debug                    build pixel diagnostics into target/pixel-debug/astroterm
 #   make build-aggressive                     build for this CPU with fat LTO, into target/aggressive
 #   make build-aggressive-pgo                 additionally train/apply PGO and BOLT, into target/aggressive-pgo
 #   make run -- -i Tokyo -cCu           run the last built binary with arguments
@@ -34,10 +35,14 @@ RUN_ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
 	@:
 endif
 
-.PHONY: build build-aggressive build-aggressive-pgo check-aggressive-pgo-tools run build-run test test-benchmarks clean-stale check-sweep
+.PHONY: build build-debug build-aggressive build-aggressive-pgo check-aggressive-pgo-tools run build-run test test-benchmarks clean-stale check-sweep
 
 build:
 	cargo build --release
+
+build-debug:
+	cargo build --profile pixel-debug --features pixel-debug
+	@echo "Run: make run BINARY=target/pixel-debug/astroterm ARGS='-i Tokyo -m'"
 
 build-aggressive:
 	$(AGGRESSIVE_ENV) cargo build --profile aggressive

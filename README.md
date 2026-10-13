@@ -128,6 +128,7 @@ Enable Bash completions for the current shell:
 source <(./target/release/astroterm --bash-completions)
 ```
 
+- `make build-debug`: build `target/pixel-debug/astroterm` with [pixel arithmetic checks](docs/pixel-debug.md).
 - `--debug-frametimes`: show the time spent calculating and drawing each frame.
 - `--debug-singleframe`: display one frame, then exit and print a detailed timing report.
 - Multi-frame timing: see [bounded frame captures](docs/frame-benchmarks.md) for reproducible per-frame reports.
@@ -162,7 +163,7 @@ been removed. Independent accuracy checks are documented in
 [scripts/reference/README.md](scripts/reference/README.md).
 
 Stars use four-texel dots in their sky tiles, enlarged when zoomed in. Within each group, stars blend from dim
-to bright current magnitude (ascending ID for ties); group images add together. Zooming in boosts brightness.
+to bright current magnitude (ascending ID for ties); group images merge from slowest to fastest, weighting stored RGB by opacity while opacity accumulates source-over. Zooming in boosts each star’s opacity, capped at full opacity before blending; changing the boost redraws the selected tiles.
 Stars whose complete dot would cross the image boundary are omitted. The Sun, planets and Moon retain their sizes.
 With the azimuthal grid on, its angle labels replace the compass letters.
 

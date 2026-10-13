@@ -46,7 +46,7 @@ fn the_panel_is_empty_when_off_and_lists_time_counts_display_and_timings_when_on
     let solar_system = simulate_solar_system(&tables.bodies, time);
     let selected = select_regions(&tables.stars, &observation);
     let mut caches = RegionCaches::default();
-    let refreshed = refresh_regions(&mut caches, &tables, &selected, time, &config(&[]).render);
+    let refreshed = refresh_regions(&mut caches, &tables, &selected, time, &view, &config(&[]).render);
     let display = DisplayInfo { protocol: ProtocolType::Kitty, tmux: false, compression: CompressionSupport::Unknown, shared_memory: false, screen: Rect::new(0, 0, 100, 40), font: (10, 20), image: (1000, 800), text_cell: (9, 17) };
     let frame = PanelFrame { time, clock: &clock, solar_system: &solar_system, selected: &selected, caches: &caches, refreshed, display };
     let mut times = StepTimes::default();

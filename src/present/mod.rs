@@ -137,21 +137,40 @@ pub fn compose(frame: &Frame, out: &mut Vec<u8>) {
     out.clear();
     out.reserve(frame.width() * frame.height() * 4);
     for (texel, overlay) in frame.stars().iter().zip(frame.overlay().chunks_exact(4)) {
+        #[cfg(feature = "pixel-debug")]
+        {
+            texel.check("compose star input", f64::INFINITY);
+            crate::pixel_debug::record_accumulated([texel.rgb[0] as f64, texel.rgb[1] as f64, texel.rgb[2] as f64, texel.opacity as f64]);
+            crate::pixel_debug::check_overlay("compose overlay input", overlay);
+        }
         let mut pixel = [background[0], background[1], background[2]];
         if texel.opacity > 0.0 {
             let (scale, floor) = if texel.opacity > 1.0 { (255.0 / texel.opacity, 1.0) }                // saturated: the straight colour
                 else if texel.opacity < MIN_STAR_PIXEL_OPACITY { (255.0 * MIN_STAR_PIXEL_OPACITY / texel.opacity, MIN_STAR_PIXEL_OPACITY) } // raised to the floor, colour intact
                 else { (255.0, texel.opacity) };
-            for (channel, color) in pixel.iter_mut().zip(texel.rgb) { *channel = (color * scale + *channel * (1.0 - floor)).min(255.0); }
+            for (index, (channel, color)) in pixel.iter_mut().zip(texel.rgb).enumerate() {
+                let value = color * scale + *channel * (1.0 - floor);
+                #[cfg(feature = "pixel-debug")]
+                crate::pixel_debug::check_channel("compose tone mapping before clamp", index, value as f64, 255.0);
+                let _ = index;
+                *channel = value.min(255.0);
+            }
         }
         let alpha = f32::from(overlay[3]) / 255.0;
         for (channel, &drawn) in pixel.iter_mut().zip(&overlay[..3]) { *channel = f32::from(drawn) + *channel * (1.0 - alpha); } // the overlay is premultiplied
+        #[cfg(feature = "pixel-debug")]
+        crate::pixel_debug::check_pixel("compose before u8 conversion", [pixel[0] as f64, pixel[1] as f64, pixel[2] as f64, 255.0], 255.0);
         out.extend(pixel.map(|channel| (channel + 0.5) as u8));
         out.push(255);
     }
 }
 
 fn strip_alpha(rgba: &[u8], rgb: &mut Vec<u8>) {
+    #[cfg(feature = "pixel-debug")]
+    {
+        crate::pixel_debug::check_overlay("strip_alpha input", rgba);
+        assert!(rgba.chunks_exact(4).all(|pixel| pixel[3] == 255), "pixel-debug: strip_alpha requires opaque pixels");
+    }
     rgb.clear();
     rgb.reserve(rgba.len() / 4 * 3);
     for pixel in rgba.chunks_exact(4) { rgb.extend_from_slice(&pixel[..3]); }
@@ -166,6 +185,16 @@ mod tests {
     fn frame(width: usize, height: usize) -> Frame { Frame::new(width, height, SkyArea::centred(width, height), (10, 20)) }
     fn pixel(out: &[u8], frame: &Frame, row: usize, column: usize) -> [u8; 4] { out[(row * frame.width() + column) * 4..][..4].try_into().unwrap() }
     fn premultiplied(rgb: [f32; 3], opacity: f32) -> Texel { Texel { rgb: rgb.map(|c| c / 255.0 * opacity), opacity } }
+
+    #[cfg(feature = "pixel-debug")]
+    #[test]
+    fn pixel_wrappers_reject_hidden_color_overflow_and_nonopaque_rgb_conversion() {
+        let mut frame = frame(1, 1);
+        frame.stars_mut()[0] = Texel { rgb: [1.1, 0.0, 0.0], opacity: 1.0 };
+        let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compose(&frame, &mut Vec::new()))).unwrap_err();
+        assert!(failure.downcast_ref::<String>().unwrap().contains("compose star input")); // caught before min(255) could hide the bad colour
+        assert!(std::panic::catch_unwind(|| strip_alpha(&[20, 10, 5, 128], &mut Vec::new())).is_err());
+    }
 
     #[test]
     fn tone_mapping_matches_the_old_star_composition_and_handles_floor_and_saturation() {

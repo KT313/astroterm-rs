@@ -22,7 +22,7 @@ pub fn order_star_rows(magnitudes: &[u16], ids: &[u32], threshold: u16) -> Vec<u
 pub const STAR_GLYPH_RADIUS: usize = 2;
 
 /// One texel of a sky tile: the colour share each star contributed (palette level / 255 × opacity, premultiplied)
-/// and the combined opacity. Starlight adds, so texels of different images are summed; the final frame clamps.
+/// and the combined opacity. Group layers weight stored RGB by opacity; the warp sums sampled light before final tone mapping.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Texel {
     pub rgb: [f32; 3],
@@ -32,11 +32,29 @@ pub struct Texel {
 impl Texel {
     pub const SIZE: usize = std::mem::size_of::<Texel>();
     pub fn is_empty(self) -> bool { self.opacity == 0.0 }
+    #[cfg(feature = "pixel-debug")]
+    #[track_caller]
+    pub(crate) fn check(self, operation: &str, maximum: f64) {
+        crate::pixel_debug::check_pixel(operation, [self.rgb[0] as f64, self.rgb[1] as f64, self.rgb[2] as f64, self.opacity as f64], maximum);
+    }
     pub fn plus(self, other: Texel) -> Texel {
-        Texel { rgb: [self.rgb[0] + other.rgb[0], self.rgb[1] + other.rgb[1], self.rgb[2] + other.rgb[2]], opacity: self.opacity + other.opacity }
+        #[cfg(feature = "pixel-debug")]
+        { self.check("Texel::plus left", f64::INFINITY); other.check("Texel::plus right", f64::INFINITY); }
+        let result = Texel { rgb: [self.rgb[0] + other.rgb[0], self.rgb[1] + other.rgb[1], self.rgb[2] + other.rgb[2]], opacity: self.opacity + other.opacity };
+        #[cfg(feature = "pixel-debug")]
+        result.check("Texel::plus output", f64::INFINITY);
+        result
     }
     pub fn scaled(self, factor: f32) -> Texel {
-        Texel { rgb: self.rgb.map(|c| c * factor), opacity: self.opacity * factor }
+        #[cfg(feature = "pixel-debug")]
+        {
+            self.check("Texel::scaled input", f64::INFINITY);
+            assert!(factor.is_finite() && factor >= 0.0, "pixel-debug: Texel::scaled invalid factor={factor:?}");
+        }
+        let result = Texel { rgb: self.rgb.map(|c| c * factor), opacity: self.opacity * factor };
+        #[cfg(feature = "pixel-debug")]
+        result.check("Texel::scaled output", f64::INFINITY);
+        result
     }
 }
 
@@ -86,15 +104,27 @@ const UNIT_LEVELS: [f32; 256] = {
 
 /// The colour share a star of palette colour `color` adds at `opacity`.
 pub fn premultiplied_color(color: u8, opacity: f32) -> [f32; 3] {
-    StarColor::rgb_of(color).map(|level| UNIT_LEVELS[usize::from(level)] * opacity)
+    #[cfg(feature = "pixel-debug")]
+    crate::pixel_debug::check_channel("premultiplied_color input", 3, opacity as f64, 1.0);
+    let rgb = StarColor::rgb_of(color).map(|level| UNIT_LEVELS[usize::from(level)] * opacity);
+    #[cfg(feature = "pixel-debug")]
+    (Texel { rgb, opacity }).check("premultiplied_color output", 1.0);
+    rgb
 }
 
 /// Source-over in premultiplied form: the new star covers `opacity` of what was there. Zero opacity changes nothing.
 #[inline]
 pub fn blend_star(texel: &mut Texel, premultiplied: [f32; 3], opacity: f32) {
+    #[cfg(feature = "pixel-debug")]
+    {
+        texel.check("blend_star destination", f64::INFINITY);                            // constellation stars can cover an accumulated HDR frame
+        (Texel { rgb: premultiplied, opacity }).check("blend_star source", 1.0);
+    }
     let keep = 1.0 - opacity;
     for (old, new) in texel.rgb.iter_mut().zip(premultiplied) { *old = *old * keep + new; }
     texel.opacity = texel.opacity * keep + opacity;
+    #[cfg(feature = "pixel-debug")]
+    texel.check("blend_star output", f64::INFINITY);
 }
 
 #[cfg(test)]
@@ -136,7 +166,8 @@ mod tests {
         assert!(table.prepare(2.0));
         assert_eq!(table.opacities.as_ptr(), allocation);                                   // a new boost refills the same allocation
         assert_eq!(table.of(magnitude_code(2.0)), star_opacity(2.0, 2.0));
-        assert!(table.of(magnitude_code(2.0)) > star_opacity(2.0, 1.0));
+        let dim = magnitude_code(STAR_OPACITY_REFERENCE_MAGNITUDE + 1.0 / STAR_OPACITY_MAGNITUDE_SCALE);
+        assert!(table.of(dim) > star_opacity(decode_magnitude(dim), 1.0));                   // choose an unsaturated magnitude even when the constants are tuned
     }
 
     #[test]
@@ -153,5 +184,17 @@ mod tests {
         assert_eq!(texel.plus(faint), faint.plus(texel));
         assert_eq!(Texel::SIZE, 16);
         assert!(Texel::default().is_empty() && !texel.is_empty());
+    }
+
+    #[cfg(feature = "pixel-debug")]
+    #[test]
+    fn pixel_wrappers_detect_bad_blend_opacity_and_float_overflow_at_the_operation() {
+        let failure = std::panic::catch_unwind(|| blend_star(&mut Texel::default(), [0.0; 3], 1.1)).unwrap_err();
+        assert!(failure.downcast_ref::<String>().unwrap().contains("blend_star source: opacity"));
+        let huge = Texel { rgb: [f32::MAX; 3], opacity: f32::MAX };
+        let failure = std::panic::catch_unwind(|| huge.plus(huge)).unwrap_err();
+        assert!(failure.downcast_ref::<String>().unwrap().contains("Texel::plus output"));
+        assert!(std::panic::catch_unwind(|| huge.scaled(2.0)).is_err());
+        assert!(std::panic::catch_unwind(|| Texel::default().scaled(-1.0)).is_err());
     }
 }

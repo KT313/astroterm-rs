@@ -31,6 +31,8 @@
 
 /// Tunable defaults, resource limits and cache durations; independent of all application layers.
 pub mod constants;
+#[cfg(feature = "pixel-debug")]
+pub mod pixel_debug;
 pub mod astro;
 pub mod catalog;
 pub mod cli;

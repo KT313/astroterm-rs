@@ -17,7 +17,7 @@ use crate::metadata::MetadataField;
 use crate::model::{LabelColumn, RenderOptions, SkyTables, StarColor, View};
 use crate::observation::Observation;
 use crate::projection::{Frame, ProjectedArc, ScreenPoint, SkyArea, prepare_camera, project_camera, project_constellation_segment, project_horizon_labels, project_horizon_line, project_light_direction, project_to_cell};
-use crate::regions::{RegionCaches, UNPLACED, blend_star, order_star_rows, premultiplied_color, rows_wanted, zoom_opacity_boost};
+use crate::regions::{RegionCaches, UNPLACED, blend_star, order_star_rows, premultiplied_color, rows_wanted};
 use crate::text::draw_text_over;
 use crate::selection::Selected;
 use crate::solar_system::SolarSystem;
@@ -81,7 +81,6 @@ pub fn draw_points(frame: &mut Frame, inputs: &PointInputs<'_>, observation: &Ob
     // constellation endpoint stars join the star layer as glyphs, like the tiles' stars
     let constellations = inputs.tables.constellations.table();
     let simulation = inputs.caches.simulations().constellations();
-    let boost = zoom_opacity_boost(view.fov_degrees) as f32;
     let mut endpoint_pixels = Vec::with_capacity(constellations.len());
     let rows = simulation.len().min(constellations.len());
     for row in 0..rows {
@@ -91,7 +90,7 @@ pub fn draw_points(frame: &mut Frame, inputs: &PointInputs<'_>, observation: &Ob
         let code = simulation.magnitudes()[row];
         let Some(pixel) = endpoint_pixels[row] else { continue };
         if !sky.glyph_fits((pixel.0 - sky.y as i32, pixel.1 - sky.x as i32)) { continue; }
-        let opacity = inputs.caches.opacities().of(code) * boost;
+        let opacity = inputs.caches.opacities().of(code);
         let premultiplied = premultiplied_color(constellations.columns().display_color[row], opacity);
         let (width, stars) = (frame.width(), frame.stars_mut());
         let bottom_right = pixel.0 as usize * width + pixel.1 as usize;
@@ -146,6 +145,8 @@ pub fn draw_points(frame: &mut Frame, inputs: &PointInputs<'_>, observation: &Ob
         fill_band(overlay, width, height, top, cell_height, [0, 0, 0]);                   // the old notices sat on a black line
         draw_text_over(text, overlay, width, height, notice, (0, top), NOTICE_RGB);
     }
+    #[cfg(feature = "pixel-debug")]
+    crate::pixel_debug::check_overlay("draw_points output", frame.overlay());
     drawn
 }
 
@@ -373,7 +374,12 @@ fn fill_moon_disc(canvas: &mut PixmapMut<'_>, (row, column): (i32, i32), radius:
             }
             if sum[3] == 0 { continue; }
             let pixel = &mut data[(y as usize * width as usize + x as usize) * 4..][..4];
-            for i in 0..4 { pixel[i] = (sum[i] / 4) as u8; }                                  // premultiplied: colour × covered share
+            for i in 0..4 {
+                let value = sum[i] / 4;
+                #[cfg(feature = "pixel-debug")]
+                crate::pixel_debug::check_channel("fill_moon_disc before u8 conversion", i, value as f64, 255.0);
+                pixel[i] = value as u8;                                                   // premultiplied: colour × covered share
+            }
         }
     }
 }
@@ -439,7 +445,7 @@ mod tests {
         let solar_system = simulate_solar_system(&tables.bodies, time);
         let selected = select_regions(&tables.stars, &observation);
         let mut caches = RegionCaches::default();
-        refresh_regions(&mut caches, tables, &selected, time, settings);
+        refresh_regions(&mut caches, tables, &selected, time, view, settings);
         let inputs = PointInputs { solar_system: &solar_system, tables, caches: &caches, selected: &selected, panel: &[], notice: None };
         (draw_points(frame, &inputs, &observation, view, settings), observation)
     }
@@ -455,6 +461,33 @@ mod tests {
         frame.overlay()[index..index + 4].try_into().unwrap()
     }
     fn lit_overlay(frame: &Frame) -> usize { frame.overlay().chunks_exact(4).filter(|pixel| pixel[3] != 0).count() }
+
+    #[test]
+    fn constellation_zoom_is_applied_once_and_clamped_before_blending() {
+        let direction = catalog_direction(90.0, 90.0);
+        let view = View { fov_degrees: 60.0, ..View::default() };
+        for base_opacity in [0.1_f64, 0.8] {
+            let magnitude = crate::constants::STAR_OPACITY_REFERENCE_MAGNITUDE - base_opacity.log10() / crate::constants::STAR_OPACITY_MAGNITUDE_SCALE;
+            let mut row = crate::model::fixtures::row(direction, 0.0, magnitude, 1);
+            row.display_color = StarColor::RedOrange.index();
+            let code = row.magnitude;
+            let mut columns = crate::model::StarRowVec::new();
+            columns.push(row.into());
+            let tables = SkyTables { constellations: crate::model::Constellations::new(columns, vec![0], Vec::new()), ..SkyTables::default() };
+            let mut frame = Frame::square(201);
+            let background = crate::regions::Texel { rgb: [0.1, 0.2, 0.3], opacity: 0.5 };
+            frame.stars_mut().fill(background);
+            let (drawn, _) = draw(&tables, &view, 0.0, &RenderOptions { magnitude_threshold: magnitude + 1.0, ..settings() }, &mut frame);
+            assert_eq!(drawn.endpoint_stars, 1);
+            let opacity = crate::regions::star_opacity(crate::catalog::decode_magnitude(code), crate::regions::zoom_opacity_boost(60.0));
+            if base_opacity == 0.8 { assert_eq!(opacity, 1.0); }
+            let mut expected = background;
+            blend_star(&mut expected, premultiplied_color(row.display_color, opacity), opacity);
+            let changed: Vec<_> = frame.stars().iter().filter(|texel| **texel != background).collect();
+            assert_eq!(changed.len(), 4);
+            assert!(changed.into_iter().all(|texel| *texel == expected));
+        }
+    }
 
     #[test]
     fn overlapping_endpoint_stars_paint_dimmest_first_and_break_ties_by_ascending_id() {
@@ -668,7 +701,7 @@ mod tests {
         let solar_system = simulate_solar_system(&clipped.bodies, time);
         let selected = select_regions(&clipped.stars, &observation);
         let mut caches = RegionCaches::default();
-        refresh_regions(&mut caches, &clipped, &selected, time, &settings());
+        refresh_regions(&mut caches, &clipped, &selected, time, &View::default(), &settings());
         let inputs = PointInputs { solar_system: &solar_system, tables: &clipped, caches: &caches, selected: &selected, panel: &[], notice: Some("Shared memory unavailable; using streaming.") };
         let streaming = draw_points(&mut frame, &inputs, &observation, &View::default(), &settings());
         assert_eq!(streaming.notices, [ACCURACY_WARNING, MAGNITUDE_CLIPPING_WARNING, "Shared memory unavailable; using streaming."]); // the display's notice on top
@@ -686,7 +719,7 @@ mod tests {
         let selected = select_regions(&tables.stars, &observation);
         let mut caches = RegionCaches::default();
         let settings = RenderOptions { magnitude_threshold: 9.0, ..settings() };
-        refresh_regions(&mut caches, &tables, &selected, time, &settings);
+        refresh_regions(&mut caches, &tables, &selected, time, &view, &settings);
         let fields = vec![MetadataField { label: "Date".into(), value: "2000-01-01".into() }; 12];
         let inputs = PointInputs { solar_system: &solar_system, tables: &tables, caches: &caches, selected: &selected, panel: &fields, notice: None };
         let mut frame = Frame::new(1920, 1100, SkyArea::centred(1920, 1100), (9, 17));

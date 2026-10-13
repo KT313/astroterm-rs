@@ -25,7 +25,7 @@ fn main() {
             let solar_system = simulate_solar_system(&tables.bodies, time);
             let observation = observe(&config.simulation.observer, config.simulation.refraction, &config.view, time);
             let selected = select_regions(&tables.stars, &observation);
-            refresh_regions(&mut caches, &tables, &selected, time, &config.render);
+            refresh_regions(&mut caches, &tables, &selected, time, &config.view, &config.render);
             project_stars_to_screen(&mut frame, &caches, &selected, &observation, &config.view);
             let inputs = PointInputs { solar_system: &solar_system, tables: &tables, caches: &caches, selected: &selected, panel: &[], notice: None };
             draw_points(&mut frame, &inputs, &observation, &config.view, &config.render);

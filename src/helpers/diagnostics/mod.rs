@@ -21,6 +21,8 @@ pub(crate) fn start_step_times(arguments: &Arguments) -> StepTimes {
 
 /// Report diagnostics and the original rendering result after the terminal scope has dropped its guard.
 pub(crate) fn finish_rendering(result: io::Result<()>, config: &Config, times: &StepTimes) -> ExitCode {
+    #[cfg(feature = "pixel-debug")]
+    if let Err(error) = astroterm::pixel_debug::write_report(&mut io::stderr().lock()) { eprintln!("Pixel diagnostic report failed: {error}"); }
     finish_requested_report(result, config, times, &mut io::stdout().lock(), &mut io::stderr().lock())
 }
 

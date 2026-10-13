@@ -13,6 +13,9 @@ path = "src/lib.rs"
 name = "astroterm"
 path = "src/main.rs"
 
+[features]
+pixel-debug = []
+
 [dependencies]
 base64-simd = "0.8"
 bincode = { version = "2", features = ["serde"] }
@@ -64,6 +67,12 @@ harness = false
 # variables in a debugger, build once with CARGO_PROFILE_DEV_DEBUG=full.
 [profile.dev]
 debug = "line-tables-only"
+
+# Optimized rendering with explicit pixel diagnostics and integer overflow checks, including dependencies.
+[profile.pixel-debug]
+inherits = "release"
+debug = "line-tables-only"
+overflow-checks = true
 
 # `make build-aggressive`: the release profile plus whole-program optimization and `-C target-cpu=native`.
 # `make build-aggressive-pgo` additionally trains/applies PGO and BOLT. Panics abort, but the panic hook still

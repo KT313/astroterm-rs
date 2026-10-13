@@ -127,7 +127,7 @@ fn clipping_notice_coexists_with_date_notice_and_the_tables_carry_it() {
         let observation = observe(&Observer::default(), false, &view, time);
         let selected = select_regions(&tables.stars, &observation);
         let mut caches = RegionCaches::default();
-        refresh_regions(&mut caches, tables, &selected, time, &settings);
+        refresh_regions(&mut caches, tables, &selected, time, &view, &settings);
         let mut frame = Frame::new(140, 60, SkyArea::centred(140, 60), (10, 20));
         let inputs = PointInputs { solar_system: &solar_system, tables, caches: &caches, selected: &selected, panel: &[], notice: None };
         draw_points(&mut frame, &inputs, &observation, &view, &settings).notices

@@ -86,7 +86,7 @@ impl Panel {
 
         // timings
         if self.frame_times {
-            self.lines.push(field("Groups refreshed", format!("{} simulated, {} drawn, {} summed", frame.refreshed.simulated, frame.refreshed.rendered, frame.refreshed.summed)));
+            self.lines.push(field("Groups refreshed", format!("{} simulated, {} drawn, {} merged", frame.refreshed.simulated, frame.refreshed.rendered, frame.refreshed.merged)));
             append_step_time_fields(&mut self.lines, times.steps());
         }
         &self.lines
