@@ -151,7 +151,7 @@ Each region's stars are sorted into three speed groups with TTLs assigned from `
 startup: longest for the slowest group, shortest for the fastest (currently 365, 10 and 1 simulated days).
 Constellation stars use the fastest group's TTL. The drawn stars of a region are kept as a 64 × 64 sky-fixed tile that is
 re-rendered only when its simulation or the brightness threshold changes, and the screen is produced by mapping
-every pixel back to its tile. Tiles of regions that leave the view stay in memory for their return.
+each tile's four corners onto the screen and filtering its texture. Tiles of regions that leave the view stay in memory for their return.
 The fixed holds have known direction-error exceptions; the opt-in [offline hold audit](docs/stellar-hold-audit.md)
 reports them without changing the runtime policy.
 
@@ -166,10 +166,13 @@ been removed. Independent accuracy checks are documented in
 Stars use four-texel dots in their sky tiles, enlarged when zoomed in. Within each group, stars blend from dim
 to bright current magnitude (ascending ID for ties); group images merge from slowest to fastest, weighting stored RGB by opacity while opacity accumulates source-over. Zooming in boosts each star’s opacity, capped at full opacity before blending; changing the boost redraws the selected tiles.
 Stars whose complete dot would cross the image boundary are omitted. The Sun, planets and Moon retain their sizes.
-The forward tile-mapping prototype projects each lit texel's corners, integrates triangle coverage over screen
-pixels, and blends overlapping region tiles source-over. Set `FORWARD_TILE_PROJECTION` to `false` in
-`src/constants.rs` and rebuild to compare with the inverse warp. Curvature is evaluated at texel corners;
-texels crossing the antipodal projection singularity are skipped in this prototype.
+The forward tile-mapping prototype projects four outer corners per merged region tile and draws two textured
+triangles. A temporary area-sum table averages texture rectangles when reducing the image; this keeps small
+stars from disappearing merely because they fall between point samples. Triangle edges retain fractional
+screen-pixel coverage, and overlapping regions blend source-over in their existing order.
+This prototype approximates curvature across a whole tile and uses rectangular rather than exact rotated
+filter footprints; positions and sharpness can differ from per-texel projection. Tiles crossing the antipodal
+projection singularity, or folding into nonconvex shapes, are skipped.
 With the azimuthal grid on, its angle labels replace the compass letters.
 
 <details>

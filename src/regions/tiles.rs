@@ -5,10 +5,9 @@
 //! `i` is centred at pixel coordinate `i`, columns grow the way screen columns grow to the right, rows grow
 //! downwards from celestial north.
 use crate::astro::Vector3;
-use crate::constants::{CELL_COUNT, STELLAR_DRIFT_MARGIN, TILE_EDGE_TEXELS};
+use crate::constants::{STELLAR_DRIFT_MARGIN, TILE_EDGE_TEXELS};
 use crate::model::region_caps;
 use crate::regions::appearance::STAR_GLYPH_RADIUS;
-use std::sync::OnceLock;
 
 /// Where a region's tile lies on the sky and how it is sampled.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -55,28 +54,6 @@ impl TileGeometry {
         let middle = Self::middle();
         (self.center + self.east * ((column - middle) / self.density) + self.north * ((middle - row) / self.density)).normalized()
     }
-}
-
-/// A tile's geometry in f32 for the per-pixel warp: the same numbers as `TileGeometry`, packed.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct TileFrame {
-    pub center: [f32; 3],
-    pub east: [f32; 3],
-    pub north: [f32; 3],
-    pub density: f32,                       // texels per radian
-}
-
-impl From<TileGeometry> for TileFrame {
-    fn from(tile: TileGeometry) -> Self {
-        let pack = |v: Vector3| [v.x as f32, v.y as f32, v.z as f32];
-        Self { center: pack(tile.center), east: pack(tile.east), north: pack(tile.north), density: tile.density as f32 }
-    }
-}
-
-/// The tile geometry of every region, built once (fixed geometry) for the warp's per-pixel lookups.
-pub fn tile_frames() -> &'static [TileFrame] {
-    static FRAMES: OnceLock<Vec<TileFrame>> = OnceLock::new();
-    FRAMES.get_or_init(|| (0..CELL_COUNT).map(|region| TileGeometry::new(region).into()).collect())
 }
 
 #[cfg(test)]
@@ -135,13 +112,4 @@ mod tests {
         assert!(corner.density() > face.density());                                          // cube corners hold smaller regions: finer texels there
     }
 
-    #[test]
-    fn the_packed_frames_match_the_geometry_of_every_region() {
-        let frames = tile_frames();
-        assert_eq!(frames.len(), CELL_COUNT);
-        for region in [0, 1, 777, CELL_COUNT / 2, CELL_COUNT - 1] {
-            assert_eq!(frames[region], TileFrame::from(TileGeometry::new(region)));
-            assert!((frames[region].density - TileGeometry::new(region).density() as f32).abs() < 1e-3);
-        }
-    }
 }

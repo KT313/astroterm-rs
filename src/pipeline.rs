@@ -27,7 +27,7 @@ pub(super) fn run_frame_loop(config: &Config, data: &mut Data, display: &mut Dis
     let (observer, atmosphere, settings) = (config.simulation.observer, config.simulation.refraction, &config.render);
     let mut view = config.view;
     data.star_opacities.prepare(1.0);                                                                     // prepare the initial shared drawing curve before frame timings
-    let mut frame = display.new_frame();                                                                         // the star layer, the overlay and the ray table
+    let mut frame = display.new_frame();                                                                         // the star layer, overlay and text rasterizer
     let mut panel = Panel::new(config, data);
     let mut clock = begin_benchmark_capture(benchmark, config, || capture_display(display.info()), times)?;     // export startup timings if requested, then start simulated time
     times.reset_frame_timings();                                                                                 // keep setup time out of the displayed frame timings

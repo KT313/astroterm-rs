@@ -175,7 +175,6 @@ fn seam_threshold_horizon_and_view_edge_cases_are_not_culled() {
         observation.to_horizon = Matrix3::IDENTITY;                                        // the catalog axes are the horizon axes in this fixture
         observation.to_catalog = Matrix3::IDENTITY;
         observation.observer.velocity = Vector3::default();
-        observation.beta = Vector3::default();
         observation.patch.center = view.center_direction().to_unit_vector();
         let (offered, _) = candidates(&tables, &observation, 5.0);
         assert_eq!(offered, BTreeSet::from([0, 1]));

@@ -2,10 +2,12 @@
 //! projection geometry it and step 6 reuse: cameras, maps, arcs, the horizon and the view controls.
 use crate::timing::StepTimes;
 mod geometry;
-mod forward;
-mod warp;
+mod raster;
+mod tile_warp;
+mod tile_sampling;
+mod frame;
 
-pub use warp::{Frame, SkyArea, ViewKey, ViewTable};
+pub use frame::{Frame, SkyArea};
 pub use geometry::{
     ArcPart, CartesianCamera, Polar, ProjectedArc, ScreenPoint,
     find_visible_arc_parts, find_visible_arc_parts_vectors, pan_view, polar_to_cell, prepare_camera,
@@ -14,14 +16,9 @@ pub use geometry::{
     project_constellation_segment, project_horizon_labels, project_horizon_line,
 };
 
-/// Step 5: project selected region images into the star layer. The forward prototype is selected in constants;
-/// disabling it restores inverse sampling. Returns whether the inverse ray table was rebuilt (false for forward).
+/// Step 5: project each selected region's merged image as two textured triangles using its four outer corners.
 pub fn project_stars_to_screen(frame: &mut Frame, data: &crate::model::Data, selected: &crate::selection::Selected,
-    observation: &crate::observation::Observation, view: &crate::model::View, times: &mut StepTimes) -> bool {
-    if crate::constants::FORWARD_TILE_PROJECTION {
-        forward::project_tiles_forward(frame, data, selected, observation, view, times);
-        false
-    } else {
-        warp::project_tiles_inverse(frame, data, selected, observation, view, times)
-    }
+    observation: &crate::observation::Observation, view: &crate::model::View, times: &mut StepTimes) {
+    // Map the whole region tiles onto the frame's star layer.
+    tile_warp::project_whole_tiles(frame, data, selected, observation, view, times);
 }

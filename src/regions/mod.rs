@@ -17,7 +17,7 @@ mod tiles;
 pub use appearance::{STAR_GLYPH_RADIUS, blend_star, order_star_rows, premultiplied_color, star_opacity, zoom_opacity_boost};
 use crate::model::GroupTileKey;
 pub use simulation::{Refresh, UNPLACED, rows_wanted};
-pub use tiles::{TileFrame, TileGeometry, tile_frames};
+pub use tiles::TileGeometry;
 
 use crate::timing::StepTimes;
 use crate::astro::FrameTime;

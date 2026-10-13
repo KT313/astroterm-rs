@@ -2,7 +2,7 @@
 //!
 //! Inputs: the observer's site, whether there is an atmosphere, the view and the simulated time. Output: the
 //! observer's barycentric state, the rotation between catalog axes (J2000 equatorial) and the observer's horizon
-//! (East, North, Up) in both directions, the aberration velocity ratio, the refraction switch, and the patch of
+//! (East, North, Up) in both directions, the refraction switch, and the patch of
 //! catalog sky the view can show, margins included. Runs every frame; one Earth evaluation and a few rotations.
 //! `apparent_direction` is the one place that turns a position or a star direction into what the observer sees.
 use crate::timing::StepTimes;
@@ -21,8 +21,7 @@ pub struct Observation {
     pub time: FrameTime,
     pub observer: BodyState,                // barycentric position and velocity of the site
     pub to_horizon: Matrix3,                // catalog axes → East, North, Up at the site
-    pub to_catalog: Matrix3,                // the inverse, for the warp
-    pub beta: Vector3,                      // observer velocity / c in catalog axes: the aberration shift of a unit direction
+    pub to_catalog: Matrix3,                // horizon axes → catalog axes, used to select the visible sky patch
     pub atmosphere: bool,                   // apply refraction
     pub patch: SkyPatch,
 }
@@ -60,7 +59,7 @@ pub fn observe(site: &Observer, atmosphere: bool, view: &View, time: FrameTime, 
             radius: (view.fov_degrees.to_radians() / 2.0 + margin).min(PI),
         }
     });
-    Observation { time, observer, to_horizon, to_catalog, beta: observer.velocity * (1.0 / LIGHT_SPEED_AU_DAY), atmosphere, patch }
+    Observation { time, observer, to_horizon, to_catalog, atmosphere, patch }
 }
 
 impl Observation {
@@ -96,7 +95,7 @@ mod tests {
         assert!(up.z > 0.99999 && up.y < 0.0, "{up:?}");                                    // the geodetic vertical leans towards the equator by 0.19° at most
         let spin = (observation.observer.velocity - earth.velocity).length() * 149_597_870.7 / 86_400.0;
         assert!((spin - 0.343).abs() < 0.01, "{spin} km/s");                                 // 0.465 km/s × cos 42.36°
-        assert!((observation.beta.length() - 1e-4).abs() < 1e-5);
+        assert!(((observation.observer.velocity.length() / LIGHT_SPEED_AU_DAY) - 1e-4).abs() < 1e-5);
         for axis in [Vector3 { x: 1.0, y: 0.0, z: 0.0 }, Vector3 { x: 0.0, y: 1.0, z: 0.0 }, Vector3 { x: 0.0, y: 0.0, z: 1.0 }] {
             let back = observation.to_catalog.apply(observation.to_horizon.apply(axis));
             assert!((back - axis).length() < 1e-14);
