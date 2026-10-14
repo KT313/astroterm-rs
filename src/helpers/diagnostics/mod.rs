@@ -6,20 +6,12 @@ use std::fmt::Display;
 use std::io;
 use std::process::ExitCode;
 use std::time::Instant;
-use astroterm::cli::Arguments;
 use astroterm::astro::FrameTime;
 use astroterm::model::Config;
 use astroterm::present::{CompressionSupport, DisplayInfo, Presented};
 use serde::Serialize;
 use astroterm::timing::StepTimes;
 use ratatui_image::picker::ProtocolType;
-
-/// Capture startup timings for the requested diagnostic mode.
-pub(crate) fn start_step_times(arguments: &Arguments) -> StepTimes {
-    let mut times = StepTimes::with_trace(arguments.debug_singleframe || arguments.debug_frames.is_some());
-    times.enable_details(arguments.debug_frametimes);
-    times
-}
 
 /// Report diagnostics and the original rendering result after the terminal scope has dropped its guard.
 pub(crate) fn finish_rendering(result: io::Result<()>, config: &Config, times: &StepTimes) -> ExitCode {

@@ -1,6 +1,6 @@
 use super::*;
 use clap::Parser;
-use astroterm::cli::build_config;
+use astroterm::cli::{Arguments, build_config};
 
 struct FailingWriter { fail_flush: bool }
 impl io::Write for FailingWriter {

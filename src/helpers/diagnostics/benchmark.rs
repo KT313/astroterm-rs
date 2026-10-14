@@ -86,12 +86,13 @@ pub(crate) fn open_frame_benchmark(config: &Config) -> Result<Option<BenchmarkSe
     Ok(Some(BenchmarkSession::new(BufWriter::new(file), settings.clone())))
 }
 
-pub(crate) fn begin_benchmark_capture(session: &mut Option<BenchmarkSession>, config: &Config, display: impl FnOnce() -> io::Result<CaptureDisplay>, times: &mut StepTimes) -> io::Result<SimulationClock> {
+/// Write the startup report before the caller starts simulated time.
+pub(crate) fn begin_benchmark_capture(session: &mut Option<BenchmarkSession>, config: &Config, display: impl FnOnce() -> io::Result<CaptureDisplay>, times: &mut StepTimes) -> io::Result<()> {
+    // Capture terminal details only when a benchmark report was requested.
     if let Some(session) = session {
         session.begin_capture(config, display()?, times)?;
-        return Ok(SimulationClock::start_fixed_step(config.simulation.start_julian_date, session.settings.step_seconds));
     }
-    Ok(SimulationClock::start(config.simulation.start_julian_date, config.simulation.speed))
+    Ok(())
 }
 
 pub(crate) fn prepare_benchmark_frame(session: &Option<BenchmarkSession>, input: &FrameInput, clock: &mut SimulationClock) -> io::Result<()> {

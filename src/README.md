@@ -26,8 +26,9 @@ Bottom-up. Every module exposes its symbols from its root `mod.rs`; callers use 
 | `controls/` | what a key does to the view and the clock |
 | `metadata/` | the panel's text: local time, zodiac, Moon phase, location, speed, view, timings |
 | `cli/` | argument parsing and validation, Bash completions |
+| `time/` | binary-owned `StartupTiming` records setup, then is consumed into a fully initialized `TimeManager` with frame pacing and a simulation clock |
 | `main.rs`, `pipeline.rs`, `helpers/` | the binary: startup, the seven-step frame loop, controls, panel lines, diagnostics and the frame benchmark |
 
 Owned data at runtime: `Data` (immutable catalog columns beside mutable group/region caches), the `Frame`
-(star layer, overlay, text rasterizer), the `Display` with its `Terminal`, and the `StepTimes`. All are created in
+(star layer, overlay, text rasterizer), the `Display` with its `Terminal`, and the `TimeManager` (which owns `StepTimes`). All are created in
 `main.rs` or at the top of the frame loop and passed by reference to the steps.

@@ -9,7 +9,7 @@ pub(super) use frame::{Panel, PanelFrame, apply_frame_controls, resolve_frame_ti
 pub(super) use diagnostics::{
     BenchmarkSession, open_frame_benchmark, begin_benchmark_capture, prepare_benchmark_frame,
     validate_benchmark_time, complete_benchmark_frame, finish_benchmark_report,
-    start_step_times, finish_rendering, begin_frame_diagnostics, finish_frame_diagnostics, capture_display,
+    finish_rendering, begin_frame_diagnostics, finish_frame_diagnostics, capture_display,
 };
 
 // Shared implementation helpers stay private to this module and its children.
