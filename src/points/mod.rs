@@ -69,7 +69,8 @@ const PANEL_RGB: [u8; 3] = [255, 255, 255];
 /// Draw everything but the warped stars into the frame.
 pub fn draw_points(frame: &mut Frame, inputs: &PointInputs<'_>, observation: &Observation, view: &View, settings: &RenderOptions, times: &mut StepTimes) -> Drawn {
     let mut drawn = Drawn::default();
-    times.measure_detail("Overlay clear", || frame.clear_overlay());
+    times.measure_checkpoint("Points.Overlay clear");
+    frame.clear_overlay();
     if frame.width() == 0 || frame.height() == 0 { return drawn; }                       // nothing to draw on
     let sky = frame.sky();
     let viewport = sky.viewport();
@@ -82,7 +83,8 @@ pub fn draw_points(frame: &mut Frame, inputs: &PointInputs<'_>, observation: &Ob
     let constellations = &inputs.data.constellation_stars;
     let simulation = &inputs.data.constellation_simulation;
     let rows = simulation.len().min(constellations.len());
-    let endpoint_pixels = times.measure_detail("Constellation stars", || {
+    times.measure_checkpoint("Points.Constellation stars");
+    let endpoint_pixels = {
         let mut endpoint_pixels = Vec::with_capacity(constellations.len());
         for row in 0..rows {
             endpoint_pixels.push(pixel_of(observation.apparent_star_direction(simulation.directions()[row])));
@@ -99,14 +101,15 @@ pub fn draw_points(frame: &mut Frame, inputs: &PointInputs<'_>, observation: &Ob
             drawn.endpoint_stars += 1;
         }
         endpoint_pixels
-    });
+    };
 
     // the overlay: horizon, constellation lines, grid, bodies
     let (width, height) = (frame.width(), frame.height());
     {
         let (overlay, _) = frame.overlay_and_text();
         let mut canvas = PixmapMut::from_bytes(overlay, width as u32, height as u32).expect("the overlay is width × height RGBA");
-        times.measure_detail("Sky lines", || {
+        times.measure_checkpoint("Points.Sky lines");
+        {
             if view.is_facing() {
                 for [a, b] in project_horizon_line(view, viewport) {
                     stroke_segment(&mut canvas, sky.frame_pixel(a), sky.frame_pixel(b), HORIZON_RGB, 1.2);
@@ -124,20 +127,23 @@ pub fn draw_points(frame: &mut Frame, inputs: &PointInputs<'_>, observation: &Ob
                     stroke_segment(&mut canvas, (cy as i32, cx as i32), ((cy - reach * s).round() as i32, (cx + reach * c).round() as i32), GRID_RGB, 0.7);
                 }
             }
-        });
-        drawn.bodies = times.measure_detail("Solar-system drawing", || draw_bodies(&mut canvas, &pixel_of, inputs, observation, view, &mut drawn.body_labels));
+        };
+        times.measure_checkpoint("Points.Solar-system drawing");
+        drawn.bodies = draw_bodies(&mut canvas, &pixel_of, inputs, observation, view, &mut drawn.body_labels);
     }
 
     // text: labels for the brightest stars, bodies and directions, the panel, the notices
-    times.measure_detail("Label selection", || {
+    times.measure_checkpoint("Points.Label selection");
+    {
         drawn.star_labels = select_star_labels(inputs, observation, settings, &pixel_of, sky, &endpoint_pixels);
         drawn.direction_labels = direction_labels(sky, view, settings, viewport);
         drawn.notices = [needs_accuracy_warning(tt).then_some(ACCURACY_WARNING), inputs.data.clipping.any().then_some(MAGNITUDE_CLIPPING_WARNING), inputs.notice].into_iter().flatten().collect();
-    });
+    };
     let cell = frame.text_cell();
     let (cell_width, cell_height) = (i32::from(cell.0), i32::from(cell.1));
     let (overlay, text) = frame.overlay_and_text();
-    times.measure_detail("Text rasterization", || {
+    times.measure_checkpoint("Points.Text rasterization");
+    {
         for label in drawn.star_labels.iter().chain(&drawn.body_labels) {
             draw_text_over(text, overlay, width, height, &label.text, (label.pixel.1 + cell_width, label.pixel.0 - cell_height), label.rgb);
         }
@@ -153,7 +159,7 @@ pub fn draw_points(frame: &mut Frame, inputs: &PointInputs<'_>, observation: &Ob
             fill_band(overlay, width, height, top, cell_height, [0, 0, 0]);                   // the old notices sat on a black line
             draw_text_over(text, overlay, width, height, notice, (0, top), NOTICE_RGB);
         }
-    });
+    };
     #[cfg(feature = "pixel-debug")]
     crate::pixel_debug::check_overlay("draw_points output", frame.overlay());
     drawn

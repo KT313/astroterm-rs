@@ -19,7 +19,7 @@ pub(super) fn project_hermite_tiles(
     frame: &mut Frame, data: &Data, selected: &Selected, observation: &Observation, view: &View, times: &mut StepTimes,
 ) {
     // Compare patch formulas through the same tessellation, filtering, coverage and composition code.
-    project_curved_tiles(frame, data, selected, observation, view, times, build_patch, "Hermite mesh preparation");
+    project_curved_tiles(frame, data, selected, observation, view, times, build_patch, "Projection.Hermite mesh preparation");
 }
 
 #[derive(Clone, Copy, Debug, Default)]

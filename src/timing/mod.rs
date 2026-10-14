@@ -3,11 +3,11 @@
 use crate::rows::row_columns;
 
 mod pipeline;
+mod checkpoints;
 mod averages;
 mod trace;
 mod capture;
 mod details;
-pub use details::DetailBatch;
 pub use capture::CaptureSteps;
 pub use trace::{PipelineTrace, TraceStep};
 
@@ -30,6 +30,7 @@ pub struct StepTimes {
     per_frame: bool,
     trace: Option<PipelineTrace>,
     detailed: bool,
+    checkpoints: Box<checkpoints::Checkpoints>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]

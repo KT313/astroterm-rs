@@ -41,8 +41,17 @@ Each flushed JSONL record is available while the program runs. Transport schema 
   report-write failure may leave an incomplete file; a missing end record must never be treated as success.
 
 Step records contain a name, parent index within the same segment, raw seconds, and directly recorded
-diagnostic seconds. They preserve repeated calls in invocation order. These are unsmoothed measurements;
-they are not the timing panel's moving averages. Parent durations include children: do not add them together.
+diagnostic seconds. Startup scopes preserve repeated calls in invocation order. Frame checkpoints use dotted
+paths, such as `Solar system.Earth state`, and aggregate repeated paths into one row per frame. Any number of
+path levels is supported; the serialized rows retain separate names and parent indices. These are unsmoothed
+measurements, not the timing panel's moving averages. Parent durations include children: do not add them together.
+
+Each checkpoint closes the preceding interval and starts the next. All intervening work belongs to that interval,
+including loop bookkeeping and function returns. A top-level checkpoint also accounts for work outside its named
+children. `END` closes the final interval without starting another, before report I/O and FPS sleep. Frame totals
+are published together at `END`, so the visible panel shows the previous completed frame's smoothed measurements
+and has no frame timing rows on the very first frame. Without detailed diagnostics, only top-level transitions
+read the clock; repeated child checkpoints within the same stage do not.
 
 Frame elapsed time ends after rendering/presentation and before final reporting. Startup, report serialization,
 flush, trace cleanup, and FPS sleep are excluded. Existing in-frame instrumentation is included. Report I/O

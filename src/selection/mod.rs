@@ -30,21 +30,22 @@ pub fn select_regions(stars: &[Region], observation: &Observation, times: &mut S
     let has_stars = |region: usize| stars[region].speed_groups.iter().any(|group| !group.stars.is_empty());
     let mut regions = Vec::new();
     if whole_sky {
-        times.measure_detail("Populated regions", || regions.extend((0..CELL_COUNT).filter(|&region| has_stars(region))));
+        times.measure_checkpoint("Selection.Populated regions");
+        regions.extend((0..CELL_COUNT).filter(|&region| has_stars(region)));
         return Selected { regions, whole_sky };
     }
 
     // coarse caps first, fine caps only for narrow patches
-    let caps = times.measure_detail("Region caps", caps);
+    times.measure_checkpoint("Selection.Region caps");
+    let caps = caps();
     let fine = patch.radius < 30_f64.to_radians();
-    times.measure_detail("Cap intersection filtering", || {
-        for (parent, cap) in caps.coarse.iter().enumerate() {
-            if !cap.intersects(patch.center, patch.radius) { continue; }
-            for child in parent * GRID_CHILDREN_PER_COARSE_CELL..(parent + 1) * GRID_CHILDREN_PER_COARSE_CELL {
-                if (!fine || caps.fine[child].intersects(patch.center, patch.radius)) && has_stars(child) { regions.push(child); }
-            }
+    times.measure_checkpoint("Selection.Cap intersection filtering");
+    for (parent, cap) in caps.coarse.iter().enumerate() {
+        if !cap.intersects(patch.center, patch.radius) { continue; }
+        for child in parent * GRID_CHILDREN_PER_COARSE_CELL..(parent + 1) * GRID_CHILDREN_PER_COARSE_CELL {
+            if (!fine || caps.fine[child].intersects(patch.center, patch.radius)) && has_stars(child) { regions.push(child); }
         }
-    });
+    }
     Selected { regions, whole_sky }
 }
 

@@ -24,15 +24,27 @@ pub struct SolarSystem {
 
 /// Evaluate every body of the tables for light arriving at the geocentre at `time`.
 pub fn simulate_solar_system(data: &Data, time: FrameTime, times: &mut StepTimes) -> SolarSystem {
-    let earth = times.measure_detail("Earth state", || evaluate_planet(BodyId::Earth, time.tt));
+    // Evaluate Earth's state at reception before calculating when each body's light was emitted.
+    times.measure_checkpoint("Solar system.Earth state");
+    let earth = evaluate_planet(BodyId::Earth, time.tt);
     let emitted = |id: BodyId| emission_position(id, time.tt, earth.position);
-    SolarSystem {
-        time,
-        earth,
-        sun: times.measure_detail("Sun light time", || emitted(data.solar_system_sun.sun.id)),
-        moons: times.measure_detail("Moon light time", || data.solar_system_moons.moons.iter().map(|moon| { let position = emitted(moon.id); BodyState { position, velocity: velocity_at(moon.id, time.tt, position, earth.position) } }).collect()),
-        planets: times.measure_detail("Planet light time", || data.solar_system_planets.planets.iter().map(|planet| if planet.id == BodyId::Earth { earth.position } else { emitted(planet.id) }).collect()),
-    }
+
+    // Calculate the Sun, moons and planets in separate measured intervals.
+    times.measure_checkpoint("Solar system.Sun light time");
+    let sun = emitted(data.solar_system_sun.sun.id);
+
+    times.measure_checkpoint("Solar system.Moon light time");
+    let moons = data.solar_system_moons.moons.iter().map(|moon| {
+        let position = emitted(moon.id);
+        BodyState { position, velocity: velocity_at(moon.id, time.tt, position, earth.position) }
+    }).collect();
+
+    times.measure_checkpoint("Solar system.Planet light time");
+    let planets = data.solar_system_planets.planets.iter().map(|planet| {
+        if planet.id == BodyId::Earth { earth.position } else { emitted(planet.id) }
+    }).collect();
+
+    SolarSystem { time, earth, sun, moons, planets }
 }
 
 impl SolarSystem {

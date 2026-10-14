@@ -20,7 +20,7 @@ pub(super) fn project_coons_tiles(
     frame: &mut Frame, data: &Data, selected: &Selected, observation: &Observation, view: &View, times: &mut StepTimes,
 ) {
     // The backend controls the fitted surface; coverage and region composition are shared for comparison.
-    project_curved_tiles(frame, data, selected, observation, view, times, build_patch, "Coons mesh preparation");
+    project_curved_tiles(frame, data, selected, observation, view, times, build_patch, "Projection.Coons mesh preparation");
 }
 
 #[derive(Clone, Copy, Debug)]

@@ -42,16 +42,16 @@ pub fn refresh_regions(data: &mut Data, selected: &Selected, time: FrameTime, vi
 
     // Prepare star opacities for the current zoom, reusing the lookup table when unchanged.
     let zoom_boost = zoom_opacity_boost(view.fov_degrees);
-    times.measure_detail("Opacity table", || {
-        data.star_opacities.prepare(zoom_boost)
-    });
+    times.measure_checkpoint("Regions.Opacity table");
+    data.star_opacities.prepare(zoom_boost);
 
     // Read the brightness limit and encode it for comparisons with stored star magnitudes.
     let threshold = settings.magnitude_threshold;
     let threshold_code = magnitude_code(threshold);
 
     // Refresh the constellation cache when needed, covering every endpoint star with the fastest group's TTL.
-    times.measure_detail("Constellation simulation", || {
+    times.measure_checkpoint("Regions.Constellation simulation");
+    {
         let constellation_stars = &data.constellation_stars;
         let star_count = constellation_stars.len();
         let fastest_group_index = SPEED_GROUP_COUNT - 1;
@@ -64,41 +64,32 @@ pub fn refresh_regions(data: &mut Data, selected: &Selected, time: FrameTime, vi
             ttl_seconds,
             &mut data.constellation_last_update,
         )
-    });
+    };
 
-    // Accumulate one timing total for each kind of work across all selected regions.
-    let mut passes = times.detail_batch([
-        "Tile geometry",
-        "Brightness prefixes",
-        "Simulation caches",
-        "Image cache decisions",
-        "Group image rendering",
-        "Region image merging",
-    ]);
-
+    // Refresh each selected region, accumulating repeated timing paths within the frame.
     for &region_index in &selected.regions {
         // Prepare the sky-to-tile mapping shared by this region's groups.
-        let tile = passes.measure(0, || TileGeometry::new(region_index));
+        times.measure_checkpoint("Regions.Tile geometry");
+        let tile = TileGeometry::new(region_index);
         let region = &mut data.star_regions[region_index];
 
         for group in &mut region.speed_groups {
             // Find the stars that could be bright enough to draw.
             let table = &group.stars;
-            let star_count = passes.measure(1, || rows_wanted(table, tt, threshold));
+            times.measure_checkpoint("Regions.Brightness prefixes");
+            let star_count = rows_wanted(table, tt, threshold);
 
             // Clear the old image if this group has no stars to draw.
             if star_count == 0 {
                 data.tile_bytes -= group.tile.bytes();
-                passes.measure(4, || {
-                    group.tile.render(GroupTileKey::EMPTY, &tile, table, &[], &[], &data.star_opacities);
-                });
+                times.measure_checkpoint("Regions.Group image rendering");
+                group.tile.render(GroupTileKey::EMPTY, &tile, table, &[], &[], &data.star_opacities);
                 continue;
             }
 
             // Reuse star samples, or calculate them when missing or expired.
-            let refresh = passes.measure(2, || {
-                group.update_simulation(tt, rows_wanted(&group.stars, tt, threshold))
-            });
+            times.measure_checkpoint("Regions.Simulation caches");
+            let refresh = group.update_simulation(tt, rows_wanted(&group.stars, tt, threshold));
             if refresh != Refresh::Unchanged {
                 report.simulated += 1;
             }
@@ -106,34 +97,33 @@ pub fn refresh_regions(data: &mut Data, selected: &Selected, time: FrameTime, vi
             let simulation = &group.simulation;
 
             // Describe the inputs used to draw this group's image.
-            let image_key = passes.measure(3, || {
-                GroupTileKey {
-                    simulated_at: group.last_update.expect("a simulated group has an epoch"),
-                    star_count,
-                    magnitude_threshold: threshold_code,
-                    zoom_boost,
-                }
-            });
+            times.measure_checkpoint("Regions.Image cache decisions");
+            let image_key = GroupTileKey {
+                simulated_at: group.last_update.expect("a simulated group has an epoch"),
+                star_count,
+                magnitude_threshold: threshold_code,
+                zoom_boost,
+            };
 
             // Keep the existing image when those inputs have not changed.
             let image = &mut group.tile;
-            let image_is_current = passes.measure(3, || image.key() == Some(image_key));
+            times.measure_checkpoint("Regions.Image cache decisions");
+            let image_is_current = image.key() == Some(image_key);
             if image_is_current {
                 continue;
             }
 
             // Redraw the image and account for any change in its memory use.
             data.tile_bytes -= image.bytes();
-            passes.measure(4, || {
-                image.render(
-                    image_key,
-                    &tile,
-                    table,
-                    simulation.directions(),
-                    simulation.magnitudes(),
-                    &data.star_opacities,
-                );
-            });
+            times.measure_checkpoint("Regions.Group image rendering");
+            image.render(
+                image_key,
+                &tile,
+                table,
+                simulation.directions(),
+                simulation.magnitudes(),
+                &data.star_opacities,
+            );
             data.tile_bytes += image.bytes();
             report.rendered += 1;
         }
@@ -143,19 +133,21 @@ pub fn refresh_regions(data: &mut Data, selected: &Selected, time: FrameTime, vi
         let region_image = &mut region.merged_tile;
 
         // Keep the merged image when all of its group images are unchanged.
-        let region_is_current = passes.measure(3, || region_image.is_current(groups));
+        times.measure_checkpoint("Regions.Image cache decisions");
+        let region_is_current = region_image.is_current(groups);
         if region_is_current {
             continue;
         }
 
         // Merge the updated group images and account for their combined image.
         data.tile_bytes -= region_image.bytes();
-        passes.measure(5, || region_image.merge(groups));
+        times.measure_checkpoint("Regions.Region image merging");
+        region_image.merge(groups);
         data.tile_bytes += region_image.bytes();
         report.merged += 1;
     }
 
-    passes.publish(times);
+    times.measure_checkpoint("Regions");
     report
 }
 

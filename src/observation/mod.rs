@@ -37,8 +37,10 @@ pub struct SkyPatch {
 /// Place the observer and orient the sky for `time`.
 pub fn observe(site: &Observer, atmosphere: bool, view: &View, time: FrameTime, times: &mut StepTimes) -> Observation {
     // the observer in catalog axes: the Earth plus the site, rotated by the Earth's orientation
-    let earth = times.measure_detail("Earth state", || evaluate_planet(BodyId::Earth, time.tt));
-    let (observer, to_horizon, to_catalog) = times.measure_detail("Observer and orientation", || {
+    times.measure_checkpoint("Observation.Earth state");
+    let earth = evaluate_planet(BodyId::Earth, time.tt);
+    times.measure_checkpoint("Observation.Observer and orientation");
+    let (observer, to_horizon, to_catalog) = {
         let to_fixed = compute_body_fixed_rotation(compute_slow_orientation(time.tt), time.ut1);
         let from_fixed = to_fixed.transpose();
         let site_state = compute_site_state(*site);
@@ -47,10 +49,11 @@ pub fn observe(site: &Observer, atmosphere: bool, view: &View, time: FrameTime, 
         let to_horizon = compute_horizon_rotation(site).compose(to_fixed);
         let to_catalog = to_horizon.transpose();
         (observer, to_horizon, to_catalog)
-    });
+    };
 
     // the patch of catalog sky the view can show
-    let patch = times.measure_detail("Visible sky patch", || {
+    times.measure_checkpoint("Observation.Visible sky patch");
+    let patch = {
         let margin = 0.1_f64.to_radians() / 3600.0 + STELLAR_DRIFT_MARGIN + QUANTIZATION_MARGIN + NUMERIC_SLACK
             + ABERRATION_MARGIN.max((observer.velocity.length() / LIGHT_SPEED_AU_DAY).clamp(0.0, 1.0).asin())
             + if atmosphere { REFRACTION_MARGIN } else { 0.0 };
@@ -58,7 +61,7 @@ pub fn observe(site: &Observer, atmosphere: bool, view: &View, time: FrameTime, 
             center: to_catalog.apply(view.center_direction().to_unit_vector()).normalized(),
             radius: (view.fov_degrees.to_radians() / 2.0 + margin).min(PI),
         }
-    });
+    };
     Observation { time, observer, to_horizon, to_catalog, atmosphere, patch }
 }
 

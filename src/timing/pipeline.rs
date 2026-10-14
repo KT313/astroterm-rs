@@ -6,6 +6,8 @@ impl StepTimes {
     /// Start a frame. Repeated calls within one scope contribute to one frame total before smoothing.
     /// Callers without a frame loop retain the original per-call averaging behavior.
     pub fn begin_frame(&mut self) {
+        assert!(!self.has_active_checkpoint(), "finish checkpoint timing with END before starting a frame");
+        self.clear_checkpoint_trace();
         self.reset_frame_samples(); // carry completed averages forward and clear this frame's totals
         self.per_frame = true;
     }

@@ -16,32 +16,32 @@ use super::tile_sampling::TileSampler;
 
 pub(super) fn project_whole_tiles(frame: &mut Frame, data: &Data, selected: &Selected, observation: &Observation, view: &View, times: &mut StepTimes) {
     // Clear the previous sky and prepare the current camera and screen dimensions.
-    times.measure_detail("Star layer clear", || frame.stars_mut().fill(Texel::default()));
+    times.measure_checkpoint("Projection.Star layer clear");
+    frame.stars_mut().fill(Texel::default());
     let (width, height, sky) = (frame.width(), frame.height(), frame.sky());
     if width == 0 || height == 0 || sky.size < 2 { return; }
-    let camera = times.measure_detail("Camera preparation", || prepare_camera(view));
+    times.measure_checkpoint("Projection.Camera preparation");
+    let camera = prepare_camera(view);
 
     // One sampler for every region; no projected result is cached between frames.
     let mut sampler = TileSampler::new(TILE_EDGE_TEXELS);
-    let mut passes = times.detail_batch([
-        "Tile geometry",
-        "Tile corner projection",
-        "Tile filter preparation",
-        "Tile rasterization",
-    ]);
 
     // Project each tile's corners once, then paint its quad onto the frame.
     for &region in &selected.regions {
         let image = &data.star_regions[region].merged_tile;
         if image.is_empty() || image.lit_rows().iter().all(|&row| row == 0) { continue; }
-        let geometry = passes.measure(0, || TileGeometry::new(region));
-        let corners = passes.measure(1, || project_tile_corners(&geometry, observation, camera, sky));
+        times.measure_checkpoint("Projection.Tile geometry");
+        let geometry = TileGeometry::new(region);
+        times.measure_checkpoint("Projection.Tile corner projection");
+        let corners = project_tile_corners(&geometry, observation, camera, sky);
         let Some(corners) = corners else { continue; };
         let Some(mappings) = texture_mappings(corners) else { continue; };
-        passes.measure(2, || sampler.prepare(image.lit_rows()));
-        passes.measure(3, || draw_tile(frame.stars_mut(), width, height, sky, corners, &mappings, &sampler, image.texels()));
+        times.measure_checkpoint("Projection.Tile filter preparation");
+        sampler.prepare(image.lit_rows());
+        times.measure_checkpoint("Projection.Tile rasterization");
+        draw_tile(frame.stars_mut(), width, height, sky, corners, &mappings, &sampler, image.texels());
     }
-    passes.publish(times);
+    times.measure_checkpoint("Projection");
 }
 
 /// Project the four outer texture boundaries. Skip tiles crossing the back singularity or folding over

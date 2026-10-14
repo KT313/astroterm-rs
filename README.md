@@ -129,7 +129,7 @@ source <(./target/release/astroterm --bash-completions)
 ```
 
 - `make build-debug`: build `target/pixel-debug/astroterm` with [pixel arithmetic checks](docs/pixel-debug.md).
-- `--debug-frametimes`: show each frame stage with indented sub-step timings, including cache work, texel projection, rasterization, and terminal output.
+- `--debug-frametimes`: show each frame stage with indented sub-step timings, including cache work, adaptive tile projection, rasterization, and terminal output. Values use completed-frame averages.
 - `--debug-singleframe`: display one frame, then exit and print a detailed timing report.
 - Multi-frame timing: see [bounded frame captures](docs/frame-benchmarks.md) for reproducible per-frame reports.
 

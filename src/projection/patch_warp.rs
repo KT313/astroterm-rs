@@ -28,36 +28,38 @@ pub(super) fn project_curved_tiles<P: CurvedPatch>(
     }
 
     // Clear the last frame and prepare the camera once for every selected region.
-    times.measure_detail("Star layer clear", || frame.stars_mut().fill(Texel::default()));
+    times.measure_checkpoint("Projection.Star layer clear");
+    frame.stars_mut().fill(Texel::default());
     let (width, height, sky) = (frame.width(), frame.height(), frame.sky());
     if width == 0 || height == 0 || sky.size < 2 { return; }
-    let camera = times.measure_detail("Camera preparation", || prepare_camera(view));
+    times.measure_checkpoint("Projection.Camera preparation");
+    let camera = prepare_camera(view);
     let mut sampler = TileSampler::new(TILE_EDGE_TEXELS);
     let mut mesh = Vec::new();
     let mut pixels = RegionPixels::default();
-    let mut passes = times.detail_batch([
-        "Tile geometry", "Tile corner projection", mesh_stage,
-        "Tile filter preparation", "Tile rasterization", "Tile composition",
-    ]);
 
     // Fit one patch per region, then reuse temporary mesh and pixel storage for the next region.
     for &region in &selected.regions {
         let image = &data.star_regions[region].merged_tile;
         if image.is_empty() || image.lit_rows().iter().all(|&row| row == 0) { continue; }
-        let geometry = passes.measure(0, || TileGeometry::new(region));
-        let patch = passes.measure(1, || build_patch(&geometry, observation, camera, sky));
+        times.measure_checkpoint("Projection.Tile geometry");
+        let geometry = TileGeometry::new(region);
+        times.measure_checkpoint("Projection.Tile corner projection");
+        let patch = build_patch(&geometry, observation, camera, sky);
         let Some(patch) = patch else { continue; };
-        if !passes.measure(2, || build_mesh(&patch, &mut mesh)) { continue; }
-        passes.measure(3, || sampler.prepare(image.lit_rows()));
-        passes.measure(4, || {
-            pixels.prepare(&mesh, width, height, sky);
-            for triangle in &mesh {
-                pixels.draw_triangle(triangle, &sampler, image.texels());
-            }
-        });
-        passes.measure(5, || pixels.composite(frame.stars_mut(), width));
+        times.measure_checkpoint(mesh_stage);
+        if !build_mesh(&patch, &mut mesh) { continue; }
+        times.measure_checkpoint("Projection.Tile filter preparation");
+        sampler.prepare(image.lit_rows());
+        times.measure_checkpoint("Projection.Tile rasterization");
+        pixels.prepare(&mesh, width, height, sky);
+        for triangle in &mesh {
+            pixels.draw_triangle(triangle, &sampler, image.texels());
+        }
+        times.measure_checkpoint("Projection.Tile composition");
+        pixels.composite(frame.stars_mut(), width);
     }
-    passes.publish(times);
+    times.measure_checkpoint("Projection");
 }
 
 pub(super) struct Triangle {
@@ -291,7 +293,6 @@ fn clip_outline_pixel(triangle: [Point; 3], pixel: Point) -> Option<PixelFragmen
         size: std::array::from_fn(|axis| maximum[axis] - minimum[axis]),
     })
 }
-
 
 #[cfg(test)]
 mod tests {

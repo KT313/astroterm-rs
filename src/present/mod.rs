@@ -82,31 +82,40 @@ impl<W: Write> Terminal<W> {
 
 /// Show the frame: tone map, compare, encode, send. Returns whether anything was sent.
 pub fn present<W: Write>(frame: &Frame, terminal: &mut Terminal<W>, times: &mut StepTimes) -> io::Result<Presented> {
-    times.measure_detail("Frame composition", || compose(frame, &mut terminal.image));
-    if times.measure_detail("Frame comparison", || terminal.image == terminal.previous || terminal.image.is_empty()) { return Ok(Presented::Unchanged); } // a zero-size frame has nothing to send
+    times.measure_checkpoint("Present.Frame composition");
+    compose(frame, &mut terminal.image);
+    times.measure_checkpoint("Present.Frame comparison");
+    if terminal.image == terminal.previous || terminal.image.is_empty() { return Ok(Presented::Unchanged); } // a zero-size frame has nothing to send
     let (width, height) = (frame.width() as u32, frame.height() as u32);
     let written = match terminal.protocol {
         ProtocolType::Kitty => {
-            times.measure_detail("RGB conversion", || strip_alpha(&terminal.image, &mut terminal.rgb));
+            times.measure_checkpoint("Present.RGB conversion");
+            strip_alpha(&terminal.image, &mut terminal.rgb);
             let mut written = upload_shared(terminal, (width, height), times)?;                                  // the shared object, if the terminal takes it
             if !terminal.shared_memory {                                                                  // otherwise, or after a failed transfer, stream the same image
-                times.measure_detail("Image encoding", || kitty::encode_upload_reusing(&terminal.rgb, (width, height), terminal.kitty_id, terminal.compress, terminal.tmux, &mut terminal.compressor, &mut terminal.compressed, &mut terminal.upload))?;
-                times.measure_detail("Image upload", || present_frame(&mut terminal.out, terminal.upload.as_bytes()))?;
+                times.measure_checkpoint("Present.Image encoding");
+                kitty::encode_upload_reusing(&terminal.rgb, (width, height), terminal.kitty_id, terminal.compress, terminal.tmux, &mut terminal.compressor, &mut terminal.compressed, &mut terminal.upload)?;
+                times.measure_checkpoint("Present.Image upload");
+                present_frame(&mut terminal.out, terminal.upload.as_bytes())?;
                 written += terminal.upload.len();
             }
-            times.measure_detail("Image swap", || {
-                kitty::serialize_swap_into(terminal.kitty_id, terminal.screen, terminal.tmux, &mut terminal.swap)?;
-                present_frame(&mut terminal.out, &terminal.swap)
-            })?;
+            times.measure_checkpoint("Present.Image swap");
+            kitty::serialize_swap_into(terminal.kitty_id, terminal.screen, terminal.tmux, &mut terminal.swap)?;
+            present_frame(&mut terminal.out, &terminal.swap)?;
             terminal.kitty_id = kitty::other_image_id(terminal.kitty_id);
             written + terminal.swap.len()
         }
         protocol => {
-            let image = times.measure_detail("RGBA image copy", || RgbaImage::from_raw(width, height, terminal.image.clone()).expect("the composed frame is width × height RGBA"));
-            let encoded = times.measure_detail("Image encoding", || encode_image(DynamicImage::ImageRgba8(image), terminal.screen, protocol, terminal.tmux))?;
-            let cells = times.measure_detail("Terminal image layout", || compose_image(&encoded, terminal.screen, terminal.screen));
-            times.measure_detail("Frame serialization", || serialize_frame_into(&cells, &mut terminal.blank, &mut terminal.serialized))?;
-            times.measure_detail("Image upload", || present_frame(&mut terminal.out, &terminal.serialized))?;
+            times.measure_checkpoint("Present.RGBA image copy");
+            let image = RgbaImage::from_raw(width, height, terminal.image.clone()).expect("the composed frame is width × height RGBA");
+            times.measure_checkpoint("Present.Image encoding");
+            let encoded = encode_image(DynamicImage::ImageRgba8(image), terminal.screen, protocol, terminal.tmux)?;
+            times.measure_checkpoint("Present.Terminal image layout");
+            let cells = compose_image(&encoded, terminal.screen, terminal.screen);
+            times.measure_checkpoint("Present.Frame serialization");
+            serialize_frame_into(&cells, &mut terminal.blank, &mut terminal.serialized)?;
+            times.measure_checkpoint("Present.Image upload");
+            present_frame(&mut terminal.out, &terminal.serialized)?;
             terminal.serialized.len()
         }
     };
@@ -121,13 +130,17 @@ pub fn present<W: Write>(frame: &Frame, terminal: &mut Terminal<W>, times: &mut 
 /// the terminal did not, also when the write fails.
 fn upload_shared<W: Write>(terminal: &mut Terminal<W>, dimensions: (u32, u32), times: &mut StepTimes) -> io::Result<usize> {
     if !terminal.shared_memory { return Ok(0); }
-    let object = match times.measure_detail("Shared memory preparation", || kitty::create_shared_image(&terminal.rgb)) {
+    times.measure_checkpoint("Present.Shared memory preparation");
+    let object = match kitty::create_shared_image(&terminal.rgb) {
         Ok(object) => object,
         Err(_) => { terminal.shared_memory = false; return Ok(0); }                                      // no shared memory on this system: stream from now on
     };
-    times.measure_detail("Shared memory command", || kitty::encode_shared_upload(&object, dimensions, terminal.kitty_id, false, terminal.tmux, &mut terminal.upload));
-    times.measure_detail("Image upload", || present_frame(&mut terminal.out, terminal.upload.as_bytes()))?; // on error the object drops and unlinks its name
-    let consumed = times.measure_detail("Shared memory consumption", || kitty::wait_for_shared_consumption(&object));
+    times.measure_checkpoint("Present.Shared memory command");
+    kitty::encode_shared_upload(&object, dimensions, terminal.kitty_id, false, terminal.tmux, &mut terminal.upload);
+    times.measure_checkpoint("Present.Image upload");
+    present_frame(&mut terminal.out, terminal.upload.as_bytes())?; // on error the object drops and unlinks its name
+    times.measure_checkpoint("Present.Shared memory consumption");
+    let consumed = kitty::wait_for_shared_consumption(&object);
     if !matches!(consumed, Ok(true)) { terminal.shared_memory = false; }                                  // timed out or unreadable: the streamed copy follows
     Ok(terminal.upload.len())
 }

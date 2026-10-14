@@ -20,7 +20,7 @@ impl Serialize for CaptureSteps<'_> {
 impl StepTimes {
     pub fn capture_steps(&self) -> io::Result<CaptureSteps<'_>> {
         let trace = self.trace.as_ref().ok_or_else(|| io::Error::other("frame capture requires tracing"))?;
-        if !trace.active.is_empty() || !self.parents.is_empty() { return Err(io::Error::other("cannot export an active timing scope")); }
+        if self.has_active_checkpoint() || !trace.active.is_empty() || !self.parents.is_empty() { return Err(io::Error::other("cannot export an active timing scope")); }
         for (index, step) in trace.steps.iter().enumerate() {
             if !step.seconds.is_finite() || step.seconds < 0.0 || !step.direct_diagnostic_seconds.is_finite()
                 || step.direct_diagnostic_seconds < 0.0 || step.parent.is_some_and(|parent| parent >= index) {
@@ -33,6 +33,7 @@ impl StepTimes {
     /// Reuse one completed trace's allocation. Runtime caches and running timing averages remain untouched.
     pub fn clear_capture_segment(&mut self) -> io::Result<()> {
         self.capture_steps()?;
+        self.clear_checkpoint_trace();
         let trace = self.trace.as_mut().unwrap();
         let mut steps = std::mem::take(&mut trace.steps);
         steps.clear();

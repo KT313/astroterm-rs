@@ -17,6 +17,13 @@ pub struct TimeManager {
     pub clock: SimulationClock,
 }
 
+impl TimeManager {
+    /// Finish the previous measurement and start a dotted path; END stops measurement.
+    pub fn measure(&mut self, path: &'static str) {
+        self.step_times.measure_checkpoint(path);
+    }
+}
+
 impl StartupTiming {
     /// Begin recording startup work without starting the simulation clock.
     pub fn new(arguments: &Arguments) -> Self {
@@ -88,5 +95,20 @@ mod tests {
         assert_eq!(clock.julian_date(), config.simulation.start_julian_date);
         clock.set_frame_index(2).unwrap();
         assert_eq!(clock.julian_date(), config.simulation.start_julian_date - 4.0 / 86400.0);
+    }
+
+    #[test]
+    fn manager_checkpoints_reach_the_shared_frame_report() {
+        let arguments = Arguments::try_parse_from(["astroterm", "--debug-singleframe"]).unwrap();
+        let startup = StartupTiming::new(&arguments);
+        let config = build_config(arguments, &[]).unwrap();
+        let mut manager = startup.start_simulation(&config);
+        manager.step_times.begin_frame();
+        manager.measure("Solar system.Earth state");
+        manager.measure("END");
+
+        assert_eq!(manager.step_times.steps()[0].name, "Solar system");
+        assert_eq!(manager.step_times.steps()[1].name, "Earth state");
+        assert!(manager.step_times.capture_steps().is_ok());
     }
 }

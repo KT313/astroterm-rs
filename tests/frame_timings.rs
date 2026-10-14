@@ -17,14 +17,23 @@ fn render(data: &mut Data, frame: &mut Frame, terminal: &mut Terminal<Vec<u8>>, 
     let view = View::default();
     let settings = RenderOptions { unicode: true, braille: false, color: true, constellations: true, grid: false, magnitude_threshold: 6.0, dynamic_names: true };
     times.begin_frame();
-    let solar = times.measure_steps("Solar system", |times| simulate_solar_system(data, time, times));
-    let observation = times.measure_steps("Observation", |times| observe(&Observer::default(), true, &view, time, times));
-    let selected = times.measure_steps("Selection", |times| select_regions(&data.star_regions, &observation, times));
-    times.measure_steps("Regions", |times| refresh_regions(data, &selected, time, &view, &settings, times));
-    times.measure_steps("Projection", |times| project_stars_to_screen(frame, data, &selected, &observation, &view, times));
+    times.measure_checkpoint("Solar system");
+    let solar = simulate_solar_system(data, time, times);
+    times.measure_checkpoint("Observation");
+    let observation = observe(&Observer::default(), true, &view, time, times);
+    times.measure_checkpoint("Selection");
+    let selected = select_regions(&data.star_regions, &observation, times);
+    times.measure_checkpoint("Regions");
+    refresh_regions(data, &selected, time, &view, &settings, times);
+    times.measure_checkpoint("Projection");
+    project_stars_to_screen(frame, data, &selected, &observation, &view, times);
     let inputs = PointInputs { solar_system: &solar, data, selected: &selected, panel: &[], notice: None };
-    times.measure_steps("Points", |times| draw_points(frame, &inputs, &observation, &view, &settings, times));
-    times.measure_steps("Present", |times| present(frame, terminal, times)).unwrap()
+    times.measure_checkpoint("Points");
+    draw_points(frame, &inputs, &observation, &view, &settings, times);
+    times.measure_checkpoint("Present");
+    let presented = present(frame, terminal, times);
+    times.measure_checkpoint("END");
+    presented.unwrap()
 }
 
 #[test]
@@ -63,4 +72,24 @@ fn detail_is_hierarchical_bounded_and_preserves_the_rendered_frame() {
     detailed.clear_capture_segment().unwrap();
     render(&mut data, &mut frame, &mut terminal, &mut detailed);
     assert!(!detailed.trace().unwrap().steps.iter().any(|step| step.name == "Region image merging" || step.name == "Image encoding")); // cache hit work stays absent, not repeated from the previous trace
+}
+
+#[test]
+fn failed_presentation_can_finish_its_checkpoint_before_propagating_the_error() {
+    struct FailedOutput;
+    impl std::io::Write for FailedOutput {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> { Err(std::io::Error::other("test write failure")) }
+        fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+    }
+    let frame = Frame::square(9);
+    let mut terminal = Terminal::new(FailedOutput, ProtocolType::Sixel, false, Rect::new(0, 0, 2, 2), false, false);
+    let mut times = StepTimes::with_trace(true);
+    times.begin_frame();
+    times.measure_checkpoint("Present");
+    let result = present(&frame, &mut terminal, &mut times);
+    times.measure_checkpoint("END");
+
+    assert_eq!(result.unwrap_err().to_string(), "test write failure");
+    assert!(times.capture_steps().is_ok());
+    assert!(times.steps().iter().any(|step| step.name == "Image upload"));
 }

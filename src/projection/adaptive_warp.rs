@@ -24,45 +24,45 @@ pub(super) fn project_adaptive_tiles(
     frame: &mut Frame, data: &Data, selected: &Selected, observation: &Observation, view: &View, times: &mut StepTimes,
 ) {
     // Prepare one camera and reuse temporary allocations across regions in this frame.
-    times.measure_detail("Star layer clear", || frame.stars_mut().fill(Texel::default()));
+    times.measure_checkpoint("Projection.Star layer clear");
+    frame.stars_mut().fill(Texel::default());
     let (width, height, sky) = (frame.width(), frame.height(), frame.sky());
     if width == 0 || height == 0 || sky.size < 2 { return; }
-    let camera = times.measure_detail("Camera preparation", || prepare_camera(view));
+    times.measure_checkpoint("Projection.Camera preparation");
+    let camera = prepare_camera(view);
     let mut samples = HashMap::new();
     let mut mesh = Vec::new();
     let mut sampler = TileSampler::new(TILE_EDGE_TEXELS);
     let mut pixels = RegionPixels::default();
     let mut totals = MeshStats::default();
-    let mut passes = times.detail_batch([
-        "Tile geometry", "Tile corner projection", "Adaptive mesh preparation",
-        "Tile filter preparation", "Tile rasterization", "Tile composition",
-    ]);
 
     // Build directly projected meshes, then accumulate all pieces before compositing each complete region.
     for &region in &selected.regions {
         let image = &data.star_regions[region].merged_tile;
         if image.is_empty() || image.lit_rows().iter().all(|&row| row == 0) { continue; }
-        let tile = passes.measure(0, || TileGeometry::new(region));
+        times.measure_checkpoint("Projection.Tile geometry");
+        let tile = TileGeometry::new(region);
         let projector = TileProjector { tile, observation, camera, sky, half_fov: view.fov_degrees.to_radians() * 0.5 };
         samples.clear();
-        passes.measure(1, || {
-            for key in corner_keys(0, 0, grid_size()) { sample_vertex(&projector, &mut samples, key); }
-        });
-        let stats = passes.measure(2, || build_mesh(&projector, &mut samples, &mut mesh));
+        times.measure_checkpoint("Projection.Tile corner projection");
+        for key in corner_keys(0, 0, grid_size()) { sample_vertex(&projector, &mut samples, key); }
+        times.measure_checkpoint("Projection.Adaptive mesh preparation");
+        let stats = build_mesh(&projector, &mut samples, &mut mesh);
         totals.projections += stats.projections;
         totals.capped_cells += stats.capped_cells;
         totals.skipped_cells += stats.skipped_cells;
         totals.divisions = totals.divisions.max(stats.divisions);
         if mesh.is_empty() { continue; }
-        passes.measure(3, || sampler.prepare(image.lit_rows()));
-        passes.measure(4, || {
-            pixels.prepare(&mesh, width, height, sky);
-            for triangle in &mesh { pixels.draw_triangle(triangle, &sampler, image.texels()); }
-        });
-        passes.measure(5, || pixels.composite(frame.stars_mut(), width));
+        times.measure_checkpoint("Projection.Tile filter preparation");
+        sampler.prepare(image.lit_rows());
+        times.measure_checkpoint("Projection.Tile rasterization");
+        pixels.prepare(&mesh, width, height, sky);
+        for triangle in &mesh { pixels.draw_triangle(triangle, &sampler, image.texels()); }
+        times.measure_checkpoint("Projection.Tile composition");
+        pixels.composite(frame.stars_mut(), width);
     }
-    passes.publish(times);
-    times.describe("Adaptive mesh preparation", || format!(
+    times.measure_checkpoint("Projection");
+    times.describe("Projection.Adaptive mesh preparation", || format!(
         "{} sky projections; maximum {}x{} cells per region; {} cells above target at limit; {} unsafe cells omitted",
         totals.projections, totals.divisions, totals.divisions, totals.capped_cells, totals.skipped_cells,
     ));
@@ -396,6 +396,7 @@ mod tests {
                 eprintln!("Adaptive fov={fov}, dense={dense}, regions={}: {:.3}ms; three frames after warmup", selected.regions.len(), elapsed * 1000.0 / 3.0);
                 let mut detail = StepTimes::with_trace(true);
                 project_adaptive_tiles(&mut frame, &data, &selected, &observation, &view, &mut detail);
+                detail.measure_checkpoint("END");
                 for step in detail.steps().iter().filter(|step| matches!(step.name, "Adaptive mesh preparation" | "Tile filter preparation" | "Tile rasterization" | "Tile composition")) {
                     eprintln!("  {}: {:.3}ms (separate traced frame)", step.name, step.average_seconds * 1000.0);
                 }
@@ -468,6 +469,7 @@ mod tests {
         let mut frame = Frame::square(201);
         let mut times = StepTimes::with_trace(true);
         project_adaptive_tiles(&mut frame, &data, &selected, &observation, &view, &mut times);
+        times.measure_checkpoint("END");
         assert!(times.steps().iter().any(|step| step.name == "Adaptive mesh preparation"));
         assert!(frame.stars().iter().any(|texel| texel.opacity > 0.0));
         for (index, texel) in frame.stars().iter().enumerate() {

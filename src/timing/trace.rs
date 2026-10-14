@@ -44,12 +44,15 @@ impl StepTimes {
 
     /// Attach data to the latest invocation in this scope. No formatting or counting when disabled.
     pub fn describe(&mut self, name: &'static str, describe: impl FnOnce() -> String) {
+        let checkpoint = self.checkpoint_trace_index(name);
         let Some(trace) = &mut self.trace else {
             return;
         };
         let start = std::time::Instant::now();
         let parent = trace.active.last().copied();
-        if let Some(step) = trace
+        if let Some(index) = checkpoint {
+            trace.steps[index].details.push(describe());
+        } else if let Some(step) = trace
             .steps
             .iter_mut()
             .rev()
@@ -61,8 +64,9 @@ impl StepTimes {
     }
 
     pub(super) fn record_diagnostic_time(&mut self, seconds: f64) {
+        let checkpoint = self.active_checkpoint_trace_index();
         let trace = self.trace.as_mut().unwrap();
-        if let Some(&index) = trace.active.last() {
+        if let Some(index) = checkpoint.or_else(|| trace.active.last().copied()) {
             trace.steps[index].direct_diagnostic_seconds += seconds;
         } else {
             trace.unscoped_diagnostic_seconds += seconds;
@@ -83,6 +87,7 @@ impl StepTimes {
 
     /// Keep startup diagnostics, but exclude startup costs from the frame-time panel.
     pub fn reset_frame_timings(&mut self) {
+        *self.checkpoints = Default::default();
         self.steps.clear();
         self.records.clear();
         self.per_frame = false;
@@ -119,11 +124,11 @@ impl PipelineTrace {
             writeln!(output, "astroterm --debug-singleframe: execution trace")?;
             writeln!(
                 output,
-                "Presented frames: {}. Invocation/start order; repeated calls are separate except explicitly aggregated batch passes.",
+                "Presented frames: {}. Startup calls use invocation order; frame paths are grouped hierarchically and repeated checkpoints are aggregated.",
                 self.presented_frames
             )?;
         } else {
-            writeln!(output, "Execution trace in invocation/start order; repeated calls are separate except explicitly aggregated batch passes.")?;
+            writeln!(output, "Startup calls use invocation order; frame paths are grouped hierarchically and repeated checkpoints are aggregated.")?;
         }
         writeln!(
             output,
