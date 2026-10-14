@@ -6,7 +6,7 @@ use astroterm::{
     model::{PreparedCatalog, Data},
     progress::NoProgress,
     sky::{build_sky_tables, prepare_owned_catalog, load_cached_catalog, write_cached_catalog, catalog_fingerprint},
-    timing::StepTimes,
+    time::StepTimes,
 };
 
 /// The loader without progress display or timings, with its notices collected.
@@ -123,14 +123,14 @@ fn clipping_notice_coexists_with_date_notice_and_the_tables_carry_it() {
         let time = FrameTime::from_utc(utc);
         let view = View::default();
         let settings = RenderOptions { unicode: true, braille: false, color: false, constellations: false, grid: false, magnitude_threshold: -50.0, dynamic_names: false };
-        let solar_system = simulate_solar_system(tables, time, &mut astroterm::timing::StepTimes::default());
-        let observation = observe(&Observer::default(), false, &view, time, &mut astroterm::timing::StepTimes::default());
-        let selected = select_regions(&tables.star_regions, &observation, &mut astroterm::timing::StepTimes::default());
+        let solar_system = simulate_solar_system(tables, time, &mut astroterm::time::StepTimes::default());
+        let observation = observe(&Observer::default(), false, &view, time, &mut astroterm::time::StepTimes::default());
+        let selected = select_regions(&tables.star_regions, &observation, &mut astroterm::time::StepTimes::default());
         let mut caches = tables.clone();
-        refresh_regions(&mut caches, &selected, time, &view, &settings, &mut astroterm::timing::StepTimes::default());
+        refresh_regions(&mut caches, &selected, time, &view, &settings, &mut astroterm::time::StepTimes::default());
         let mut frame = Frame::new(140, 60, SkyArea::centred(140, 60), (10, 20));
         let inputs = PointInputs { solar_system: &solar_system, data: &caches, selected: &selected, panel: &[], notice: None };
-        draw_points(&mut frame, &inputs, &observation, &view, &settings, &mut astroterm::timing::StepTimes::default()).notices
+        draw_points(&mut frame, &inputs, &observation, &view, &settings, &mut astroterm::time::StepTimes::default()).notices
     };
     let clipped = tables(&prepare_owned_catalog(load_csv("ra,dec,mag,dist,rv\n0,0,-9.9,10,-100\n").unwrap(), &mut astroterm::progress::Report::quiet()).unwrap());
     let plain = tables(&prepare_owned_catalog(Catalog::new(Vec::new(), StarNames::default(), Vec::new()), &mut astroterm::progress::Report::quiet()).unwrap());

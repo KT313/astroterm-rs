@@ -20,7 +20,7 @@ pub fn transport_notice(info: &DisplayInfo) -> Option<&'static str> {
     (info.protocol == ProtocolType::Kitty && !info.shared_memory).then_some(SHARED_MEMORY_NOTICE)
 }
 
-use crate::timing::StepTimes;
+use crate::time::StepTimes;
 use crate::constants::{MIN_STAR_PIXEL_OPACITY, PIXEL_BACKGROUND_RGBA};
 use crate::projection::Frame;
 use crate::terminal::transport::graphics::{compose_image, encode_image, kitty, present_frame, serialize_frame_into};
@@ -82,39 +82,39 @@ impl<W: Write> Terminal<W> {
 
 /// Show the frame: tone map, compare, encode, send. Returns whether anything was sent.
 pub fn present<W: Write>(frame: &Frame, terminal: &mut Terminal<W>, times: &mut StepTimes) -> io::Result<Presented> {
-    times.measure_checkpoint("Present.Frame composition");
+    times.measure("Present.Frame composition");
     compose(frame, &mut terminal.image);
-    times.measure_checkpoint("Present.Frame comparison");
+    times.measure("Present.Frame comparison");
     if terminal.image == terminal.previous || terminal.image.is_empty() { return Ok(Presented::Unchanged); } // a zero-size frame has nothing to send
     let (width, height) = (frame.width() as u32, frame.height() as u32);
     let written = match terminal.protocol {
         ProtocolType::Kitty => {
-            times.measure_checkpoint("Present.RGB conversion");
+            times.measure("Present.RGB conversion");
             strip_alpha(&terminal.image, &mut terminal.rgb);
             let mut written = upload_shared(terminal, (width, height), times)?;                                  // the shared object, if the terminal takes it
             if !terminal.shared_memory {                                                                  // otherwise, or after a failed transfer, stream the same image
-                times.measure_checkpoint("Present.Image encoding");
+                times.measure("Present.Image encoding");
                 kitty::encode_upload_reusing(&terminal.rgb, (width, height), terminal.kitty_id, terminal.compress, terminal.tmux, &mut terminal.compressor, &mut terminal.compressed, &mut terminal.upload)?;
-                times.measure_checkpoint("Present.Image upload");
+                times.measure("Present.Image upload");
                 present_frame(&mut terminal.out, terminal.upload.as_bytes())?;
                 written += terminal.upload.len();
             }
-            times.measure_checkpoint("Present.Image swap");
+            times.measure("Present.Image swap");
             kitty::serialize_swap_into(terminal.kitty_id, terminal.screen, terminal.tmux, &mut terminal.swap)?;
             present_frame(&mut terminal.out, &terminal.swap)?;
             terminal.kitty_id = kitty::other_image_id(terminal.kitty_id);
             written + terminal.swap.len()
         }
         protocol => {
-            times.measure_checkpoint("Present.RGBA image copy");
+            times.measure("Present.RGBA image copy");
             let image = RgbaImage::from_raw(width, height, terminal.image.clone()).expect("the composed frame is width × height RGBA");
-            times.measure_checkpoint("Present.Image encoding");
+            times.measure("Present.Image encoding");
             let encoded = encode_image(DynamicImage::ImageRgba8(image), terminal.screen, protocol, terminal.tmux)?;
-            times.measure_checkpoint("Present.Terminal image layout");
+            times.measure("Present.Terminal image layout");
             let cells = compose_image(&encoded, terminal.screen, terminal.screen);
-            times.measure_checkpoint("Present.Frame serialization");
+            times.measure("Present.Frame serialization");
             serialize_frame_into(&cells, &mut terminal.blank, &mut terminal.serialized)?;
-            times.measure_checkpoint("Present.Image upload");
+            times.measure("Present.Image upload");
             present_frame(&mut terminal.out, &terminal.serialized)?;
             terminal.serialized.len()
         }
@@ -130,16 +130,16 @@ pub fn present<W: Write>(frame: &Frame, terminal: &mut Terminal<W>, times: &mut 
 /// the terminal did not, also when the write fails.
 fn upload_shared<W: Write>(terminal: &mut Terminal<W>, dimensions: (u32, u32), times: &mut StepTimes) -> io::Result<usize> {
     if !terminal.shared_memory { return Ok(0); }
-    times.measure_checkpoint("Present.Shared memory preparation");
+    times.measure("Present.Shared memory preparation");
     let object = match kitty::create_shared_image(&terminal.rgb) {
         Ok(object) => object,
         Err(_) => { terminal.shared_memory = false; return Ok(0); }                                      // no shared memory on this system: stream from now on
     };
-    times.measure_checkpoint("Present.Shared memory command");
+    times.measure("Present.Shared memory command");
     kitty::encode_shared_upload(&object, dimensions, terminal.kitty_id, false, terminal.tmux, &mut terminal.upload);
-    times.measure_checkpoint("Present.Image upload");
+    times.measure("Present.Image upload");
     present_frame(&mut terminal.out, terminal.upload.as_bytes())?; // on error the object drops and unlinks its name
-    times.measure_checkpoint("Present.Shared memory consumption");
+    times.measure("Present.Shared memory consumption");
     let consumed = kitty::wait_for_shared_consumption(&object);
     if !matches!(consumed, Ok(true)) { terminal.shared_memory = false; }                                  // timed out or unreadable: the streamed copy follows
     Ok(terminal.upload.len())
@@ -255,16 +255,16 @@ mod tests {
     fn an_unchanged_frame_sends_nothing_and_a_changed_one_is_sent() {
         let mut frame = frame(40, 20);
         let mut terminal = Terminal::new(Vec::new(), ProtocolType::Sixel, false, Rect::new(0, 0, 4, 1), false, false);
-        let first = present(&frame, &mut terminal, &mut crate::timing::StepTimes::default()).unwrap();
+        let first = present(&frame, &mut terminal, &mut crate::time::StepTimes::default()).unwrap();
         let Presented::Sent(bytes) = first else { panic!("{first:?}") };
         assert!(bytes > 0 && terminal.output().len() == bytes);
-        assert_eq!(present(&frame, &mut terminal, &mut crate::timing::StepTimes::default()).unwrap(), Presented::Unchanged);
+        assert_eq!(present(&frame, &mut terminal, &mut crate::time::StepTimes::default()).unwrap(), Presented::Unchanged);
         assert_eq!(terminal.output().len(), bytes);                                          // nothing written, nothing flushed to the output
         frame.stars_mut()[205] = Texel { rgb: [1.0; 3], opacity: 1.0 };
-        assert!(matches!(present(&frame, &mut terminal, &mut crate::timing::StepTimes::default()).unwrap(), Presented::Sent(_)));
+        assert!(matches!(present(&frame, &mut terminal, &mut crate::time::StepTimes::default()).unwrap(), Presented::Sent(_)));
         assert!(terminal.output().len() > bytes);
         terminal.resize(Rect::new(0, 0, 4, 1));
-        assert!(matches!(present(&frame, &mut terminal, &mut crate::timing::StepTimes::default()).unwrap(), Presented::Sent(_)));      // a resize resends the same frame
+        assert!(matches!(present(&frame, &mut terminal, &mut crate::time::StepTimes::default()).unwrap(), Presented::Sent(_)));      // a resize resends the same frame
     }
 
     /// Release-mode cost of composing and encoding a full HD frame; run with `--ignored --nocapture`.
@@ -280,10 +280,10 @@ mod tests {
             compose(&frame, &mut composed);
             let compose_time = started.elapsed();
             let started = std::time::Instant::now();
-            let sent = present(&frame, &mut terminal, &mut crate::timing::StepTimes::default()).unwrap();
+            let sent = present(&frame, &mut terminal, &mut crate::time::StepTimes::default()).unwrap();
             let first = started.elapsed();
             let started = std::time::Instant::now();
-            let again = present(&frame, &mut terminal, &mut crate::timing::StepTimes::default()).unwrap();
+            let again = present(&frame, &mut terminal, &mut crate::time::StepTimes::default()).unwrap();
             let unchanged = started.elapsed();
             eprintln!("{protocol:?}: compose {compose_time:?}; present {first:?} ({sent:?}); unchanged frame {unchanged:?} ({again:?})");
         }
@@ -302,12 +302,12 @@ mod tests {
         let frame = frame(8, 4);
         let mut terminal = Terminal::new(Vec::new(), ProtocolType::Kitty, false, Rect::new(0, 0, 8, 2), false, false);
         let first_id = terminal.kitty_image_id();
-        let Presented::Sent(bytes) = present(&frame, &mut terminal, &mut crate::timing::StepTimes::default()).unwrap() else { panic!() };
+        let Presented::Sent(bytes) = present(&frame, &mut terminal, &mut crate::time::StepTimes::default()).unwrap() else { panic!() };
         let text = String::from_utf8_lossy(terminal.output()).into_owned();
         assert!(text.contains(&format!("i={first_id}")) && text.contains("f=24"), "{text}");  // an RGB upload for the first id
         assert_eq!(terminal.output().len(), bytes);
         assert_ne!(terminal.kitty_image_id(), first_id);
-        assert_eq!(present(&frame, &mut terminal, &mut crate::timing::StepTimes::default()).unwrap(), Presented::Unchanged);
+        assert_eq!(present(&frame, &mut terminal, &mut crate::time::StepTimes::default()).unwrap(), Presented::Unchanged);
         assert_eq!(terminal.kitty_image_id(), kitty::other_image_id(first_id));
     }
 }
@@ -362,14 +362,14 @@ mod shared_tests {
         for tmux in [false, true] {
             let frame = frame();
             let mut terminal = terminal(true, tmux);
-            let Presented::Sent(bytes) = present(&frame, &mut terminal, &mut crate::timing::StepTimes::default()).unwrap() else { panic!() };
+            let Presented::Sent(bytes) = present(&frame, &mut terminal, &mut crate::time::StepTimes::default()).unwrap() else { panic!() };
             assert_eq!(terminal.output().pixels, [rgb(&frame)]);                                          // the object carries RGB, not the RGBA frame
             assert!(terminal.shared_memory() && terminal.output().names.iter().all(missing));            // consumed: the name is gone and the transport stays
             let text = String::from_utf8(terminal.output().output.clone()).unwrap();
             assert!(text.contains("t=s,") && !text.contains("t=d,") && !text.contains("o=z,"), "{text}"); // no streamed copy, no compression
             assert!(text.find("t=s,").unwrap() < text.find("a=p,").unwrap());
             assert_eq!(text.len(), bytes);
-            assert_eq!(present(&frame, &mut terminal, &mut crate::timing::StepTimes::default()).unwrap(), Presented::Unchanged);
+            assert_eq!(present(&frame, &mut terminal, &mut crate::time::StepTimes::default()).unwrap(), Presented::Unchanged);
             assert_eq!(terminal.output().names.len(), 1);
         }
     }
@@ -378,7 +378,7 @@ mod shared_tests {
     fn an_unconsumed_object_falls_back_to_a_complete_stream_before_the_swap_for_the_rest_of_the_session() {
         let frame = frame();
         let mut terminal = terminal(false, false);
-        assert!(matches!(present(&frame, &mut terminal, &mut crate::timing::StepTimes::default()).unwrap(), Presented::Sent(_)));
+        assert!(matches!(present(&frame, &mut terminal, &mut crate::time::StepTimes::default()).unwrap(), Presented::Sent(_)));
         assert!(!terminal.shared_memory() && terminal.output().names.iter().all(missing));              // unlinked here, transport switched off
         let text = String::from_utf8(terminal.output().output.clone()).unwrap();
         assert!(text.find("t=s,").unwrap() < text.find("t=d,").unwrap() && text.find("t=d,").unwrap() < text.find("a=p,").unwrap());
@@ -391,7 +391,7 @@ mod shared_tests {
         assert_eq!(decoded, rgb(&frame));                                                                 // the streamed copy is the whole image
         let mut changed = frame; changed.stars_mut()[30] = Texel { rgb: [0.2, 0.2, 1.0], opacity: 1.0 };
         let before = terminal.output().names.len();
-        assert!(matches!(present(&changed, &mut terminal, &mut crate::timing::StepTimes::default()).unwrap(), Presented::Sent(_)));
+        assert!(matches!(present(&changed, &mut terminal, &mut crate::time::StepTimes::default()).unwrap(), Presented::Sent(_)));
         assert_eq!(terminal.output().names.len(), before);                                                // no further shared attempt this session
     }
 
@@ -401,11 +401,11 @@ mod shared_tests {
         let mut terminal = terminal(false, false);
         terminal.output().fail_upload = true;
         let id = terminal.kitty_image_id();
-        assert!(present(&frame, &mut terminal, &mut crate::timing::StepTimes::default()).is_err());
+        assert!(present(&frame, &mut terminal, &mut crate::time::StepTimes::default()).is_err());
         assert_eq!(terminal.kitty_image_id(), id);
         assert!(terminal.output().names.iter().all(missing));
         assert!(!String::from_utf8(terminal.output().output.clone()).unwrap().contains("a=p,"));
         terminal.output().fail_upload = false;
-        assert!(matches!(present(&frame, &mut terminal, &mut crate::timing::StepTimes::default()).unwrap(), Presented::Sent(_)));                  // the next frame is sent whole
+        assert!(matches!(present(&frame, &mut terminal, &mut crate::time::StepTimes::default()).unwrap(), Presented::Sent(_)));                  // the next frame is sent whole
     }
 }

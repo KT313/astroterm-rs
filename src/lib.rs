@@ -8,7 +8,7 @@
 //! calculated samples and rendered tile. Definitions are collected in `model/data.rs`; processing algorithms
 //! remain in the step modules. Catalog columns stay unchanged during frames, while their caches update in place.
 //!
-//! Pure foundations ([`astro`], [`catalog`], [`rows`], [`progress`], [`timing`] and [`text`]) support the model.
+//! Pure foundations ([`astro`], [`catalog`], [`rows`], [`progress`], [`time`] and [`text`]) support the model.
 //! [`astro::models`] supplies astronomy formulas. [`controls`] changes the view and simulation clock; [`cli`]
 //! validates options; [`terminal`] handles input, transport and terminal restoration. Callers import public
 //! symbols from each module's root, not its implementation folders.
@@ -38,4 +38,5 @@ pub mod solar_system;
 pub mod sky;
 pub mod terminal;
 pub mod text;
-pub mod timing;
+/// Self-contained simulation clocks and timing; application settings are supplied by callers.
+pub mod time;

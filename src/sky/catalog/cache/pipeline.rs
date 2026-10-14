@@ -1,7 +1,7 @@
 //! Resolve the selected dataset, reuse validated prepared data, or prepare the source catalog.
 use crate::catalog::datasets::{Dataset, DatasetDirectories};
 use crate::model::PreparedCatalog;
-use crate::timing::StepTimes;
+use crate::time::StepTimes;
 use std::io::{self, Write};
 use crate::progress::{DatasetProgress, Report};
 use super::loading::{
@@ -28,13 +28,15 @@ fn load_reported_catalog(dataset: Option<&Dataset>, parallel_blocks: u8, directo
     if let Dataset::GaiaGdr3 { files } = dataset {
         return report_clipping(super::gaia::load_gaia_catalog(*files, directories, notices, times)?, notices);
     }
-    let source = times.measure("Dataset resolution", || crate::catalog::datasets::resolve_dataset(dataset, directories, notices))?;
-    times.describe("Dataset resolution", || format!("source={}", source.display()));
+    times.measure("Dataset loading.Dataset resolution");
+    let source = crate::catalog::datasets::resolve_dataset(dataset, directories, notices)?;
+    times.describe("Dataset loading.Dataset resolution", || format!("source={}", source.display()));
     let path = resolve_cache_path(&source, directories, notices); // find an optional prepared-cache location
     let fingerprint = fingerprint_source(&path);                // identify the source and all preparation rules
     if let Some(catalog) = try_load_prepared_catalog(&path, &fingerprint, notices, times)? { return report_clipping(catalog, notices); }
 
-    let parsed = times.measure_steps("AT-HYG loading", |times| crate::catalog::load_athyg_catalog(&source, &mut Report::live(notices, times))).map_err(io::Error::other)?;
+    times.measure("Dataset loading.AT-HYG loading");
+    let parsed = crate::catalog::load_athyg_catalog(&source, &mut Report::live(notices, times)).map_err(io::Error::other)?;
     let catalog = prepare_catalog(parsed, times, notices)?;               // compact and index the parsed stars
     write_prepared_catalog_if_stable(path, &source, &catalog, &fingerprint, notices, times)?; // save only if the source stayed unchanged
     report_clipping(catalog, notices)

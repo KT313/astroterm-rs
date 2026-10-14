@@ -92,23 +92,24 @@ fn real_catalog_quantization_stays_within_half_an_arcsecond() {
 fn athyg_builds_validated_group_tables_from_source_and_cache() {
     use astroterm::catalog::datasets::{Dataset, DatasetDirectories};
     use astroterm::progress::NoProgress;
-    use astroterm::timing::StepTimes;
+    use astroterm::time::StepTimes;
     let cache = tempfile::tempdir().unwrap();
     let directories = DatasetDirectories { data: None, cache: Some(cache.path().into()) };
     let dataset = Dataset::Path(DATASET.into());
     let mut notices = Vec::new();
     let started = std::time::Instant::now();
-    let prepared = astroterm::sky::load_sky_catalog(Some(&dataset), astroterm::constants::MAST_PARALLEL_BLOCKS, &directories, &mut astroterm::progress::Report::live(&mut astroterm::progress::NoProgress(&mut notices), &mut astroterm::timing::StepTimes::default())).unwrap();
+    let prepared = astroterm::sky::load_sky_catalog(Some(&dataset), astroterm::constants::MAST_PARALLEL_BLOCKS, &directories, &mut astroterm::progress::Report::live(&mut astroterm::progress::NoProgress(&mut notices), &mut astroterm::time::StepTimes::default())).unwrap();
     eprintln!("prepared {} stars in {:?}", prepared.catalog.stars.len(), started.elapsed());
     let started = std::time::Instant::now();
     let mut times = StepTimes::with_trace(true);
     let tables = astroterm::sky::build_sky_tables(&prepared, &mut astroterm::progress::Report::live(&mut NoProgress(std::io::sink()), &mut times)).unwrap();
     eprintln!("built and validated the group tables in {:?}", started.elapsed());
+    times.measure("END");
     for step in &times.trace().unwrap().steps { eprintln!("  {} {:.3}s {}", step.name, step.seconds, step.details.join("; ")); }
     assert_eq!(tables.region_star_count() + tables.constellation_stars.len(), prepared.catalog.stars.len());
     assert!(tables.region_star_count() > 2_500_000);
     assert_eq!(tables.constellation_stars.len(), prepared.catalog.endpoint_indices().len());
-    let cached = astroterm::sky::load_sky_catalog(Some(&dataset), astroterm::constants::MAST_PARALLEL_BLOCKS, &directories, &mut astroterm::progress::Report::live(&mut astroterm::progress::NoProgress(&mut notices), &mut astroterm::timing::StepTimes::default())).unwrap();
+    let cached = astroterm::sky::load_sky_catalog(Some(&dataset), astroterm::constants::MAST_PARALLEL_BLOCKS, &directories, &mut astroterm::progress::Report::live(&mut astroterm::progress::NoProgress(&mut notices), &mut astroterm::time::StepTimes::default())).unwrap();
     assert_eq!(cached, prepared);
     let from_cache = astroterm::sky::build_sky_tables(&cached, &mut astroterm::progress::Report::quiet()).unwrap();
     assert_eq!(from_cache, tables);

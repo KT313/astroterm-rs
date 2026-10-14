@@ -8,7 +8,7 @@ use astroterm::projection::{Frame, project_stars_to_screen};
 use astroterm::regions::refresh_regions;
 use astroterm::selection::select_regions;
 use astroterm::solar_system::simulate_solar_system;
-use astroterm::timing::StepTimes;
+use astroterm::time::StepTimes;
 use ratatui::layout::Rect;
 use ratatui_image::picker::ProtocolType;
 
@@ -17,22 +17,22 @@ fn render(data: &mut Data, frame: &mut Frame, terminal: &mut Terminal<Vec<u8>>, 
     let view = View::default();
     let settings = RenderOptions { unicode: true, braille: false, color: true, constellations: true, grid: false, magnitude_threshold: 6.0, dynamic_names: true };
     times.begin_frame();
-    times.measure_checkpoint("Solar system");
+    times.measure("Solar system");
     let solar = simulate_solar_system(data, time, times);
-    times.measure_checkpoint("Observation");
+    times.measure("Observation");
     let observation = observe(&Observer::default(), true, &view, time, times);
-    times.measure_checkpoint("Selection");
+    times.measure("Selection");
     let selected = select_regions(&data.star_regions, &observation, times);
-    times.measure_checkpoint("Regions");
+    times.measure("Regions");
     refresh_regions(data, &selected, time, &view, &settings, times);
-    times.measure_checkpoint("Projection");
+    times.measure("Projection");
     project_stars_to_screen(frame, data, &selected, &observation, &view, times);
     let inputs = PointInputs { solar_system: &solar, data, selected: &selected, panel: &[], notice: None };
-    times.measure_checkpoint("Points");
+    times.measure("Points");
     draw_points(frame, &inputs, &observation, &view, &settings, times);
-    times.measure_checkpoint("Present");
+    times.measure("Present");
     let presented = present(frame, terminal, times);
-    times.measure_checkpoint("END");
+    times.measure("END");
     presented.unwrap()
 }
 
@@ -85,9 +85,9 @@ fn failed_presentation_can_finish_its_checkpoint_before_propagating_the_error() 
     let mut terminal = Terminal::new(FailedOutput, ProtocolType::Sixel, false, Rect::new(0, 0, 2, 2), false, false);
     let mut times = StepTimes::with_trace(true);
     times.begin_frame();
-    times.measure_checkpoint("Present");
+    times.measure("Present");
     let result = present(&frame, &mut terminal, &mut times);
-    times.measure_checkpoint("END");
+    times.measure("END");
 
     assert_eq!(result.unwrap_err().to_string(), "test write failure");
     assert!(times.capture_steps().is_ok());

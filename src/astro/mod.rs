@@ -52,7 +52,7 @@ pub use models::stars::compute_star_position;
 pub use notation::{DegreesMinutesSeconds, ElapsedTime, ZodiacSign, azimuth_to_compass, compass_point_to_azimuth};
 pub use orbital::OrbitalElements;
 pub use time::{
-    FrameTime, J2000, SimulationClock, current_julian_date, datetime_to_julian_date, earth_rotation_angle, estimate_delta_t,
+    FrameTime, J2000, current_julian_date, datetime_to_julian_date, earth_rotation_angle, estimate_delta_t,
     greenwich_mean_sidereal_time, julian_date_to_utc, parse_utc_datetime, ut1_to_tt,
 };
 

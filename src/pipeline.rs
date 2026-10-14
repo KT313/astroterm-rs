@@ -13,9 +13,7 @@ use astroterm::regions::{RefreshReport, refresh_regions};
 use astroterm::selection::{Selected, select_regions};
 use astroterm::solar_system::simulate_solar_system;
 use astroterm::terminal::poll_frame_input;
-use astroterm::timing::StepTimes;
-
-use crate::time::TimeManager;
+use astroterm::time::{StepTimes, TimeManager};
 
 use crate::helpers::{
     BenchmarkSession, Panel, PanelFrame, apply_frame_controls, begin_frame_diagnostics, capture_display,

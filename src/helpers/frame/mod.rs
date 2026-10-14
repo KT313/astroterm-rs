@@ -1,5 +1,6 @@
 //! What the frame loop does around the seven steps: controls and the clock, and the metadata panel's lines.
-use astroterm::astro::{FrameTime, Observer, SimulationClock, name_moon_phase};
+use astroterm::time::SimulationClock;
+use astroterm::astro::{FrameTime, Observer, name_moon_phase};
 use astroterm::controls::{Control, apply_control};
 use astroterm::metadata::{MetadataField, ObserverTimeZone, append_step_time_fields, fill_metadata_fields, format_star_count, resolve_observer_timezone};
 use astroterm::model::{Config, Data, View};
@@ -8,7 +9,7 @@ use astroterm::regions::RefreshReport;
 use astroterm::selection::Selected;
 use astroterm::solar_system::SolarSystem;
 use astroterm::terminal::FrameInput;
-use astroterm::timing::StepTimes;
+use astroterm::time::StepTimes;
 use ratatui_image::picker::ProtocolType;
 
 /// Apply a frame's controls to the view and the clock. The caller checks for quit first.

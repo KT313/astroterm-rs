@@ -10,7 +10,7 @@ use astroterm::astro::FrameTime;
 use astroterm::model::Config;
 use astroterm::present::{CompressionSupport, DisplayInfo, Presented};
 use serde::Serialize;
-use astroterm::timing::StepTimes;
+use astroterm::time::StepTimes;
 use ratatui_image::picker::ProtocolType;
 
 /// Report diagnostics and the original rendering result after the terminal scope has dropped its guard.

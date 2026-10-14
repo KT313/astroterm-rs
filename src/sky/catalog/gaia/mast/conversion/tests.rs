@@ -133,6 +133,7 @@ fn mast_measure_compact_preparation_and_labels() {
 
 #[derive(Default)]
 struct LoadingProgress {
+    conversions: usize,
     text: Vec<u8>,
     stages: Vec<crate::progress::Stage>,
     active: Option<crate::progress::Stage>,
@@ -147,6 +148,10 @@ impl std::io::Write for LoadingProgress {
     fn flush(&mut self) -> io::Result<()> { Ok(()) }
 }
 impl DatasetProgress for LoadingProgress {
+    fn set_detail(&mut self, detail: &str) {
+        if detail == "Converting star measurements" { self.conversions += 1; }
+    }
+
     fn begin_stage(&mut self, stage: crate::progress::Stage, _: &str, unit: crate::progress::Unit, total: Option<u64>) {
         self.stages.push(stage);
         self.active = Some(stage);
@@ -216,8 +221,11 @@ fn mast_loading_uses_one_bar_for_cold_cached_and_mixed_blocks() {
         assert_eq!(progress.positions, vec![0, 1, 2]);                                           // a partial final block still counts once, including skipped duplicate rows
         assert_eq!(progress.completed, 1);
         assert_eq!(progress.stages, [crate::progress::Stage::Convert, crate::progress::Stage::CheckIds, crate::progress::Stage::AssignRegions, crate::progress::Stage::Sort, crate::progress::Stage::Reorder, crate::progress::Stage::Index]);
-        let conversions = times.trace().unwrap().steps.iter().filter(|step| step.name == "MAST block conversion").count();
-        assert_eq!(conversions, cached.iter().filter(|&&hit| !hit).count());
+        times.measure("END");
+        assert_eq!(progress.conversions, cached.iter().filter(|&&hit| !hit).count());
+        let conversion_rows = times.trace().unwrap().steps.iter().filter(|step| step.name == "MAST block conversion").count();
+        assert_eq!(conversion_rows, usize::from(progress.conversions > 0)); // repeated blocks share one timing row
+
         if let Some(expected) = &expected { assert_eq!(&catalog, expected); } else { expected = Some(catalog); }
     }
 }

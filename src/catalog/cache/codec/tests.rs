@@ -8,7 +8,7 @@ fn streaming_chunks_preserve_bits_and_cross_element_boundaries() {
     let input: Vec<[u32; 3]> = (0..CACHE_CHUNK_BYTES / 12 + 5).map(|i| [i as u32, !i as u32, 0]).collect();
     for length in [0, 1, CACHE_CHUNK_BYTES, CACHE_CHUNK_BYTES + 1] {
         let bytes = vec![17; length];
-        write_sections(&path, &[4; 32], &[&bytes, bytemuck::cast_slice(&input)], &mut sink(), &mut crate::timing::StepTimes::default()).unwrap();
+        write_sections(&path, &[4; 32], &[&bytes, bytemuck::cast_slice(&input)], &mut sink(), &mut crate::time::StepTimes::default()).unwrap();
         let mut reader = PreparedCatalogReader::open(&path, &[4; 32], &mut sink()).unwrap();
         assert_eq!(reader.decode::<u8>(0, &mut sink()).unwrap(), bytes);
         assert_eq!(reader.decode::<[u32; 3]>(1, &mut sink()).unwrap(), input);
@@ -20,7 +20,7 @@ fn streaming_chunks_preserve_bits_and_cross_element_boundaries() {
 fn corrupt_headers_lengths_frames_and_trailers_fail_closed() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("cache");
-    write_sections(&path, &[7; 32], &[&[42; 128]], &mut sink(), &mut crate::timing::StepTimes::default()).unwrap();
+    write_sections(&path, &[7; 32], &[&[42; 128]], &mut sink(), &mut crate::time::StepTimes::default()).unwrap();
     let original = std::fs::read(&path).unwrap();
     for case in 0..10 {
         let mut bytes = original.clone();
@@ -51,7 +51,7 @@ fn corrupt_headers_lengths_frames_and_trailers_fail_closed() {
 fn chunk_padding_extra_frames_and_incorrect_directory_sizes_are_rejected() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("cache");
-    write_sections(&path, &[3; 32], &[&[1; 100]], &mut sink(), &mut crate::timing::StepTimes::default()).unwrap();
+    write_sections(&path, &[3; 32], &[&[1; 100]], &mut sink(), &mut crate::time::StepTimes::default()).unwrap();
     let original = std::fs::read(&path).unwrap();
     for case in 0..4 {
         let mut bytes = original.clone();
@@ -89,7 +89,7 @@ fn publication_failure_keeps_existing_destination_and_write_errors_propagate() {
     let path = root.path().join("occupied");
     std::fs::create_dir(&path).unwrap();
     std::fs::write(path.join("keep"), b"unchanged").unwrap();
-    assert!(write_sections(&path, &[0; 32], &[b"test"], &mut sink(), &mut crate::timing::StepTimes::default()).is_err());
+    assert!(write_sections(&path, &[0; 32], &[b"test"], &mut sink(), &mut crate::time::StepTimes::default()).is_err());
     assert_eq!(std::fs::read(path.join("keep")).unwrap(), b"unchanged");
     struct Failing;
     impl Write for Failing {
@@ -106,7 +106,7 @@ fn concurrent_publications_leave_one_complete_stream() {
     std::thread::scope(|scope| {
         for value in [19u8, 211] {
             let path = &path;
-            scope.spawn(move || write_sections(path, &[9; 32], &[&vec![value; 10000]], &mut sink(), &mut crate::timing::StepTimes::default()).unwrap());
+            scope.spawn(move || write_sections(path, &[9; 32], &[&vec![value; 10000]], &mut sink(), &mut crate::time::StepTimes::default()).unwrap());
         }
     });
     let mut reader = PreparedCatalogReader::open(&path, &[9; 32], &mut sink()).unwrap();

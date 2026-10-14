@@ -23,8 +23,8 @@ fn main() {
     };
     for date in [2451545.0, 2459146.0, 2460736.9583333335] {
         let time = FrameTime::from_utc(date);
-        let system = simulate_solar_system(&bodies, time, &mut astroterm::timing::StepTimes::default());
-        let observation = observe(&observer, false, &View::default(), time, &mut astroterm::timing::StepTimes::default());
+        let system = simulate_solar_system(&bodies, time, &mut astroterm::time::StepTimes::default());
+        let observation = observe(&observer, false, &View::default(), time, &mut astroterm::time::StepTimes::default());
         for name in ["Vega", "Arcturus"] {
             let star = catalog.stars.iter().find(|star| catalog.star_name(star) == Some(name)).unwrap();
             let sample = star.motion.evaluate(years_since_j2000(time.tt), star.magnitude);

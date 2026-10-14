@@ -9,6 +9,7 @@ reading Rust.
    in EXEMPT_DEEP still exceed it; they are listed in the output as pending the owner's decision, not failures.
 3. No function has a `_with_progress` or `_with_times` twin: no function name carries either suffix.
 4. No `super::super::super` paths.
+5. time/ has no imports from other application modules, including in its tests.
 
 Test code is not checked for rule 1: files declared with `#[cfg(test)] mod name;`, files named `tests.rs` or
 `*_tests.rs`, and everything after the first line that is exactly `#[cfg(test)]`.
@@ -83,6 +84,9 @@ def main():
                 exemptions.append(f"{relative}: module level {depth}")
             else:
                 failures.append(f"{relative}: module level {depth} exceeds two below src/")
+    for path in (SRC / "time").rglob("*.rs"):
+        if re.search(r"\b(?:crate|astroterm)::(?!time\b)", path.read_text()):
+            failures.append(f"{path.relative_to(ROOT)}: time/ depends on another application module")
     for item in failures: print(item)
     print(f"{len(files)} files checked, {len(failures)} violations, {len(exemptions)} deep loader files exempt (owner decision): "
           + ", ".join(sorted({str(pathlib.Path(e.split(':')[0]).parent) for e in exemptions})))

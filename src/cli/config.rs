@@ -93,7 +93,7 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
     let frame_benchmark = arguments.debug_frames.map(|frames| {
         let step_seconds = arguments.debug_frame_step_seconds.unwrap_or(0.0);
         let last = frames.checked_sub(1).ok_or_else(|| ConfigError("Frame count must be positive".into()))?;
-        let mut clock = crate::astro::SimulationClock::start_fixed_step(start_julian_date, step_seconds);
+        let mut clock = crate::time::SimulationClock::start_fixed_step(start_julian_date, step_seconds);
         if !step_seconds.is_finite() || clock.set_frame_index(last).is_err() {
             return Err(ConfigError("Benchmark step and scheduled final date must be finite".into()));
         }

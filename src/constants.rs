@@ -75,9 +75,6 @@ pub const METADATA_TAB_WIDTH: usize = 8;                                        
 pub const METADATA_VALUE_COLUMN: usize = 16;                                              // earliest column where metadata values begin
 pub const KEYS_COLUMN_WIDTH: usize = 18;                                                  // space reserved for key names in the help text
 
-// Timing smoothing
-pub const TIMING_EMA_FACTOR: f64 = 0.95;                                                  // keep 95% of the old timing average and add 5% of the new value
-
 // Memory inventory and table preview limits
 pub const INVENTORY_MAX_ROWS: usize = 4096;                                               // maximum rows in a memory-usage report
 pub const INVENTORY_MAX_DEPTH: usize = 16;                                                // maximum nesting inspected while measuring memory usage

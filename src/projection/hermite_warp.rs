@@ -8,7 +8,7 @@ use crate::observation::Observation;
 use crate::projection::{CartesianCamera, Frame, SkyArea, project_camera};
 use crate::regions::TileGeometry;
 use crate::selection::Selected;
-use crate::timing::StepTimes;
+use crate::time::StepTimes;
 use super::patch_warp::{CurvedPatch, project_curved_tiles};
 use super::raster::Point;
 use super::tile_warp::{contains_antipode, is_convex};

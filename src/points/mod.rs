@@ -9,7 +9,7 @@
 //!
 //! Positions come from the observation (`apparent_direction`) and the keep-list projection geometry, exactly as
 //! the old per-star path computed them, so bodies and lines land where the old renderer put them.
-use crate::timing::StepTimes;
+use crate::time::StepTimes;
 use crate::astro::Vector3;
 use crate::astro::accuracy::{ACCURACY_WARNING, needs_accuracy_warning};
 use crate::catalog::{MAGNITUDE_CLIPPING_WARNING, NameId, magnitude_code};
@@ -69,7 +69,7 @@ const PANEL_RGB: [u8; 3] = [255, 255, 255];
 /// Draw everything but the warped stars into the frame.
 pub fn draw_points(frame: &mut Frame, inputs: &PointInputs<'_>, observation: &Observation, view: &View, settings: &RenderOptions, times: &mut StepTimes) -> Drawn {
     let mut drawn = Drawn::default();
-    times.measure_checkpoint("Points.Overlay clear");
+    times.measure("Points.Overlay clear");
     frame.clear_overlay();
     if frame.width() == 0 || frame.height() == 0 { return drawn; }                       // nothing to draw on
     let sky = frame.sky();
@@ -83,7 +83,7 @@ pub fn draw_points(frame: &mut Frame, inputs: &PointInputs<'_>, observation: &Ob
     let constellations = &inputs.data.constellation_stars;
     let simulation = &inputs.data.constellation_simulation;
     let rows = simulation.len().min(constellations.len());
-    times.measure_checkpoint("Points.Constellation stars");
+    times.measure("Points.Constellation stars");
     let endpoint_pixels = {
         let mut endpoint_pixels = Vec::with_capacity(constellations.len());
         for row in 0..rows {
@@ -108,7 +108,7 @@ pub fn draw_points(frame: &mut Frame, inputs: &PointInputs<'_>, observation: &Ob
     {
         let (overlay, _) = frame.overlay_and_text();
         let mut canvas = PixmapMut::from_bytes(overlay, width as u32, height as u32).expect("the overlay is width × height RGBA");
-        times.measure_checkpoint("Points.Sky lines");
+        times.measure("Points.Sky lines");
         {
             if view.is_facing() {
                 for [a, b] in project_horizon_line(view, viewport) {
@@ -128,12 +128,12 @@ pub fn draw_points(frame: &mut Frame, inputs: &PointInputs<'_>, observation: &Ob
                 }
             }
         };
-        times.measure_checkpoint("Points.Solar-system drawing");
+        times.measure("Points.Solar-system drawing");
         drawn.bodies = draw_bodies(&mut canvas, &pixel_of, inputs, observation, view, &mut drawn.body_labels);
     }
 
     // text: labels for the brightest stars, bodies and directions, the panel, the notices
-    times.measure_checkpoint("Points.Label selection");
+    times.measure("Points.Label selection");
     {
         drawn.star_labels = select_star_labels(inputs, observation, settings, &pixel_of, sky, &endpoint_pixels);
         drawn.direction_labels = direction_labels(sky, view, settings, viewport);
@@ -142,7 +142,7 @@ pub fn draw_points(frame: &mut Frame, inputs: &PointInputs<'_>, observation: &Ob
     let cell = frame.text_cell();
     let (cell_width, cell_height) = (i32::from(cell.0), i32::from(cell.1));
     let (overlay, text) = frame.overlay_and_text();
-    times.measure_checkpoint("Points.Text rasterization");
+    times.measure("Points.Text rasterization");
     {
         for label in drawn.star_labels.iter().chain(&drawn.body_labels) {
             draw_text_over(text, overlay, width, height, &label.text, (label.pixel.1 + cell_width, label.pixel.0 - cell_height), label.rgb);
@@ -456,18 +456,18 @@ mod tests {
     /// The whole frame for `tables` at `view`: steps 1 to 4 and 6 (the star layer stays empty unless asked).
     fn draw(tables: &Data, view: &View, days: f64, settings: &RenderOptions, frame: &mut Frame) -> (Drawn, Observation) {
         let time = FrameTime::from_utc(J2000 + days);
-        let observation = observe(&boston(), false, view, time, &mut crate::timing::StepTimes::default());
-        let solar_system = simulate_solar_system(tables, time, &mut crate::timing::StepTimes::default());
-        let selected = select_regions(&tables.star_regions, &observation, &mut crate::timing::StepTimes::default());
+        let observation = observe(&boston(), false, view, time, &mut crate::time::StepTimes::default());
+        let solar_system = simulate_solar_system(tables, time, &mut crate::time::StepTimes::default());
+        let selected = select_regions(&tables.star_regions, &observation, &mut crate::time::StepTimes::default());
         let mut caches = tables.clone();
-        refresh_regions(&mut caches, &selected, time, view, settings, &mut crate::timing::StepTimes::default());
+        refresh_regions(&mut caches, &selected, time, view, settings, &mut crate::time::StepTimes::default());
         let inputs = PointInputs { solar_system: &solar_system, data: &caches, selected: &selected, panel: &[], notice: None };
-        (draw_points(frame, &inputs, &observation, view, settings, &mut crate::timing::StepTimes::default()), observation)
+        (draw_points(frame, &inputs, &observation, view, settings, &mut crate::time::StepTimes::default()), observation)
     }
 
     /// Catalog directions at the given horizon altitude and azimuth (degrees) for the zenith view at J2000.
     fn catalog_direction(azimuth_degrees: f64, altitude_degrees: f64) -> Vector3 {
-        let observation = observe(&boston(), false, &View::default(), FrameTime::from_utc(J2000), &mut crate::timing::StepTimes::default());
+        let observation = observe(&boston(), false, &View::default(), FrameTime::from_utc(J2000), &mut crate::time::StepTimes::default());
         observation.to_catalog.apply(crate::astro::Horizontal { azimuth: azimuth_degrees.to_radians(), altitude: altitude_degrees.to_radians() }.to_unit_vector())
     }
 
@@ -590,7 +590,7 @@ mod tests {
         let (drawn, observation) = draw(&tables, &view, 3000.0, &settings(), &mut frame);
         assert_eq!(drawn.star_labels.len(), DYNAMIC_NAME_COUNT);
         assert!(drawn.bodies >= 1 && drawn.body_labels.len() == drawn.bodies);
-        let solar_system = simulate_solar_system(&tables, observation.time, &mut crate::timing::StepTimes::default());
+        let solar_system = simulate_solar_system(&tables, observation.time, &mut crate::time::StepTimes::default());
         let camera = prepare_camera(&view);
         for label in &drawn.body_labels {
             let position = match label.text.as_str() {
@@ -712,13 +712,13 @@ mod tests {
         let (none, _) = draw(&tables, &View::default(), 0.0, &settings(), &mut frame);
         assert!(none.notices.is_empty());
         let time = FrameTime::from_utc(J2000 + 30000.0 * 365.25);
-        let observation = observe(&boston(), false, &View::default(), time, &mut crate::timing::StepTimes::default());
-        let solar_system = simulate_solar_system(&clipped, time, &mut crate::timing::StepTimes::default());
-        let selected = select_regions(&clipped.star_regions, &observation, &mut crate::timing::StepTimes::default());
+        let observation = observe(&boston(), false, &View::default(), time, &mut crate::time::StepTimes::default());
+        let solar_system = simulate_solar_system(&clipped, time, &mut crate::time::StepTimes::default());
+        let selected = select_regions(&clipped.star_regions, &observation, &mut crate::time::StepTimes::default());
         let mut caches = clipped.clone();
-        refresh_regions(&mut caches, &selected, time, &View::default(), &settings(), &mut crate::timing::StepTimes::default());
+        refresh_regions(&mut caches, &selected, time, &View::default(), &settings(), &mut crate::time::StepTimes::default());
         let inputs = PointInputs { solar_system: &solar_system, data: &caches, selected: &selected, panel: &[], notice: Some("Shared memory unavailable; using streaming.") };
-        let streaming = draw_points(&mut frame, &inputs, &observation, &View::default(), &settings(), &mut crate::timing::StepTimes::default());
+        let streaming = draw_points(&mut frame, &inputs, &observation, &View::default(), &settings(), &mut crate::time::StepTimes::default());
         assert_eq!(streaming.notices, [ACCURACY_WARNING, MAGNITUDE_CLIPPING_WARNING, "Shared memory unavailable; using streaming."]); // the display's notice on top
     }
 
@@ -729,20 +729,20 @@ mod tests {
         let tables = bsc5();
         let view = View { center: ViewCenter::Facing { azimuth: 3.5, tilt: 0.6 }, projection: ProjectionKind::Stereographic, fov_degrees: 120.0 };
         let time = FrameTime::from_utc(J2000);
-        let observation = observe(&boston(), true, &view, time, &mut crate::timing::StepTimes::default());
-        let solar_system = simulate_solar_system(&tables, time, &mut crate::timing::StepTimes::default());
-        let selected = select_regions(&tables.star_regions, &observation, &mut crate::timing::StepTimes::default());
+        let observation = observe(&boston(), true, &view, time, &mut crate::time::StepTimes::default());
+        let solar_system = simulate_solar_system(&tables, time, &mut crate::time::StepTimes::default());
+        let selected = select_regions(&tables.star_regions, &observation, &mut crate::time::StepTimes::default());
         let mut caches = tables.clone();
         let settings = RenderOptions { magnitude_threshold: 9.0, ..settings() };
-        refresh_regions(&mut caches, &selected, time, &view, &settings, &mut crate::timing::StepTimes::default());
+        refresh_regions(&mut caches, &selected, time, &view, &settings, &mut crate::time::StepTimes::default());
         let fields = vec![MetadataField { label: "Date".into(), value: "2000-01-01".into() }; 12];
         let inputs = PointInputs { solar_system: &solar_system, data: &caches, selected: &selected, panel: &fields, notice: None };
         let mut frame = Frame::new(1920, 1100, SkyArea::centred(1920, 1100), (9, 17));
-        draw_points(&mut frame, &inputs, &observation, &view, &settings, &mut crate::timing::StepTimes::default());
+        draw_points(&mut frame, &inputs, &observation, &view, &settings, &mut crate::time::StepTimes::default());
         let started = std::time::Instant::now();
         let frames = 10;
         let mut drawn = Drawn::default();
-        for _ in 0..frames { drawn = draw_points(&mut frame, &inputs, &observation, &view, &settings, &mut crate::timing::StepTimes::default()); }
+        for _ in 0..frames { drawn = draw_points(&mut frame, &inputs, &observation, &view, &settings, &mut crate::time::StepTimes::default()); }
         eprintln!("draw_points {:?} per frame: {} endpoint stars, {} arcs, {} bodies, {} star labels, {} direction labels", started.elapsed() / frames, drawn.endpoint_stars, drawn.arcs, drawn.bodies, drawn.star_labels.len(), drawn.direction_labels.len());
     }
 
@@ -750,14 +750,14 @@ mod tests {
     fn the_metadata_panel_is_painted_at_the_top_left() {
         let tables = stars(&[]);
         let time = FrameTime::from_utc(J2000);
-        let observation = observe(&boston(), true, &View::default(), time, &mut crate::timing::StepTimes::default());
-        let solar_system = simulate_solar_system(&tables, time, &mut crate::timing::StepTimes::default());
-        let selected = select_regions(&tables.star_regions, &observation, &mut crate::timing::StepTimes::default());
+        let observation = observe(&boston(), true, &View::default(), time, &mut crate::time::StepTimes::default());
+        let solar_system = simulate_solar_system(&tables, time, &mut crate::time::StepTimes::default());
+        let selected = select_regions(&tables.star_regions, &observation, &mut crate::time::StepTimes::default());
         let caches = tables.clone();
         let fields = [MetadataField { label: "Date".into(), value: "2000-01-01".into() }, MetadataField { label: "Site".into(), value: "Boston".into() }];
         let mut frame = Frame::new(301, 201, SkyArea::centred(301, 201), (10, 20));
         let inputs = PointInputs { solar_system: &solar_system, data: &caches, selected: &selected, panel: &fields, notice: None };
-        draw_points(&mut frame, &inputs, &observation, &View::default(), &RenderOptions { dynamic_names: false, ..settings() }, &mut crate::timing::StepTimes::default());
+        draw_points(&mut frame, &inputs, &observation, &View::default(), &RenderOptions { dynamic_names: false, ..settings() }, &mut crate::time::StepTimes::default());
         let line = |row: i32| (0..301).filter(|&column| overlay_pixel(&frame, row, column)[3] > 0).count();
         assert!(line(10) > 20 && line(30) > 20, "two text lines at rows 0..40");
         assert_eq!((60..100).map(line).sum::<usize>(), 0);

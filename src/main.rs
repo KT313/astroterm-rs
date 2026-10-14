@@ -2,7 +2,6 @@
 
 mod helpers;
 mod pipeline;
-mod time;
 
 use std::io;
 use std::process::ExitCode;
@@ -13,8 +12,7 @@ use astroterm::catalog::datasets::DatasetDirectories;
 use astroterm::cli::Arguments;
 use astroterm::constants::{SPEED_GROUP_BOUNDS, SPEED_GROUP_TTL_SECONDS};
 use astroterm::model::{Config, Data};
-use time::StartupTiming;
-use astroterm::timing::StepTimes;
+use astroterm::time::{StartupTiming, StepTimes};
 
 use helpers::{
     BenchmarkSession, Panel, begin_benchmark_capture, capture_display, finish_benchmark_report, finish_rendering, load_catalog, load_cities, open_display, open_frame_benchmark,
@@ -25,15 +23,11 @@ use pipeline::run_frame_loop;
 /// Parse options, build the sky data, and render until the user quits.
 fn main() -> ExitCode {
 
-    // Each speed group needs a TTL, including the group above the final speed threshold.
-    assert_eq!(
-        SPEED_GROUP_TTL_SECONDS.len(),
-        SPEED_GROUP_BOUNDS.len() + 1,
-        "SPEED_GROUP_TTL_SECONDS must have exactly one more entry than SPEED_GROUP_BOUNDS",
-    );
+    assert_stuff();
 
     let arguments = Arguments::parse();
-    let mut startup_timing = StartupTiming::new(&arguments);                                             // capture startup timings when diagnostics are requested
+    let capture_trace = arguments.debug_singleframe || arguments.debug_frames.is_some();
+    let mut startup_timing = StartupTiming::new(capture_trace, arguments.debug_frametimes);             // capture startup timings when diagnostics are requested
     let Ok(cities) = load_cities(&mut startup_timing.step_times) else { return ExitCode::FAILURE; };     // load city data
     if arguments.bash_completions { return print_bash_completions(&cities); }                            // print shell completions and exit
     let Ok(config) = validate_arguments(arguments, &cities) else { return ExitCode::FAILURE; };          // validate config options
@@ -65,7 +59,19 @@ fn render_in_terminal(config: &Config, data: &mut Data, mut startup_timing: Star
     }
 
     // Only the initialized manager can enter the loop; return its measurements after rendering.
-    let mut time_manager = startup_timing.start_simulation(config);
+    let frame_step_seconds = config.frame_benchmark.as_ref().map(|benchmark| benchmark.step_seconds);
+    let mut time_manager = startup_timing.start_simulation(
+        config.simulation.start_julian_date, config.simulation.speed, config.fps, frame_step_seconds,
+    );
     let result = run_frame_loop(config, data, &mut display, &mut frame, &mut panel, &mut time_manager, benchmark);
     (result, time_manager.step_times)
+}
+
+fn assert_stuff() {
+    // Each speed group needs a TTL, including the group above the final speed threshold.
+    assert_eq!(
+        SPEED_GROUP_TTL_SECONDS.len(),
+        SPEED_GROUP_BOUNDS.len() + 1,
+        "SPEED_GROUP_TTL_SECONDS must have exactly one more entry than SPEED_GROUP_BOUNDS",
+    );
 }

@@ -41,8 +41,8 @@ Each flushed JSONL record is available while the program runs. Transport schema 
   report-write failure may leave an incomplete file; a missing end record must never be treated as success.
 
 Step records contain a name, parent index within the same segment, raw seconds, and directly recorded
-diagnostic seconds. Startup scopes preserve repeated calls in invocation order. Frame checkpoints use dotted
-paths, such as `Solar system.Earth state`, and aggregate repeated paths into one row per frame. Any number of
+diagnostic seconds. Startup and frame checkpoints use dotted paths, such as `Dataset loading.Catalog preparation`
+and `Solar system.Earth state`. Repeated paths aggregate into one row per capture segment. Any number of
 path levels is supported; the serialized rows retain separate names and parent indices. These are unsmoothed
 measurements, not the timing panel's moving averages. Parent durations include children: do not add them together.
 

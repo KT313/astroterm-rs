@@ -1,6 +1,6 @@
 //! Block-local results preserve physical ordinals through missing fields, duplicates and deferred errors.
 use crate::{catalog::{MastRow, MastBlock, BlobStore, encode_mast, decode_mast, mast_digest, read_mast_block, read_or_repair_mast_block, validate_gaia_input, StarId},
-    model::{StarRow, StarStorage}, progress::DatasetProgress, timing::StepTimes};
+    model::{StarRow, StarStorage}, progress::DatasetProgress, time::StepTimes};
 use super::super::conversion::{convert_source, ConversionStats};
 use serde::{Serialize, Deserialize};
 use std::io;
@@ -40,16 +40,19 @@ pub(super) fn load_converted_block(raw_store: &BlobStore, block: &mut MastBlock,
 fn load_with_raw_reader(raw_store: &BlobStore, block: &mut MastBlock, store: &BlobStore, policy: &str, progress: &mut dyn DatasetProgress, times: &mut StepTimes,
     read_raw: impl FnOnce(&BlobStore, &mut MastBlock, &mut dyn DatasetProgress, &mut StepTimes) -> io::Result<Vec<u8>>) -> io::Result<ConvertedBlock> {
     let key = block_key(block, policy);
-    let cached = times.measure("MAST converted block read", || store.read(&key, progress));
+    times.measure("Dataset loading.Gaia loading.MAST converted block read");
+    let cached = store.read(&key, progress);
     let cached = cached.and_then(|bytes| bytes.map(|bytes| {
         progress.set_detail("Decoding cached block");
-        times.measure("MAST converted block decode", || decode_mast::<ConvertedBlock>(&bytes))
+        times.measure("Dataset loading.Gaia loading.MAST converted block decode");
+        decode_mast::<ConvertedBlock>(&bytes)
     }).transpose());
     match cached {
         Ok(Some(data)) => {
             progress.set_detail("Checking cached records");
-            if times.measure("MAST converted block validation", || validate_block(&data, block.rows)).is_ok() {
-                times.describe("Gaia loading", || format!("converted block reused: {} rows; no source decode or conversion", block.rows));
+            times.measure("Dataset loading.Gaia loading.MAST converted block validation");
+            if validate_block(&data, block.rows).is_ok() {
+                times.describe("Dataset loading.Gaia loading", || format!("converted block reused: {} rows; no source decode or conversion", block.rows));
                 return Ok(data);
             }
             writeln!(progress, "Invalid converted MAST block; rebuilding from local Parquet.")?;
@@ -60,14 +63,18 @@ fn load_with_raw_reader(raw_store: &BlobStore, block: &mut MastBlock, store: &Bl
 
     let raw = read_raw(raw_store, block, progress, times)?;
     progress.set_detail("Decoding source columns");
-    let rows = times.measure("MAST Parquet decode", || read_mast_block(raw))?; // decode source columns only on a converted-cache miss
+    times.measure("Dataset loading.Gaia loading.MAST Parquet decode");
+    let rows = read_mast_block(raw)?; // decode source columns only on a converted-cache miss
     progress.set_detail("Converting star measurements");
-    let data = times.measure("MAST block conversion", || convert_block(&rows))?;
+    times.measure("Dataset loading.Gaia loading.MAST block conversion");
+    let data = convert_block(&rows)?;
     progress.set_detail("Checking converted records");
-    times.measure("MAST converted block validation", || validate_block(&data, block.rows))?;
+    times.measure("Dataset loading.Gaia loading.MAST converted block validation");
+    validate_block(&data, block.rows)?;
     progress.set_detail("Saving converted block");
     let key = block_key(block, policy);                         // a verified repair can change the normalized bytes and therefore this key
-    times.measure("MAST converted block write", || store.publish(&key, &encode_mast(&data)?, false))?; // publish before claiming reuse
+    times.measure("Dataset loading.Gaia loading.MAST converted block write");
+    store.publish(&key, &encode_mast(&data)?, false)?; // publish before claiming reuse
     Ok(data)
 }
 

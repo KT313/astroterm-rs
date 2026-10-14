@@ -42,14 +42,15 @@ fn the_panel_is_empty_when_off_and_lists_time_counts_display_and_timings_when_on
     let time = FrameTime::from_utc(config(&[]).simulation.start_julian_date);
     let clock = SimulationClock::start(time.utc, 0.0);
     let view = View { center: ViewCenter::Zenith, fov_degrees: 360.0, projection: ProjectionKind::Equidistant };     // the whole sky, as chunk 10 tests it
-    let observation = observe(&config(&[]).simulation.observer, false, &view, time, &mut astroterm::timing::StepTimes::default());
-    let solar_system = simulate_solar_system(&tables, time, &mut astroterm::timing::StepTimes::default());
-    let selected = select_regions(&tables.star_regions, &observation, &mut astroterm::timing::StepTimes::default());
-    let refreshed = refresh_regions(&mut tables, &selected, time, &view, &config(&[]).render, &mut astroterm::timing::StepTimes::default());
+    let observation = observe(&config(&[]).simulation.observer, false, &view, time, &mut astroterm::time::StepTimes::default());
+    let solar_system = simulate_solar_system(&tables, time, &mut astroterm::time::StepTimes::default());
+    let selected = select_regions(&tables.star_regions, &observation, &mut astroterm::time::StepTimes::default());
+    let refreshed = refresh_regions(&mut tables, &selected, time, &view, &config(&[]).render, &mut astroterm::time::StepTimes::default());
     let display = DisplayInfo { protocol: ProtocolType::Kitty, tmux: false, compression: CompressionSupport::Unknown, shared_memory: false, screen: Rect::new(0, 0, 100, 40), font: (10, 20), image: (1000, 800), text_cell: (9, 17) };
     let frame = PanelFrame { time, clock: &clock, solar_system: &solar_system, selected: &selected, refreshed, display };
     let mut times = StepTimes::default();
-    times.measure("Projection", || {});
+    times.measure("Projection");
+    times.measure("END");
 
     let off = config(&[]);
     let mut panel = Panel::new(&off, &tables);

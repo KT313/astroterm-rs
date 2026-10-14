@@ -2,7 +2,7 @@
 //! them is up to the backend (see `terminal::keys`).
 
 use crate::constants::{MAX_INTERACTIVE_SPEED, PAN_STEP_FRACTION, SPEED_FACTOR, ZOOM_FACTOR};
-use crate::astro::SimulationClock;
+use crate::time::SimulationClock;
 use crate::model::View;
 
 

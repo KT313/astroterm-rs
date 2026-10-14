@@ -1,7 +1,7 @@
 //! Stage-3 skeleton rejects unsupported input explicitly; accepted catalogs keep empty exception storage.
 use astroterm::{catalog::datasets::{Dataset, DatasetDirectories}, constants::MAST_PARALLEL_BLOCKS, model::StarException,
     progress::NoProgress, sky::{load_sky_catalog, prepare_owned_catalog, write_cached_catalog, load_cached_catalog, catalog_fingerprint},
-    timing::StepTimes};
+    time::StepTimes};
 use std::io;
 
 #[test]

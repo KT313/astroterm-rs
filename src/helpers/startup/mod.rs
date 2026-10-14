@@ -6,13 +6,16 @@ use astroterm::catalog::{City, load_embedded_cities};
 use astroterm::cli::{Arguments, build_config, write_bash_completions};
 use astroterm::model::{Config, GraphicsProtocol, Data};
 use astroterm::present::Display;
-use astroterm::timing::StepTimes;
+use astroterm::time::StepTimes;
 use ratatui_image::picker::ProtocolType;
 use super::{finish_requested_report, report_failure};
 
 /// Load the embedded city table, recording diagnostics and reporting any failure.
 pub(crate) fn load_cities(step_times: &mut StepTimes) -> Result<Vec<City>, ExitCode> {
-    let cities = match step_times.measure("City loading", load_embedded_cities) {
+    step_times.measure("City loading");
+    let result = load_embedded_cities();
+    step_times.measure("END");
+    let cities = match result {
         Ok(cities) => cities,
         Err(error) => return Err(report_failure(error)),
     };
@@ -38,13 +41,14 @@ pub(crate) fn validate_arguments(arguments: Arguments, cities: &[City]) -> Resul
 pub(crate) fn load_catalog(config: &Config, directories: &DatasetDirectories, times: &mut StepTimes) -> Result<Data, ExitCode> {
     let loaded = {
         let mut progress = astroterm::terminal::open_startup_progress(config.no_progress);
-        let result = times.measure_steps("Dataset loading", |times| {
-            astroterm::sky::load_sky_catalog(config.dataset.as_ref(), config.dataset_parallel_blocks, directories, &mut astroterm::progress::Report::live(&mut progress, times))
-        });
+        times.measure("Dataset loading");
+        let result = astroterm::sky::load_sky_catalog(config.dataset.as_ref(), config.dataset_parallel_blocks, directories, &mut astroterm::progress::Report::live(&mut progress, times));
         let result = result.and_then(|catalog| {
             catalog.catalog.validate_exception_support()?;                                                // reject unsupported sparse data before the frame loop
-            times.measure_steps("Group data", |times| astroterm::sky::build_sky_tables(&catalog, &mut astroterm::progress::Report::live(&mut progress, times))).map(|data| (catalog, data))
+            times.measure("Group data");
+            astroterm::sky::build_sky_tables(&catalog, &mut astroterm::progress::Report::live(&mut progress, times)).map(|data| (catalog, data))
         });
+        times.measure("END");
         progress.finish(result.is_ok()); // stop all startup drawing before terminal setup or error reporting
         result
     };
@@ -81,7 +85,10 @@ pub(crate) fn open_display(config: &Config, times: &mut StepTimes) -> io::Result
         GraphicsProtocol::Iterm2 => Some(ProtocolType::Iterm2),
         GraphicsProtocol::Halfblocks => Some(ProtocolType::Halfblocks),
     };
-    let display = times.measure("Terminal setup", || Display::open(forced, config.terminal, config.text_scale))?;
+    times.measure("Terminal setup");
+    let result = Display::open(forced, config.terminal, config.text_scale);
+    times.measure("END");
+    let display = result?;
     let info = display.info();
     times.describe("Terminal setup", || format!("protocol={:?}; frame={}x{}; cell={}x{}; metadata={}; frame-time panel={}",
         info.protocol, info.image.0, info.image.1, info.font.0, info.font.1, config.terminal.metadata_panel, config.terminal.frame_times));

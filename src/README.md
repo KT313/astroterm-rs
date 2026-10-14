@@ -10,7 +10,6 @@ Bottom-up. Every module exposes its symbols from its root `mod.rs`; callers use 
 | `catalog/` | BSC5, AT-HYG and Gaia parsers, MAST downloads and blob store, names and designations, magnitude coding, the prepared-catalog codec |
 | `rows/` | the column-table macros the catalog and timing records use |
 | `progress/` | the startup progress trait and `Report`, the one value that carries progress and timings through the loaders |
-| `timing/` | `StepTimes`: dotted frame checkpoints, smoothed durations and the opt-in trace; startup retains scoped timers |
 | `text/` | the fontdue text rasterizer used for labels and the panel |
 | `model/catalog` | the data model: `Data` (definitions in `model/data.rs`: regions own groups; groups own star tables, simulation caches and tiles; constellation stars, bodies and names share this owner), the cube-map grid, speed-group rules, packed storage |
 | `model/configuration` | `Config`, `View`, `RenderOptions`, `TerminalSettings` |
@@ -26,7 +25,7 @@ Bottom-up. Every module exposes its symbols from its root `mod.rs`; callers use 
 | `controls/` | what a key does to the view and the clock |
 | `metadata/` | the panel's text: local time, zodiac, Moon phase, location, speed, view, timings |
 | `cli/` | argument parsing and validation, Bash completions |
-| `time/` | binary-owned `StartupTiming` records setup, then is consumed into a fully initialized `TimeManager` with frame pacing, a simulation clock and `measure(path)` checkpoints |
+| `time/` | self-contained startup/frame timing, simulation clock, pacing, checkpoints, averages and trace serialization; callers supply plain settings, with no imports from other application modules |
 | `main.rs`, `pipeline.rs`, `helpers/` | the binary: startup, the seven-step frame loop, controls, panel lines, diagnostics and the frame benchmark |
 
 Owned data at runtime: `Data` (immutable catalog columns beside mutable group/region caches), the `Frame`

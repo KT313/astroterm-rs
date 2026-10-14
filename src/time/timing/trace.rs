@@ -1,5 +1,4 @@
-//! Opt-in, execution-ordered diagnostics. Ordinary frame timing never evaluates diagnostic closures.
-use crate::rows::row_columns;
+//! Opt-in, hierarchically grouped diagnostics. Ordinary frame timing never evaluates diagnostic closures.
 use super::StepTimes;
 use std::io::{self, Write};
 
@@ -8,7 +7,6 @@ pub struct PipelineTrace {
     pub presented_frames: u64,
     pub reused_display_frames: u64,
     pub steps: Vec<TraceStep>,
-    pub(super) active: Vec<usize>,
     pub unscoped_diagnostic_seconds: f64,
 }
 
@@ -21,7 +19,6 @@ pub struct TraceStep {
     pub direct_diagnostic_seconds: f64,
     pub(super) parent: Option<usize>,
 }
-row_columns!(TraceStep { name, depth, seconds, details, direct_diagnostic_seconds, parent, .. });
 
 impl StepTimes {
     /// Record only completed rendering; failed writes never call this hook.
@@ -42,23 +39,15 @@ impl StepTimes {
         self.trace.as_ref()
     }
 
-    /// Attach data to the latest invocation in this scope. No formatting or counting when disabled.
+    /// Attach data to the exact checkpoint path in this segment. No formatting or counting when disabled.
     pub fn describe(&mut self, name: &'static str, describe: impl FnOnce() -> String) {
         let checkpoint = self.checkpoint_trace_index(name);
         let Some(trace) = &mut self.trace else {
             return;
         };
         let start = std::time::Instant::now();
-        let parent = trace.active.last().copied();
         if let Some(index) = checkpoint {
             trace.steps[index].details.push(describe());
-        } else if let Some(step) = trace
-            .steps
-            .iter_mut()
-            .rev()
-            .find(|s| s.name == name && s.parent == parent)
-        {
-            step.details.push(describe());
         }
         self.record_diagnostic_time(start.elapsed().as_secs_f64());
     }
@@ -66,22 +55,10 @@ impl StepTimes {
     pub(super) fn record_diagnostic_time(&mut self, seconds: f64) {
         let checkpoint = self.active_checkpoint_trace_index();
         let trace = self.trace.as_mut().unwrap();
-        if let Some(index) = checkpoint.or_else(|| trace.active.last().copied()) {
+        if let Some(index) = checkpoint {
             trace.steps[index].direct_diagnostic_seconds += seconds;
         } else {
             trace.unscoped_diagnostic_seconds += seconds;
-        }
-    }
-
-    pub(super) fn push_trace_scope(&mut self, index: Option<usize>) {
-        if let Some(index) = index {
-            self.trace.as_mut().unwrap().active.push(index);
-        }
-    }
-
-    pub(super) fn pop_trace_scope(&mut self, index: Option<usize>) {
-        if index.is_some() {
-            self.trace.as_mut().unwrap().active.pop();
         }
     }
 
@@ -93,25 +70,6 @@ impl StepTimes {
         self.per_frame = false;
     }
 
-    pub(super) fn start_trace(&mut self, name: &'static str) -> Option<usize> {
-        let trace = self.trace.as_mut()?;
-        let index = trace.steps.len();
-        trace.steps.push(TraceStep {
-            name,
-            depth: trace.active.last().map_or(0, |&parent| trace.steps[parent].depth + 1),
-            seconds: 0.0,
-            details: Vec::new(),
-            direct_diagnostic_seconds: 0.0,
-            parent: trace.active.last().copied(),
-        });
-        Some(index)
-    }
-
-    pub(super) fn finish_trace(&mut self, index: Option<usize>, seconds: f64) {
-        if let Some(index) = index {
-            self.trace.as_mut().unwrap().steps[index].seconds = seconds;
-        }
-    }
 }
 
 impl PipelineTrace {
@@ -124,11 +82,11 @@ impl PipelineTrace {
             writeln!(output, "astroterm --debug-singleframe: execution trace")?;
             writeln!(
                 output,
-                "Presented frames: {}. Startup calls use invocation order; frame paths are grouped hierarchically and repeated checkpoints are aggregated.",
+                "Presented frames: {}. Paths are grouped hierarchically; repeated checkpoints are aggregated.",
                 self.presented_frames
             )?;
         } else {
-            writeln!(output, "Startup calls use invocation order; frame paths are grouped hierarchically and repeated checkpoints are aggregated.")?;
+            writeln!(output, "Paths are grouped hierarchically; repeated checkpoints are aggregated.")?;
         }
         writeln!(
             output,
@@ -182,48 +140,25 @@ impl PipelineTrace {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn diagnostic_cost_is_charged_to_enclosing_scope_and_scopes_do_not_leak() {
-        let mut times = StepTimes::with_trace(true);
-        times.measure_steps("First", |times| {
-            times.measure("Child", || ());
-            times.describe("Child", || "first only".into());
-        });
-        times.measure_steps("Second", |times| {
-            times.describe("Child", || panic!("no Child in this invocation"));
-        });
-        let trace = times.trace().unwrap();
-        assert_eq!(trace.steps[1].details, ["first only"]);
-        assert!(trace.steps[0].direct_diagnostic_seconds > 0.0);
-        assert_eq!(trace.steps[1].direct_diagnostic_seconds, 0.0);
-        assert!(trace.steps[0].seconds >= trace.steps[1].seconds + trace.steps[0].direct_diagnostic_seconds);
-    }
 
     #[test]
-    fn records_each_call_in_start_order_with_lazy_scoped_details() {
+    fn descriptions_follow_exact_paths_and_remain_lazy_when_disabled_or_absent() {
         let mut disabled = StepTimes::default();
-        disabled.describe("unused", || panic!("must stay lazy"));
+        disabled.describe("Missing", || panic!("disabled diagnostics must stay lazy"));
         let mut times = StepTimes::with_trace(true);
-        times.measure_steps("Parent", |times| {
-            times.measure("Child", || 1);
-            times.describe("Child", || "first input=2 output=1".into());
-            times.measure("Child", || 2);
-            times.describe("Child", || "second input=3 output=2".into());
-        });
-        times.describe("Parent", || "done".into());
+        times.measure("First.Child");
+        times.describe("First.Child", || "first child".into());
+        times.measure("Second.Child");
+        times.describe("Second.Missing", || panic!("absent paths must stay lazy"));
+        times.describe("Second.Child", || "second child".into());
+        times.measure("END");
         let trace = times.trace().unwrap();
-        assert_eq!(
-            trace.steps.iter().map(|s| (s.name, s.depth)).collect::<Vec<_>>(),
-            [("Parent", 0), ("Child", 1), ("Child", 1)]
-        );
-        assert_eq!(trace.steps[1].details, ["first input=2 output=1"]);
-        assert_eq!(trace.steps[2].details, ["second input=3 output=2"]);
+        assert_eq!(trace.steps[1].details, ["first child"]);
+        assert_eq!(trace.steps[3].details, ["second child"]);
+        assert!(trace.steps[1].direct_diagnostic_seconds > 0.0);
+        assert!(trace.steps[1].seconds >= trace.steps[1].direct_diagnostic_seconds);
         let mut report = Vec::new();
         trace.write_report(&mut report).unwrap();
-        assert!(String::from_utf8(report).unwrap().contains("003   Child:"));
-        times.reset_frame_timings();
-        times.begin_frame();
-        assert!(times.steps().is_empty());
-        assert_eq!(times.trace().unwrap().steps.len(), 3);
+        assert!(String::from_utf8(report).unwrap().contains("Child:"));
     }
 }

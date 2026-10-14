@@ -23,8 +23,8 @@ fn main() {
         let ut1 = fields.get(1).copied().unwrap_or(tt);
         // Observe 59 s after the requested epoch, as the old sampled pipeline did for its composed comparisons.
         let frame = FrameTime { utc: ut1 + 59.0 / 86400.0, ut1: ut1 + 59.0 / 86400.0, tt: tt + 59.0 / 86400.0 };
-        let system = simulate_solar_system(&bodies, frame, &mut astroterm::timing::StepTimes::default());
-        let observation = observe(&site, false, &View::default(), frame, &mut astroterm::timing::StepTimes::default());
+        let system = simulate_solar_system(&bodies, frame, &mut astroterm::time::StepTimes::default());
+        let observation = observe(&site, false, &View::default(), frame, &mut astroterm::time::StepTimes::default());
         let states = evaluate_planets(tt);
         let moon = evaluate_moon(tt).add_parent(states[BodyId::Earth as usize]);
         let raw: Vec<_> = states

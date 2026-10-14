@@ -21,9 +21,9 @@ struct Node {
 
 impl StepTimes {
     /// Finish the preceding interval and begin `path`. `END` finishes without starting another interval.
-    /// Repeated paths accumulate within the frame; dotted ancestors include all descendant intervals.
+    /// Repeated paths accumulate within the segment; dotted ancestors include all descendant intervals.
     /// Without detailed diagnostics, paths collapse to their top-level stage and child calls read no clock.
-    pub fn measure_checkpoint(&mut self, path: &'static str) {
+    pub fn measure(&mut self, path: &'static str) {
         self.measure_at(path, Instant::now);
     }
 
@@ -92,9 +92,6 @@ impl StepTimes {
             for row in &mut trace.steps {
                 if let Some(parent) = &mut row.parent && *parent >= trace_index { *parent += 1; }
             }
-            for active in &mut trace.active {
-                if *active >= trace_index { *active += 1; }
-            }
             trace.steps.insert(trace_index, row);
             for node in &mut self.checkpoints.nodes {
                 if let Some(index) = &mut node.trace_index && *index >= trace_index { *index += 1; }
@@ -117,17 +114,17 @@ impl StepTimes {
     }
 
     fn publish_checkpoints(&mut self) {
-        // Feed each frame total into the existing smoothing once; END itself never appears as a timing row.
-        let saved_parents = std::mem::take(&mut self.parents);
+        // Publish startup totals or smooth a completed frame; END itself never appears as a timing row.
+        let mut parents = Vec::new();
         for index in 0..self.checkpoints.nodes.len() {
             let Some(elapsed) = self.checkpoints.nodes[index].elapsed.take() else { continue; };
-            self.parents.clear();
+            parents.clear();
             let mut parent = self.checkpoints.nodes[index].parent;
             while let Some(index) = parent {
-                self.parents.push(self.checkpoints.nodes[index].name);
+                parents.push(self.checkpoints.nodes[index].name);
                 parent = self.checkpoints.nodes[index].parent;
             }
-            self.parents.reverse();
+            parents.reverse();
             let node = &self.checkpoints.nodes[index];
             let name = node.name;
             let trace_index = node.trace_index;
@@ -136,17 +133,16 @@ impl StepTimes {
                 self.trace.as_mut().unwrap().steps[trace_index].seconds += seconds;
             }
             let previous_rows = self.steps.len();
-            self.record(name, seconds);
-            self.group_new_checkpoint_row(previous_rows);
+            self.record(name, &parents, seconds);
+            self.group_new_checkpoint_row(previous_rows, &parents);
         }
-        self.parents = saved_parents;
     }
 
-    fn group_new_checkpoint_row(&mut self, previous_rows: usize) {
+    fn group_new_checkpoint_row(&mut self, previous_rows: usize, parents: &[&'static str]) {
         // A child first encountered on a later frame still belongs below its parent in the timing panel.
-        if self.steps.len() == previous_rows || self.parents.is_empty() { return; }
-        let parent_name = self.parents.last().unwrap();
-        let ancestors = &self.parents[..self.parents.len() - 1];
+        if self.steps.len() == previous_rows || parents.is_empty() { return; }
+        let parent_name = parents.last().unwrap();
+        let ancestors = &parents[..parents.len() - 1];
         let parent = self.steps.iter().zip(&self.records).position(|(step, record)| {
             step.name == *parent_name && record.parents == ancestors
         }).expect("checkpoint ancestors are published before their children");
@@ -178,7 +174,7 @@ impl StepTimes {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::TIMING_EMA_FACTOR;
+    use super::super::TIMING_EMA_FACTOR;
 
     fn advance(times: &mut StepTimes, origin: &Instant, milliseconds: u64, path: &'static str) {
         times.measure_at(path, || *origin + Duration::from_millis(milliseconds));
@@ -206,6 +202,21 @@ mod tests {
         assert_eq!(rows[6].parent, Some(5));
         assert_eq!(times.steps().len(), 7);
         assert!(times.capture_steps().is_ok());
+    }
+
+    #[test]
+    fn startup_segments_accumulate_without_frame_smoothing_or_idle_time() {
+        let origin = Instant::now();
+        let mut times = StepTimes::with_trace(true);
+        advance(&mut times, &origin, 0, "Dataset loading.Parse");
+        advance(&mut times, &origin, 2, "END");
+        advance(&mut times, &origin, 100, "Dataset loading.Parse");
+        advance(&mut times, &origin, 104, "END");
+
+        assert_eq!(times.trace().unwrap().steps.len(), 2);
+        assert_eq!(times.trace().unwrap().steps[0].seconds, 0.006);
+        assert_eq!(times.steps()[0].average_seconds, 0.006);
+        assert_eq!(times.steps()[1].average_seconds, 0.006);
     }
 
     #[test]

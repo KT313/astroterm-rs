@@ -1,5 +1,5 @@
 //! Progress follows actual loading work; recording it must not change the prepared catalog.
-use astroterm::{catalog::datasets::{Dataset, DatasetDirectories}, progress::{DatasetProgress, Stage, Unit, Outcome}, sky::load_sky_catalog, timing::StepTimes};
+use astroterm::{catalog::datasets::{Dataset, DatasetDirectories}, progress::{DatasetProgress, Stage, Unit, Outcome}, sky::load_sky_catalog, time::StepTimes};
 use std::io::{self, Write};
 
 #[derive(Default)]
@@ -156,6 +156,7 @@ fn preparation_and_cache_traces_cover_visible_work_in_order() {
     for pair in [Stage::AssignRegions, Stage::Sort, Stage::Reorder, Stage::Index, Stage::ValidateCache, Stage::WriteCache, Stage::FinalizeCache].windows(2) {
         assert!(progress.starts.iter().position(|stage| stage == &pair[0]).unwrap() < progress.starts.iter().position(|stage| stage == &pair[1]).unwrap());
     }
+    times.measure("END");
     let trace = times.trace().unwrap();
     for name in ["Region assignment", "Region and brightness sort", "Star field permutation", "Sky index construction",
         "Prepared catalog write", "Prepared star validation", "Prepared ID and region validation", "Prepared section writing", "Prepared catalog finalization"] {
@@ -183,6 +184,7 @@ fn source_and_cached_loads_report_actual_work_and_ordered_skip_reasons() {
         let catalog = load_sky_catalog(Some(&Dataset::Path(path.clone())), astroterm::constants::MAST_PARALLEL_BLOCKS, &dirs, &mut astroterm::progress::Report::live(&mut astroterm::progress::NoProgress(Vec::new()), &mut times)).unwrap();
         assert_eq!(catalog.catalog.stars.len(), 2);
         let mut report = Vec::new();
+        times.measure("END");
         times.trace().unwrap().write_report(&mut report).unwrap();
         let report = String::from_utf8(report).unwrap();
         if warm {

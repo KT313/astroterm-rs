@@ -9,7 +9,7 @@ use crate::constants::{CELL_COUNT, CONSTELLATION_REGION, SIMULATION_REGION_COUNT
 use crate::model::{Constellation, Region, StarGroup, StarTable, StarLabels, PreparedCatalog, SkyCatalog, Data, StarRow, StarRowVec};
 use crate::progress::{DatasetProgress, Outcome, Report, Stage, Unit};
 use crate::model::speed_group;
-use crate::timing::StepTimes;
+use crate::time::StepTimes;
 
 /// Split a prepared catalog into the per-group tables and the constellation table, then validate them.
 pub fn build_sky_tables(prepared: &PreparedCatalog, report: &mut Report<'_>) -> io::Result<Data> {
@@ -33,8 +33,10 @@ fn build_tables(prepared: &PreparedCatalog, progress: &mut dyn DatasetProgress, 
     }
 
     // split, renumber, validate
-    let star_regions = times.measure("Speed group split", || split_groups(catalog, bounds, progress));
-    let (constellation_stars, constellation_figures) = times.measure("Constellation table", || build_constellations(catalog))?;
+    times.measure("Group data.Speed group split");
+    let star_regions = split_groups(catalog, bounds, progress);
+    times.measure("Group data.Constellation table");
+    let (constellation_stars, constellation_figures) = build_constellations(catalog)?;
     let tables = Data {
         solar_system_sun: Default::default(),
         solar_system_planets: Default::default(),
@@ -50,8 +52,9 @@ fn build_tables(prepared: &PreparedCatalog, progress: &mut dyn DatasetProgress, 
         tile_bytes: 0,
     };
     progress.set_detail("Checking the group tables");
-    times.measure("Group table validation", || tables.validate())?;
-    times.describe("Speed group split", || describe(&tables));
+    times.measure("Group data.Group table validation");
+    tables.validate()?;
+    times.describe("Group data.Speed group split", || describe(&tables));
     Ok(tables)
 }
 

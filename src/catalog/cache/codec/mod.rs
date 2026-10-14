@@ -1,7 +1,7 @@
 //! Version 9: a bounded directory, independent compressed chunks, then a CRC32 trailer.
 use super::{invalid, supported};
 use crate::{constants::CACHE_CHUNK_BYTES, progress::{DatasetProgress, Stage, Unit, Outcome}};
-use crate::timing::StepTimes;
+use crate::time::StepTimes;
 use std::{fs::File, io::{self, Read, Write}, path::Path};
 
 const MAGIC: &[u8; 8] = b"ASTROCAT";
@@ -139,7 +139,8 @@ pub(crate) fn write_sections(path: &Path, fingerprint: &[u8; 32], sections: &[&[
     }
     progress.begin_stage(Stage::WriteCache, "Uncompressed bytes processed", Unit::Bytes, Some(total));
     let mut checksum = crc32fast::Hasher::new();
-    times.measure("Prepared section writing", || -> io::Result<()> {
+    times.measure("Dataset loading.Prepared cache.Prepared catalog write.Prepared section writing");
+    {
         write_hashed(&mut temporary, &mut checksum, &header)?;
         let mut compressor = zstd::bulk::Compressor::new(1)?;
         let mut compressed = vec![0u8; zstd::zstd_safe::compress_bound(CACHE_CHUNK_BYTES)];
@@ -153,17 +154,16 @@ pub(crate) fn write_sections(path: &Path, fingerprint: &[u8; 32], sections: &[&[
                 progress.set_position(processed);
             }
         }
-        Ok(())
-    })?;
+    };
     progress.finish_stage(Outcome::Complete);
     progress.begin_stage(Stage::FinalizeCache, "Finalizing prepared catalog", Unit::Work, None);
-    times.measure("Prepared catalog finalization", || -> io::Result<()> {
+    times.measure("Dataset loading.Prepared cache.Prepared catalog write.Prepared catalog finalization");
+    {
         temporary.write_all(&checksum.finalize().to_le_bytes())?;
         temporary.flush()?;
         temporary.as_file().sync_all()?;
         temporary.persist(path).map_err(|error| error.error)?;
-        Ok(())
-    })?;
+    };
     progress.finish_stage(Outcome::Complete);
     Ok(())
 }

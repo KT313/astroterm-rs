@@ -1,6 +1,6 @@
 //! Resolve one stable physical prefix; completed groups remain independently reusable when N changes.
 use super::{storage::{BlobStore, BlobStamp, VerifiedBlob, digest, encode, decode, invalid}, transport::{Fetch, Http, Identity}, parquet};
-use crate::{catalog::datasets::DatasetDirectories, constants::{MAST_BLOCK_SECONDS, MAST_FOOTER_TAIL_BYTES, MAST_FOOTER_MAX_BYTES}, progress::{DatasetProgress, Stage, Unit}, timing::StepTimes};
+use crate::{catalog::datasets::DatasetDirectories, constants::{MAST_BLOCK_SECONDS, MAST_FOOTER_TAIL_BYTES, MAST_FOOTER_MAX_BYTES}, progress::{DatasetProgress, Stage, Unit}, time::StepTimes};
 use serde::{Serialize, Deserialize};
 use std::{io, time::{Instant, Duration}};
 use super::downloading::{plan_blocks, download_missing};
@@ -41,7 +41,8 @@ fn resolve_selection(count: u32, parallel_blocks: u8, store: BlobStore, fetch: &
     let mut plan = plan_blocks(&mut selection, leaves, fetch, progress, times)?;                  // locate cached blocks without opening their star payloads
     let downloaded = plan.jobs.len();
     let reused = plan.ready.len() - downloaded;
-    times.measure_steps("MAST block downloads", |times| download_missing(&selection.store, &mut plan, parallel_blocks, fetch, progress, times))?;
+    times.measure("Dataset loading.Dataset resolution.MAST block downloads");
+    download_missing(&selection.store, &mut plan, parallel_blocks, fetch, progress, times)?;
     selection.blocks = plan.ready.into_iter().map(|block| block.ok_or_else(|| invalid("missing MAST block result"))).collect::<io::Result<_>>()?;
 
     if selection.available < u64::from(count) {

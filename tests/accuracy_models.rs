@@ -33,8 +33,8 @@ fn observe(tt: f64, ut1: f64) -> Sky {
         longitude: -71.0589_f64.to_radians(),
     };
     let bodies = Data::default();
-    let system = simulate_solar_system(&bodies, time, &mut astroterm::timing::StepTimes::default());
-    let observation = observe_sky(&site, false, &View::default(), time, &mut astroterm::timing::StepTimes::default());
+    let system = simulate_solar_system(&bodies, time, &mut astroterm::time::StepTimes::default());
+    let observation = observe_sky(&site, false, &View::default(), time, &mut astroterm::time::StepTimes::default());
     let catalog = astroterm::sky::prepare_owned_catalog(load_embedded_catalog(&mut astroterm::progress::Report::quiet()).unwrap(), &mut astroterm::progress::Report::quiet()).unwrap();
     Sky { bodies, system, observation, catalog }
 }

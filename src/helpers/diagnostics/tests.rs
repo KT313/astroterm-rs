@@ -18,7 +18,8 @@ fn report_config(flags: &[&str]) -> Config {
 fn plain_single_frame_keeps_existing_trace_and_failed_run_stays_unreported() {
     let config = report_config(&["astroterm", "--debug-singleframe"]);
     let mut times = StepTimes::with_trace(true);
-    times.measure("Present", || ());
+    times.measure("Present");
+    times.measure("END");
     let mut expected = Vec::new();
     times.trace().unwrap().write_report(&mut expected).unwrap();
     let (mut output, mut errors) = (Vec::new(), Vec::new());

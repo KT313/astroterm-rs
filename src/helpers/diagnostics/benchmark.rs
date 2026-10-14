@@ -1,6 +1,6 @@
 //! One report writer per process; timings stay in StepTimes and are released after each serialized segment.
-use astroterm::{astro::{FrameTime, SimulationClock}, model::{Config, FrameBenchmarkConfig}, present::Presented,
-    terminal::FrameInput, timing::{CaptureSteps, StepTimes}};
+use astroterm::{astro::{FrameTime}, model::{Config, FrameBenchmarkConfig}, present::Presented,
+    terminal::FrameInput, time::{CaptureSteps, SimulationClock, StepTimes}};
 use super::CaptureDisplay;
 use serde::Serialize;
 use std::{fs::File, io::{self, BufWriter, Write}, process::ExitCode};
@@ -88,6 +88,9 @@ pub(crate) fn open_frame_benchmark(config: &Config) -> Result<Option<BenchmarkSe
 
 /// Write the startup report before the caller starts simulated time.
 pub(crate) fn begin_benchmark_capture(session: &mut Option<BenchmarkSession>, config: &Config, display: impl FnOnce() -> io::Result<CaptureDisplay>, times: &mut StepTimes) -> io::Result<()> {
+    // Finish startup timing before writing the report or starting the simulation clock.
+    times.measure("END");
+
     // Capture terminal details only when a benchmark report was requested.
     if let Some(session) = session {
         session.begin_capture(config, display()?, times)?;

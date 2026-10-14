@@ -1,6 +1,6 @@
 //! Step 5 of the frame (`project_stars_to_screen`, the warp of the region tiles onto the screen) beside the
 //! projection geometry it and step 6 reuse: cameras, maps, arcs, the horizon and the view controls.
-use crate::timing::StepTimes;
+use crate::time::StepTimes;
 mod geometry;
 mod raster;
 mod tile_warp;

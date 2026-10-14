@@ -1,6 +1,6 @@
 //! Dataset startup reporting without terminal or catalog dependencies. Headless callers retain their writer.
 use std::io::{self, Read, Write};
-use crate::timing::StepTimes;
+use crate::time::StepTimes;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stage { Resolve, Verify, Connect, Download, Install, Parse, Convert, PlanDownloads, CheckIds, AssignRegions, Reorder, Sort, Index, Group, ReadCache, ValidateCache, WriteCache, FinalizeCache }

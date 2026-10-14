@@ -57,7 +57,7 @@ fn all_stars(tables: &Data) -> Vec<(u32, astroterm::astro::models::stars::Stella
 
 /// The stars the selection offers: the brightness prefixes of the selected regions plus the constellation table.
 fn candidates(tables: &Data, observation: &Observation, threshold: f64) -> (BTreeSet<u32>, bool) {
-    let selected = select_regions(&tables.star_regions, observation, &mut astroterm::timing::StepTimes::default());
+    let selected = select_regions(&tables.star_regions, observation, &mut astroterm::time::StepTimes::default());
     let mut ids = BTreeSet::new();
     for &region in &selected.regions {
         for table in tables.star_regions[region].speed_groups.iter().map(|group| &group.stars) {
@@ -85,7 +85,7 @@ fn visible_by_full_scan(tables: &Data, observation: &Observation, view: &View, t
 
 fn compare(date: f64, view: View, threshold: f64, refraction: bool, latitude: f64, longitude: f64) {
     let tables = tables();
-    let observation = observe(&Observer { latitude, longitude }, refraction, &view, FrameTime::from_utc(date), &mut astroterm::timing::StepTimes::default());
+    let observation = observe(&Observer { latitude, longitude }, refraction, &view, FrameTime::from_utc(date), &mut astroterm::time::StepTimes::default());
     let (offered, whole_sky) = candidates(&tables, &observation, threshold);
     let visible = visible_by_full_scan(&tables, &observation, &view, threshold, !whole_sky && view.fov_degrees < 300.0);
     let missing: Vec<_> = visible.difference(&offered).collect();
@@ -171,7 +171,7 @@ fn seam_threshold_horizon_and_view_edge_cases_are_not_culled() {
             parsed.stars.push(star);
         }
         let tables = build(parsed);
-        let mut observation = observe(&Observer::default(), refraction, &view, FrameTime::from_utc(J2000), &mut astroterm::timing::StepTimes::default());
+        let mut observation = observe(&Observer::default(), refraction, &view, FrameTime::from_utc(J2000), &mut astroterm::time::StepTimes::default());
         observation.to_horizon = Matrix3::IDENTITY;                                        // the catalog axes are the horizon axes in this fixture
         observation.to_catalog = Matrix3::IDENTITY;
         observation.observer.velocity = Vector3::default();
@@ -211,7 +211,7 @@ fn fast_stars_use_ordinary_regions_and_large_drift_has_no_special_selection() {
 
     let time = FrameTime::from_utc(J2000 + 1000.0 * JULIAN_YEAR_DAYS);
     let cone = |center: Vector3, threshold: f64| {
-        let mut observation = observe(&Observer::default(), false, &View { fov_degrees: 2.0, ..View::default() }, time, &mut astroterm::timing::StepTimes::default());
+        let mut observation = observe(&Observer::default(), false, &View { fov_degrees: 2.0, ..View::default() }, time, &mut astroterm::time::StepTimes::default());
         observation.patch.center = center;
         candidates(&tables, &observation, threshold).0
     };
@@ -219,6 +219,6 @@ fn fast_stars_use_ordinary_regions_and_large_drift_has_no_special_selection() {
     assert!(cone(motion.u0, 3.0).is_empty());                                                    // the brightness prefix still applies
     let moved = motion.evaluate(1000.0, 4.0).direction;
     assert!(cone(moved, 5.0).is_empty());                                                        // documented limitation
-    let wide = observe(&Observer::default(), false, &View { fov_degrees: 360.0, ..View::default() }, time, &mut astroterm::timing::StepTimes::default());
+    let wide = observe(&Observer::default(), false, &View { fov_degrees: 360.0, ..View::default() }, time, &mut astroterm::time::StepTimes::default());
     assert_eq!(candidates(&tables, &wide, 5.0).0, BTreeSet::from([1, 2]));
 }

@@ -1,5 +1,5 @@
 //! Per-step registration and smoothing; frame orchestration stays in pipeline.rs.
-use crate::constants::TIMING_EMA_FACTOR;
+use super::TIMING_EMA_FACTOR;
 use super::{StepRecord, StepTime, StepTimes};
 
 impl StepTimes {
@@ -10,48 +10,40 @@ impl StepTimes {
             }
             record.previous_average = record.initialized.then_some(step.average_seconds);
             record.frame_seconds = None;
-            record.frame_calls = 0;
         }
     }
 
     /// Add a duration to a step's average. A new step starts at its first duration rather than at zero.
-    pub(super) fn record(&mut self, name: &'static str, seconds: f64) {
-        let Some(index) = self.register_step(name) else {
-            return;
-        };
+    pub(super) fn record(&mut self, name: &'static str, parents: &[&'static str], seconds: f64) {
+        let index = self.register_step(name, parents);
         let step = &mut self.steps[index];
         let record = &mut self.records[index];
-        record.frame_calls = record.frame_calls.saturating_add(1);
-        let (previous, sample) = if self.per_frame {
-            let total = record.frame_seconds.get_or_insert(0.0);
-            *total += seconds;
-            (record.previous_average, *total)
-        } else {
-            (record.initialized.then_some(step.average_seconds), seconds)
-        };
-        step.average_seconds = previous.map_or(sample, |old| old * TIMING_EMA_FACTOR + sample * (1.0 - TIMING_EMA_FACTOR));
+        let total = record.frame_seconds.get_or_insert(0.0);
+        *total += seconds;
+        let previous = if self.per_frame { record.previous_average } else { None };
+        step.average_seconds = previous.map_or(*total, |old| old * TIMING_EMA_FACTOR + *total * (1.0 - TIMING_EMA_FACTOR));
         record.initialized = true;
     }
 
-    pub(super) fn register_step(&mut self, name: &'static str) -> Option<usize> {
+    fn register_step(&mut self, name: &'static str, parents: &[&'static str]) -> usize {
         if let Some(index) = self
             .steps
             .iter()
             .zip(&self.records)
-            .position(|(step, record)| step.name == name && record.parents == self.parents)
+            .position(|(step, record)| step.name == name && record.parents == parents)
         {
-            return Some(index);
+            return index;
         }
         self.steps.push(StepTime {
             name,
-            depth: self.parents.len(),
+            depth: parents.len(),
             average_seconds: 0.0,
         });
         self.records.push(StepRecord {
-            parents: self.parents.clone(),
+            parents: parents.to_vec(),
             ..StepRecord::default()
         });
-        Some(self.steps.len() - 1)
+        self.steps.len() - 1
     }
 }
 
@@ -63,9 +55,11 @@ mod tests {
     #[test]
     fn averages_start_at_the_first_duration_and_then_move_slowly() {
         let mut times = StepTimes::default();
-        times.record("Stars", 1.0);
+        times.begin_frame();
+        times.record("Stars", &[], 1.0);
         assert_eq!(times.steps()[0].average_seconds, 1.0);
-        times.record("Stars", 3.0);
+        times.begin_frame();
+        times.record("Stars", &[], 3.0);
         assert!((times.steps()[0].average_seconds - (0.95 + 0.15)).abs() < 1e-12);
     }
 
@@ -73,42 +67,34 @@ mod tests {
     fn steps_keep_the_order_they_first_ran_in() {
         let mut times = StepTimes::default();
         for name in ["Stars", "Moon", "Stars", "Draw", "Moon"] {
-            times.record(name, 0.001);
+            times.record(name, &[], 0.001);
         }
         let names: Vec<_> = times.steps().iter().map(|step| step.name).collect();
         assert_eq!(names, ["Stars", "Moon", "Draw"]);
     }
 
     #[test]
-    fn measure_returns_the_result_and_records_the_step() {
-        let mut times = StepTimes::default();
-        assert_eq!(times.measure("Answer", || 42), 42);
-        assert_eq!(times.steps().len(), 1);
-        assert!(times.steps()[0].average_seconds >= 0.0);
-    }
-
-    #[test]
     fn repeated_calls_are_summed_then_smoothed_once_per_frame() {
         let mut times = StepTimes::default();
         times.begin_frame();
-        times.record("Samples", 1.0);
-        times.record("Samples", 2.0);
+        times.record("Samples", &[], 1.0);
+        times.record("Samples", &[], 2.0);
         assert_eq!(times.steps()[0].average_seconds, 3.0);
         times.begin_frame();
-        times.record("Samples", 4.0);
-        times.record("Samples", 5.0);
+        times.record("Samples", &[], 4.0);
+        times.record("Samples", &[], 5.0);
         assert!((times.steps()[0].average_seconds - (3.0 * 0.95 + 9.0 * 0.05)).abs() < 1e-12);
     }
 
     #[test]
-    fn identical_names_in_distinct_parent_scopes_stay_separate() {
+    fn identical_names_in_distinct_paths_stay_separate() {
         let mut times = StepTimes::default();
         times.begin_frame();
-        times.measure_steps("Simulation", |times| times.record("Samples", 1.0));
-        times.measure_steps("Light time", |times| {
-            times.record("Samples", 2.0);
-            times.record("Samples", 3.0);
-        });
+        times.record("Simulation", &[], 1.0);
+        times.record("Samples", &["Simulation"], 1.0);
+        times.record("Light time", &[], 5.0);
+        times.record("Samples", &["Light time"], 2.0);
+        times.record("Samples", &["Light time"], 3.0);
         let steps = times.steps();
         assert_eq!(
             steps.iter().map(|s| (s.name, s.depth)).collect::<Vec<_>>(),
@@ -122,7 +108,7 @@ mod tests {
     fn skipped_optional_steps_decay_towards_zero() {
         let mut times = StepTimes::default();
         times.begin_frame();
-        times.record("Refraction", 1.0);
+        times.record("Refraction", &[], 1.0);
         times.begin_frame();
         times.begin_frame();
         assert_eq!(times.steps()[0].average_seconds, TIMING_EMA_FACTOR);

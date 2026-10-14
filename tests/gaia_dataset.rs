@@ -11,12 +11,12 @@ fn real_gaia_prefix_converts_and_reuses_prepared_cache() {
     let dirs = DatasetDirectories { data: Some(data.into()), cache: Some(cache.path().into()) };
     let dataset = Dataset::GaiaGdr3 { files: count };
     let mut notices = Vec::new();
-    let original = load_sky_catalog(Some(&dataset), astroterm::constants::MAST_PARALLEL_BLOCKS, &dirs, &mut astroterm::progress::Report::live(&mut astroterm::progress::NoProgress(&mut notices), &mut astroterm::timing::StepTimes::default())).unwrap();
+    let original = load_sky_catalog(Some(&dataset), astroterm::constants::MAST_PARALLEL_BLOCKS, &dirs, &mut astroterm::progress::Report::live(&mut astroterm::progress::NoProgress(&mut notices), &mut astroterm::time::StepTimes::default())).unwrap();
     println!("{}", String::from_utf8_lossy(&notices));
     assert!(original.catalog.stars.len() > 100_000);
     assert!(original.catalog.constellations().is_empty());
     notices.clear();
-    let cached = load_sky_catalog(Some(&dataset), astroterm::constants::MAST_PARALLEL_BLOCKS, &dirs, &mut astroterm::progress::Report::live(&mut astroterm::progress::NoProgress(&mut notices), &mut astroterm::timing::StepTimes::default())).unwrap();
+    let cached = load_sky_catalog(Some(&dataset), astroterm::constants::MAST_PARALLEL_BLOCKS, &dirs, &mut astroterm::progress::Report::live(&mut astroterm::progress::NoProgress(&mut notices), &mut astroterm::time::StepTimes::default())).unwrap();
     assert_eq!(cached, original);
     assert!(!String::from_utf8_lossy(&notices).contains("Gaia DR3: rows="));
     assert_eq!(String::from_utf8_lossy(&notices).matches("no G-to-V conversion").count(), 1);
@@ -34,7 +34,7 @@ fn mast_first_block_builds_validated_group_tables() {
     let dirs = DatasetDirectories { data: Some(data.into()), cache: Some(cache.path().into()) };
     let dataset = Dataset::GaiaGdr3Stars { stars: 100_000 };
     let mut notices = Vec::new();
-    let prepared = load_sky_catalog(Some(&dataset), astroterm::constants::MAST_PARALLEL_BLOCKS, &dirs, &mut astroterm::progress::Report::live(&mut astroterm::progress::NoProgress(&mut notices), &mut astroterm::timing::StepTimes::default())).unwrap();
+    let prepared = load_sky_catalog(Some(&dataset), astroterm::constants::MAST_PARALLEL_BLOCKS, &dirs, &mut astroterm::progress::Report::live(&mut astroterm::progress::NoProgress(&mut notices), &mut astroterm::time::StepTimes::default())).unwrap();
     println!("{}", String::from_utf8_lossy(&notices));
     assert!(prepared.catalog.stars.source_ids().is_some());
     let tables = astroterm::sky::build_sky_tables(&prepared, &mut astroterm::progress::Report::quiet()).unwrap();

@@ -13,7 +13,7 @@ use astroterm::selection::select_regions;
 use astroterm::sky::{build_sky_tables, prepare_owned_catalog};
 use astroterm::solar_system::simulate_solar_system;
 use astroterm::astro::FrameTime;
-use astroterm::timing::StepTimes;
+use astroterm::time::StepTimes;
 use ratatui::layout::Rect;
 use ratatui_image::picker::ProtocolType;
 
@@ -32,13 +32,13 @@ fn settings() -> RenderOptions {
 /// One frame through steps 1 to 6 into `frame`; returns the observation and what step 6 drew.
 fn run_frame(data: &mut Data, frame: &mut Frame, view: &View, settings: &RenderOptions) -> (Observation, Drawn) {
     let time = FrameTime::from_utc(UTC_2025_03_01_11H);
-    let solar_system = simulate_solar_system(data, time, &mut astroterm::timing::StepTimes::default());                                  // 1
-    let observation = observe(&TOKYO, true, view, time, &mut astroterm::timing::StepTimes::default());                                              // 2
-    let selected = select_regions(&data.star_regions, &observation, &mut astroterm::timing::StepTimes::default());                                       // 3
-    refresh_regions(data, &selected, time, view, settings, &mut astroterm::timing::StepTimes::default());                                       // 4
-    project_stars_to_screen(frame, data, &selected, &observation, view, &mut astroterm::timing::StepTimes::default());                            // 5
+    let solar_system = simulate_solar_system(data, time, &mut astroterm::time::StepTimes::default());                                  // 1
+    let observation = observe(&TOKYO, true, view, time, &mut astroterm::time::StepTimes::default());                                              // 2
+    let selected = select_regions(&data.star_regions, &observation, &mut astroterm::time::StepTimes::default());                                       // 3
+    refresh_regions(data, &selected, time, view, settings, &mut astroterm::time::StepTimes::default());                                       // 4
+    project_stars_to_screen(frame, data, &selected, &observation, view, &mut astroterm::time::StepTimes::default());                            // 5
     let inputs = PointInputs { solar_system: &solar_system, data, selected: &selected, panel: &[], notice: None };
-    let drawn = draw_points(frame, &inputs, &observation, view, settings, &mut astroterm::timing::StepTimes::default());                            // 6
+    let drawn = draw_points(frame, &inputs, &observation, view, settings, &mut astroterm::time::StepTimes::default());                            // 6
     (observation, drawn)
 }
 
@@ -59,7 +59,7 @@ fn every_view_renders_at_every_size_including_degenerate_frames() {
         for (index, view) in views.iter().enumerate() {
             run_frame(&mut data, &mut frame, view, &settings());
             assert_eq!(frame.stars().len(), width * height);
-            let presented = present(&frame, &mut terminal, &mut astroterm::timing::StepTimes::default()).unwrap();                                  // 7
+            let presented = present(&frame, &mut terminal, &mut astroterm::time::StepTimes::default()).unwrap();                                  // 7
             let expect_sent = index == 0 && width * height > 0;                                       // the first frame of a size is always sent; tiny frames may then repeat
             assert!(!expect_sent || matches!(presented, Presented::Sent(_)), "{width}x{height} {view:?}: {presented:?}");
         }

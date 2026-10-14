@@ -1,15 +1,19 @@
 //! Opt-in real transport qualification. Ordinary tests never download data.
 use astroterm::{catalog::datasets::{Dataset, DatasetDirectories}, sky::load_sky_catalog,
-    timing::StepTimes, progress::{DatasetProgress, Stage, Unit}};
+    time::StepTimes, progress::{DatasetProgress, Stage, Unit}};
 use std::{io::{self, Write}, path::PathBuf, time::Duration};
 
 #[derive(Default)]
-struct Counts { downloaded: usize, text: Vec<u8>, downloading: bool, last_ready: Option<u64>, received: u64, transfer_elapsed: Duration }
+struct Counts { converted: usize, downloaded: usize, text: Vec<u8>, downloading: bool, last_ready: Option<u64>, received: u64, transfer_elapsed: Duration }
 impl Write for Counts {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> { self.text.write(bytes) }
     fn flush(&mut self) -> io::Result<()> { Ok(()) }
 }
 impl DatasetProgress for Counts {
+    fn set_detail(&mut self, detail: &str) {
+        if detail == "Converting star measurements" { self.converted += 1; }
+    }
+
     fn begin_stage(&mut self, stage: Stage, detail: &str, unit: Unit, _: Option<u64>) {
         self.downloading = stage == Stage::Download;
         self.last_ready = None;
@@ -39,7 +43,8 @@ fn mast_two_groups_extend_without_reconverting_old_rows() {
         let started = std::time::Instant::now();
         let mut times = StepTimes::with_trace(true);
         let catalog = load_sky_catalog(Some(&Dataset::GaiaGdr3Stars { stars: count }), parallel, &directories, &mut astroterm::progress::Report::live(&mut log, &mut times)).unwrap();
-        let converted = times.trace().unwrap().steps.iter().filter(|step| step.name == "MAST block conversion").count();
+        times.measure("END");
+        let converted = log.converted;
         assert_eq!((log.downloaded, converted), (expected_downloads, expected_conversions));
         assert_eq!(log.received > 0, expected_downloads > 0);
         let mut ids: Vec<_> = catalog.catalog.stars.iter().map(|star| star.id.0).collect();

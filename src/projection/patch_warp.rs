@@ -5,7 +5,7 @@ use crate::observation::Observation;
 use crate::projection::{CartesianCamera, Frame, SkyArea, prepare_camera};
 use crate::regions::{TileGeometry, blend_star};
 use crate::selection::Selected;
-use crate::timing::StepTimes;
+use crate::time::StepTimes;
 use super::raster::Point;
 use super::tile_sampling::TileSampler;
 use super::tile_warp::{TextureMapping, is_convex};
@@ -28,11 +28,11 @@ pub(super) fn project_curved_tiles<P: CurvedPatch>(
     }
 
     // Clear the last frame and prepare the camera once for every selected region.
-    times.measure_checkpoint("Projection.Star layer clear");
+    times.measure("Projection.Star layer clear");
     frame.stars_mut().fill(Texel::default());
     let (width, height, sky) = (frame.width(), frame.height(), frame.sky());
     if width == 0 || height == 0 || sky.size < 2 { return; }
-    times.measure_checkpoint("Projection.Camera preparation");
+    times.measure("Projection.Camera preparation");
     let camera = prepare_camera(view);
     let mut sampler = TileSampler::new(TILE_EDGE_TEXELS);
     let mut mesh = Vec::new();
@@ -42,24 +42,24 @@ pub(super) fn project_curved_tiles<P: CurvedPatch>(
     for &region in &selected.regions {
         let image = &data.star_regions[region].merged_tile;
         if image.is_empty() || image.lit_rows().iter().all(|&row| row == 0) { continue; }
-        times.measure_checkpoint("Projection.Tile geometry");
+        times.measure("Projection.Tile geometry");
         let geometry = TileGeometry::new(region);
-        times.measure_checkpoint("Projection.Tile corner projection");
+        times.measure("Projection.Tile corner projection");
         let patch = build_patch(&geometry, observation, camera, sky);
         let Some(patch) = patch else { continue; };
-        times.measure_checkpoint(mesh_stage);
+        times.measure(mesh_stage);
         if !build_mesh(&patch, &mut mesh) { continue; }
-        times.measure_checkpoint("Projection.Tile filter preparation");
+        times.measure("Projection.Tile filter preparation");
         sampler.prepare(image.lit_rows());
-        times.measure_checkpoint("Projection.Tile rasterization");
+        times.measure("Projection.Tile rasterization");
         pixels.prepare(&mesh, width, height, sky);
         for triangle in &mesh {
             pixels.draw_triangle(triangle, &sampler, image.texels());
         }
-        times.measure_checkpoint("Projection.Tile composition");
+        times.measure("Projection.Tile composition");
         pixels.composite(frame.stars_mut(), width);
     }
-    times.measure_checkpoint("Projection");
+    times.measure("Projection");
 }
 
 pub(super) struct Triangle {

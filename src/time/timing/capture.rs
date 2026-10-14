@@ -20,7 +20,7 @@ impl Serialize for CaptureSteps<'_> {
 impl StepTimes {
     pub fn capture_steps(&self) -> io::Result<CaptureSteps<'_>> {
         let trace = self.trace.as_ref().ok_or_else(|| io::Error::other("frame capture requires tracing"))?;
-        if self.has_active_checkpoint() || !trace.active.is_empty() || !self.parents.is_empty() { return Err(io::Error::other("cannot export an active timing scope")); }
+        if self.has_active_checkpoint() { return Err(io::Error::other("cannot export an active timing measurement")); }
         for (index, step) in trace.steps.iter().enumerate() {
             if !step.seconds.is_finite() || step.seconds < 0.0 || !step.direct_diagnostic_seconds.is_finite()
                 || step.direct_diagnostic_seconds < 0.0 || step.parent.is_some_and(|parent| parent >= index) {
@@ -52,7 +52,8 @@ mod tests {
         let mut capacity = 0;
         for index in 0..3000 {
             times.begin_frame();
-            times.measure_steps("Parent", |times| { times.measure("Child", || {}); });
+            times.measure("Parent.Child");
+            times.measure("END");
             let value = serde_json::to_value(times.capture_steps().unwrap()).unwrap();
             assert_eq!(value[1]["parent"], 0);
             let current = times.trace().unwrap().steps.capacity();

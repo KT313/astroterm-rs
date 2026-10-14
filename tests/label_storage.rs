@@ -3,7 +3,7 @@ use astroterm::catalog::{load_athyg_catalog, StarId};
 use astroterm::points::star_label;
 use astroterm::progress::NoProgress;
 use astroterm::sky::{build_sky_tables, prepare_catalog, write_cached_catalog, load_cached_catalog, catalog_fingerprint};
-use astroterm::timing::StepTimes;
+use astroterm::time::StepTimes;
 
 fn source() -> astroterm::catalog::Catalog {
     let directory = tempfile::tempdir().unwrap();

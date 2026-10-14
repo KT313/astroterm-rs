@@ -3,7 +3,7 @@ mod conversion;
 mod assembly;
 
 use crate::{catalog::{datasets::DatasetDirectories, resolve_mast, mast_digest, encode_mast, BlobStore, MastSelection}, model::PreparedCatalog,
-    progress::DatasetProgress, timing::StepTimes};
+    progress::DatasetProgress, time::StepTimes};
 use std::{io, path::{Path, PathBuf}};
 
 pub(crate) fn load_mast_catalog(count: u32, parallel_blocks: u8, directories: &DatasetDirectories, progress: &mut dyn DatasetProgress, times: &mut StepTimes) -> io::Result<PreparedCatalog> {
@@ -11,7 +11,8 @@ pub(crate) fn load_mast_catalog(count: u32, parallel_blocks: u8, directories: &D
     writeln!(progress, "Gaia DR3: using G magnitude in the existing V-magnitude field; no G-to-V conversion. The star threshold uses G.")?;
     if count == 0 { return super::prepare_gaia_catalog(&[], progress, times); }                     // zero needs neither storage nor network
     let cache_root = directories.cache.as_ref().ok_or_else(|| io::Error::other("Cannot find the cache directory for reusable MAST conversions"))?;
-    let mut selected = times.measure_steps("Dataset resolution", |times| resolve_mast(count, parallel_blocks, directories, progress, times))?;
+    times.measure("Dataset loading.Dataset resolution");
+    let mut selected = resolve_mast(count, parallel_blocks, directories, progress, times)?;
     prepare_selected_catalog(&mut selected, cache_root, progress, times)
 }
 
@@ -27,7 +28,8 @@ fn prepare_selected_catalog(selected: &mut MastSelection, cache_root: &Path, pro
         selected.check_unchanged()?;
         return Ok(prepared);
     }
-    let prepared = times.measure_steps("Gaia loading", |times| assembly::assemble_selected_catalog(selected, &converted, &policy, progress, times))?;
+    times.measure("Dataset loading.Gaia loading");
+    let prepared = assembly::assemble_selected_catalog(selected, &converted, &policy, progress, times)?;
     selected.check_unchanged()?;                                                                   // check for later source changes without reading every raw blob again
     let (path, fingerprint) = selection_cache_identity(selected, &policy, cache_root)?; // use final identities after any local repair
     save_prepared_catalog(path, &prepared, &fingerprint, progress, times)?;

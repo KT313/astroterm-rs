@@ -4,7 +4,7 @@ use astroterm::catalog::datasets::{Dataset, DatasetDirectories};
 use astroterm::constants::MAST_PARALLEL_BLOCKS;
 use astroterm::progress::NoProgress;
 use astroterm::sky::{build_sky_tables, load_sky_catalog};
-use astroterm::timing::StepTimes;
+use astroterm::time::StepTimes;
 use std::{io, time::Instant};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let argument = std::env::args_os().nth(1).ok_or("expected a dataset name or path")?;

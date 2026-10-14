@@ -10,7 +10,7 @@ use crate::catalog::{
     load_constellation_figures,
 };
 use sha2::{Digest, Sha256};
-use crate::{progress::{DatasetProgress, Unit}, timing::StepTimes};
+use crate::{progress::{DatasetProgress, Unit}, time::StepTimes};
 use std::{
     collections::HashSet,
     fs,
@@ -116,18 +116,22 @@ pub fn cache_path(source: &Path, directory: &Path) -> io::Result<PathBuf> {
 /// Write the prepared catalog to its cache file, validating it first; progress and timings go to `report`.
 pub fn write_cached_catalog(path: &Path, prepared: &PreparedCatalog, fingerprint: &[u8; 32], report: &mut crate::progress::Report<'_>) -> io::Result<()> {
     let (progress, times) = report.parts();
-    times.measure_steps("Prepared catalog write", |times| write_prepared_sections(path, prepared, fingerprint, progress, times))
+    times.measure("Dataset loading.Prepared cache.Prepared catalog write");
+    write_prepared_sections(path, prepared, fingerprint, progress, times)
 }
 
 fn write_prepared_sections(path: &Path, prepared: &PreparedCatalog, fingerprint: &[u8; 32], progress: &mut dyn DatasetProgress, times: &mut StepTimes) -> io::Result<()> {
     progress.begin_stage(crate::progress::Stage::ValidateCache, "Checking prepared output", crate::progress::Unit::Work, None);
     let catalog = &prepared.catalog;
-    times.measure_steps("Prepared catalog validation", |times| {
-        if catalog.stars.source_ids().is_none() { times.measure("Prepared label validation", || catalog.names.validate())?; }
-        validate_catalog(catalog, &prepared.preparation, true, progress, times)
-    })?;
+    times.measure("Dataset loading.Prepared cache.Prepared catalog validation");
+    if catalog.stars.source_ids().is_none() {
+        times.measure("Dataset loading.Prepared cache.Prepared catalog validation.Prepared label validation");
+        catalog.names.validate()?;
+    }
+    validate_catalog(catalog, &prepared.preparation, true, progress, times)?;
     progress.finish_stage(crate::progress::Outcome::Complete);
-    let figures = times.measure("Prepared figure encoding", || encode_figures(catalog.constellations()))?;
+    times.measure("Dataset loading.Prepared cache.Prepared catalog write.Prepared figure encoding");
+    let figures = encode_figures(catalog.constellations())?;
     let counts = catalog.stars.magnitude_clipping();
     let clipping = [counts.lower, counts.upper];
     let label_mode = [u8::from(catalog.stars.source_ids().is_some())];
@@ -151,8 +155,10 @@ fn write_prepared_sections(path: &Path, prepared: &PreparedCatalog, fingerprint:
 /// Read and validate a prepared catalog whose file carries `fingerprint`; progress and timings go to `report`.
 pub fn load_cached_catalog(path: &Path, fingerprint: &[u8; 32], report: &mut crate::progress::Report<'_>) -> io::Result<PreparedCatalog> {
     let (progress, times) = report.parts();
-    let prepared = times.measure("Prepared section reading", || read_prepared_sections(path, fingerprint, progress))?;
-    times.measure_steps("Prepared catalog validation", |times| validate_catalog(&prepared.catalog, &prepared.preparation, false, progress, times))?;
+    times.measure("Dataset loading.Prepared cache.Prepared catalog lookup.Prepared section reading");
+    let prepared = read_prepared_sections(path, fingerprint, progress)?;
+    times.measure("Dataset loading.Prepared cache.Prepared catalog validation");
+    validate_catalog(&prepared.catalog, &prepared.preparation, false, progress, times)?;
     progress.finish_stage(crate::progress::Outcome::Complete);
     Ok(prepared)
 }
@@ -233,14 +239,18 @@ fn validate_catalog(catalog: &SkyCatalog, preparation: &CatalogPreparation, full
     progress.set_work(Unit::Stars, Some(catalog.stars.len() as u64 * 2));
     progress.set_detail("Checking labels and star values (first of two star passes)");
     catalog.validate_exception_support()?;
-    times.measure("Prepared star validation", || catalog.stars.validate_rows(&catalog.names, preparation.motion_bounds(), full, progress))?;
+    times.measure("Dataset loading.Prepared cache.Prepared catalog validation.Prepared star validation");
+    catalog.stars.validate_rows(&catalog.names, preparation.motion_bounds(), full, progress)?;
     progress.set_detail("Checking IDs and regional order (second star pass)");
-    let ids = times.measure("Prepared ID and region validation", || validate_ids_and_regions(catalog, full, progress))?;
-    times.describe("Prepared ID and region validation", || format!("internal IDs={}; scratch={}; payload bytes={}", catalog.stars.len(), ids.kind(), ids.bytes()));
+    times.measure("Dataset loading.Prepared cache.Prepared catalog validation.Prepared ID and region validation");
+    let ids = validate_ids_and_regions(catalog, full, progress)?;
+    times.describe("Dataset loading.Prepared cache.Prepared catalog validation.Prepared ID and region validation", || format!("internal IDs={}; scratch={}; payload bytes={}", catalog.stars.len(), ids.kind(), ids.bytes()));
     progress.set_detail("Releasing temporary validation data");
-    times.measure("Prepared ID scratch release", || drop(ids));                                // free ID scratch before collecting constellation endpoints
+    times.measure("Dataset loading.Prepared cache.Prepared catalog validation.Prepared ID scratch release");
+    drop(ids);                                // free ID scratch before collecting constellation endpoints
     progress.set_detail("Checking constellation connections");
-    times.measure("Prepared constellation validation", || validate_endpoint_union(catalog))
+    times.measure("Dataset loading.Prepared cache.Prepared catalog validation.Prepared constellation validation");
+    validate_endpoint_union(catalog)
 }
 
 fn validate_ids_and_regions(catalog: &SkyCatalog, full: bool, progress: &mut dyn DatasetProgress) -> io::Result<IdScratch> {
@@ -366,7 +376,7 @@ mod tests {
     use crate::catalog::{load_embedded_catalog, datasets::{Dataset, DatasetDirectories}};
     use crate::model::Data;
     use crate::progress::NoProgress;
-    use crate::timing::StepTimes;
+    use crate::time::StepTimes;
 
     fn prepared() -> PreparedCatalog {
         crate::sky::prepare_owned_catalog(load_embedded_catalog(&mut crate::progress::Report::quiet()).unwrap(), &mut crate::progress::Report::quiet()).unwrap()
@@ -405,7 +415,7 @@ mod tests {
         sections
     }
     fn save_sections(path: &Path, fingerprint: &[u8; 32], sections: &[Vec<u8>]) {
-        write_sections(path, fingerprint, &sections.iter().map(Vec::as_slice).collect::<Vec<_>>(), &mut crate::progress::NoProgress(io::sink()), &mut crate::timing::StepTimes::default()).unwrap();
+        write_sections(path, fingerprint, &sections.iter().map(Vec::as_slice).collect::<Vec<_>>(), &mut crate::progress::NoProgress(io::sink()), &mut crate::time::StepTimes::default()).unwrap();
     }
     #[test]
     fn exception_payloads_are_rejected_without_rebuilding_from_source() {
@@ -422,7 +432,7 @@ mod tests {
         for section_index in [EXCEPTIONS, STAR_SECTIONS - 1] {
             let mut sections = original.clone();
             sections[section_index] = vec![0; 56]; // nonempty placeholder or orphan; contents must never be consumed
-            write_sections(&path, &fingerprint, &sections.iter().map(Vec::as_slice).collect::<Vec<_>>(), &mut crate::progress::NoProgress(io::sink()), &mut crate::timing::StepTimes::default()).unwrap();
+            write_sections(&path, &fingerprint, &sections.iter().map(Vec::as_slice).collect::<Vec<_>>(), &mut crate::progress::NoProgress(io::sink()), &mut crate::time::StepTimes::default()).unwrap();
             let saved = fs::read(&path).unwrap();
             let error = load_sky_catalog(Some(&dataset), &dirs, &mut notices).unwrap_err();
             assert_eq!(error.kind(), io::ErrorKind::Unsupported);

@@ -16,11 +16,14 @@ fn completed_frames_include_reuse_and_keep_startup_separate() {
     let config = config();
     let mut session = BenchmarkSession::new(Vec::new(), config.frame_benchmark.clone().unwrap());
     let mut times = StepTimes::with_trace(true);
-    times.measure("Startup fixture", || {});
+    times.measure("Startup fixture");
+    times.measure("END");
     session.begin_capture(&config, display(), &mut times).unwrap();
     for index in 1..=3 {
         times.begin_frame();
-        times.measure_steps("Observation", |times| { times.measure("Repeated", || {}); times.measure("Repeated", || {}); });
+        times.measure("Observation.Repeated");
+        times.measure("Observation.Repeated");
+        times.measure("END");
         let outcome = if index == 1 { Presented::Sent(1) } else { Presented::Unchanged };
         let done = session.record_frame(FrameTime::from_utc(config.simulation.start_julian_date), outcome, 0.000_123_456, display(), &mut times).unwrap();
         assert_eq!(done, index == 3);

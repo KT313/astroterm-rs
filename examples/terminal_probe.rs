@@ -21,14 +21,14 @@ fn main() {
             let mut display = Display::open(Some(ratatui_image::picker::ProtocolType::Kitty), config.terminal, config.text_scale).unwrap();
             let mut frame = display.new_frame();
             let time = FrameTime::from_utc(config.simulation.start_julian_date);
-            let solar_system = simulate_solar_system(&tables, time, &mut astroterm::timing::StepTimes::default());
-            let observation = observe(&config.simulation.observer, config.simulation.refraction, &config.view, time, &mut astroterm::timing::StepTimes::default());
-            let selected = select_regions(&tables.star_regions, &observation, &mut astroterm::timing::StepTimes::default());
-            refresh_regions(&mut tables, &selected, time, &config.view, &config.render, &mut astroterm::timing::StepTimes::default());
-            project_stars_to_screen(&mut frame, &tables, &selected, &observation, &config.view, &mut astroterm::timing::StepTimes::default());
+            let solar_system = simulate_solar_system(&tables, time, &mut astroterm::time::StepTimes::default());
+            let observation = observe(&config.simulation.observer, config.simulation.refraction, &config.view, time, &mut astroterm::time::StepTimes::default());
+            let selected = select_regions(&tables.star_regions, &observation, &mut astroterm::time::StepTimes::default());
+            refresh_regions(&mut tables, &selected, time, &config.view, &config.render, &mut astroterm::time::StepTimes::default());
+            project_stars_to_screen(&mut frame, &tables, &selected, &observation, &config.view, &mut astroterm::time::StepTimes::default());
             let inputs = PointInputs { solar_system: &solar_system, data: &tables, selected: &selected, panel: &[], notice: None };
-            draw_points(&mut frame, &inputs, &observation, &config.view, &config.render, &mut astroterm::timing::StepTimes::default());
-            present(&frame, display.terminal(), &mut astroterm::timing::StepTimes::default()).unwrap();
+            draw_points(&mut frame, &inputs, &observation, &config.view, &config.render, &mut astroterm::time::StepTimes::default());
+            present(&frame, display.terminal(), &mut astroterm::time::StepTimes::default()).unwrap();
             crossterm::execute!(std::io::stdout(), crossterm::terminal::BeginSynchronizedUpdate).unwrap();
             panic!("intentional pixel restoration probe");
         }

@@ -8,11 +8,11 @@ pub use records::{ObserverTimeZone, MetadataField};
 use chrono::{Datelike, Timelike};
 
 use crate::astro::{
-    DegreesMinutesSeconds, ElapsedTime, MoonPhase, Observer, SimulationClock, ZodiacSign, azimuth_to_compass,
+    DegreesMinutesSeconds, ElapsedTime, MoonPhase, Observer, ZodiacSign, azimuth_to_compass,
     julian_date_to_utc,
 };
 use crate::model::{ProjectionKind, View, ViewCenter};
-use crate::timing::StepTime;
+use crate::time::{SimulationClock, StepTime};
 
 use local_time::LocalTime;
 pub use local_time::{convert_observer_time, resolve_observer_timezone};
