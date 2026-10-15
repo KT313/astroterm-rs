@@ -172,17 +172,16 @@ been removed. Independent accuracy checks are documented in
 Stars use four-texel dots in their sky tiles, enlarged when zoomed in. Within each group, stars blend from dim
 to bright current magnitude (ascending ID for ties); group images merge from slowest to fastest, weighting stored RGB by opacity while opacity accumulates source-over. Zooming in boosts each star’s opacity, capped at full opacity before blending; changing the boost redraws the selected tiles.
 Stars whose complete dot would cross the image boundary are omitted. The Sun, planets and Moon retain their sizes.
-Tiles are stereographic images of their region, as the screen is a stereographic image of the sky, so turning
-the sky maps a tile onto the screen by a closed formula. The stereographic warp uses it backwards: for every
-pixel inside a region's screen image it undoes the screen projection, refraction (through a fixed table) and
-aberration, rotates into the tile and applies the tile projection, then averages the texels under the pixel's
-footprint and blends the result source-over. Every pixel is exact; rows are stepped by forward differences and
-rows whose tile rows hold no light are skipped. The equidistant view (`-e`) still pushes each tile forward
-through an adaptive mesh: tile corners are projected, edge midpoints and the center are checked against
-straight interpolation, and regions above the sampled error target use a finer uniform grid up to a work cap,
-where unresolved pieces are omitted rather than drawn as long chords; at a full 360° field that can leave gaps
-at the extreme outer rim. Texture footprints are rectangular area averages; the cached tile resolution is
-unchanged, so extreme magnification can still look blurry.
+Tiles are stereographic images of their region, and the screen is a stereographic or equidistant (`-e`) image
+of the sky, so every pixel's place in a tile follows from a closed formula. The warp uses it backwards: for every
+pixel inside a region's screen image it undoes the screen projection (a division for the stereographic view, a
+small per-frame table for the equidistant one), refraction (through a fixed table) and aberration, rotates into
+the tile and applies the tile projection, then averages the texels under the pixel's footprint and blends the
+result source-over. Every pixel is exact, including the 360° rim, where the point behind the observer spreads
+along the whole edge. Rows are stepped by forward differences, and in the stereographic view rows whose tile rows
+hold no light are skipped. Texture footprints are square area averages of the screen's radial scale (the
+equidistant view blurs a little more along the rim than across it); the cached tile resolution is unchanged, so
+extreme magnification can still look blurry.
 With the azimuthal grid on, its angle labels replace the compass letters.
 
 <details>

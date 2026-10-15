@@ -3,10 +3,6 @@
 use crate::time::StepTimes;
 mod geometry;
 mod pixel_warp;
-mod mesh;
-mod adaptive_warp;
-mod patch_warp;
-mod triangle_rows;
 mod tile_sampling;
 mod frame;
 
@@ -20,9 +16,8 @@ pub use geometry::{
 };
 
 /// Step 5: return a square image of projected stars, with no frame offsets or terminal margins.
-/// Pixels use row-major order and retain floating-point RGB and opacity until final presentation.
-/// The stereographic view pulls every pixel back to its tile (`pixel_warp`); the equidistant view still pushes
-/// each tile forward through an adaptive mesh (`adaptive_warp`, to be ported).
+/// Pixels use row-major order and retain floating-point RGB and opacity until final presentation. Every
+/// pixel inside a region's image is pulled back to the region's tile and sampled there (`pixel_warp`).
 pub fn project_stars_to_screen(
     drawing_area_width_and_height: usize,
     data: &crate::model::Data,
@@ -32,8 +27,5 @@ pub fn project_stars_to_screen(
     times: &mut StepTimes
 ) -> Vec<crate::model::Texel> {
     // Render in square-local coordinates; the caller places the result into the full frame.
-    match view.projection {
-        crate::model::ProjectionKind::Stereographic => pixel_warp::project_tiles_by_pixel(drawing_area_width_and_height, data, selected, observation, view, times),
-        crate::model::ProjectionKind::Equidistant => adaptive_warp::project_adaptive_tiles(drawing_area_width_and_height, data, selected, observation, view, times),
-    }
+    pixel_warp::project_tiles_by_pixel(drawing_area_width_and_height, data, selected, observation, view, times)
 }

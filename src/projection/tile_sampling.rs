@@ -50,20 +50,6 @@ impl TileSampler {
         first <= last && (u64::MAX >> (63 - (last - first))) << first & self.lit_rows != 0
     }
 
-    /// Conservative rejection before clipping an outline pixel. A clipped fragment may move its sampling
-    /// center by half the full footprint and keeps a minimum one-texel filter. Include both before rejecting.
-    pub(super) fn may_cover_light(&self, position: [f64; 2], footprint: [f64; 2]) -> bool {
-        // Clamp is non-expansive, so this expanded box contains every possible clipped-fragment filter box.
-        let edge = self.edge as f64;
-        let center = position.map(|value| value.clamp(0.0, edge));
-        let radius = footprint.map(|value| value + 0.5);
-        let first_column = (center[0] - radius[0]).max(0.0) as usize;
-        let last_column = ((center[0] + radius[0]).min(edge).ceil() as usize - 1).min(self.edge - 1);
-        let first_row = (center[1] - radius[1]).max(0.0) as usize;
-        let last_row = ((center[1] + radius[1]).min(edge).ceil() as usize - 1).min(self.edge - 1);
-        self.has_lit_texels(first_column, last_column, first_row, last_row)
-    }
-
     fn has_lit_texels(&self, first_column: usize, last_column: usize, first_row: usize, last_row: usize) -> bool {
         // Check broad column/row masks first, then only the rows that the footprint overlaps.
         let columns = (u64::MAX >> (63 - (last_column - first_column))) << first_column;
@@ -263,26 +249,6 @@ mod tests {
         texels.fill(Texel::default());
         sampler.prepare(&lit_rows_of(&texels, edge));
         assert_eq!(sampler.sample(&texels, [32.0, 32.0], [64.0; 2]), None);
-    }
-
-    #[test]
-    fn early_rejection_contains_minimum_filters_of_shifted_pixel_fragments() {
-        // The minimum one-texel filter can move beyond the full pixel's original filter box after clipping.
-        let mut texels = vec![Texel::default(); 16];
-        texels[10] = Texel { rgb: [0.5; 3], opacity: 0.5 };
-        let sampler = sampler(&texels);
-        for u in [-1.0, 0.0, 1.49, 1.51, 2.3, 4.0, 5.0] {
-            for v in [-1.0, 0.0, 1.49, 1.51, 2.3, 4.0, 5.0] {
-                for footprint in [[0.1, 0.2], [1.0, 1.0], [3.0, 2.0], [8.0, 8.0]] {
-                    for offset in [-0.5, 0.0, 0.5] {
-                        let part = [u + offset * footprint[0], v + offset * footprint[1]];
-                        if sampler.sample(&texels, part, footprint.map(|value| value * 0.25)).is_some() {
-                            assert!(sampler.may_cover_light([u, v], footprint));
-                        }
-                    }
-                }
-            }
-        }
     }
 
 }

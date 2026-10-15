@@ -86,9 +86,8 @@ in effect; use `--overwrite` explicitly. The helper is local development tooling
 
 The seven main stages have child rows in the live `--debug-frametimes` panel, single-frame traces and bounded
 frame captures. Region refresh separates brightness-prefix lookup, simulation caches, image cache decisions,
-group drawing and region merging. Projection separates the star buffer allocation, camera preparation, tile geometry, region mapping (the
-equidistant mesh reports tile-corner projection, adaptive mesh preparation and region composition instead),
-filter preparation and tile rasterization. Output separates composition/comparison, RGB
+group drawing and region merging. Projection separates the star buffer allocation, camera preparation, tile geometry, region mapping, filter
+preparation and tile rasterization. Output separates composition/comparison, RGB
 conversion, shared-memory preparation/consumption, or encoding/upload for streaming protocols.
 
 Repeated region and texel passes publish one accumulated child row per pass per frame, in declared pass order,
@@ -97,12 +96,12 @@ decay when work is skipped. Parent durations include children and timing overhea
 children. Fine-grained timers have a cost, especially for texel loops. They run only for the timing panel, traces
 or benchmark capture; ordinary rendering retains the seven top-level measurements without reading sub-step clocks.
 
-The stereographic warp has a normal/extreme-view timing fixture:
+The warp has a normal/extreme-view timing fixture:
 `cargo test --release --lib time_pixel_mapping -- --ignored --nocapture` (also `make test-benchmarks`).
-It uses the screenshot camera/date at 180 and 351.6 degrees, no refraction, embedded BSC5 and synthetic dense tiles,
-and prints three untraced projection times per case (averaged after warmup), followed by child-stage times from a
-separate traced frame. The child times are not components of that untraced average. The equidistant mesh keeps
-its own fixture, `time_adaptive_mapping`, with the same inputs.
+It uses the screenshot camera/date at 180 and 351.6 degrees stereographic and 360 degrees equidistant, no
+refraction, embedded BSC5 and synthetic dense tiles, and prints three untraced projection times per case (averaged
+after warmup), followed by child-stage times from a separate traced frame. The child times are not components of
+that untraced average.
 
 Simulation timestamps use signed milliseconds since `0000-01-01T00:00:00`, with uniform Gregorian days
 and astronomical year numbering. New saved benchmark results use version 3. Historical saved results
