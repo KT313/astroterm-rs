@@ -1,12 +1,13 @@
 //! The frame loop: the seven steps of `dev/pipeline-restructuring-plan.md` section 6, called by name and in
-//! order every frame. Keys and resizes are polled first; the simulated time comes from the clock.
+//! order every frame, with a separate metadata text-overlay pass between points and presentation.
+//! Keys and resizes are polled first; the simulated time comes from the clock.
 
 use std::io;
 use std::thread;
 
 use astroterm::model::{Config, Data};
 use astroterm::observation::{Observation, observe};
-use astroterm::points::{PointInputs, draw_points};
+use astroterm::points::{draw_points};
 use astroterm::present::{Display, present, transport_notice};
 use astroterm::projection::{Frame, project_stars_to_screen};
 use astroterm::regions::{RefreshReport, refresh_regions};
@@ -15,7 +16,7 @@ use astroterm::solar_system::simulate_solar_system;
 use astroterm::time::{StepTimes, TimeManager};
 
 use crate::helpers::{
-    BenchmarkSession, Panel, PanelFrame, handle_input, begin_frame_diagnostics, capture_display,
+    BenchmarkSession, Panel, draw_text_overlay, handle_input, begin_frame_diagnostics,
     complete_benchmark_frame, finish_frame_diagnostics,
 };
 
@@ -39,7 +40,6 @@ pub(super) fn run_frame_loop(
         let should_quit = handle_input(config, &mut current_view, &mut time_manager.clock, display, frame, benchmark)?;
         if should_quit { return Ok(()); }
 
-        // Read the single millisecond timestamp used by every stage of this frame.
         let time_ms = time_manager.get_current_simulation_time()?;
 
         time_manager.measure("Solar system");
@@ -57,26 +57,29 @@ pub(super) fn run_frame_loop(
         time_manager.measure("Projection");
         project_stars_to_screen(frame, data, &selected, &observation, &current_view, &mut time_manager.step_times);
 
-
-        // Include the panel and trace descriptions in the work needed to prepare point overlays.
         time_manager.measure("Points");
-        describe_steps(&mut time_manager.step_times, &observation, &selected, refreshed, data);
-        let info = display.info();
-        let lines = panel.lines(&PanelFrame { time_ms, clock: &time_manager.clock, solar_system: &solar_system, selected: &selected, refreshed, display: info }, &config.simulation.observer, &current_view, data, &time_manager.step_times);
-        let inputs = PointInputs { solar_system: &solar_system, data, selected: &selected, panel: lines, notice: transport_notice(&info) };
-        draw_points(frame, &inputs, &observation, &current_view, &config.render, &mut time_manager.step_times);
+        let drawn = draw_points(frame, &solar_system, data, &selected, transport_notice(&display.info()), &observation, &current_view, &config.render, &mut time_manager.step_times);
 
-        // Stop timing on both successful and failed writes, before reporting or sleeping.
+        time_manager.measure("Text overlay");
+        draw_text_overlay(frame, display, panel, &solar_system, &selected, data, &drawn.notices, refreshed, time_ms, &current_view, config, time_manager);
+
         time_manager.measure("Present");
-        let result = present(frame, display.terminal(), &mut time_manager.step_times);
-        time_manager.measure("END");
-        let presented = result?;
+        let presentation_result = present(frame, display.terminal(), &mut time_manager.step_times);
 
-        // after the frame: timings, benchmark, pacing
+        time_manager.measure("END");
+        let presented = presentation_result?;
+
+        // Record the completed frame's timings and any requested benchmark sample.
         let elapsed = finish_frame_diagnostics(config, frame_start, time_ms, presented, &mut time_manager.step_times);
-        if complete_benchmark_frame(benchmark, time_ms, presented, elapsed, || capture_display(display.info()), &mut time_manager.step_times)? || config.debug_singleframe { return Ok(()); }
+        describe_steps(&mut time_manager.step_times, &observation, &selected, refreshed, data);
+        let benchmark_complete = complete_benchmark_frame(benchmark, time_ms, presented, elapsed, display, &mut time_manager.step_times)?;
+
+        // Stop after the requested benchmark frames or the single diagnostic frame.
+        if benchmark_complete || config.debug_singleframe { return Ok(()); }
+
+        // Wait for the next frame's scheduled start; a late frame needs no extra delay.
         let frame_duration = &time_manager.min_frame_duration;
-        thread::sleep(frame_duration.saturating_sub(frame_start.elapsed()));                                   // wait until the next frame is due, unless already running late
+        thread::sleep(frame_duration.saturating_sub(frame_start.elapsed()));
     }
 }
 

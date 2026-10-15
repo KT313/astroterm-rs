@@ -1,5 +1,6 @@
-//! What the frame loop does around the seven steps: controls and the clock, and the metadata panel's lines.
-use astroterm::time::SimulationClock;
+//! Frame-loop helpers: controls and the clock, plus preparation and drawing of the metadata text overlay.
+use astroterm::time::{SimulationClock, TimeManager};
+use astroterm::points::draw_panel_and_notices;
 use astroterm::astro::{Observer, name_moon_phase};
 use astroterm::controls::{Control, apply_control};
 use astroterm::metadata::{MetadataField, ObserverTimeZone, append_step_time_fields, fill_metadata_fields, format_star_count, resolve_observer_timezone};
@@ -56,6 +57,45 @@ pub(crate) fn apply_frame_controls(input: &FrameInput, initial_view: &View, view
 /// Stop on a quit key without processing any other control.
 pub(crate) fn stop_on_quit(input: &FrameInput) -> bool {
     input.controls.contains(&Control::Quit)
+}
+
+/// Build and paint the metadata panel after sky graphics, keeping notices on top.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn draw_text_overlay(
+    frame: &mut Frame,
+    display: &Display,
+    panel: &mut Panel,
+    solar_system: &SolarSystem,
+    selected: &Selected,
+    data: &Data,
+    notices: &[&str],
+    refreshed: RefreshReport,
+    time_ms: i64,
+    view: &View,
+    config: &Config,
+    time_manager: &mut TimeManager,
+) {
+    // Build the panel's text from the simulation results and current terminal information.
+    time_manager.measure("Text overlay.Panel preparation");
+    let display_info = display.info();
+    let panel_lines = panel.lines(
+        &PanelFrame {
+            time_ms,
+            clock: &time_manager.clock,
+            solar_system,
+            selected,
+            refreshed,
+            display: display_info,
+        },
+        &config.simulation.observer,
+        view,
+        data,
+        &time_manager.step_times,
+    );
+
+    // Paint the panel and notices without clearing the graphics already in the frame.
+    time_manager.measure("Text overlay.Text rasterization");
+    draw_panel_and_notices(frame, panel_lines, notices);
 }
 
 /// The metadata panel: its lines are rebuilt every frame into the same vector, empty when the panel is off.

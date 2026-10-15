@@ -1,7 +1,7 @@
 //! One report writer per process; timings stay in StepTimes and are released after each serialized segment.
-use astroterm::{model::{Config, FrameBenchmarkConfig}, present::Presented,
+use astroterm::{model::{Config, FrameBenchmarkConfig}, present::{Display, Presented},
     terminal::FrameInput, time::{CaptureSteps, SimulationClock, StepTimes}};
-use super::CaptureDisplay;
+use super::{CaptureDisplay, capture_display};
 use serde::Serialize;
 use std::{fs::File, io::{self, BufWriter, Write}, process::ExitCode};
 
@@ -122,8 +122,22 @@ pub(crate) fn set_benchmark_frame_time(session: &Option<BenchmarkSession>, clock
     clock.set_frame_index(session.completed)
 }
 
-pub(crate) fn complete_benchmark_frame(session: &mut Option<BenchmarkSession>, time_ms: i64, presented: Presented, elapsed: f64, display: impl FnOnce() -> io::Result<CaptureDisplay>, times: &mut StepTimes) -> io::Result<bool> {
-    match session { Some(session) => session.record_frame(time_ms, presented, elapsed, display()?, times), None => Ok(false) }
+pub(crate) fn complete_benchmark_frame(
+    session: &mut Option<BenchmarkSession>,
+    time_ms: i64,
+    presented: Presented,
+    elapsed: f64,
+    display: &Display,
+    times: &mut StepTimes,
+) -> io::Result<bool> {
+    // Ordinary runs have no benchmark report to update.
+    let Some(session) = session else {
+        return Ok(false);
+    };
+
+    // Read the display information and record the completed frame.
+    let display_info = capture_display(display.info())?;
+    session.record_frame(time_ms, presented, elapsed, display_info, times)
 }
 
 pub(crate) fn finish_benchmark_report(session: &mut Option<BenchmarkSession>, mut result: io::Result<()>) -> io::Result<()> {

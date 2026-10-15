@@ -2,7 +2,7 @@
 use astroterm::astro::{J2000, Observer};
 use astroterm::model::{RenderOptions, Data, View};
 use astroterm::observation::observe;
-use astroterm::points::{PointInputs, draw_points};
+use astroterm::points::{draw_points, draw_panel_and_notices};
 use astroterm::present::{Presented, Terminal, present};
 use astroterm::projection::{Frame, project_stars_to_screen};
 use astroterm::regions::refresh_regions;
@@ -27,9 +27,10 @@ fn render(data: &mut Data, frame: &mut Frame, terminal: &mut Terminal<Vec<u8>>, 
     refresh_regions(data, &selected, time, &view, &settings, times);
     times.measure("Projection");
     project_stars_to_screen(frame, data, &selected, &observation, &view, times);
-    let inputs = PointInputs { solar_system: &solar, data, selected: &selected, panel: &[], notice: None };
     times.measure("Points");
-    draw_points(frame, &inputs, &observation, &view, &settings, times);
+    let drawn = draw_points(frame, &solar, data, &selected, None, &observation, &view, &settings, times);
+    times.measure("Text overlay");
+    draw_panel_and_notices(frame, &[], &drawn.notices);
     times.measure("Present");
     let presented = present(frame, terminal, times);
     times.measure("END");
@@ -47,7 +48,7 @@ fn detail_is_hierarchical_bounded_and_preserves_the_rendered_frame() {
     let mut terminal = Terminal::new(Vec::new(), ProtocolType::Sixel, false, Rect::new(0, 0, 8, 4), false, false);
     let mut plain = StepTimes::default();
     assert!(matches!(render(&mut data, &mut frame, &mut terminal, &mut plain), Presented::Sent(_)));
-    assert_eq!(plain.steps().len(), 7);
+    assert_eq!(plain.steps().len(), 8);
     let expected_stars = frame.stars().to_vec();
     let expected_overlay = frame.overlay().to_vec();
 
@@ -66,6 +67,7 @@ fn detail_is_hierarchical_bounded_and_preserves_the_rendered_frame() {
     let capture = serde_json::to_value(detailed.capture_steps().unwrap()).unwrap();
     let child = capture.as_array().unwrap().iter().find(|row| row["name"] == "Brightness prefixes").unwrap();
     assert_eq!(capture[child["parent"].as_u64().unwrap() as usize]["name"], "Regions");
+    assert!(detailed.steps().iter().any(|step| step.name == "Text overlay" && step.depth == 0));
     let fields = astroterm::metadata::format_step_time_fields(detailed.steps());
     assert!(fields.iter().any(|field| field.label.contains("Brightness prefixes")));
 

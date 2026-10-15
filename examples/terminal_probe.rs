@@ -11,7 +11,7 @@ fn main() {
         }
         Some("pixel-panic") => {
             // one frame through the seven steps on a forced Kitty display, then a panic inside a synchronized update
-            use astroterm::{cli::{Arguments, build_config}, present::{Display, present}, observation::observe, points::{PointInputs, draw_points},
+            use astroterm::{cli::{Arguments, build_config}, present::{Display, present}, observation::observe, points::{draw_points, draw_panel_and_notices},
                 projection::project_stars_to_screen, regions::refresh_regions, selection::select_regions, solar_system::simulate_solar_system};
             use clap::Parser;
             let config = build_config(Arguments::parse_from(["probe", "--graphics-protocol", "kitty"]), &[]).unwrap();
@@ -25,8 +25,8 @@ fn main() {
             let selected = select_regions(&tables.star_regions, &observation, &mut astroterm::time::StepTimes::default());
             refresh_regions(&mut tables, &selected, time, &config.view, &config.render, &mut astroterm::time::StepTimes::default());
             project_stars_to_screen(&mut frame, &tables, &selected, &observation, &config.view, &mut astroterm::time::StepTimes::default());
-            let inputs = PointInputs { solar_system: &solar_system, data: &tables, selected: &selected, panel: &[], notice: None };
-            draw_points(&mut frame, &inputs, &observation, &config.view, &config.render, &mut astroterm::time::StepTimes::default());
+            let drawn = draw_points(&mut frame, &solar_system, &tables, &selected, None, &observation, &config.view, &config.render, &mut astroterm::time::StepTimes::default());
+            draw_panel_and_notices(&mut frame, &[], &drawn.notices);
             present(&frame, display.terminal(), &mut astroterm::time::StepTimes::default()).unwrap();
             crossterm::execute!(std::io::stdout(), crossterm::terminal::BeginSynchronizedUpdate).unwrap();
             panic!("intentional pixel restoration probe");

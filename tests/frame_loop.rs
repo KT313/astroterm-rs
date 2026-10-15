@@ -4,7 +4,7 @@ use astroterm::astro::Observer;
 use astroterm::catalog::load_embedded_catalog;
 use astroterm::model::{ProjectionKind, RenderOptions, Data, View, ViewCenter};
 use astroterm::observation::{Observation, observe};
-use astroterm::points::{Drawn, PointInputs, draw_points, star_label};
+use astroterm::points::{Drawn, draw_points, draw_panel_and_notices, star_label};
 use astroterm::present::{Presented, Terminal, present};
 use astroterm::progress::NoProgress;
 use astroterm::projection::{Frame, SkyArea, prepare_camera, project_camera, project_stars_to_screen, project_to_cell};
@@ -36,8 +36,8 @@ fn run_frame(data: &mut Data, frame: &mut Frame, view: &View, settings: &RenderO
     let selected = select_regions(&data.star_regions, &observation, &mut astroterm::time::StepTimes::default());                                       // 3
     refresh_regions(data, &selected, time, view, settings, &mut astroterm::time::StepTimes::default());                                       // 4
     project_stars_to_screen(frame, data, &selected, &observation, view, &mut astroterm::time::StepTimes::default());                            // 5
-    let inputs = PointInputs { solar_system: &solar_system, data, selected: &selected, panel: &[], notice: None };
-    let drawn = draw_points(frame, &inputs, &observation, view, settings, &mut astroterm::time::StepTimes::default());                            // 6
+    let drawn = draw_points(frame, &solar_system, data, &selected, None, &observation, view, settings, &mut astroterm::time::StepTimes::default());                            // 6
+    draw_panel_and_notices(frame, &[], &drawn.notices);
     (observation, drawn)
 }
 
