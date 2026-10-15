@@ -21,51 +21,112 @@ use super::tile_warp::{contains_antipode, is_convex};
 /// Adapt tile meshes using the selected stereographic or equidistant camera formula.
 #[allow(dead_code)] // backend selection is one call in projection/mod.rs
 pub(super) fn project_adaptive_tiles(
-    frame: &mut Frame, data: &Data, selected: &Selected, observation: &Observation, view: &View, times: &mut StepTimes,
+    frame: &mut Frame,
+    data: &Data,
+    selected: &Selected,
+    observation: &Observation,
+    view: &View,
+    times: &mut StepTimes,
 ) {
-    // Prepare one camera and reuse temporary allocations across regions in this frame.
+    // Clear the previous frame's stars and stop if the drawing area is too small.
     times.measure("Projection.Star layer clear");
     frame.stars_mut().fill(Texel::default());
     let (width, height, sky) = (frame.width(), frame.height(), frame.sky());
-    if width == 0 || height == 0 || sky.size < 2 { return; }
+    if width == 0 || height == 0 || sky.size < 2 {
+        return;
+    }
+
+    // Prepare the camera and reuse the temporary mesh and drawing buffers across regions.
     times.measure("Projection.Camera preparation");
     let camera = prepare_camera(view);
-    let mut samples = HashMap::new();
-    let mut mesh = Vec::new();
+    let mut vertices = HashMap::new();
+    let mut triangles = Vec::new();
     let mut sampler = TileSampler::new(TILE_EDGE_TEXELS);
     let mut pixels = RegionPixels::default();
     let mut totals = MeshStats::default();
 
-    // Build directly projected meshes, then accumulate all pieces before compositing each complete region.
     for &region in &selected.regions {
-        let image = &data.star_regions[region].merged_tile;
-        if image.is_empty() || image.lit_rows().iter().all(|&row| row == 0) { continue; }
-        times.measure("Projection.Tile geometry");
-        let tile = TileGeometry::new(region);
-        let projector = TileProjector { tile, observation, camera, sky, half_fov: view.fov_degrees.to_radians() * 0.5 };
-        samples.clear();
-        times.measure("Projection.Tile corner projection");
-        for key in corner_keys(0, 0, grid_size()) { sample_vertex(&projector, &mut samples, key); }
-        times.measure("Projection.Adaptive mesh preparation");
-        let stats = build_mesh(&projector, &mut samples, &mut mesh);
-        totals.projections += stats.projections;
-        totals.capped_cells += stats.capped_cells;
-        totals.skipped_cells += stats.skipped_cells;
-        totals.divisions = totals.divisions.max(stats.divisions);
-        if mesh.is_empty() { continue; }
-        times.measure("Projection.Tile filter preparation");
-        sampler.prepare(image.lit_rows());
-        times.measure("Projection.Tile rasterization");
-        pixels.prepare(&mesh, width, height, sky);
-        for triangle in &mesh { pixels.draw_triangle(triangle, &sampler, image.texels()); }
-        times.measure("Projection.Tile composition");
-        pixels.composite(frame.stars_mut(), width);
+        // Skip cached region images that contain no light.
+        times.measure("Projection.Tile empty skip");
+        let tile = &data.star_regions[region].merged_tile;
+        if tile.is_empty() || tile.lit_rows().iter().all(|&row| row == 0) {
+            continue;
+        }
+
+        // Build the region's screen mapping and count its results, including omitted cells.
+        let stats = build_region_mesh(region, observation, camera, sky, view, &mut vertices, &mut triangles, times);
+        totals.add_region(&stats);
+        if triangles.is_empty() {
+            continue;
+        }
+
+        // Draw the cached tile through that mapping and combine it with the frame.
+        draw_region_mesh(frame, tile, &triangles, &mut sampler, &mut pixels, times);
     }
-    times.measure("Projection");
-    times.describe("Projection.Adaptive mesh preparation", || format!(
-        "{} sky projections; maximum {}x{} cells per region; {} cells above target at limit; {} unsafe cells omitted",
-        totals.projections, totals.divisions, totals.divisions, totals.capped_cells, totals.skipped_cells,
-    ));
+
+    // Attach the combined mesh statistics to this frame's diagnostic trace.
+    totals.record_trace(times);
+}
+
+/// Build one region's projected triangles, reusing storage from the preceding region.
+#[allow(clippy::too_many_arguments)]
+fn build_region_mesh(
+    region: usize,
+    observation: &Observation,
+    camera: CartesianCamera,
+    sky: SkyArea,
+    view: &View,
+    vertices: &mut HashMap<[usize; 2], Vertex>,
+    triangles: &mut Vec<Triangle>,
+    times: &mut StepTimes,
+) -> MeshStats {
+    // Locate this tile on the sky and discard projected positions from the previous region.
+    times.measure("Projection.Tile geometry");
+    let tile = TileGeometry::new(region);
+    let projector = TileProjector {
+        tile,
+        observation,
+        camera,
+        sky,
+        half_fov: view.fov_degrees.to_radians() * 0.5,
+    };
+    vertices.clear();
+
+    // Project the four outer corners as the starting points for the triangle grid.
+    times.measure("Projection.Tile corner projection");
+    for corner in corner_keys(0, 0, grid_size()) {
+        sample_vertex(&projector, vertices, corner);
+    }
+
+    // Refine the grid until its sampled error is acceptable or the subdivision limit is reached.
+    times.measure("Projection.Adaptive mesh preparation");
+    build_mesh(&projector, vertices, triangles)
+}
+
+/// Draw all triangles into temporary region pixels, then blend the completed region into the frame once.
+fn draw_region_mesh(
+    frame: &mut Frame,
+    tile: &crate::model::RegionTileCache,
+    triangles: &[Triangle],
+    sampler: &mut TileSampler,
+    pixels: &mut RegionPixels,
+    times: &mut StepTimes,
+) {
+    // Identify tile areas containing light so empty samples can be skipped.
+    times.measure("Projection.Tile filter preparation");
+    sampler.prepare(tile.lit_rows());
+
+    // Resize and clear the region's temporary pixels, then fill them through the triangle mapping.
+    times.measure("Projection.Tile rasterization");
+    pixels.prepare(triangles, frame.width(), frame.height(), frame.sky());
+    for triangle in triangles {
+        pixels.draw_triangle(triangle, sampler, tile.texels());
+    }
+
+    // Blend the completed region into the frame's star layer.
+    times.measure("Projection.Tile composition");
+    let width = frame.width();
+    pixels.composite(frame.stars_mut(), width);
 }
 
 struct TileProjector<'a> {
@@ -89,6 +150,25 @@ struct MeshStats {
     divisions: usize,
     capped_cells: usize,
     skipped_cells: usize,
+}
+
+impl MeshStats {
+    /// Add this region's counts and retain the largest grid resolution seen in the frame.
+    fn add_region(&mut self, region: &Self) {
+        self.projections += region.projections;
+        self.capped_cells += region.capped_cells;
+        self.skipped_cells += region.skipped_cells;
+        self.divisions = self.divisions.max(region.divisions);
+    }
+
+    /// Finish the projection sub-step timer and describe the combined mesh results.
+    fn record_trace(&self, times: &mut StepTimes) {
+        times.measure("Projection");
+        times.describe("Projection.Adaptive mesh preparation", || format!(
+            "{} sky projections; maximum {}x{} cells per region; {} cells above target at limit; {} unsafe cells omitted",
+            self.projections, self.divisions, self.divisions, self.capped_cells, self.skipped_cells,
+        ));
+    }
 }
 
 fn grid_size() -> usize {
