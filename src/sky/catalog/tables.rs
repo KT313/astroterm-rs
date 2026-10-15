@@ -42,7 +42,7 @@ fn build_tables(prepared: &PreparedCatalog, progress: &mut dyn DatasetProgress, 
         solar_system_planets: Default::default(),
         solar_system_moons: Default::default(),
         constellation_stars,
-        constellation_last_update: None,
+        constellation_last_update_ms: None,
         constellation_simulation: Default::default(),
         constellation_figures,
         star_regions,
@@ -168,7 +168,7 @@ mod tests {
             let total: usize = tables.star_regions[region].speed_groups.iter().map(|group| &group.stars).map(StarTable::len).sum();
             assert_eq!(total, catalog.grid.offsets[region + 1] - catalog.grid.offsets[region], "region {region}");
             for (group, entry) in tables.star_regions[region].speed_groups.iter().enumerate() {
-                assert_eq!(entry.ttl, crate::model::get_ttl_of_speed_group(group));
+                assert_eq!(entry.ttl_ms, crate::model::get_ttl_of_speed_group_ms(group));
             }
         }
         assert_eq!(tables.solar_system_planets.planets.len(), 8);

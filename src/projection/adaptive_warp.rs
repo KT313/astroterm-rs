@@ -222,7 +222,7 @@ fn build_mesh(projector: &TileProjector<'_>, samples: &mut HashMap<[usize; 2], V
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::astro::{FrameTime, Observer};
+    use crate::astro::{Observer};
     use crate::constants::GRID_DEPTH;
     use crate::model::{ViewCenter, hash_direction, region_caps};
     use crate::observation::observe;
@@ -231,7 +231,7 @@ mod tests {
         // Reproduce the screenshot's date, observer, orientation and frame dimensions without loading stars.
         let view = View { center: ViewCenter::Facing { azimuth: 334_f64.to_radians(), tilt: 0.0 }, fov_degrees: fov, ..View::default() };
         let date = crate::astro::parse_utc_datetime("2025-03-01T11:00:00").unwrap();
-        let time = FrameTime::from_utc(crate::astro::datetime_to_julian_date(&date));
+        let time = crate::astro::utc_jd_to_time_ms(crate::astro::datetime_to_julian_date(&date)).unwrap();
         let site = Observer { latitude: 35.69_f64.to_radians(), longitude: 139.69_f64.to_radians() };
         let observation = observe(&site, atmosphere, &view, time, &mut StepTimes::default());
         (view, observation, prepare_camera(&view), SkyArea::centred(1917, 1116))
@@ -376,7 +376,7 @@ mod tests {
             let selected = crate::selection::select_regions(&data.star_regions, &observation, &mut StepTimes::default());
             let settings = crate::model::RenderOptions { magnitude_threshold: 9.0, unicode: true, braille: false, color: true,
                 constellations: false, grid: false, dynamic_names: false };
-            crate::regions::refresh_regions(&mut data, &selected, observation.time, &view, &settings, &mut StepTimes::default());
+            crate::regions::refresh_regions(&mut data, &selected, observation.time_ms, &view, &settings, &mut StepTimes::default());
             let mut frame = Frame::new(1917, 1116, SkyArea::centred(1917, 1116), (10, 20));
             for dense in [false, true] {
                 if dense {
@@ -410,7 +410,7 @@ mod tests {
         for (fov, atmosphere) in [(10.0, false), (60.0, true), (180.0, false), (351.6, false), (359.9, false), (360.0, false), (360.0, true)] {
             let (mut view, previous, _, sky) = fixture(fov, atmosphere);
             view.projection = ProjectionKind::Equidistant;
-            let observation = observe(&Observer { latitude: 35.69_f64.to_radians(), longitude: 139.69_f64.to_radians() }, atmosphere, &view, previous.time, &mut StepTimes::default());
+            let observation = observe(&Observer { latitude: 35.69_f64.to_radians(), longitude: 139.69_f64.to_radians() }, atmosphere, &view, previous.time_ms, &mut StepTimes::default());
             let camera = prepare_camera(&view);
             let mut samples = HashMap::new();
             let mut mesh = Vec::new();

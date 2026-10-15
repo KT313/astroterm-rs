@@ -8,7 +8,7 @@ use crate::regions::{TileGeometry, blend_star, order_star_rows, premultiplied_co
 
 impl GroupTileKey {
     /// The key of an image whose prefix is empty: nothing to draw, whatever the threshold.
-    pub const EMPTY: GroupTileKey = GroupTileKey { simulated_at: 0.0, star_count: 0, magnitude_threshold: 0, zoom_boost: 1.0 };
+    pub const EMPTY: GroupTileKey = GroupTileKey { simulated_at_ms: 0, star_count: 0, magnitude_threshold: 0, zoom_boost: 1.0 };
 }
 
 impl GroupTileCache {
@@ -17,7 +17,7 @@ impl GroupTileCache {
     pub fn is_empty(&self) -> bool { self.tile.texels.is_empty() }
     pub fn bytes(&self) -> usize { self.tile.texels.len() * Texel::SIZE }
 
-    /// Draw rows `0..key.star_count` of the simulation (`directions` and `magnitudes` at `key.simulated_at`) into the tile: each
+    /// Draw rows `0..key.star_count` of the simulation (`directions` and `magnitudes` at `key.simulated_at_ms`) into the tile: each
     /// row brighter than the threshold becomes the four-texel glyph of its colour, blended source-over from dim
     /// to bright current magnitude, then ascending ID. Catalog brightness-bound order is unchanged. Rows the model
     /// could not place and rows outside the tile are skipped.
@@ -114,7 +114,7 @@ mod tests {
         let stars = fixtures::layout(&rows.iter().map(|row| (region(), 0, *row)).collect::<Vec<_>>());
         stars.star_table(region(), 0).clone()
     }
-    fn key(rows: usize, threshold: f64) -> GroupTileKey { GroupTileKey { simulated_at: J2000, star_count: rows, magnitude_threshold: magnitude_code(threshold), zoom_boost: 1.0 } }
+    fn key(rows: usize, threshold: f64) -> GroupTileKey { GroupTileKey { simulated_at_ms: crate::astro::utc_jd_to_time_ms(J2000).unwrap(), star_count: rows, magnitude_threshold: magnitude_code(threshold), zoom_boost: 1.0 } }
     fn opacities() -> StarOpacities { let mut table = StarOpacities::default(); table.prepare(1.0); table }
     fn lit(texels: &[Texel]) -> Vec<(usize, Texel)> { texels.iter().copied().enumerate().filter(|(_, texel)| !texel.is_empty()).collect() }
 

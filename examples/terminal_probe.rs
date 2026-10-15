@@ -12,15 +12,14 @@ fn main() {
         Some("pixel-panic") => {
             // one frame through the seven steps on a forced Kitty display, then a panic inside a synchronized update
             use astroterm::{cli::{Arguments, build_config}, present::{Display, present}, observation::observe, points::{PointInputs, draw_points},
-                projection::project_stars_to_screen, regions::refresh_regions, selection::select_regions, solar_system::simulate_solar_system,
-                astro::FrameTime};
+                projection::project_stars_to_screen, regions::refresh_regions, selection::select_regions, solar_system::simulate_solar_system};
             use clap::Parser;
             let config = build_config(Arguments::parse_from(["probe", "--graphics-protocol", "kitty"]), &[]).unwrap();
             let prepared = astroterm::sky::prepare_owned_catalog(astroterm::catalog::load_embedded_catalog(&mut astroterm::progress::Report::quiet()).unwrap(), &mut astroterm::progress::Report::quiet()).unwrap();
             let mut tables = astroterm::sky::build_sky_tables(&prepared, &mut astroterm::progress::Report::quiet()).unwrap();
             let mut display = Display::open(Some(ratatui_image::picker::ProtocolType::Kitty), config.terminal, config.text_scale).unwrap();
             let mut frame = display.new_frame();
-            let time = FrameTime::from_utc(config.simulation.start_julian_date);
+            let time = config.simulation.start_time_ms;
             let solar_system = simulate_solar_system(&tables, time, &mut astroterm::time::StepTimes::default());
             let observation = observe(&config.simulation.observer, config.simulation.refraction, &config.view, time, &mut astroterm::time::StepTimes::default());
             let selected = select_regions(&tables.star_regions, &observation, &mut astroterm::time::StepTimes::default());

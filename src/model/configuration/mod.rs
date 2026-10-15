@@ -31,7 +31,7 @@ pub struct Config {
 #[derive(Clone, Debug, PartialEq)]
 pub struct FrameBenchmarkConfig {
     pub frames: u32,
-    pub step_seconds: f64,
+    pub step_ms: i64,
     pub report: std::path::PathBuf,
 }
 
@@ -39,7 +39,7 @@ pub struct FrameBenchmarkConfig {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SimulationSettings {
     pub observer: Observer,
-    pub start_julian_date: f64,
+    pub start_time_ms: i64,
     /// Simulated days per real day.
     pub speed: f64,
     /// Lift objects by atmospheric refraction.

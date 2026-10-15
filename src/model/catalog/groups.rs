@@ -7,7 +7,7 @@
 //! grouping policy, not a bound on angular speed at every date: approaching stars can move faster later.
 //! `tests/stellar_hold_accuracy.rs` audits the resulting fixed holds without changing runtime behavior.
 use crate::astro::models::stars::computational_years;
-use crate::constants::{SPEED_GROUP_TTL_SECONDS, SPEED_GROUP_BOUNDS, SPEED_GROUP_COUNT};
+use crate::constants::{SPEED_GROUP_TTL_MS, SPEED_GROUP_BOUNDS, SPEED_GROUP_COUNT};
 use crate::model::{Region, StarGroup, StarTable};
 
 /// The group of a star from its stored motion bound (radians over the computational interval). Stars without
@@ -17,29 +17,31 @@ pub fn speed_group(motion_bound: f32) -> usize {
     SPEED_GROUP_BOUNDS.iter().filter(|&&rate| drift_bound_for_rate(rate) <= bound).count()
 }
 
-/// Configured TTL in simulated seconds. Sorting the values assigns the longest to group 0 (slowest),
+/// Configured TTL in simulated milliseconds. Sorting the values assigns the longest to group 0 (slowest),
 /// regardless of their order in the constants array. Runtime expiration reads the value stored in StarGroup.
-pub fn get_ttl_of_speed_group(group_index: usize) -> f64 {
+pub fn get_ttl_of_speed_group_ms(group_index: usize) -> i64 {
     // Reject an index that does not identify a configured speed group.
     assert!(
         group_index < SPEED_GROUP_COUNT,
         "speed group {group_index} does not exist",
     );
 
+    assert!(SPEED_GROUP_TTL_MS.iter().all(|&ttl_ms| ttl_ms >= 0), "speed-group TTLs must be nonnegative");
+
     // Copy the configured TTLs and put the longest first, matching the slow-to-fast group order.
-    let mut ttls_slowest_to_fastest = SPEED_GROUP_TTL_SECONDS;
+    let mut ttls_slowest_to_fastest = SPEED_GROUP_TTL_MS;
     ttls_slowest_to_fastest.sort_by(|left_ttl, right_ttl| {
-        right_ttl.total_cmp(left_ttl) // Comparing right against left puts larger TTLs first.
+        right_ttl.cmp(left_ttl) // Comparing right against left puts larger TTLs first.
     });
 
-    // Return this group's TTL in simulated seconds.
+    // Return this group's TTL in simulated milliseconds.
     ttls_slowest_to_fastest[group_index]
 }
 
 impl StarGroup {
     /// Build a group with its configured TTL and empty simulation/image caches.
     pub fn new(stars: StarTable, speed_group: usize) -> Self {
-        Self { ttl: get_ttl_of_speed_group(speed_group), stars, ..Self::default() }
+        Self { ttl_ms: get_ttl_of_speed_group_ms(speed_group), stars, ..Self::default() }
     }
 }
 
@@ -92,18 +94,18 @@ mod tests {
     #[test]
     fn configured_ttls_are_assigned_from_slowest_to_fastest() {
         let region = Region::default();
-        let actual = region.speed_groups.map(|group| group.ttl);
-        assert_eq!(actual, [365.0 * 86_400.0, 10.0 * 86_400.0, 86_400.0]);
+        let actual = region.speed_groups.map(|group| group.ttl_ms);
+        assert_eq!(actual, [365 * 86_400_000, 10 * 86_400_000, 86_400_000]);
         assert!(actual.windows(2).all(|pair| pair[0] > pair[1]));
-        for (group, ttl) in actual.into_iter().enumerate() {
-            assert_eq!(StarGroup::new(StarTable::default(), group).ttl, ttl);
+        for (group, ttl_ms) in actual.into_iter().enumerate() {
+            assert_eq!(StarGroup::new(StarTable::default(), group).ttl_ms, ttl_ms);
         }
     }
 
     #[test]
     #[should_panic(expected = "speed group 3 does not exist")]
     fn hold_time_rejects_unknown_groups() {
-        get_ttl_of_speed_group(SPEED_GROUP_COUNT);
+        get_ttl_of_speed_group_ms(SPEED_GROUP_COUNT);
     }
 
     #[test]

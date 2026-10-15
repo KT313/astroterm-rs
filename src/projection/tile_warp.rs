@@ -187,7 +187,7 @@ impl TextureMapping {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::astro::{FrameTime, J2000, Observer};
+    use crate::astro::{J2000, Observer};
     use crate::model::{ProjectionKind, RenderOptions, ViewCenter, fixtures, hash_direction};
     use crate::observation::observe;
     use crate::regions::refresh_regions;
@@ -267,7 +267,7 @@ mod tests {
 
     #[test]
     fn whole_tiles_place_stars_near_their_observed_positions_and_clear_empty_views() {
-        let time = FrameTime::from_utc(J2000);
+        let time = crate::astro::utc_jd_to_time_ms(J2000).unwrap();
         let site = Observer { latitude: 0.6, longitude: 2.4 };
         for (fov, atmosphere, projection) in [(180.0, false, ProjectionKind::Stereographic), (60.0, true, ProjectionKind::Stereographic),
             (10.0, true, ProjectionKind::Equidistant)] {
@@ -311,7 +311,7 @@ mod tests {
         let mut report = crate::progress::Report::quiet();
         let prepared = crate::sky::prepare_owned_catalog(crate::catalog::load_embedded_catalog(&mut report).unwrap(), &mut report).unwrap();
         let mut data = crate::sky::build_sky_tables(&prepared, &mut report).unwrap();
-        let time = FrameTime::from_utc(J2000);
+        let time = crate::astro::utc_jd_to_time_ms(J2000).unwrap();
         let view = View { center: ViewCenter::Facing { azimuth: 334_f64.to_radians(), tilt: 0.0 }, fov_degrees: 180.0, ..View::default() };
         let observation = observe(&Observer { latitude: 35.69_f64.to_radians(), longitude: 139.69_f64.to_radians() }, true, &view, time, &mut StepTimes::default());
         let selected = crate::selection::select_regions(&data.star_regions, &observation, &mut StepTimes::default());

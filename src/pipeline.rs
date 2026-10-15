@@ -4,7 +4,6 @@
 use std::io;
 use std::thread;
 
-use astroterm::astro::FrameTime;
 use astroterm::model::{Config, Data};
 use astroterm::observation::{Observation, observe};
 use astroterm::points::{PointInputs, draw_points};
@@ -17,7 +16,7 @@ use astroterm::time::{StepTimes, TimeManager};
 
 use crate::helpers::{
     BenchmarkSession, Panel, PanelFrame, handle_input, begin_frame_diagnostics, capture_display,
-    complete_benchmark_frame, finish_frame_diagnostics, validate_benchmark_time,
+    complete_benchmark_frame, finish_frame_diagnostics,
 };
 
 /// Draw frames at the configured rate until the user quits. Keys change the view and the simulation clock.
@@ -40,22 +39,20 @@ pub(super) fn run_frame_loop(
         let should_quit = handle_input(config, &mut current_view, &mut time_manager.clock, display, frame, benchmark)?;
         if should_quit { return Ok(()); }
 
-        // Read the selected simulation date and derive the time scales used by the astronomy calculations.
-        let simulation_date = time_manager.get_current_simulation_time();
-        let time = FrameTime::from_utc(simulation_date);
-        validate_benchmark_time(benchmark, time)?;
+        // Read the single millisecond timestamp used by every stage of this frame.
+        let time_ms = time_manager.get_current_simulation_time()?;
 
         time_manager.measure("Solar system");
-        let solar_system = simulate_solar_system(data, time, &mut time_manager.step_times);
+        let solar_system = simulate_solar_system(data, time_ms, &mut time_manager.step_times);
 
         time_manager.measure("Observation");
-        let observation = observe(&config.simulation.observer, config.simulation.refraction, &current_view, time, &mut time_manager.step_times);
+        let observation = observe(&config.simulation.observer, config.simulation.refraction, &current_view, time_ms, &mut time_manager.step_times);
 
         time_manager.measure("Selection");
         let selected = select_regions(&data.star_regions, &observation, &mut time_manager.step_times);
 
         time_manager.measure("Regions");
-        let refreshed = refresh_regions(data, &selected, time, &current_view, &config.render, &mut time_manager.step_times);
+        let refreshed = refresh_regions(data, &selected, time_ms, &current_view, &config.render, &mut time_manager.step_times);
 
         time_manager.measure("Projection");
         project_stars_to_screen(frame, data, &selected, &observation, &current_view, &mut time_manager.step_times);
@@ -65,7 +62,7 @@ pub(super) fn run_frame_loop(
         time_manager.measure("Points");
         describe_steps(&mut time_manager.step_times, &observation, &selected, refreshed, data);
         let info = display.info();
-        let lines = panel.lines(&PanelFrame { time, clock: &time_manager.clock, solar_system: &solar_system, selected: &selected, refreshed, display: info }, &config.simulation.observer, &current_view, data, &time_manager.step_times);
+        let lines = panel.lines(&PanelFrame { time_ms, clock: &time_manager.clock, solar_system: &solar_system, selected: &selected, refreshed, display: info }, &config.simulation.observer, &current_view, data, &time_manager.step_times);
         let inputs = PointInputs { solar_system: &solar_system, data, selected: &selected, panel: lines, notice: transport_notice(&info) };
         draw_points(frame, &inputs, &observation, &current_view, &config.render, &mut time_manager.step_times);
 
@@ -76,8 +73,8 @@ pub(super) fn run_frame_loop(
         let presented = result?;
 
         // after the frame: timings, benchmark, pacing
-        let elapsed = finish_frame_diagnostics(config, frame_start, time, presented, &mut time_manager.step_times);
-        if complete_benchmark_frame(benchmark, time, presented, elapsed, || capture_display(display.info()), &mut time_manager.step_times)? || config.debug_singleframe { return Ok(()); }
+        let elapsed = finish_frame_diagnostics(config, frame_start, time_ms, presented, &mut time_manager.step_times);
+        if complete_benchmark_frame(benchmark, time_ms, presented, elapsed, || capture_display(display.info()), &mut time_manager.step_times)? || config.debug_singleframe { return Ok(()); }
         let frame_duration = &time_manager.min_frame_duration;
         thread::sleep(frame_duration.saturating_sub(frame_start.elapsed()));                                   // wait until the next frame is due, unless already running late
     }

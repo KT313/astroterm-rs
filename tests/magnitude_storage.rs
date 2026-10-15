@@ -100,7 +100,7 @@ fn clipped_minimum_passes_the_brightness_prefix_before_the_saturating_current_ma
         for (region, group, table) in tables.star_tables() {
             let rows = rows_wanted(table, tt, -10.0);
             assert_eq!(rows, table.len());                                                   // the stored bounds admit both rows at every date
-            (simulations.star_regions[region].speed_groups[group].update_simulation(tt, rows_wanted(table, tt, -10.0)));
+            (simulations.star_regions[region].speed_groups[group].update_simulation(astroterm::astro::utc_jd_to_time_ms(tt).unwrap(), tt, rows_wanted(table, tt, -10.0)));
             codes.extend(simulations.star_regions[region].speed_groups[group].simulation.magnitudes().iter().take(rows).copied().filter(|&code| code != UNPLACED));
         }
         assert_eq!(codes.iter().filter(|&&code| code <= magnitude_code(-10.0)).count(), drawn);
@@ -110,7 +110,7 @@ fn clipped_minimum_passes_the_brightness_prefix_before_the_saturating_current_ma
 
 #[test]
 fn clipping_notice_coexists_with_date_notice_and_the_tables_carry_it() {
-    use astroterm::astro::{FrameTime, J2000, Observer, accuracy::ACCURACY_WARNING};
+    use astroterm::astro::{J2000, Observer, accuracy::ACCURACY_WARNING};
     use astroterm::catalog::MAGNITUDE_CLIPPING_WARNING;
     use astroterm::model::{RenderOptions, View};
     use astroterm::observation::observe;
@@ -120,7 +120,7 @@ fn clipping_notice_coexists_with_date_notice_and_the_tables_carry_it() {
     use astroterm::selection::select_regions;
     use astroterm::solar_system::simulate_solar_system;
     let notices = |tables: &Data, utc: f64| {
-        let time = FrameTime::from_utc(utc);
+        let time = astroterm::astro::utc_jd_to_time_ms(utc).unwrap();
         let view = View::default();
         let settings = RenderOptions { unicode: true, braille: false, color: false, constellations: false, grid: false, magnitude_threshold: -50.0, dynamic_names: false };
         let solar_system = simulate_solar_system(tables, time, &mut astroterm::time::StepTimes::default());

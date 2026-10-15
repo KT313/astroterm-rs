@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{io, time::Duration};
 
 use super::{SimulationClock, StepTimes};
 
@@ -13,19 +13,19 @@ pub struct TimeManager {
     pub min_frame_duration: Duration,
     pub clock: SimulationClock,
     debug_singleframe: bool,
-    start_julian_date: f64,
+    start_time_ms: i64,
 }
 
 impl TimeManager {
-    /// Return the current simulation date as a UTC Julian date.
-    pub fn get_current_simulation_time(&self) -> f64 {
+    /// Return the current simulation date as milliseconds since Gregorian year zero.
+    pub fn get_current_simulation_time(&self) -> io::Result<i64> {
         // Single-frame diagnostics use the exact requested date, regardless of time spent preparing the frame.
         if self.debug_singleframe {
-            return self.start_julian_date;
+            return Ok(self.start_time_ms);
         }
 
         // Interactive runs and benchmarks use the date currently held by their simulation clock.
-        self.clock.julian_date()
+        self.clock.get_current_time_ms()
     }
 
     /// Finish the previous measurement and start a dotted path; END stops measurement.
@@ -45,14 +45,14 @@ impl StartupTiming {
     }
 
     /// Consume startup timing and start simulated time after setup and startup reporting finish.
-    pub fn start_simulation(self, start_date: f64, speed: f64, frames_per_second: u32, frame_step_seconds: Option<f64>, debug_singleframe: bool) -> TimeManager {
+    pub fn start_simulation(self, start_time_ms: i64, speed: f64, frames_per_second: u32, frame_step_ms: Option<i64>, debug_singleframe: bool) -> TimeManager {
         // Use the validated frame rate to set the minimum interval between frames.
         let min_frame_duration = Duration::from_secs_f64(1.0 / f64::from(frames_per_second));
 
         // Benchmarks advance by frame index; interactive runs advance with elapsed real time.
-        let clock = match frame_step_seconds {
-            Some(step_seconds) => SimulationClock::start_fixed_step(start_date, step_seconds),
-            None => SimulationClock::start(start_date, speed),
+        let clock = match frame_step_ms {
+            Some(step_ms) => SimulationClock::start_fixed_step(start_time_ms, step_ms),
+            None => SimulationClock::start(start_time_ms, speed),
         };
 
         // Move the collected measurements into the fully initialized runtime owner.
@@ -61,7 +61,7 @@ impl StartupTiming {
             min_frame_duration,
             clock,
             debug_singleframe,
-            start_julian_date: start_date,
+            start_time_ms,
         }
     }
 }
@@ -70,25 +70,25 @@ impl StartupTiming {
 mod tests {
     use super::*;
 
-    const START_DATE: f64 = 2451545.0;
+    const START_DATE: i64 = 63_113_947_200_000;
 
     #[test]
     fn single_frame_time_uses_the_stored_start_date_instead_of_the_current_clock() {
         let startup = StartupTiming::new(true, false);
         let mut manager = startup.start_simulation(START_DATE, 1.0, 60, None, true);
-        manager.clock = SimulationClock::start(START_DATE + 1.0, 0.0);
+        manager.clock = SimulationClock::start(START_DATE + 1, 0.0);
 
-        assert_eq!(manager.get_current_simulation_time(), START_DATE);
+        assert_eq!(manager.get_current_simulation_time().unwrap(), START_DATE);
     }
 
     #[test]
     fn normal_time_follows_the_clock_for_paused_forward_and_reverse_frames() {
-        for step_seconds in [0.0, 2.0, -2.0] {
+        for step_ms in [0, 2000, -2000] {
             let startup = StartupTiming::new(true, false);
-            let mut manager = startup.start_simulation(START_DATE, 1.0, 60, Some(step_seconds), false);
+            let mut manager = startup.start_simulation(START_DATE, 1.0, 60, Some(step_ms), false);
             manager.clock.set_frame_index(3).unwrap();
 
-            assert_eq!(manager.get_current_simulation_time(), START_DATE + 3.0 * step_seconds / 86400.0);
+            assert_eq!(manager.get_current_simulation_time().unwrap(), START_DATE + 3 * step_ms);
         }
     }
 
@@ -102,22 +102,22 @@ mod tests {
         let manager = startup.start_simulation(START_DATE, 100.0, 60, None, false);
         assert_eq!(manager.min_frame_duration, Duration::from_secs_f64(1.0 / 60.0));
         let clock = &manager.clock;
-        assert_eq!(clock.start_julian_date(), START_DATE);
+        assert_eq!(clock.start_time_ms(), START_DATE);
         assert_eq!(clock.speed(), 100.0);
-        assert_eq!(clock.frame_step_seconds(), None);
+        assert_eq!(clock.frame_step_ms(), None);
         assert_eq!(manager.step_times.trace().unwrap().steps.len(), 1);
     }
 
     #[test]
     fn benchmark_clock_uses_the_configured_frame_step() {
         let startup = StartupTiming::new(true, false);
-        let mut manager = startup.start_simulation(START_DATE, 1.0, 60, Some(-2.0), false);
+        let mut manager = startup.start_simulation(START_DATE, 1.0, 60, Some(-2000), false);
 
         let clock = &mut manager.clock;
-        assert_eq!(clock.frame_step_seconds(), Some(-2.0));
-        assert_eq!(clock.julian_date(), START_DATE);
+        assert_eq!(clock.frame_step_ms(), Some(-2000));
+        assert_eq!(clock.get_current_time_ms().unwrap(), START_DATE);
         clock.set_frame_index(2).unwrap();
-        assert_eq!(clock.julian_date(), START_DATE - 4.0 / 86400.0);
+        assert_eq!(clock.get_current_time_ms().unwrap(), START_DATE - 4000);
     }
 
     #[test]

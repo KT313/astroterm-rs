@@ -3,13 +3,13 @@
 //! positions come from the frame loop's steps 1 and 2 (`simulate_solar_system`, `observe`); the reference
 //! values and tolerances are unchanged since the old spine.
 use astroterm::astro::{
-    self, FrameTime, Horizontal, Observer, Vector3,
+    self, Horizontal, Observer, Vector3,
     models::{BodyId, orientation::*, stars::years_since_j2000},
 };
 use astroterm::catalog::load_embedded_catalog;
 use astroterm::model::{Data, PreparedCatalog, View};
-use astroterm::observation::{Observation, observe as observe_sky};
-use astroterm::solar_system::{SolarSystem, simulate_solar_system};
+use astroterm::observation::Observation;
+use astroterm::solar_system::SolarSystem;
 use serde_json::Value;
 
 fn vector(v: &Value) -> Vector3 {
@@ -24,19 +24,20 @@ fn angle(a: Vector3, b: Vector3) -> f64 {
 }
 
 /// The Boston sky at one time: the solar system as its light arrives, the observer's orientation, the catalog.
-struct Sky { bodies: Data, system: SolarSystem, observation: Observation, catalog: PreparedCatalog }
+struct Sky { bodies: Data, system: SolarSystem, observation: Observation, catalog: PreparedCatalog, tt_jd: f64 }
 
 fn observe(tt: f64, ut1: f64) -> Sky {
-    let time = FrameTime { utc: ut1, ut1, tt };
+    let dates = astro::AstronomicalTime { utc_jd: ut1, ut1_jd: ut1, tt_jd: tt };
+    let time_ms = astro::utc_jd_to_time_ms(ut1).unwrap();
     let site = Observer {
         latitude: 42.3601_f64.to_radians(),
         longitude: -71.0589_f64.to_radians(),
     };
     let bodies = Data::default();
-    let system = simulate_solar_system(&bodies, time, &mut astroterm::time::StepTimes::default());
-    let observation = observe_sky(&site, false, &View::default(), time, &mut astroterm::time::StepTimes::default());
+    let system = astroterm::solar_system::calculate_solar_system_at_tt(&bodies, time_ms, tt, &mut astroterm::time::StepTimes::default());
+    let observation = astroterm::observation::calculate_observation_at_dates(&site, false, &View::default(), time_ms, &dates, &mut astroterm::time::StepTimes::default());
     let catalog = astroterm::sky::prepare_owned_catalog(load_embedded_catalog(&mut astroterm::progress::Report::quiet()).unwrap(), &mut astroterm::progress::Report::quiet()).unwrap();
-    Sky { bodies, system, observation, catalog }
+    Sky { bodies, system, observation, catalog, tt_jd: tt }
 }
 /// The apparent horizon direction (East, North, Up) of a body, airless.
 fn body(sky: &Sky, name: &str) -> Vector3 {
@@ -53,7 +54,7 @@ fn body(sky: &Sky, name: &str) -> Vector3 {
 fn star(sky: &Sky, hr: u32) -> Vector3 {
     let catalog = &sky.catalog.catalog;
     let star = catalog.stars.iter().find(|star| star.id.0 == hr).unwrap();
-    let sample = star.motion.evaluate(years_since_j2000(sky.observation.time.tt), star.magnitude);
+    let sample = star.motion.evaluate(years_since_j2000(sky.tt_jd), star.magnitude);
     sky.observation.apparent_star_direction(sample.direction)
 }
 

@@ -8,7 +8,7 @@ mod configuration;
 
 pub use catalog::{
     SkyCatalog, CatalogPreparation, PreparedCatalog, ConstellationSet, StarException, SkyGrid,
-    hash_direction, speed_group, get_ttl_of_speed_group, drift_bound_for_rate, STAR_SECTIONS, StarRow, StarStorage, Star, Constellation, StarColor,
+    hash_direction, speed_group, get_ttl_of_speed_group_ms, drift_bound_for_rate, STAR_SECTIONS, StarRow, StarStorage, Star, Constellation, StarColor,
 };
 pub(crate) use catalog::{unsupported_star_data, CellCap, build_caps, region_caps};
 #[cfg(test)]

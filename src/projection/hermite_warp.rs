@@ -104,7 +104,7 @@ impl CurvedPatch for HermitePatch {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::astro::{FrameTime, Observer};
+    use crate::astro::{Observer};
     use crate::constants::{CURVED_PATCH_MAX_SUBDIVISIONS, GRID_DEPTH};
     use crate::model::{Texel, ViewCenter, region_caps};
     use crate::observation::observe;
@@ -135,7 +135,7 @@ mod tests {
         // Match the screenshot's camera and date, including the extreme zoom-out view.
         let site = Observer { latitude: 35.69_f64.to_radians(), longitude: 139.69_f64.to_radians() };
         let view = View { center: ViewCenter::Facing { azimuth: 334_f64.to_radians(), tilt: 0.0 }, fov_degrees: fov, ..View::default() };
-        let time = FrameTime::from_utc(crate::astro::datetime_to_julian_date(&crate::astro::parse_utc_datetime("2025-03-01T11:00:00").unwrap()));
+        let time = crate::astro::utc_jd_to_time_ms(crate::astro::datetime_to_julian_date(&crate::astro::parse_utc_datetime("2025-03-01T11:00:00").unwrap())).unwrap();
         let observation = observe(&site, atmosphere, &view, time, &mut StepTimes::default());
         (view, observation, prepare_camera(&view), SkyArea::centred(1917, 1116))
     }

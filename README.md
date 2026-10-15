@@ -142,12 +142,18 @@ in the existing magnitude field. The MAST path removes identical adjacent copies
 
 The Sun, Moon and planets are evaluated every frame; an unchanged frame sends nothing to the terminal.
 
+Simulation timestamps are signed integer milliseconds since Gregorian year 0, with uniform days and no leap-second handling.
+Dates accept an optional `.sss` fraction. Fractional playback speeds retain sub-millisecond progress internally;
+astronomical formulas convert dates to their required time scales on demand without rounding light-time calculations.
+The integer storage range does not extend the models' scientific accuracy range. Existing raw downloads are preserved;
+prepared catalogs may be rebuilt after this time-representation change.
+
 Optional [frame timing captures](docs/frame-benchmarks.md) run a fixed number of frames at reproducible simulated dates.
 
 Catalog brightness is stored in steps of 0.001 magnitude; values very close to a display threshold may round across it.
 Stars are filed by their catalog-epoch sky regions with a fixed motion allowance of 0.25°. At distant dates,
 fast-moving stars may be missing from a view; special handling for them is currently deferred.
-Each region's stars are sorted into three speed groups with TTLs assigned from `SPEED_GROUP_TTL_SECONDS` at
+Each region's stars are sorted into three speed groups with TTLs assigned from `SPEED_GROUP_TTL_MS` at
 startup: longest for the slowest group, shortest for the fastest (currently 365, 10 and 1 simulated days).
 Constellation stars use the fastest group's TTL. The drawn stars of a region are kept as a 64 × 64 sky-fixed tile that is
 re-rendered only when its simulation or the brightness threshold changes, and the screen is produced by mapping

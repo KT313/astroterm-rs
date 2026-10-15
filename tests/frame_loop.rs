@@ -12,7 +12,6 @@ use astroterm::regions::refresh_regions;
 use astroterm::selection::select_regions;
 use astroterm::sky::{build_sky_tables, prepare_owned_catalog};
 use astroterm::solar_system::simulate_solar_system;
-use astroterm::astro::FrameTime;
 use astroterm::time::StepTimes;
 use ratatui::layout::Rect;
 use ratatui_image::picker::ProtocolType;
@@ -31,7 +30,7 @@ fn settings() -> RenderOptions {
 
 /// One frame through steps 1 to 6 into `frame`; returns the observation and what step 6 drew.
 fn run_frame(data: &mut Data, frame: &mut Frame, view: &View, settings: &RenderOptions) -> (Observation, Drawn) {
-    let time = FrameTime::from_utc(UTC_2025_03_01_11H);
+    let time = astroterm::astro::utc_jd_to_time_ms(UTC_2025_03_01_11H).unwrap();
     let solar_system = simulate_solar_system(data, time, &mut astroterm::time::StepTimes::default());                                  // 1
     let observation = observe(&TOKYO, true, view, time, &mut astroterm::time::StepTimes::default());                                              // 2
     let selected = select_regions(&data.star_regions, &observation, &mut astroterm::time::StepTimes::default());                                       // 3

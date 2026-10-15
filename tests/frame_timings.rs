@@ -1,5 +1,5 @@
 //! Real frame sub-steps reach both the timing panel and machine-readable capture without changing pixels.
-use astroterm::astro::{FrameTime, J2000, Observer};
+use astroterm::astro::{J2000, Observer};
 use astroterm::model::{RenderOptions, Data, View};
 use astroterm::observation::observe;
 use astroterm::points::{PointInputs, draw_points};
@@ -13,7 +13,7 @@ use ratatui::layout::Rect;
 use ratatui_image::picker::ProtocolType;
 
 fn render(data: &mut Data, frame: &mut Frame, terminal: &mut Terminal<Vec<u8>>, times: &mut StepTimes) -> Presented {
-    let time = FrameTime::from_utc(J2000);
+    let time = astroterm::astro::utc_jd_to_time_ms(J2000).unwrap();
     let view = View::default();
     let settings = RenderOptions { unicode: true, braille: false, color: true, constellations: true, grid: false, magnitude_threshold: 6.0, dynamic_names: true };
     times.begin_frame();

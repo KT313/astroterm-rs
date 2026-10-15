@@ -42,9 +42,9 @@ pub struct Arguments {
     )]
     pub longitude: f64,
 
-    /// Observation datetime in UTC/UT, proleptic Gregorian calendar. Astronomical years: 0 = 1 BC; use a sign
+    /// Observation datetime in UTC/UT with optional .sss milliseconds; no leap seconds. Proleptic Gregorian calendar. Astronomical years: 0 = 1 BC; use a sign
     /// outside 0000–9999, e.g. -7974-01-01T00:00:00 or +12026-01-01T00:00:00
-    #[arg(short = 'd', long, value_name = "yyyy-mm-ddThh:mm:ss", allow_hyphen_values = true)]
+    #[arg(short = 'd', long, value_name = "yyyy-mm-ddThh:mm:ss[.sss]", allow_hyphen_values = true)]
     pub datetime: Option<String>,
 
     /// Only render stars brighter than this magnitude (default: 5.0)
@@ -162,9 +162,9 @@ pub struct Arguments {
     #[arg(long, value_name = "FILE", requires = "debug_frames")]
     pub debug_frame_report: Option<std::path::PathBuf>,
 
-    /// Simulated seconds per captured frame (default: 0, paused); negative values run backwards
-    #[arg(long, value_name = "SECONDS", allow_negative_numbers = true, requires = "debug_frames")]
-    pub debug_frame_step_seconds: Option<f64>,
+    /// Simulated seconds per captured frame, with up to 3 decimal places (default: 0, paused); negative runs backwards
+    #[arg(long = "debug-frame-step-seconds", value_name = "SECONDS", value_parser = crate::time::parse_seconds_to_ms, allow_negative_numbers = true, requires = "debug_frames")]
+    pub debug_frame_step_ms: Option<i64>,
 
     /// Append Markdown table dumps in tmp/ at startup, after preparation, and after each projection and rendering. Available in every build
     #[arg(long)]

@@ -19,7 +19,7 @@ pub struct Data {
     pub solar_system_moons: MoonsTable,
 
     pub constellation_stars: StarTable,
-    pub constellation_last_update: Option<f64>, // simulated TT Julian date of the constellation samples; None until calculated
+    pub constellation_last_update_ms: Option<i64>, // simulation timestamp in milliseconds of the constellation samples; None until calculated
     pub constellation_simulation: SimulationCache, // always considered; uses the fast group's hold time
     pub constellation_figures: Vec<Constellation>, // line endpoints index rows of constellation_stars
 
@@ -71,8 +71,8 @@ pub struct Region {
 /// One group's original stars, calculated samples and rendered image, with no separate flat cache arrays.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct StarGroup {
-    pub ttl: f64,                              // simulated seconds; shorter for faster groups, assigned at startup
-    pub last_update: Option<f64>,              // simulated TT Julian date of this group's samples; None until calculated
+    pub ttl_ms: i64,                              // simulated milliseconds; shorter for faster groups, assigned at startup
+    pub last_update_ms: Option<i64>,              // simulation timestamp in milliseconds of this group's samples; None until calculated
     pub stars: StarTable,
     pub simulation: SimulationCache,
     pub tile: GroupTileCache,
@@ -112,11 +112,11 @@ pub enum StarLabels {
 
 /// Calculated samples for the first N rows of one star table; both vectors have length N.
 ///
-/// Key: the owning StarGroup.last_update, or Data.constellation_last_update for constellation stars.
-/// This is the simulated TT Julian date for every sample, not wall-clock time. Refresh when absent or when
-/// abs(current_tt - last_update) exceeds the TTL in days. Ordinary groups use StarGroup.ttl; constellation
+/// Key: the owning StarGroup.last_update_ms, or Data.constellation_last_update_ms for constellation stars.
+/// This is the simulation timestamp in milliseconds for every sample, not wall-clock time. Refresh when absent or when
+/// the absolute timestamp difference exceeds the TTL in milliseconds. Ordinary groups use StarGroup.ttl_ms; constellation
 /// stars use the fastest configured TTL. The owning timestamp and these samples must be updated together.
-/// If more rows are needed within that hold, append them at the stored date without changing last_update.
+/// If more rows are needed within that hold, append them at the stored date without changing last_update_ms.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SimulationCache {
     pub directions: Vec<Vector3>,
@@ -126,7 +126,7 @@ pub struct SimulationCache {
 /// Drawing inputs that determine a group's image.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GroupTileKey {
-    pub simulated_at: f64,                      // StarGroup.last_update after samples have been calculated
+    pub simulated_at_ms: i64,                      // StarGroup.last_update_ms after samples have been calculated
     pub star_count: usize,                      // number of leading table rows considered for drawing
     pub magnitude_threshold: u16,
     pub zoom_boost: f64,

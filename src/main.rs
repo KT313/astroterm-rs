@@ -10,7 +10,7 @@ use clap::Parser;
 
 use astroterm::catalog::datasets::DatasetDirectories;
 use astroterm::cli::Arguments;
-use astroterm::constants::{SPEED_GROUP_BOUNDS, SPEED_GROUP_TTL_SECONDS};
+use astroterm::constants::{SPEED_GROUP_BOUNDS, SPEED_GROUP_TTL_MS};
 use astroterm::model::{Config, Data};
 use astroterm::time::{StartupTiming, StepTimes};
 
@@ -59,9 +59,9 @@ fn render_in_terminal(config: &Config, data: &mut Data, mut startup_timing: Star
     }
 
     // Only the initialized manager can enter the loop; return its measurements after rendering.
-    let frame_step_seconds = config.frame_benchmark.as_ref().map(|benchmark| benchmark.step_seconds);
+    let frame_step_ms = config.frame_benchmark.as_ref().map(|benchmark| benchmark.step_ms);
     let mut time_manager = startup_timing.start_simulation(
-        config.simulation.start_julian_date, config.simulation.speed, config.fps, frame_step_seconds, config.debug_singleframe,
+        config.simulation.start_time_ms, config.simulation.speed, config.fps, frame_step_ms, config.debug_singleframe,
     );
     let result = run_frame_loop(config, data, &mut display, &mut frame, &mut panel, &mut time_manager, benchmark);
     (result, time_manager.step_times)
@@ -70,8 +70,9 @@ fn render_in_terminal(config: &Config, data: &mut Data, mut startup_timing: Star
 fn assert_stuff() {
     // Each speed group needs a TTL, including the group above the final speed threshold.
     assert_eq!(
-        SPEED_GROUP_TTL_SECONDS.len(),
+        SPEED_GROUP_TTL_MS.len(),
         SPEED_GROUP_BOUNDS.len() + 1,
-        "SPEED_GROUP_TTL_SECONDS must have exactly one more entry than SPEED_GROUP_BOUNDS",
+        "SPEED_GROUP_TTL_MS must have exactly one more entry than SPEED_GROUP_BOUNDS",
     );
+    assert!(SPEED_GROUP_TTL_MS.iter().all(|&ttl_ms| ttl_ms >= 0), "speed-group TTLs must be nonnegative");
 }

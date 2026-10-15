@@ -12,7 +12,7 @@ cargo test --test stellar_hold_accuracy audit_synthetic_holds -- --ignored --noc
 ```
 
 The catalog audit reads the TTL stored on each `StarGroup`; synthetic groups use the same configured defaults.
-`SPEED_GROUP_TTL_SECONDS` is assigned longest to slowest and shortest to fastest, currently 365, 10 and 1 days.
+`SPEED_GROUP_TTL_MS` is assigned longest to slowest and shortest to fastest, currently 365, 10 and 1 days.
 Constellation stars use the fastest group's TTL. The former error-derived hold formula is no longer used.
 
 **The synthetic audit currently fails qualification intentionally:** it includes an approaching star whose
@@ -52,3 +52,5 @@ inside/outside it. Out-of-interval dates are skipped. The audit includes both re
 Passing means **the sampled direction comparisons** met the target. It does not prove every date is safe, and
 does not measure brightness error, catalog uncertainty, astronomical-model accuracy, tile rasterization or warp
 error. No comparison with an external ephemeris is involved.
+
+Cache expiration uses exact integer millisecond differences; the boundary remains valid and the next millisecond expires. Astronomical TT reference calculations remain floating-point.

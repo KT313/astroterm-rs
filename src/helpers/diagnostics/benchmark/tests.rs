@@ -25,7 +25,7 @@ fn completed_frames_include_reuse_and_keep_startup_separate() {
         times.measure("Observation.Repeated");
         times.measure("END");
         let outcome = if index == 1 { Presented::Sent(1) } else { Presented::Unchanged };
-        let done = session.record_frame(FrameTime::from_utc(config.simulation.start_julian_date), outcome, 0.000_123_456, display(), &mut times).unwrap();
+        let done = session.record_frame(config.simulation.start_time_ms, outcome, 0.000_123_456, display(), &mut times).unwrap();
         assert_eq!(done, index == 3);
         assert!(times.trace().unwrap().steps.is_empty());
         assert!(!times.steps().is_empty());                                                     // segment disposal must not reset the display averages
@@ -59,7 +59,7 @@ fn failed_report_flush_and_geometry_change_cannot_complete_capture() {
     session.begin_capture(&config, display(), &mut times).unwrap();
     let mut changed = display();
     changed.geometry.screen_cells[0] += 1;
-    let error = session.record_frame(FrameTime::from_utc(2451545.0), Presented::Sent(1), 0.1, changed, &mut times).unwrap_err();
+    let error = session.record_frame(config.simulation.start_time_ms, Presented::Sent(1), 0.1, changed, &mut times).unwrap_err();
     assert_eq!(error.kind(), io::ErrorKind::Interrupted);
     session.write_end(&Err(error)).unwrap();
     let records: Vec<serde_json::Value> = String::from_utf8(session.writer).unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect();
@@ -91,4 +91,24 @@ fn report_failure_keeps_the_operational_error_primary() {
     session.as_mut().unwrap().write_failed = true;
     let error = finish_benchmark_report(&mut session, Err(io::Error::other("original rendering failure"))).unwrap_err();
     assert_eq!(error.to_string(), "original rendering failure");
+}
+
+#[test]
+fn millisecond_schedule_mismatches_never_count_as_completed_frames() {
+    let mut config = config();
+    config.simulation.start_time_ms = i64::MAX - 2;
+    config.frame_benchmark.as_mut().unwrap().step_ms = 1;
+    let mut session = BenchmarkSession::new(Vec::new(), config.frame_benchmark.clone().unwrap());
+    let mut times = StepTimes::with_trace(true);
+    session.begin_capture(&config, display(), &mut times).unwrap();
+    assert!(session.record_frame(i64::MAX - 1, Presented::Unchanged, 0.0, display(), &mut times).is_err());
+    assert_eq!(session.completed, 0);
+    for index in 0..3 {
+        session.record_frame(i64::MAX - 2 + index, Presented::Unchanged, 0.0, display(), &mut times).unwrap();
+    }
+    assert_eq!(session.completed, 3);
+    let records: Vec<serde_json::Value> = String::from_utf8(session.writer).unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+    assert_eq!(records[0]["schema_version"], 2);
+    assert_eq!(records[4]["simulation_time_ms"].as_i64(), Some(i64::MAX));
+    assert!(records[4].get("utc_jd").is_none());
 }

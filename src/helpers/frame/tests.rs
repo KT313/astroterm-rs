@@ -22,13 +22,13 @@ fn tables() -> Data {
 #[test]
 fn controls_change_the_view_and_the_clock_and_quit_is_detected() {
     let config = config(&[]);
-    let mut clock = SimulationClock::start(config.simulation.start_julian_date, 0.0);
+    let mut clock = SimulationClock::start(config.simulation.start_time_ms, 0.0);
     let mut view = config.view;
     let input = FrameInput { controls: vec![Control::ZoomIn, Control::TogglePause], resized: false };
     assert!(!stop_on_quit(&input));
-    apply_frame_controls(&input, &config.view, &mut view, &mut clock);
+    apply_frame_controls(&input, &config.view, &mut view, &mut clock).unwrap();
     assert!(view.fov_degrees < config.view.fov_degrees && clock.is_paused());
-    apply_frame_controls(&FrameInput { controls: vec![Control::ResetView], resized: false }, &config.view, &mut view, &mut clock);
+    apply_frame_controls(&FrameInput { controls: vec![Control::ResetView], resized: false }, &config.view, &mut view, &mut clock).unwrap();
     assert_eq!(view, config.view);
     assert!(stop_on_quit(&FrameInput { controls: vec![Control::PanLeft, Control::Quit], resized: false }));
 }
@@ -36,15 +36,15 @@ fn controls_change_the_view_and_the_clock_and_quit_is_detected() {
 #[test]
 fn the_panel_is_empty_when_off_and_lists_time_counts_display_and_timings_when_on() {
     let mut tables = tables();
-    let time = FrameTime::from_utc(config(&[]).simulation.start_julian_date);
-    let clock = SimulationClock::start(time.utc, 0.0);
+    let time = config(&[]).simulation.start_time_ms;
+    let clock = SimulationClock::start(time, 0.0);
     let view = View { center: ViewCenter::Zenith, fov_degrees: 360.0, projection: ProjectionKind::Equidistant };     // the whole sky, as chunk 10 tests it
     let observation = observe(&config(&[]).simulation.observer, false, &view, time, &mut astroterm::time::StepTimes::default());
     let solar_system = simulate_solar_system(&tables, time, &mut astroterm::time::StepTimes::default());
     let selected = select_regions(&tables.star_regions, &observation, &mut astroterm::time::StepTimes::default());
     let refreshed = refresh_regions(&mut tables, &selected, time, &view, &config(&[]).render, &mut astroterm::time::StepTimes::default());
     let display = DisplayInfo { protocol: ProtocolType::Kitty, tmux: false, compression: CompressionSupport::Unknown, shared_memory: false, screen: Rect::new(0, 0, 100, 40), font: (10, 20), image: (1000, 800), text_cell: (9, 17) };
-    let frame = PanelFrame { time, clock: &clock, solar_system: &solar_system, selected: &selected, refreshed, display };
+    let frame = PanelFrame { time_ms: time, clock: &clock, solar_system: &solar_system, selected: &selected, refreshed, display };
     let mut times = StepTimes::default();
     times.measure("Projection");
     times.measure("END");

@@ -1,5 +1,5 @@
 //! One report writer per process; timings stay in StepTimes and are released after each serialized segment.
-use astroterm::{astro::{FrameTime}, model::{Config, FrameBenchmarkConfig}, present::Presented,
+use astroterm::{model::{Config, FrameBenchmarkConfig}, present::Presented,
     terminal::FrameInput, time::{CaptureSteps, SimulationClock, StepTimes}};
 use super::CaptureDisplay;
 use serde::Serialize;
@@ -13,19 +13,20 @@ pub(crate) struct BenchmarkSession<W: Write = BufWriter<File>> {
     reused: u32,
     display: Option<CaptureDisplay>,
     write_failed: bool,
+    start_time_ms: Option<i64>,
 }
 
 #[derive(Serialize)]
 struct Segment<'a> { r#type: &'static str, trace_complete: bool, steps: CaptureSteps<'a> }
 #[derive(Serialize)]
 struct Frame<'a> {
-    r#type: &'static str, index: u32, utc_jd: f64, tt_jd: f64, elapsed_seconds: f64,
+    r#type: &'static str, index: u32, simulation_time_ms: i64, elapsed_seconds: f64,
     presentation: &'static str, display: CaptureDisplay, trace_complete: bool, steps: CaptureSteps<'a>,
 }
 
 impl<W: Write> BenchmarkSession<W> {
     fn new(writer: W, settings: FrameBenchmarkConfig) -> Self {
-        Self { writer, settings, completed: 0, presented: 0, reused: 0, display: None, write_failed: false }
+        Self { writer, settings, completed: 0, presented: 0, reused: 0, display: None, write_failed: false, start_time_ms: None }
     }
 
     fn write_record(&mut self, record: &impl Serialize) -> io::Result<()> {
@@ -41,8 +42,10 @@ impl<W: Write> BenchmarkSession<W> {
 
     fn begin_capture(&mut self, config: &Config, display: CaptureDisplay, times: &mut StepTimes) -> io::Result<()> {
         self.write_record(&serde_json::json!({
-            "type": "run", "schema_version": 1, "requested_frames": self.settings.frames,
-            "step_seconds": self.settings.step_seconds, "start_utc_jd": config.simulation.start_julian_date,
+            "type": "run", "schema_version": 2, "requested_frames": self.settings.frames,
+            "step_ms": self.settings.step_ms, "start_time_ms": config.simulation.start_time_ms,
+            "time_epoch": "0000-01-01T00:00:00", "time_unit": "milliseconds",
+            "time_scale": "proleptic Gregorian UTC/UT, uniform days",
             "renderer": display.renderer, "graphics_protocol": display.graphics_protocol, "geometry": display.geometry,
             "transport": display.transport, "compression_support": display.compression_support, "tmux": display.tmux, "timing_panel_enabled": config.terminal.frame_times,
             "effective_config": {"view": format!("{:?}", config.view),
@@ -53,11 +56,15 @@ impl<W: Write> BenchmarkSession<W> {
         self.write_record(&Segment { r#type: "startup", trace_complete: true, steps: times.capture_steps()? })?;
         times.clear_capture_segment()?;
         self.display = Some(display);
+        self.start_time_ms = Some(config.simulation.start_time_ms);
         Ok(())
     }
 
-    fn record_frame(&mut self, time: FrameTime, presented: Presented, elapsed: f64, display: CaptureDisplay, times: &mut StepTimes) -> io::Result<bool> {
-        if self.completed >= self.settings.frames || !elapsed.is_finite() || elapsed < 0.0 || ![time.utc, time.ut1, time.tt].into_iter().all(f64::is_finite) { return Err(io::Error::other("invalid benchmark frame completion")); }
+    fn record_frame(&mut self, time_ms: i64, presented: Presented, elapsed: f64, display: CaptureDisplay, times: &mut StepTimes) -> io::Result<bool> {
+        if self.completed >= self.settings.frames || !elapsed.is_finite() || elapsed < 0.0 { return Err(io::Error::other("invalid benchmark frame completion")); }
+        let start_ms = self.start_time_ms.ok_or_else(|| io::Error::other("benchmark startup was not reported"))?;
+        let scheduled_ms = i128::from(start_ms) + i128::from(self.completed) * i128::from(self.settings.step_ms);
+        if i128::from(time_ms) != scheduled_ms { return Err(io::Error::other("benchmark frame date differs from its scheduled millisecond timestamp")); }
         self.completed += 1;                                                                  // successful rendering counts even when reporting subsequently fails
         let sent = matches!(presented, Presented::Sent(_));
         if sent { self.presented += 1; } else { self.reused += 1; }
@@ -65,7 +72,7 @@ impl<W: Write> BenchmarkSession<W> {
         if display.geometry != initial.geometry || display.renderer != initial.renderer || display.graphics_protocol != initial.graphics_protocol {
             return Err(io::Error::new(io::ErrorKind::Interrupted, "benchmark display geometry or renderer changed"));
         }
-        self.write_record(&Frame { r#type: "frame", index: self.completed, utc_jd: time.utc, tt_jd: time.tt,
+        self.write_record(&Frame { r#type: "frame", index: self.completed, simulation_time_ms: time_ms,
             elapsed_seconds: elapsed, presentation: if sent { "presented" } else { "reused_display" },
             display, trace_complete: true, steps: times.capture_steps()? })?;
         times.clear_capture_segment()?;
@@ -115,15 +122,8 @@ pub(crate) fn set_benchmark_frame_time(session: &Option<BenchmarkSession>, clock
     clock.set_frame_index(session.completed)
 }
 
-pub(crate) fn validate_benchmark_time(session: &Option<BenchmarkSession>, time: FrameTime) -> io::Result<()> {
-    if session.is_some() && ![time.utc, time.ut1, time.tt].into_iter().all(f64::is_finite) {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "benchmark frame time is not finite"));
-    }
-    Ok(())
-}
-
-pub(crate) fn complete_benchmark_frame(session: &mut Option<BenchmarkSession>, time: FrameTime, presented: Presented, elapsed: f64, display: impl FnOnce() -> io::Result<CaptureDisplay>, times: &mut StepTimes) -> io::Result<bool> {
-    match session { Some(session) => session.record_frame(time, presented, elapsed, display()?, times), None => Ok(false) }
+pub(crate) fn complete_benchmark_frame(session: &mut Option<BenchmarkSession>, time_ms: i64, presented: Presented, elapsed: f64, display: impl FnOnce() -> io::Result<CaptureDisplay>, times: &mut StepTimes) -> io::Result<bool> {
+    match session { Some(session) => session.record_frame(time_ms, presented, elapsed, display()?, times), None => Ok(false) }
 }
 
 pub(crate) fn finish_benchmark_report(session: &mut Option<BenchmarkSession>, mut result: io::Result<()>) -> io::Result<()> {

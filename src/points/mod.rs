@@ -77,7 +77,7 @@ pub fn draw_points(frame: &mut Frame, inputs: &PointInputs<'_>, observation: &Ob
     let camera = prepare_camera(view);
     let pixel_of = |horizon: Vector3| project_camera(camera, horizon).filter(|point| point.is_visible()).map(|point| sky.frame_pixel(project_to_cell(viewport, point)));
     let threshold = magnitude_code(settings.magnitude_threshold);
-    let tt = observation.time.tt;
+    let tt = crate::astro::AstronomicalTime::from_time_ms(observation.time_ms).tt_jd;
 
     // constellation endpoint stars join the star layer as glyphs, like the tiles' stars
     let constellations = &inputs.data.constellation_stars;
@@ -248,7 +248,7 @@ fn add_arc(path: &mut PathBuilder, sky: SkyArea, arc: &ProjectedArc) {
 fn select_star_labels(inputs: &PointInputs<'_>, observation: &Observation, settings: &RenderOptions, pixel_of: &dyn Fn(Vector3) -> Option<(i32, i32)>, sky: SkyArea, endpoint_pixels: &[Option<(i32, i32)>]) -> Vec<Label> {
     if !settings.dynamic_names || DYNAMIC_NAME_COUNT == 0 { return Vec::new(); }
     let threshold = magnitude_code(settings.magnitude_threshold);
-    let tt = observation.time.tt;
+    let tt = crate::astro::AstronomicalTime::from_time_ms(observation.time_ms).tt_jd;
     let mut best = Candidates::default();
     let names = &inputs.data.names;
     let unicode = settings.unicode;
@@ -414,7 +414,7 @@ pub fn background_rgb() -> [u8; 3] { [PIXEL_BACKGROUND_RGBA[0], PIXEL_BACKGROUND
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::astro::{FrameTime, J2000, Observer};
+    use crate::astro::{J2000, Observer};
     use crate::catalog::{SpaceMotion, StarId, load_embedded_catalog};
     use crate::model::{ProjectionKind, ViewCenter};
     use crate::observation::observe;
@@ -455,7 +455,7 @@ mod tests {
 
     /// The whole frame for `tables` at `view`: steps 1 to 4 and 6 (the star layer stays empty unless asked).
     fn draw(tables: &Data, view: &View, days: f64, settings: &RenderOptions, frame: &mut Frame) -> (Drawn, Observation) {
-        let time = FrameTime::from_utc(J2000 + days);
+        let time = crate::astro::utc_jd_to_time_ms(J2000 + days).unwrap();
         let observation = observe(&boston(), false, view, time, &mut crate::time::StepTimes::default());
         let solar_system = simulate_solar_system(tables, time, &mut crate::time::StepTimes::default());
         let selected = select_regions(&tables.star_regions, &observation, &mut crate::time::StepTimes::default());
@@ -467,7 +467,7 @@ mod tests {
 
     /// Catalog directions at the given horizon altitude and azimuth (degrees) for the zenith view at J2000.
     fn catalog_direction(azimuth_degrees: f64, altitude_degrees: f64) -> Vector3 {
-        let observation = observe(&boston(), false, &View::default(), FrameTime::from_utc(J2000), &mut crate::time::StepTimes::default());
+        let observation = observe(&boston(), false, &View::default(), crate::astro::utc_jd_to_time_ms(J2000).unwrap(), &mut crate::time::StepTimes::default());
         observation.to_catalog.apply(crate::astro::Horizontal { azimuth: azimuth_degrees.to_radians(), altitude: altitude_degrees.to_radians() }.to_unit_vector())
     }
 
@@ -590,7 +590,7 @@ mod tests {
         let (drawn, observation) = draw(&tables, &view, 3000.0, &settings(), &mut frame);
         assert_eq!(drawn.star_labels.len(), DYNAMIC_NAME_COUNT);
         assert!(drawn.bodies >= 1 && drawn.body_labels.len() == drawn.bodies);
-        let solar_system = simulate_solar_system(&tables, observation.time, &mut crate::time::StepTimes::default());
+        let solar_system = simulate_solar_system(&tables, observation.time_ms, &mut crate::time::StepTimes::default());
         let camera = prepare_camera(&view);
         for label in &drawn.body_labels {
             let position = match label.text.as_str() {
@@ -711,7 +711,7 @@ mod tests {
         assert_eq!(both.notices, [ACCURACY_WARNING, MAGNITUDE_CLIPPING_WARNING]);           // the clipping notice above the accuracy warning
         let (none, _) = draw(&tables, &View::default(), 0.0, &settings(), &mut frame);
         assert!(none.notices.is_empty());
-        let time = FrameTime::from_utc(J2000 + 30000.0 * 365.25);
+        let time = crate::astro::utc_jd_to_time_ms(J2000 + 30000.0 * 365.25).unwrap();
         let observation = observe(&boston(), false, &View::default(), time, &mut crate::time::StepTimes::default());
         let solar_system = simulate_solar_system(&clipped, time, &mut crate::time::StepTimes::default());
         let selected = select_regions(&clipped.star_regions, &observation, &mut crate::time::StepTimes::default());
@@ -728,7 +728,7 @@ mod tests {
     fn time_draw_points_at_full_hd() {
         let tables = bsc5();
         let view = View { center: ViewCenter::Facing { azimuth: 3.5, tilt: 0.6 }, projection: ProjectionKind::Stereographic, fov_degrees: 120.0 };
-        let time = FrameTime::from_utc(J2000);
+        let time = crate::astro::utc_jd_to_time_ms(J2000).unwrap();
         let observation = observe(&boston(), true, &view, time, &mut crate::time::StepTimes::default());
         let solar_system = simulate_solar_system(&tables, time, &mut crate::time::StepTimes::default());
         let selected = select_regions(&tables.star_regions, &observation, &mut crate::time::StepTimes::default());
@@ -749,7 +749,7 @@ mod tests {
     #[test]
     fn the_metadata_panel_is_painted_at_the_top_left() {
         let tables = stars(&[]);
-        let time = FrameTime::from_utc(J2000);
+        let time = crate::astro::utc_jd_to_time_ms(J2000).unwrap();
         let observation = observe(&boston(), true, &View::default(), time, &mut crate::time::StepTimes::default());
         let solar_system = simulate_solar_system(&tables, time, &mut crate::time::StepTimes::default());
         let selected = select_regions(&tables.star_regions, &observation, &mut crate::time::StepTimes::default());

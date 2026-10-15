@@ -1,12 +1,11 @@
 //! Optional trace descriptions and reporting after terminal cleanup.
 mod benchmark;
 pub(crate) use benchmark::{BenchmarkSession, open_frame_benchmark, begin_benchmark_capture, validate_benchmark_input, set_benchmark_frame_time,
-    validate_benchmark_time, complete_benchmark_frame, finish_benchmark_report};
+    complete_benchmark_frame, finish_benchmark_report};
 use std::fmt::Display;
 use std::io;
 use std::process::ExitCode;
 use std::time::Instant;
-use astroterm::astro::FrameTime;
 use astroterm::model::Config;
 use astroterm::present::{CompressionSupport, DisplayInfo, Presented};
 use serde::Serialize;
@@ -56,14 +55,14 @@ pub(crate) fn begin_frame_diagnostics(times: &mut StepTimes) -> Instant {
 }
 
 /// Record the duration of a successful frame through presentation, whether or not anything was sent.
-pub(crate) fn finish_frame_diagnostics(config: &Config, frame_start: Instant, time: FrameTime, presented: Presented, times: &mut StepTimes) -> f64 {
+pub(crate) fn finish_frame_diagnostics(config: &Config, frame_start: Instant, time_ms: i64, presented: Presented, times: &mut StepTimes) -> f64 {
     times.record_frame_presentation(matches!(presented, Presented::Sent(_)));
     if !(config.debug_singleframe || config.frame_benchmark.is_some()) { return 0.0; }
     let elapsed = frame_start.elapsed().as_secs_f64();
     times.describe("Present", || format!(
-        "{}; frame elapsed through presentation={:.3} ms; UTC JD={:.9}; includes in-frame diagnostics; sleep excluded",
+        "{}; frame elapsed through presentation={:.3} ms; simulation time={} ms since year 0; includes in-frame diagnostics; sleep excluded",
         match presented { Presented::Sent(bytes) => format!("sent {bytes} bytes"), Presented::Unchanged => "unchanged frame, nothing sent".into() },
-        elapsed * 1000.0, time.utc
+        elapsed * 1000.0, time_ms
     ));
     elapsed
 }

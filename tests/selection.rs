@@ -2,7 +2,7 @@
 //! regions' brightness prefixes, with the constellation table, must contain every star the full scan places inside
 //! the view. Ported from `spatial_selection.rs`; region coverage is qualified only for motion within the fixed
 //! drift margin, exactly as before.
-use astroterm::astro::{COMPUTATIONAL_INTERVAL, FrameTime, J2000, JULIAN_YEAR_DAYS, Matrix3, Observer, Vector3, refract_direction};
+use astroterm::astro::{COMPUTATIONAL_INTERVAL, J2000, JULIAN_YEAR_DAYS, Matrix3, Observer, Vector3, refract_direction};
 use astroterm::catalog::{CatalogStar, SpaceMotion, StarId, decode_magnitude, load_embedded_catalog};
 use astroterm::constants::{GRID_DEPTH, STELLAR_DRIFT_MARGIN};
 use astroterm::model::{ProjectionKind, Data, View, ViewCenter, hash_direction};
@@ -71,7 +71,7 @@ fn candidates(tables: &Data, observation: &Observation, threshold: f64) -> (BTre
 /// The stars a full scan places inside the view at or above the threshold; `drift_limited` drops stars that moved
 /// more than the drift margin, the documented limit of region selection in views under 300°.
 fn visible_by_full_scan(tables: &Data, observation: &Observation, view: &View, threshold: f64, drift_limited: bool) -> BTreeSet<u32> {
-    let years = (observation.time.tt - J2000) / JULIAN_YEAR_DAYS;
+    let years = (astroterm::astro::AstronomicalTime::from_time_ms(observation.time_ms).tt_jd - J2000) / JULIAN_YEAR_DAYS;
     let camera = prepare_camera(view);
     all_stars(tables).into_iter().filter_map(|(id, motion, magnitude)| {
         let sample = motion.evaluate(years, magnitude);
@@ -85,12 +85,12 @@ fn visible_by_full_scan(tables: &Data, observation: &Observation, view: &View, t
 
 fn compare(date: f64, view: View, threshold: f64, refraction: bool, latitude: f64, longitude: f64) {
     let tables = tables();
-    let observation = observe(&Observer { latitude, longitude }, refraction, &view, FrameTime::from_utc(date), &mut astroterm::time::StepTimes::default());
+    let observation = observe(&Observer { latitude, longitude }, refraction, &view, astroterm::astro::utc_jd_to_time_ms(date).unwrap(), &mut astroterm::time::StepTimes::default());
     let (offered, whole_sky) = candidates(&tables, &observation, threshold);
     let visible = visible_by_full_scan(&tables, &observation, &view, threshold, !whole_sky && view.fov_degrees < 300.0);
     let missing: Vec<_> = visible.difference(&offered).collect();
     assert!(missing.is_empty(), "{date} fov {} threshold {threshold} refraction {refraction}: not offered {missing:?}", view.fov_degrees);
-    if !COMPUTATIONAL_INTERVAL.contains(observation.time.tt) { assert!(whole_sky); }
+    if !COMPUTATIONAL_INTERVAL.contains(astroterm::astro::AstronomicalTime::from_time_ms(observation.time_ms).tt_jd) { assert!(whole_sky); }
 }
 
 fn check_boundary_date(date: f64) {
@@ -171,7 +171,7 @@ fn seam_threshold_horizon_and_view_edge_cases_are_not_culled() {
             parsed.stars.push(star);
         }
         let tables = build(parsed);
-        let mut observation = observe(&Observer::default(), refraction, &view, FrameTime::from_utc(J2000), &mut astroterm::time::StepTimes::default());
+        let mut observation = observe(&Observer::default(), refraction, &view, astroterm::astro::utc_jd_to_time_ms(J2000).unwrap(), &mut astroterm::time::StepTimes::default());
         observation.to_horizon = Matrix3::IDENTITY;                                        // the catalog axes are the horizon axes in this fixture
         observation.to_catalog = Matrix3::IDENTITY;
         observation.observer.velocity = Vector3::default();
@@ -209,7 +209,7 @@ fn fast_stars_use_ordinary_regions_and_large_drift_has_no_special_selection() {
     assert_eq!(hash_direction(GRID_DEPTH, motion.u0), region);                                   // speed does not change the region
     assert!(motion.motion_bound() > STELLAR_DRIFT_MARGIN);
 
-    let time = FrameTime::from_utc(J2000 + 1000.0 * JULIAN_YEAR_DAYS);
+    let time = astroterm::astro::utc_jd_to_time_ms(J2000 + 1000.0 * JULIAN_YEAR_DAYS).unwrap();
     let cone = |center: Vector3, threshold: f64| {
         let mut observation = observe(&Observer::default(), false, &View { fov_degrees: 2.0, ..View::default() }, time, &mut astroterm::time::StepTimes::default());
         observation.patch.center = center;

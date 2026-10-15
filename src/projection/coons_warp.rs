@@ -112,7 +112,7 @@ mod tests {
     use crate::projection::prepare_camera;
     use super::super::patch_warp::{build_mesh, RegionPixels, clip_pixel};
     use super::super::tile_sampling::TileSampler;
-    use crate::astro::{FrameTime, J2000, Observer};
+    use crate::astro::{J2000, Observer};
     use crate::model::{RenderOptions, ViewCenter, fixtures, hash_direction};
     use crate::observation::observe;
     use crate::regions::refresh_regions;
@@ -212,7 +212,7 @@ mod tests {
     fn corner_tangents_match_the_full_formula_and_patches_follow_representative_views() {
         // Compare analytic derivatives against independent finite differences used only by this test.
         let site = Observer { latitude: 0.6, longitude: 2.4 };
-        let time = FrameTime::from_utc(J2000);
+        let time = crate::astro::utc_jd_to_time_ms(J2000).unwrap();
         let sky = SkyArea { x: 0, y: 0, size: 1101 };
         for atmosphere in [false, true] {
             for fov in [10.0, 60.0, 180.0] {
@@ -249,7 +249,7 @@ mod tests {
     #[test]
     fn pipeline_places_stars_clears_empty_views_and_preserves_equidistant() {
         // Render one real simulated star in each mode; the equidistant branch must be byte-for-byte unchanged.
-        let time = FrameTime::from_utc(J2000);
+        let time = crate::astro::utc_jd_to_time_ms(J2000).unwrap();
         for projection in [ProjectionKind::Stereographic, ProjectionKind::Equidistant] {
             let view = View { center: ViewCenter::Facing { azimuth: 1.0, tilt: 0.2 }, projection, fov_degrees: 60.0 };
             let observation = observe(&Observer::default(), true, &view, time, &mut StepTimes::default());
@@ -279,7 +279,7 @@ mod tests {
         let mut report = crate::progress::Report::quiet();
         let prepared = crate::sky::prepare_owned_catalog(crate::catalog::load_embedded_catalog(&mut report).unwrap(), &mut report).unwrap();
         let mut data = crate::sky::build_sky_tables(&prepared, &mut report).unwrap();
-        let time = FrameTime::from_utc(J2000);
+        let time = crate::astro::utc_jd_to_time_ms(J2000).unwrap();
         let view = View { center: ViewCenter::Facing { azimuth: 334_f64.to_radians(), tilt: 0.0 }, fov_degrees: 180.0, ..View::default() };
         let observation = observe(&Observer { latitude: 35.69_f64.to_radians(), longitude: 139.69_f64.to_radians() }, true, &view, time, &mut StepTimes::default());
         let selected = crate::selection::select_regions(&data.star_regions, &observation, &mut StepTimes::default());

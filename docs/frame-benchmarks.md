@@ -15,7 +15,8 @@ The program exits after 101 completed frames, including frames which reuse an al
 There is no need to wait for 101 uploads. Terminal settings are restored before the successful end record.
 
 `--debug-frame-step-seconds` defaults to zero (paused). Positive or negative values advance or reverse by
-that many simulated seconds per frame. Frame 1 uses the exact requested date; later dates are calculated
+that many simulated seconds per frame. Decimal input is exact to milliseconds (at most three fractional digits);
+exponent notation and finer fractions are rejected. Frame 1 uses the exact requested date; later dates are calculated
 from that starting date and the frame index, independently of processing speed or report I/O delays.
 Metadata shows `paused` or a signed number of seconds per frame. Ordinary interactive clock behavior is unchanged.
 
@@ -29,13 +30,13 @@ cache reuse without that extra rendering work. Metadata (`-m`) can still be show
 
 ## Reading the report
 
-Each flushed JSONL record is available while the program runs. Transport schema version 1 contains:
+Each flushed JSONL record is available while the program runs. Transport schema version 2 contains:
 
-- `run`: count, time step, starting date, actual renderer/geometry/transport and effective configuration. The
+- `run`: count, integer `step_ms`, integer `start_time_ms`, the year-zero epoch/unit/time-scale convention, actual renderer/geometry/transport and effective configuration. The
   Kitty `transport` is `shared_memory` or `streaming`; each frame record carries the transport in force for that
   frame, since a terminal that does not consume a shared object switches the run to streaming.
 - `startup`: raw startup steps, including catalog and frame preparation.
-- `frame`: contiguous one-based index, UTC/TT, elapsed seconds, presentation outcome, actual display state,
+- `frame`: contiguous one-based index, integer `simulation_time_ms`, real elapsed seconds, presentation outcome, actual display state,
   and raw timing steps. `reused_display` is a successful completed frame even without a `Present` step.
 - `end`: `complete`, `aborted`, or `failed`, with requested/completed/presented/reused counts. Startup or
   report-write failure may leave an incomplete file; a missing end record must never be treated as success.
@@ -107,3 +108,8 @@ limits. These counts describe mesh construction; they do not certify all screen 
 
 The adaptive timing fixture prints three untraced projection times per case (averaged after warmup), followed
 by child-stage times from a separate traced frame. The child times are not components of that untraced average.
+
+Simulation timestamps use signed milliseconds since `0000-01-01T00:00:00`, with uniform Gregorian days
+and astronomical year numbering. New saved benchmark results use version 3. Historical saved results
+remain readable for comparisons, but their floating-point dates are not silently rounded into the new
+schedule. Performance durations remain real floating-point seconds/milliseconds.

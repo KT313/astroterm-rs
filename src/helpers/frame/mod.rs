@@ -1,6 +1,6 @@
 //! What the frame loop does around the seven steps: controls and the clock, and the metadata panel's lines.
 use astroterm::time::SimulationClock;
-use astroterm::astro::{FrameTime, Observer, name_moon_phase};
+use astroterm::astro::{Observer, name_moon_phase};
 use astroterm::controls::{Control, apply_control};
 use astroterm::metadata::{MetadataField, ObserverTimeZone, append_step_time_fields, fill_metadata_fields, format_star_count, resolve_observer_timezone};
 use astroterm::model::{Config, Data, View};
@@ -36,7 +36,7 @@ pub(crate) fn handle_input(
     if stop_on_quit(&input) {
         return Ok(true);
     }
-    apply_frame_controls(&input, &config.view, current_view, clock);
+    apply_frame_controls(&input, &config.view, current_view, clock)?;
 
     // Resize the drawing buffers when the terminal dimensions have changed.
     if input.resized {
@@ -46,10 +46,11 @@ pub(crate) fn handle_input(
 }
 
 /// Apply a frame's controls to the view and the clock. The caller checks for quit first.
-pub(crate) fn apply_frame_controls(input: &FrameInput, initial_view: &View, view: &mut View, clock: &mut SimulationClock) {
+pub(crate) fn apply_frame_controls(input: &FrameInput, initial_view: &View, view: &mut View, clock: &mut SimulationClock) -> io::Result<()> {
     for &control in &input.controls {
-        apply_control(control, view, clock, initial_view);
+        apply_control(control, view, clock, initial_view)?;
     }
+    Ok(())
 }
 
 /// Stop on a quit key without processing any other control.
@@ -68,7 +69,7 @@ pub(crate) struct Panel {
 
 /// What one frame contributes to the panel besides the time and the view.
 pub(crate) struct PanelFrame<'a> {
-    pub time: FrameTime,
+    pub time_ms: i64,
     pub clock: &'a SimulationClock,
     pub solar_system: &'a SolarSystem,
     pub selected: &'a Selected,
@@ -94,7 +95,7 @@ impl Panel {
         self.lines.clear();
         let Some(time_zone) = &self.time_zone else { return &self.lines; };
         let phase = name_moon_phase(frame.solar_system.moon_illumination(0));
-        fill_metadata_fields(&mut self.lines, frame.time.utc, frame.clock, phase, observer, view, self.unicode, time_zone);
+        fill_metadata_fields(&mut self.lines, frame.time_ms, frame.clock, phase, observer, view, self.unicode, time_zone);
 
         // stars and regions
         let in_regions: usize = frame.selected.regions.iter().map(|&region| data.star_regions[region].speed_groups.iter().map(|group| &group.stars).map(|table| table.len()).sum::<usize>()).sum();

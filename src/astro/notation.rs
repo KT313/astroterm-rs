@@ -124,7 +124,7 @@ impl ZodiacSign {
     }
 }
 
-/// A duration in days split into years (of 365.25 days), days, hours, minutes and seconds, each truncated.
+/// A timestamp difference split into years (of 365.25 days), days, hours, minutes and seconds, each truncated.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ElapsedTime {
     pub years: i64,
@@ -135,23 +135,20 @@ pub struct ElapsedTime {
 }
 
 impl ElapsedTime {
-    pub fn from_days(elapsed_days: f64) -> ElapsedTime {
-        let years = (elapsed_days / 365.25).trunc();
-        let remaining_days = elapsed_days - years * 365.25;
-        let days = remaining_days.trunc();
-        let remaining_hours = (remaining_days - days) * 24.0;
-        let hours = remaining_hours.trunc();
-        let remaining_minutes = (remaining_hours - hours) * 60.0;
-        let minutes = remaining_minutes.trunc();
-        let seconds = ((remaining_minutes - minutes) * 60.0).trunc();
-        ElapsedTime {
-            years: years as i64,
-            days: days as i64,
-            hours: hours as i64,
-            minutes: minutes as i64,
-            seconds: seconds as i64,
-        }
+    /// Split a widened timestamp difference; signed components retain the existing truncation convention.
+    pub fn between(start_ms: i64, current_ms: i64) -> Self {
+        let mut remaining = i128::from(current_ms) - i128::from(start_ms);
+        let years = remaining / 31_557_600_000;
+        remaining %= 31_557_600_000;
+        let days = remaining / 86_400_000;
+        remaining %= 86_400_000;
+        let hours = remaining / 3_600_000;
+        remaining %= 3_600_000;
+        let minutes = remaining / 60_000;
+        remaining %= 60_000;
+        Self { years: years as i64, days: days as i64, hours: hours as i64, minutes: minutes as i64, seconds: (remaining / 1000) as i64 }
     }
+
 }
 
 #[cfg(test)]
@@ -233,7 +230,7 @@ mod tests {
 
     #[test]
     fn elapsed_time_components() {
-        let elapsed_days = 365.25 + 30.0 + 6.0 / 24.0 + 15.0 / 1440.0 + 30.0 / 86400.0;
+        let elapsed_days: f64 = 365.25 + 30.0 + 6.0 / 24.0 + 15.0 / 1440.0 + 30.0 / 86400.0;
         let expected = ElapsedTime {
             years: 1,
             days: 30,
@@ -241,6 +238,6 @@ mod tests {
             minutes: 15,
             seconds: 30,
         };
-        assert_eq!(ElapsedTime::from_days(elapsed_days), expected);
+        assert_eq!(ElapsedTime::between(0, (elapsed_days * 86_400_000.0).round() as i64), expected);
     }
 }

@@ -13,7 +13,6 @@
 //! -1 = 2 BC. Signed years are required outside 0000–9999. No Julian-calendar switch occurs in 1582.
 
 use std::f64::consts::TAU;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::{DateTime, Datelike, NaiveDateTime, Timelike, Utc};
 
@@ -87,20 +86,39 @@ pub fn estimate_delta_t(year: f64) -> f64 {
     }
 }
 
-/// Convert UT1 to approximate TT using a continuous decimal Gregorian year (no monthly jumps).
-/// The time of a frame: UTC as given, UT1 approximated by UTC, and TT with the Espenak–Meeus estimate of ΔT.
+/// Temporary time scales derived at an astronomy boundary, never a stored application timestamp.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct FrameTime {
-    pub utc: f64,
-    pub ut1: f64,
-    pub tt: f64,
+pub struct AstronomicalTime {
+    pub utc_jd: f64,
+    pub ut1_jd: f64,
+    pub tt_jd: f64,
 }
-impl FrameTime {
-    pub fn from_utc(utc: f64) -> Self {
-        Self { utc, ut1: utc, tt: ut1_to_tt(utc) }
+impl AstronomicalTime {
+    pub fn from_time_ms(time_ms: i64) -> Self {
+        let utc_jd = time_ms_to_utc_jd(time_ms);
+        Self { utc_jd, ut1_jd: utc_jd, tt_jd: ut1_to_tt(utc_jd) }
     }
 }
 
+/// Convert the canonical calendar timestamp only where a Julian-date formula is needed.
+pub fn time_ms_to_utc_jd(time_ms: i64) -> f64 {
+    let days = time_ms.div_euclid(crate::time::MILLISECONDS_PER_DAY);
+    let remainder_ms = time_ms.rem_euclid(crate::time::MILLISECONDS_PER_DAY);
+    1_721_059.5 + days as f64 + remainder_ms as f64 / crate::time::MILLISECONDS_PER_DAY as f64
+}
+
+/// Import an external UTC/UT Julian date at the application's nearest-millisecond boundary.
+/// Reference formulas that need sub-millisecond precision should keep their original floating-point date.
+pub fn utc_jd_to_time_ms(utc_jd: f64) -> std::io::Result<i64> {
+    let milliseconds = ((utc_jd - 1_721_059.5) * crate::time::MILLISECONDS_PER_DAY as f64).round();
+    let limit = 2.0_f64.powi(63);
+    if !milliseconds.is_finite() || milliseconds < -limit || milliseconds >= limit {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Julian date exceeds the simulation timestamp range"));
+    }
+    Ok(milliseconds as i64)
+}
+
+/// Convert UT1 to approximate TT using a continuous decimal Gregorian year.
 pub fn ut1_to_tt(julian_date_ut1: f64) -> f64 {
     let year = julian_date_to_utc(julian_date_ut1).map_or(2000.0 + (julian_date_ut1 - J2000) / 365.2425, |date| {
         let year = date.year();
@@ -140,12 +158,6 @@ pub fn julian_date_to_utc(julian_date_utc: f64) -> Option<DateTime<Utc>> {
     DateTime::from_timestamp(unix_seconds as i64, 0)
 }
 
-/// Julian date of the current system time.
-pub fn current_julian_date() -> f64 {
-    let since_epoch = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
-    UNIX_EPOCH_JULIAN_DATE + since_epoch.as_secs_f64() / SECONDS_PER_DAY
-}
-
 /// Parse a UTC datetime in the form `yyyy-mm-ddThh:mm:ss`. Fields may omit leading zeros (e.g. `1969-7-16T8:00:00`).
 pub fn parse_utc_datetime(text: &str) -> Option<NaiveDateTime> {
     NaiveDateTime::parse_from_str(text, "%Y-%m-%dT%H:%M:%S").ok()
@@ -172,6 +184,24 @@ mod tests {
     use super::*;
 
     const EPSILON: f64 = 0.0001;
+
+    #[test]
+    fn integer_boundary_preserves_calendar_epochs_and_fractional_time_scales() {
+        for text in ["-7974-01-01T00:00:00", "-0001-12-31T23:59:59", "0000-01-01T00:00:00", "2000-01-01T12:00:00", "+12026-01-01T00:00:00"] {
+            let calendar = parse_utc_datetime(text).unwrap();
+            let timestamp = crate::time::datetime_to_time_ms(&calendar).unwrap();
+            let original = datetime_to_julian_date(&calendar);
+            let dates = AstronomicalTime::from_time_ms(timestamp);
+            assert_eq!(dates.utc_jd, original);
+            assert_eq!(dates.ut1_jd, original);
+            assert_eq!(dates.tt_jd, ut1_to_tt(original));
+            let fractional = AstronomicalTime::from_time_ms(timestamp + 125);
+            assert!((fractional.utc_jd - (original + 0.125 / 86400.0)).abs() < 2e-9);
+            assert_eq!(utc_jd_to_time_ms(fractional.utc_jd).unwrap(), timestamp + 125);
+        }
+        assert!(utc_jd_to_time_ms(f64::NAN).is_err());
+        assert!(utc_jd_to_time_ms(f64::INFINITY).is_err());
+    }
 
     fn julian_date_of(text: &str) -> f64 {
         datetime_to_julian_date(&parse_utc_datetime(text).expect("valid datetime"))
@@ -272,10 +302,7 @@ mod tests {
 
 
 
-    #[test]
-    fn current_julian_date_is_after_2025() {
-        assert!(current_julian_date() > 2460676.5);
-    }
+
 }
 
 #[cfg(test)]

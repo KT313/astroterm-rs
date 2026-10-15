@@ -1,10 +1,10 @@
-//! Validated settings, converted to the units used internally (radians, Julian dates).
+//! Validated settings, converted to the units used internally (radians, integer simulation milliseconds).
 
 use crate::catalog::datasets::Dataset;
 use std::fmt;
 
 use crate::astro::{
-    Observer, compass_point_to_azimuth, current_julian_date, datetime_to_julian_date, parse_utc_datetime,
+    Observer, compass_point_to_azimuth,
 };
 use crate::catalog::{City, find_city, suggest_cities};
 use crate::model::{ProjectionKind, View, ViewCenter, RenderOptions, TerminalSettings};
@@ -56,9 +56,9 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
         Some(name) => locate_city(cities, name)?,
         None => validate_observer(arguments.latitude, arguments.longitude)?,
     };
-    let start_julian_date = match &arguments.datetime {
-        Some(text) => parse_start_julian_date(text)?,
-        None => current_julian_date(),
+    let start_time_ms = match &arguments.datetime {
+        Some(text) => parse_start_time_ms(text)?,
+        None => crate::time::current_time_ms().map_err(|error| ConfigError(error.to_string()))?,
     };
 
     // frame rate and view
@@ -80,7 +80,7 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
     };
     let simulation = SimulationSettings {
         observer,
-        start_julian_date,
+        start_time_ms,
         speed: arguments.speed,
         refraction: arguments.refraction,
     };
@@ -91,13 +91,13 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
         frame_times: arguments.debug_frametimes,
     };
     let frame_benchmark = arguments.debug_frames.map(|frames| {
-        let step_seconds = arguments.debug_frame_step_seconds.unwrap_or(0.0);
+        let step_ms = arguments.debug_frame_step_ms.unwrap_or(0);
         let last = frames.checked_sub(1).ok_or_else(|| ConfigError("Frame count must be positive".into()))?;
-        let mut clock = crate::time::SimulationClock::start_fixed_step(start_julian_date, step_seconds);
-        if !step_seconds.is_finite() || clock.set_frame_index(last).is_err() {
-            return Err(ConfigError("Benchmark step and scheduled final date must be finite".into()));
+        let mut clock = crate::time::SimulationClock::start_fixed_step(start_time_ms, step_ms);
+        if clock.set_frame_index(last).is_err() {
+            return Err(ConfigError("Benchmark final date exceeds the i64 millisecond range".into()));
         }
-        Ok(crate::model::FrameBenchmarkConfig { frames, step_seconds,
+        Ok(crate::model::FrameBenchmarkConfig { frames, step_ms,
             report: arguments.debug_frame_report.clone().ok_or_else(|| ConfigError("--debug-frames requires --debug-frame-report".into()))? })
     }).transpose()?;
     Ok(Config {
@@ -154,13 +154,8 @@ fn locate_city(cities: &[City], name: &str) -> Result<Observer, ConfigError> {
     })
 }
 
-fn parse_start_julian_date(text: &str) -> Result<f64, ConfigError> {
-    let datetime = parse_utc_datetime(text).ok_or_else(|| {
-        ConfigError(format!(
-            "Unable to parse datetime string '{text}'\nDatetimes must be in form <yyyy-mm-ddThh:mm:ss>"
-        ))
-    })?;
-    Ok(datetime_to_julian_date(&datetime))
+fn parse_start_time_ms(text: &str) -> Result<i64, ConfigError> {
+    crate::time::parse_simulation_time_ms(text).map_err(|error| ConfigError(format!("Unable to parse datetime string '{text}'\n{error}")))
 }
 
 fn validate_aspect_ratio(aspect_ratio: Option<f64>) -> Result<Option<f64>, ConfigError> {
@@ -250,7 +245,7 @@ mod tests {
                 longitude: 0.0
             }
         );
-        assert_eq!(config.simulation.start_julian_date, 2451545.0);
+        assert_eq!(config.simulation.start_time_ms, crate::time::parse_simulation_time_ms("2000-01-01T12:00:00").unwrap());
         assert_eq!(config.view, View::default());
         assert_eq!(config.render.magnitude_threshold, 5.0);
         assert_eq!(
@@ -466,7 +461,7 @@ mod benchmark_tests {
     fn bounded_capture_requires_a_new_report_and_rejects_conflicting_modes() {
         let base = ["astroterm", "--debug-frames", "3", "--debug-frame-report", "report.jsonl"];
         let config = build_config(Arguments::try_parse_from(base).unwrap(), &[]).unwrap();
-        assert_eq!(config.frame_benchmark.unwrap().step_seconds, 0.0);
+        assert_eq!(config.frame_benchmark.unwrap().step_ms, 0);
         for extra in [vec!["-s", "1"], vec!["--debug-singleframe"], vec!["--debug-log-data"]] {
             assert!(Arguments::try_parse_from(base.into_iter().chain(extra)).is_err());
         }
@@ -475,8 +470,18 @@ mod benchmark_tests {
             assert!(Arguments::try_parse_from(args).is_err());
         }
         for step in ["NaN", "inf", "1e308"] {
-            let args = Arguments::try_parse_from(base.into_iter().chain(["--debug-frame-step-seconds", step])).unwrap();
-            assert!(build_config(args, &[]).is_err());
+            assert!(Arguments::try_parse_from(base.into_iter().chain(["--debug-frame-step-seconds", step])).is_err());
         }
+    }
+
+    #[test]
+    fn millisecond_dates_and_benchmark_final_range_are_validated_before_startup() {
+        let arguments = ["astroterm", "-d", "0000-01-01T00:00:00.125", "--debug-frames", "3", "--debug-frame-report", "unused.jsonl"];
+        let config = build_config(Arguments::try_parse_from(arguments.into_iter().chain(["--debug-frame-step-seconds", "-0.001"])).unwrap(), &[]).unwrap();
+        assert_eq!(config.simulation.start_time_ms, 125);
+        assert_eq!(config.frame_benchmark.unwrap().step_ms, -1);
+        let overflow = Arguments::try_parse_from(arguments.into_iter().chain(["--debug-frame-step-seconds", "9223372036854775.807"])).unwrap();
+        assert!(build_config(overflow, &[]).unwrap_err().0.contains("millisecond range"));
+        assert!(Arguments::try_parse_from(arguments.into_iter().chain(["--debug-frame-step-seconds", "0.0001"])).is_err());
     }
 }
