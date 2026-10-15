@@ -7,19 +7,18 @@ use crate::astro::Vector3;
 use crate::constants::TILE_EDGE_TEXELS;
 use crate::model::{Data, Texel, View};
 use crate::observation::Observation;
-use crate::projection::{CartesianCamera, Frame, SkyArea, prepare_camera, project_camera};
+use crate::projection::{CartesianCamera, prepare_camera, project_camera};
 use crate::regions::{TileGeometry, blend_star};
 use crate::selection::Selected;
 use crate::time::StepTimes;
 use super::raster::{Point, scan_quad};
 use super::tile_sampling::TileSampler;
 
-pub(super) fn project_whole_tiles(frame: &mut Frame, data: &Data, selected: &Selected, observation: &Observation, view: &View, times: &mut StepTimes) {
-    // Clear the previous sky and prepare the current camera and screen dimensions.
-    times.measure("Projection.Star layer clear");
-    frame.stars_mut().fill(Texel::default());
-    let (width, height, sky) = (frame.width(), frame.height(), frame.sky());
-    if width == 0 || height == 0 || sky.size < 2 { return; }
+pub(super) fn project_whole_tiles(size: usize, data: &Data, selected: &Selected, observation: &Observation, view: &View, times: &mut StepTimes) -> Vec<Texel> {
+    // Allocate a square image and prepare the current camera.
+    times.measure("Projection.Star buffer allocation");
+    let mut stars = vec![Texel::default(); size.checked_mul(size).expect("drawing area pixel count overflow")];
+    if size < 2 { return stars; }
     times.measure("Projection.Camera preparation");
     let camera = prepare_camera(view);
 
@@ -33,20 +32,21 @@ pub(super) fn project_whole_tiles(frame: &mut Frame, data: &Data, selected: &Sel
         times.measure("Projection.Tile geometry");
         let geometry = TileGeometry::new(region);
         times.measure("Projection.Tile corner projection");
-        let corners = project_tile_corners(&geometry, observation, camera, sky);
+        let corners = project_tile_corners(&geometry, observation, camera, size);
         let Some(corners) = corners else { continue; };
         let Some(mappings) = texture_mappings(corners) else { continue; };
         times.measure("Projection.Tile filter preparation");
         sampler.prepare(image.lit_rows());
         times.measure("Projection.Tile rasterization");
-        draw_tile(frame.stars_mut(), width, height, sky, corners, &mappings, &sampler, image.texels());
+        draw_tile(&mut stars, size, corners, &mappings, &sampler, image.texels());
     }
     times.measure("Projection");
+    stars
 }
 
 /// Project the four outer texture boundaries. Skip tiles crossing the back singularity or folding over
 /// themselves: a two-triangle surface cannot represent those mappings reliably.
-fn project_tile_corners(tile: &TileGeometry, observation: &Observation, camera: CartesianCamera, sky: SkyArea) -> Option<[Point; 4]> {
+fn project_tile_corners(tile: &TileGeometry, observation: &Observation, camera: CartesianCamera, size: usize) -> Option<[Point; 4]> {
     // Texture boundaries extend half a texel beyond the first and last texel centers.
     let minimum = -0.5;
     let maximum = TILE_EDGE_TEXELS as f64 - 0.5;
@@ -57,12 +57,12 @@ fn project_tile_corners(tile: &TileGeometry, observation: &Observation, camera: 
     if contains_antipode(directions, camera.forward) { return None; }
 
     // Run the real camera projection only at these four corners.
-    let radius = (sky.size as f64 - 1.0) * 0.5;
+    let radius = (size as f64 - 1.0) * 0.5;
     let mut corners = [[0.0; 2]; 4];
     for (corner, direction) in corners.iter_mut().zip(directions) {
         let projected = project_camera(camera, direction)?;
         if !projected.x.is_finite() || !projected.y.is_finite() { return None; }
-        *corner = [sky.x as f64 + radius + projected.x * radius, sky.y as f64 + radius - projected.y * radius];
+        *corner = [radius + projected.x * radius, radius - projected.y * radius];
     }
 
     // Accept either winding, but reject collapsed or nonconvex quadrilaterals in this prototype.
@@ -105,9 +105,9 @@ fn texture_mappings(corners: [Point; 4]) -> Option<[TextureMapping; 2]> {
 /// in, and blends source-over onto the star layer with its coverage. Whole pixels step through the tile at a
 /// constant pace along the row; outline pixels are resolved only when a lit texel lies under them at all.
 #[allow(clippy::too_many_arguments)]
-fn draw_tile(stars: &mut [Texel], width: usize, height: usize, sky: SkyArea, corners: [Point; 4], mappings: &[TextureMapping; 2], sampler: &TileSampler, texels: &[Texel]) {
-    scan_quad(corners, width, height, sky, |span| {
-        let row = &mut stars[span.row * width..][..width];
+fn draw_tile(stars: &mut [Texel], size: usize, corners: [Point; 4], mappings: &[TextureMapping; 2], sampler: &TileSampler, texels: &[Texel]) {
+    scan_quad(corners, size, |span| {
+        let row = &mut stars[span.row * size..][..size];
         for (columns, triangle) in span.runs() {
             if columns.is_empty() { continue; }
             let mapping = &mappings[triangle];
@@ -186,6 +186,7 @@ impl TextureMapping {
 
 #[cfg(test)]
 mod tests {
+    use crate::projection::Frame;
     use super::*;
     use crate::astro::{J2000, Observer};
     use crate::model::{ProjectionKind, RenderOptions, ViewCenter, fixtures, hash_direction};
@@ -223,7 +224,7 @@ mod tests {
         let mappings = texture_mappings(corners).unwrap();
         let mut sampler = TileSampler::new(TILE_EDGE_TEXELS);
         sampler.prepare(&super::super::tile_sampling::lit_rows_of(texels, TILE_EDGE_TEXELS));
-        draw_tile(frame, 9, 9, SkyArea { x: 0, y: 0, size: 9 }, corners, &mappings, &sampler, texels);
+        draw_tile(frame, 9, corners, &mappings, &sampler, texels);
     }
     fn close(actual: Texel, expected: Texel) {
         for (a, b) in actual.rgb.into_iter().chain([actual.opacity]).zip(expected.rgb.into_iter().chain([expected.opacity])) {
@@ -281,7 +282,8 @@ mod tests {
             let settings = RenderOptions { magnitude_threshold: 6.0, unicode: true, braille: false, color: true, constellations: false, grid: false, dynamic_names: false };
             refresh_regions(&mut data, &selected, time, &view, &settings, &mut StepTimes::default());
             let mut frame = Frame::square(401);
-            project_whole_tiles(&mut frame, &data, &selected, &observation, &view, &mut StepTimes::default());
+            let projected_stars = project_whole_tiles(frame.drawing_area_width_and_height, &data, &selected, &observation, &view, &mut StepTimes::default());
+            frame.insert_projected_stars(&projected_stars);
 
             let expected = project_camera(prepare_camera(&view), observation.apparent_star_direction(direction)).unwrap();
             let expected = [200.0 + expected.x * 200.0, 200.0 - expected.y * 200.0];
@@ -299,7 +301,8 @@ mod tests {
             let worst = frame.stars().iter().enumerate().filter(|(_, texel)| !(texel.opacity.is_finite() && texel.opacity <= 1.0)).map(|(index, texel)| (index / 401, index % 401, *texel)).next();
             assert!(worst.is_none(), "{fov}: {worst:?}");
 
-            project_whole_tiles(&mut frame, &data, &Selected { regions: Vec::new(), whole_sky: false }, &observation, &view, &mut StepTimes::default());
+            let projected_stars = project_whole_tiles(frame.drawing_area_width_and_height, &data, &Selected { regions: Vec::new(), whole_sky: false }, &observation, &view, &mut StepTimes::default());
+            frame.insert_projected_stars(&projected_stars);
             assert!(frame.stars().iter().all(|texel| texel.is_empty()));
         }
     }
@@ -317,7 +320,7 @@ mod tests {
         let selected = crate::selection::select_regions(&data.star_regions, &observation, &mut StepTimes::default());
         let settings = RenderOptions { magnitude_threshold: 9.0, unicode: true, braille: false, color: true, constellations: false, grid: false, dynamic_names: false };
         refresh_regions(&mut data, &selected, time, &view, &settings, &mut StepTimes::default());
-        let mut frame = Frame::new(1920, 1100, SkyArea::centred(1920, 1100), (10, 20));
+        let mut frame = Frame::new(1920, 1100, 1100, (10, 20));
 
         for dense in [false, true] {
             if dense {
@@ -332,7 +335,8 @@ mod tests {
             let mut elapsed = 0.0;
             for run in 0..6 {
                 let start = std::time::Instant::now();
-                project_whole_tiles(&mut frame, &data, &selected, &observation, &view, &mut StepTimes::default());
+                let projected_stars = project_whole_tiles(frame.drawing_area_width_and_height, &data, &selected, &observation, &view, &mut StepTimes::default());
+                frame.insert_projected_stars(&projected_stars);
                 let seconds = start.elapsed().as_secs_f64();
                 if run > 0 { elapsed += seconds; }
                 std::hint::black_box(frame.stars());

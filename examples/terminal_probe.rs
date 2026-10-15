@@ -24,7 +24,8 @@ fn main() {
             let observation = observe(&config.simulation.observer, config.simulation.refraction, &config.view, time, &mut astroterm::time::StepTimes::default());
             let selected = select_regions(&tables.star_regions, &observation, &mut astroterm::time::StepTimes::default());
             refresh_regions(&mut tables, &selected, time, &config.view, &config.render, &mut astroterm::time::StepTimes::default());
-            project_stars_to_screen(&mut frame, &tables, &selected, &observation, &config.view, &mut astroterm::time::StepTimes::default());
+            let projected_stars = project_stars_to_screen(frame.drawing_area_width_and_height, &tables, &selected, &observation, &config.view, &mut astroterm::time::StepTimes::default());
+            frame.insert_projected_stars(&projected_stars);
             let drawn = draw_points(&mut frame, &solar_system, &tables, &selected, None, &observation, &config.view, &config.render, &mut astroterm::time::StepTimes::default());
             draw_panel_and_notices(&mut frame, &[], &drawn.notices);
             present(&frame, display.terminal(), &mut astroterm::time::StepTimes::default()).unwrap();

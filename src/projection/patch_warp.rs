@@ -2,7 +2,7 @@
 use crate::constants::{CURVED_PATCH_FLATNESS_PIXELS, CURVED_PATCH_MAX_SUBDIVISIONS, TILE_EDGE_TEXELS};
 use crate::model::{Data, ProjectionKind, Texel, View};
 use crate::observation::Observation;
-use crate::projection::{CartesianCamera, Frame, SkyArea, prepare_camera};
+use crate::projection::{CartesianCamera, prepare_camera};
 use crate::regions::{TileGeometry, blend_star};
 use crate::selection::Selected;
 use crate::time::StepTimes;
@@ -18,20 +18,18 @@ pub(super) trait CurvedPatch {
 /// Forward-render stereographic tiles as curved patches; equidistant keeps the existing straight renderer.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn project_curved_tiles<P: CurvedPatch>(
-    frame: &mut Frame, data: &Data, selected: &Selected, observation: &Observation, view: &View, times: &mut StepTimes,
-    build_patch: fn(&TileGeometry, &Observation, CartesianCamera, SkyArea) -> Option<P>, mesh_stage: &'static str,
-) {
+    size: usize, data: &Data, selected: &Selected, observation: &Observation, view: &View, times: &mut StepTimes,
+    build_patch: fn(&TileGeometry, &Observation, CartesianCamera, usize) -> Option<P>, mesh_stage: &'static str,
+) -> Vec<Texel> {
     // Limit this prototype to stereographic views without changing the existing -e behavior.
     if view.projection != ProjectionKind::Stereographic {
-        super::tile_warp::project_whole_tiles(frame, data, selected, observation, view, times);
-        return;
+        return super::tile_warp::project_whole_tiles(size, data, selected, observation, view, times);
     }
 
-    // Clear the last frame and prepare the camera once for every selected region.
-    times.measure("Projection.Star layer clear");
-    frame.stars_mut().fill(Texel::default());
-    let (width, height, sky) = (frame.width(), frame.height(), frame.sky());
-    if width == 0 || height == 0 || sky.size < 2 { return; }
+    // Allocate a square image and prepare the camera once for every selected region.
+    times.measure("Projection.Star buffer allocation");
+    let mut stars = vec![Texel::default(); size.checked_mul(size).expect("drawing area pixel count overflow")];
+    if size < 2 { return stars; }
     times.measure("Projection.Camera preparation");
     let camera = prepare_camera(view);
     let mut sampler = TileSampler::new(TILE_EDGE_TEXELS);
@@ -45,21 +43,22 @@ pub(super) fn project_curved_tiles<P: CurvedPatch>(
         times.measure("Projection.Tile geometry");
         let geometry = TileGeometry::new(region);
         times.measure("Projection.Tile corner projection");
-        let patch = build_patch(&geometry, observation, camera, sky);
+        let patch = build_patch(&geometry, observation, camera, size);
         let Some(patch) = patch else { continue; };
         times.measure(mesh_stage);
         if !build_mesh(&patch, &mut mesh) { continue; }
         times.measure("Projection.Tile filter preparation");
         sampler.prepare(image.lit_rows());
         times.measure("Projection.Tile rasterization");
-        pixels.prepare(&mesh, width, height, sky);
+        pixels.prepare(&mesh, size);
         for triangle in &mesh {
             pixels.draw_triangle(triangle, &sampler, image.texels());
         }
         times.measure("Projection.Tile composition");
-        pixels.composite(frame.stars_mut(), width);
+        pixels.composite(&mut stars, size);
     }
     times.measure("Projection");
+    stars
 }
 
 pub(super) struct Triangle {
@@ -138,11 +137,11 @@ pub(super) struct RegionPixels {
     top: usize,
     width: usize,
     height: usize,
-    sky: Option<SkyArea>,
+    size: usize,
 }
 
 impl RegionPixels {
-    pub(super) fn prepare(&mut self, mesh: &[Triangle], width: usize, height: usize, sky: SkyArea) {
+    pub(super) fn prepare(&mut self, mesh: &[Triangle], size: usize) {
         // Clip allocation to this region's visible rectangle, reusing its capacity for following regions.
         let mut minimum = [f64::INFINITY; 2];
         let mut maximum = [f64::NEG_INFINITY; 2];
@@ -151,13 +150,13 @@ impl RegionPixels {
         }
         let left = (minimum[0] - 0.5).ceil().max(0.0);
         let top = (minimum[1] - 0.5).ceil().max(0.0);
-        let right = (maximum[0] + 0.5).floor().min((width - 1) as f64);
-        let bottom = (maximum[1] + 0.5).floor().min((height - 1) as f64);
+        let right = (maximum[0] + 0.5).floor().min((size - 1) as f64);
+        let bottom = (maximum[1] + 0.5).floor().min((size - 1) as f64);
         self.width = if left <= right { (right - left) as usize + 1 } else { 0 };
         self.height = if top <= bottom { (bottom - top) as usize + 1 } else { 0 };
         self.left = left as usize;
         self.top = top as usize;
-        self.sky = Some(sky);
+        self.size = size;
         self.pixels.clear();
         self.pixels.resize(self.width * self.height, [0.0; 4]);
     }
@@ -165,8 +164,8 @@ impl RegionPixels {
     pub(super) fn draw_triangle(&mut self, triangle: &Triangle, sampler: &TileSampler, texels: &[Texel]) {
         // Scan only intersecting row spans. Fully covered pixels never enter the polygon clipper.
         if self.width == 0 || self.height == 0 { return; }
-        let sky = self.sky.unwrap();
-        super::triangle_rows::scan_triangle_rows(triangle.screen, self.left, self.top, self.width, self.height, sky, |span| {
+        let size = self.size;
+        super::triangle_rows::scan_triangle_rows(triangle.screen, self.left, self.top, self.width, self.height, size, |span| {
             let footprint = triangle.mapping.footprint_of([1.0; 2]);
             for column in span.first..=span.last {
                 let pixel = [column as f64, span.row as f64];
@@ -200,9 +199,9 @@ impl RegionPixels {
         let right = (maximum[0] + 0.5).floor().min((self.left + self.width - 1) as f64) as usize;
         let top = (minimum[1] - 0.5).ceil().max(self.top as f64) as usize;
         let bottom = (maximum[1] + 0.5).floor().min((self.top + self.height - 1) as f64) as usize;
-        let sky = self.sky.unwrap();
-        let radius = (sky.size as f64 - 1.0) * 0.5;
-        let center = [sky.x as f64 + radius, sky.y as f64 + radius];
+        let size = self.size;
+        let radius = (size as f64 - 1.0) * 0.5;
+        let center = [radius, radius];
 
         // Integrate triangle fragments rather than blending adjacent triangles as overlapping images.
         for row in top..=bottom {
@@ -302,7 +301,7 @@ mod tests {
     #[test]
     fn row_spans_match_the_original_clipper_for_sparse_dense_and_thin_triangles() {
         // Keep the old drawing loop as an independent oracle for fractional edges, both windings and clipping.
-        let sky = SkyArea { x: 3, y: 1, size: 47 };
+        let size = 47;
         let mut random = 12345_u64;
         let mut next = || {
             random = random.wrapping_mul(6364136223846793005).wrapping_add(1);
@@ -332,8 +331,8 @@ mod tests {
                     let Some(triangle) = Triangle::new(screen, texture) else { continue; };
                     let mut actual = RegionPixels::default();
                     let mut expected = RegionPixels::default();
-                    actual.prepare(std::slice::from_ref(&triangle), 53, 51, sky);
-                    expected.prepare(std::slice::from_ref(&triangle), 53, 51, sky);
+                    actual.prepare(std::slice::from_ref(&triangle), size);
+                    expected.prepare(std::slice::from_ref(&triangle), size);
                     actual.draw_triangle(&triangle, &sampler, &texels);
                     expected.draw_triangle_reference(&triangle, &sampler, &texels);
                     for (pixel, (actual, expected)) in actual.pixels.iter().zip(&expected.pixels).enumerate() {

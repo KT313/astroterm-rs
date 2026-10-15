@@ -1,5 +1,4 @@
 //! Exact row ranges for a triangle: full pixels use a cheap path; only its outline needs polygon clipping.
-use crate::projection::SkyArea;
 use super::raster::Point;
 
 struct Edge { lower: Point, upper: Point, slope: f64 }
@@ -37,7 +36,7 @@ fn span_at(edges: &[Edge; 3], y: f64) -> Option<(f64, f64)> {
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn scan_triangle_rows(
-    triangle: [Point; 3], left: usize, top: usize, width: usize, height: usize, sky: SkyArea,
+    triangle: [Point; 3], left: usize, top: usize, width: usize, height: usize, size: usize,
     mut visit: impl FnMut(TriangleRow),
 ) {
     // Prepare edge slopes once and clip the vertical extent to the region's screen rectangle.
@@ -53,8 +52,8 @@ pub(super) fn scan_triangle_rows(
     let first_row = (minimum_y - 0.5).ceil().max(top as f64);
     let last_row = (maximum_y + 0.5).floor().min((top + height - 1) as f64);
     if first_row > last_row { return; }
-    let radius = (sky.size as f64 - 1.0) * 0.5;
-    let center = [sky.x as f64 + radius, sky.y as f64 + radius];
+    let radius = (size as f64 - 1.0) * 0.5;
+    let center = [radius, radius];
     let mut upper = span_at(&edges, first_row - 0.5);
 
     // Bound each horizontal strip by its two edge spans and any triangle vertices inside the strip.

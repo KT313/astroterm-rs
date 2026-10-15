@@ -6,7 +6,7 @@
 //! terminal's cells scaled by the text scale; in half-block mode the frame is downsampled whole, text included.
 use crate::constants::MAX_IMAGE_PIXELS;
 use crate::model::TerminalSettings;
-use crate::projection::{Frame, SkyArea};
+use crate::projection::Frame;
 use crate::terminal::transport::graphics::detection::{CompressionSupport, detect_protocol};
 use crate::terminal::transport::graphics::clear_image;
 use crate::terminal::{TerminalSession, fit_square_viewport, open_terminal_session};
@@ -60,14 +60,14 @@ impl Display {
 
     /// A frame sized to the terminal as last measured.
     pub fn new_frame(&self) -> Frame {
-        Frame::new(self.info.image.0, self.info.image.1, self.sky_area(), self.info.text_cell)
+        Frame::new(self.info.image.0, self.info.image.1, self.drawing_area_size(), self.info.text_cell)
     }
 
     /// Adopt the terminal's new size after a resize: the frame and the terminal are resized and the screen
     /// cleared, so the next frame is sent whole.
     pub fn fit(&mut self, frame: &mut Frame) -> io::Result<()> {
         self.measure()?;
-        frame.resize(self.info.image.0, self.info.image.1, self.sky_area());
+        frame.resize(self.info.image.0, self.info.image.1, self.drawing_area_size());
         frame.set_text_cell(self.info.text_cell);
         Ok(())
     }
@@ -92,13 +92,12 @@ impl Display {
         clear_image(self.terminal.output(), self.info.protocol == ProtocolType::Kitty, self.info.tmux)
     }
 
-    /// The largest centred square that the cell aspect ratio allows, in frame pixels.
-    fn sky_area(&self) -> SkyArea {
+    /// Return the square's side length allowed by the cell aspect ratio, in pixels.
+    fn drawing_area_size(&self) -> usize {
         let info = self.info;
         let ratio = self.aspect_ratio.unwrap_or(f64::from(info.font.1) / f64::from(info.font.0));
         let layout = fit_square_viewport(info.screen.height, info.screen.width, ratio);
         let (width, height) = (layout.width.max(1) * usize::from(info.font.0), layout.height.max(1) * usize::from(info.font.1));
-        let size = width.min(height).min(info.image.0).min(info.image.1);
-        SkyArea { x: (info.image.0 - size) / 2, y: (info.image.1 - size) / 2, size }
+        width.min(height).min(info.image.0).min(info.image.1)
     }
 }

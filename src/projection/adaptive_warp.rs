@@ -9,7 +9,7 @@ use crate::astro::Vector3;
 use crate::constants::{ABERRATION_MARGIN, ADAPTIVE_WARP_ERROR_PIXELS, ADAPTIVE_WARP_MAX_SUBDIVISIONS, REFRACTION_MARGIN, TILE_EDGE_TEXELS};
 use crate::model::{Data, ProjectionKind, Texel, View};
 use crate::observation::Observation;
-use crate::projection::{CartesianCamera, Frame, SkyArea, prepare_camera, project_camera};
+use crate::projection::{CartesianCamera, prepare_camera, project_camera};
 use crate::regions::TileGeometry;
 use crate::selection::Selected;
 use crate::time::StepTimes;
@@ -21,19 +21,18 @@ use super::tile_warp::{contains_antipode, is_convex};
 /// Adapt tile meshes using the selected stereographic or equidistant camera formula.
 #[allow(dead_code)] // backend selection is one call in projection/mod.rs
 pub(super) fn project_adaptive_tiles(
-    frame: &mut Frame,
+    size: usize,
     data: &Data,
     selected: &Selected,
     observation: &Observation,
     view: &View,
     times: &mut StepTimes,
-) {
-    // Clear the previous frame's stars and stop if the drawing area is too small.
-    times.measure("Projection.Star layer clear");
-    frame.stars_mut().fill(Texel::default());
-    let (width, height, sky) = (frame.width(), frame.height(), frame.sky());
-    if width == 0 || height == 0 || sky.size < 2 {
-        return;
+) -> Vec<Texel> {
+    // Allocate an empty square for this projection; no terminal margins are involved.
+    times.measure("Projection.Star buffer allocation");
+    let mut stars = vec![Texel::default(); size.checked_mul(size).expect("drawing area pixel count overflow")];
+    if size < 2 {
+        return stars;
     }
 
     // Prepare the camera and reuse the temporary mesh and drawing buffers across regions.
@@ -54,18 +53,19 @@ pub(super) fn project_adaptive_tiles(
         }
 
         // Build the region's screen mapping and count its results, including omitted cells.
-        let stats = build_region_mesh(region, observation, camera, sky, view, &mut vertices, &mut triangles, times);
+        let stats = build_region_mesh(region, observation, camera, size, view, &mut vertices, &mut triangles, times);
         totals.add_region(&stats);
         if triangles.is_empty() {
             continue;
         }
 
-        // Draw the cached tile through that mapping and combine it with the frame.
-        draw_region_mesh(frame, tile, &triangles, &mut sampler, &mut pixels, times);
+        // Draw the cached tile through that mapping and combine it with the square image.
+        draw_region_mesh(&mut stars, size, tile, &triangles, &mut sampler, &mut pixels, times);
     }
 
     // Attach the combined mesh statistics to this frame's diagnostic trace.
     totals.record_trace(times);
+    stars
 }
 
 /// Build one region's projected triangles, reusing storage from the preceding region.
@@ -74,7 +74,7 @@ fn build_region_mesh(
     region: usize,
     observation: &Observation,
     camera: CartesianCamera,
-    sky: SkyArea,
+    size: usize,
     view: &View,
     vertices: &mut HashMap<[usize; 2], Vertex>,
     triangles: &mut Vec<Triangle>,
@@ -87,7 +87,7 @@ fn build_region_mesh(
         tile,
         observation,
         camera,
-        sky,
+        size,
         half_fov: view.fov_degrees.to_radians() * 0.5,
     };
     vertices.clear();
@@ -103,9 +103,10 @@ fn build_region_mesh(
     build_mesh(&projector, vertices, triangles)
 }
 
-/// Draw all triangles into temporary region pixels, then blend the completed region into the frame once.
+/// Draw all triangles into temporary region pixels, then blend the completed region into the square once.
 fn draw_region_mesh(
-    frame: &mut Frame,
+    stars: &mut [Texel],
+    size: usize,
     tile: &crate::model::RegionTileCache,
     triangles: &[Triangle],
     sampler: &mut TileSampler,
@@ -118,22 +119,21 @@ fn draw_region_mesh(
 
     // Resize and clear the region's temporary pixels, then fill them through the triangle mapping.
     times.measure("Projection.Tile rasterization");
-    pixels.prepare(triangles, frame.width(), frame.height(), frame.sky());
+    pixels.prepare(triangles, size);
     for triangle in triangles {
         pixels.draw_triangle(triangle, sampler, tile.texels());
     }
 
-    // Blend the completed region into the frame's star layer.
+    // Blend the completed region into the square image.
     times.measure("Projection.Tile composition");
-    let width = frame.width();
-    pixels.composite(frame.stars_mut(), width);
+    pixels.composite(stars, size);
 }
 
 struct TileProjector<'a> {
     tile: TileGeometry,
     observation: &'a Observation,
     camera: CartesianCamera,
-    sky: SkyArea,
+    size: usize,
     half_fov: f64,
 }
 
@@ -190,7 +190,7 @@ fn sample_vertex(projector: &TileProjector<'_>, samples: &mut HashMap<[usize; 2]
         let scale = TILE_EDGE_TEXELS as f64 / grid_size() as f64;
         let catalog = projector.tile.direction_of(key[0] as f64 * scale - 0.5, key[1] as f64 * scale - 0.5);
         let apparent = projector.observation.apparent_star_direction(catalog);
-        let radius = (projector.sky.size as f64 - 1.0) * 0.5;
+        let radius = (projector.size as f64 - 1.0) * 0.5;
         // The point renderer gives the exact equidistant antipode an arbitrary rim position. A tile vertex
         // must not use that convention: approaching the same direction can reach any point on the rim.
         let antipodal_vertex = projector.camera.kind == ProjectionKind::Equidistant
@@ -198,7 +198,7 @@ fn sample_vertex(projector: &TileProjector<'_>, samples: &mut HashMap<[usize; 2]
             && projector.camera.right.dot(apparent).hypot(projector.camera.up.dot(apparent)) < 1e-12;
         let projected = if antipodal_vertex { None } else { project_camera(projector.camera, apparent) };
         let screen = projected.and_then(|point| {
-            let screen = [projector.sky.x as f64 + radius + radius * point.x, projector.sky.y as f64 + radius - radius * point.y];
+            let screen = [radius + radius * point.x, radius - radius * point.y];
             screen.iter().all(|value| value.is_finite()).then_some(screen)
         });
         Vertex { catalog, apparent, screen }
@@ -301,25 +301,26 @@ fn build_mesh(projector: &TileProjector<'_>, samples: &mut HashMap<[usize; 2], V
 
 #[cfg(test)]
 mod tests {
+    use crate::projection::Frame;
     use super::*;
     use crate::astro::{Observer};
     use crate::constants::GRID_DEPTH;
     use crate::model::{ViewCenter, hash_direction, region_caps};
     use crate::observation::observe;
 
-    fn fixture(fov: f64, atmosphere: bool) -> (View, Observation, CartesianCamera, SkyArea) {
+    fn fixture(fov: f64, atmosphere: bool) -> (View, Observation, CartesianCamera, usize) {
         // Reproduce the screenshot's date, observer, orientation and frame dimensions without loading stars.
         let view = View { center: ViewCenter::Facing { azimuth: 334_f64.to_radians(), tilt: 0.0 }, fov_degrees: fov, ..View::default() };
         let date = crate::astro::parse_utc_datetime("2025-03-01T11:00:00").unwrap();
         let time = crate::astro::utc_jd_to_time_ms(crate::astro::datetime_to_julian_date(&date)).unwrap();
         let site = Observer { latitude: 35.69_f64.to_radians(), longitude: 139.69_f64.to_radians() };
         let observation = observe(&site, atmosphere, &view, time, &mut StepTimes::default());
-        (view, observation, prepare_camera(&view), SkyArea::centred(1917, 1116))
+        (view, observation, prepare_camera(&view), 1116)
     }
 
-    fn projector<'a>(region: usize, observation: &'a Observation, camera: CartesianCamera, sky: SkyArea, view: &View) -> TileProjector<'a> {
+    fn projector<'a>(region: usize, observation: &'a Observation, camera: CartesianCamera, size: usize, view: &View) -> TileProjector<'a> {
         // One region's mapping; samples belonging to a different projector must not be reused.
-        TileProjector { tile: TileGeometry::new(region), observation, camera, sky, half_fov: view.fov_degrees.to_radians() * 0.5 }
+        TileProjector { tile: TileGeometry::new(region), observation, camera, size, half_fov: view.fov_degrees.to_radians() * 0.5 }
     }
 
     fn exact_position(projector: &TileProjector<'_>, uv: Point) -> Option<Point> {
@@ -327,21 +328,21 @@ mod tests {
         let catalog = projector.tile.direction_of(uv[0] - 0.5, uv[1] - 0.5);
         let apparent = projector.observation.apparent_star_direction(catalog);
         let point = project_camera(projector.camera, apparent)?;
-        let radius = (projector.sky.size as f64 - 1.0) * 0.5;
-        Some([projector.sky.x as f64 + radius + point.x * radius, projector.sky.y as f64 + radius - point.y * radius])
+        let radius = (projector.size as f64 - 1.0) * 0.5;
+        Some([radius + point.x * radius, radius - point.y * radius])
     }
 
-    fn is_visible(point: Point, sky: SkyArea) -> bool {
-        let radius = (sky.size as f64 - 1.0) * 0.5;
-        (point[0] - sky.x as f64 - radius).hypot(point[1] - sky.y as f64 - radius) <= radius
+    fn is_visible(point: Point, size: usize) -> bool {
+        let radius = (size as f64 - 1.0) * 0.5;
+        (point[0] - radius).hypot(point[1] - radius) <= radius
     }
 
     #[test]
     fn flat_regions_stay_coarse_and_vertices_are_reused_only_inside_one_region() {
         // A nearly central tile at a wide view needs few pieces; repeated lookups reuse its exact vertices.
-        let (view, observation, camera, sky) = fixture(351.6, false);
+        let (view, observation, camera, size) = fixture(351.6, false);
         let region = hash_direction(GRID_DEPTH, observation.patch.center);
-        let projector = projector(region, &observation, camera, sky, &view);
+        let projector = projector(region, &observation, camera, size, &view);
         let mut samples = HashMap::new();
         let mut mesh = Vec::new();
         let stats = build_mesh(&projector, &mut samples, &mut mesh);
@@ -361,13 +362,13 @@ mod tests {
         // Audit all 6144 region geometries at the failing zoom level. Probe both the tile domain for holes
         // and triangle interiors for interpolation error, independently of the refinement midpoints.
         for atmosphere in [false, true] {
-            let (view, observation, camera, sky) = fixture(351.6, atmosphere);
+            let (view, observation, camera, size) = fixture(351.6, atmosphere);
             let mut samples = HashMap::new();
             let mut mesh = Vec::new();
             let (mut worst, mut checked, mut rejected, mut capped, mut refined, mut lost_regions) = (0.0_f64, 0, 0, 0, 0, 0);
             for region in 0..region_caps().len() {
                 samples.clear();
-                let projector = projector(region, &observation, camera, sky, &view);
+                let projector = projector(region, &observation, camera, size, &view);
                 let stats = build_mesh(&projector, &mut samples, &mut mesh);
                 rejected += stats.skipped_cells;
                 capped += stats.capped_cells;
@@ -378,7 +379,7 @@ mod tests {
 
                 // If a region has independently sampled visible positions it must retain a renderable piece.
                 let visible_region = [0.1, 0.5, 0.9].into_iter().any(|u| [0.1, 0.5, 0.9].into_iter().any(|v| {
-                    exact_position(&projector, [u * TILE_EDGE_TEXELS as f64, v * TILE_EDGE_TEXELS as f64]).is_some_and(|point| is_visible(point, sky))
+                    exact_position(&projector, [u * TILE_EDGE_TEXELS as f64, v * TILE_EDGE_TEXELS as f64]).is_some_and(|point| is_visible(point, size))
                 }));
                 if visible_region && mesh.is_empty() { lost_regions += 1; }
 
@@ -390,7 +391,7 @@ mod tests {
                         };
                         let uv = interpolate(triangle.texture);
                         let expected = exact_position(&projector, uv).unwrap();
-                        if !is_visible(expected, sky) { continue; }
+                        if !is_visible(expected, size) { continue; }
                         let actual = interpolate(triangle.screen);
                         worst = worst.max((expected[0] - actual[0]).hypot(expected[1] - actual[1]));
                         checked += 1;
@@ -407,11 +408,11 @@ mod tests {
     #[test]
     fn mesh_edges_match_and_opaque_pieces_do_not_overlap_or_leave_seams() {
         // A tile near the outer rim requires refinement. Shared grid edges must be exactly equal in screen space.
-        let (view, observation, camera, sky) = fixture(351.6, false);
+        let (view, observation, camera, size) = fixture(351.6, false);
         let angle = 175_f64.to_radians();
         let direction = observation.to_catalog.apply(camera.forward * angle.cos() + camera.up * angle.sin());
         let region = hash_direction(GRID_DEPTH, direction);
-        let projector = projector(region, &observation, camera, sky, &view);
+        let projector = projector(region, &observation, camera, size, &view);
         let mut samples = HashMap::new();
         let mut mesh = Vec::new();
         let stats = build_mesh(&projector, &mut samples, &mut mesh);
@@ -430,15 +431,18 @@ mod tests {
         data.star_regions[region].merged_tile.lit_rows = vec![u64::MAX; TILE_EDGE_TEXELS];
         let selected = Selected { regions: vec![region], whole_sky: false };
         let mut frame = Frame::square(201);
-        project_adaptive_tiles(&mut frame, &data, &selected, &observation, &view, &mut StepTimes::default());
+        let projected_stars = project_adaptive_tiles(frame.drawing_area_width_and_height, &data, &selected, &observation, &view, &mut StepTimes::default());
+        frame.insert_projected_stars(&projected_stars);
         assert!(frame.stars().iter().any(|texel| texel.opacity > 0.0));
         assert!(frame.stars().iter().all(|texel| texel.opacity.is_finite() && texel.opacity <= 1.0));
-        project_adaptive_tiles(&mut frame, &data, &Selected { regions: vec![], whole_sky: false }, &observation, &view, &mut StepTimes::default());
+        let projected_stars = project_adaptive_tiles(frame.drawing_area_width_and_height, &data, &Selected { regions: vec![], whole_sky: false }, &observation, &view, &mut StepTimes::default());
+        frame.insert_projected_stars(&projected_stars);
         assert!(frame.stars().iter().all(|texel| texel.is_empty()));
 
         // Equidistant uses the same adaptive drawing path and still produces finite, bounded pixels.
         let equidistant = View { projection: ProjectionKind::Equidistant, ..view };
-        project_adaptive_tiles(&mut frame, &data, &selected, &observation, &equidistant, &mut StepTimes::default());
+        let projected_stars = project_adaptive_tiles(frame.drawing_area_width_and_height, &data, &selected, &observation, &equidistant, &mut StepTimes::default());
+        frame.insert_projected_stars(&projected_stars);
         assert!(frame.stars().iter().any(|texel| texel.opacity > 0.0));
         assert!(frame.stars().iter().all(|texel| texel.opacity.is_finite() && texel.opacity <= 1.0));
     }
@@ -457,7 +461,7 @@ mod tests {
             let settings = crate::model::RenderOptions { magnitude_threshold: 9.0, unicode: true, braille: false, color: true,
                 constellations: false, grid: false, dynamic_names: false };
             crate::regions::refresh_regions(&mut data, &selected, observation.time_ms, &view, &settings, &mut StepTimes::default());
-            let mut frame = Frame::new(1917, 1116, SkyArea::centred(1917, 1116), (10, 20));
+            let mut frame = Frame::new(1917, 1116, 1116, (10, 20));
             for dense in [false, true] {
                 if dense {
                     for &region in &selected.regions {
@@ -469,13 +473,15 @@ mod tests {
                 let mut elapsed = 0.0;
                 for run in 0..4 {
                     let start = std::time::Instant::now();
-                    project_adaptive_tiles(&mut frame, &data, &selected, &observation, &view, &mut StepTimes::default());
+                    let projected_stars = project_adaptive_tiles(frame.drawing_area_width_and_height, &data, &selected, &observation, &view, &mut StepTimes::default());
+                    frame.insert_projected_stars(&projected_stars);
                     if run > 0 { elapsed += start.elapsed().as_secs_f64(); }
                     std::hint::black_box(frame.stars());
                 }
                 eprintln!("Adaptive fov={fov}, dense={dense}, regions={}: {:.3}ms; three frames after warmup", selected.regions.len(), elapsed * 1000.0 / 3.0);
                 let mut detail = StepTimes::with_trace(true);
-                project_adaptive_tiles(&mut frame, &data, &selected, &observation, &view, &mut detail);
+                let projected_stars = project_adaptive_tiles(frame.drawing_area_width_and_height, &data, &selected, &observation, &view, &mut detail);
+                frame.insert_projected_stars(&projected_stars);
                 detail.measure("END");
                 for step in detail.steps().iter().filter(|step| matches!(step.name, "Adaptive mesh preparation" | "Tile filter preparation" | "Tile rasterization" | "Tile composition")) {
                     eprintln!("  {}: {:.3}ms (separate traced frame)", step.name, step.average_seconds * 1000.0);
@@ -488,7 +494,7 @@ mod tests {
     fn equidistant_geometry_covers_normal_and_full_sky_views() {
         // Audit both a normal view and the full-sky rim using the exact equidistant formula as the oracle.
         for (fov, atmosphere) in [(10.0, false), (60.0, true), (180.0, false), (351.6, false), (359.9, false), (360.0, false), (360.0, true)] {
-            let (mut view, previous, _, sky) = fixture(fov, atmosphere);
+            let (mut view, previous, _, size) = fixture(fov, atmosphere);
             view.projection = ProjectionKind::Equidistant;
             let observation = observe(&Observer { latitude: 35.69_f64.to_radians(), longitude: 139.69_f64.to_radians() }, atmosphere, &view, previous.time_ms, &mut StepTimes::default());
             let camera = prepare_camera(&view);
@@ -497,20 +503,20 @@ mod tests {
             let (mut worst, mut probes, mut lost, mut skipped, mut capped) = (0.0_f64, 0, 0, 0, 0);
             for region in 0..region_caps().len() {
                 samples.clear();
-                let projector = projector(region, &observation, camera, sky, &view);
+                let projector = projector(region, &observation, camera, size, &view);
                 let stats = build_mesh(&projector, &mut samples, &mut mesh);
                 skipped += stats.skipped_cells;
                 capped += stats.capped_cells;
                 assert!(stats.projections <= (grid_size() + 1).pow(2));
                 let visible = [0.1, 0.5, 0.9].into_iter().any(|u| [0.1, 0.5, 0.9].into_iter().any(|v| {
-                    exact_position(&projector, [u * TILE_EDGE_TEXELS as f64, v * TILE_EDGE_TEXELS as f64]).is_some_and(|point| is_visible(point, sky))
+                    exact_position(&projector, [u * TILE_EDGE_TEXELS as f64, v * TILE_EDGE_TEXELS as f64]).is_some_and(|point| is_visible(point, size))
                 }));
                 if visible && mesh.is_empty() { lost += 1; }
                 for triangle in &mesh {
                     let interpolate = |points: [Point; 3]| -> Point { std::array::from_fn(|axis| points.iter().map(|point| point[axis]).sum::<f64>() / 3.0) };
                     let uv = interpolate(triangle.texture);
                     let expected = exact_position(&projector, uv).unwrap();
-                    if !is_visible(expected, sky) { continue; }
+                    if !is_visible(expected, size) { continue; }
                     let actual = interpolate(triangle.screen);
                     worst = worst.max((expected[0] - actual[0]).hypot(expected[1] - actual[1]));
                     probes += 1;
@@ -535,8 +541,8 @@ mod tests {
         let view = View { center: ViewCenter::Facing { azimuth: facing.azimuth, tilt: facing.altitude },
             projection: ProjectionKind::Equidistant, fov_degrees: 360.0 };
         let camera = prepare_camera(&view);
-        let sky = SkyArea { x: 0, y: 0, size: 201 };
-        let projector = projector(region, &observation, camera, sky, &view);
+        let size = 201;
+        let projector = projector(region, &observation, camera, size, &view);
         assert!(project_camera(camera, apparent).is_some());
         assert!(sample_vertex(&projector, &mut HashMap::new(), [0, 0]).screen.is_none());
 
@@ -548,7 +554,8 @@ mod tests {
         let selected = Selected { regions: vec![region], whole_sky: true };
         let mut frame = Frame::square(201);
         let mut times = StepTimes::with_trace(true);
-        project_adaptive_tiles(&mut frame, &data, &selected, &observation, &view, &mut times);
+        let projected_stars = project_adaptive_tiles(frame.drawing_area_width_and_height, &data, &selected, &observation, &view, &mut times);
+        frame.insert_projected_stars(&projected_stars);
         times.measure("END");
         assert!(times.steps().iter().any(|step| step.name == "Adaptive mesh preparation"));
         assert!(frame.stars().iter().any(|texel| texel.opacity > 0.0));

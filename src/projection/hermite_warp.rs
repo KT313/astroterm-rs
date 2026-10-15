@@ -3,9 +3,9 @@
 //! All derivatives are analytic: tessellation evaluates the patch, not additional sky projections.
 use crate::astro::Vector3;
 use crate::constants::TILE_EDGE_TEXELS;
-use crate::model::{Data, View};
+use crate::model::{Data, Texel, View};
 use crate::observation::Observation;
-use crate::projection::{CartesianCamera, Frame, SkyArea, project_camera};
+use crate::projection::{CartesianCamera, project_camera};
 use crate::regions::TileGeometry;
 use crate::selection::Selected;
 use crate::time::StepTimes;
@@ -16,10 +16,10 @@ use super::tile_warp::{contains_antipode, is_convex};
 /// Select Hermite everywhere in stereographic views; the shared renderer retains the straight -e backend.
 #[allow(dead_code)] // each experimental backend stays available by changing the call in projection/mod.rs
 pub(super) fn project_hermite_tiles(
-    frame: &mut Frame, data: &Data, selected: &Selected, observation: &Observation, view: &View, times: &mut StepTimes,
-) {
+    size: usize, data: &Data, selected: &Selected, observation: &Observation, view: &View, times: &mut StepTimes,
+) -> Vec<Texel> {
     // Compare patch formulas through the same tessellation, filtering, coverage and composition code.
-    project_curved_tiles(frame, data, selected, observation, view, times, build_patch, "Projection.Hermite mesh preparation");
+    project_curved_tiles(size, data, selected, observation, view, times, build_patch, "Projection.Hermite mesh preparation")
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -32,13 +32,13 @@ struct Corner {
 
 struct HermitePatch { corners: [Corner; 4] } // top-left, top-right, bottom-right, bottom-left
 
-fn build_patch(tile: &TileGeometry, observation: &Observation, camera: CartesianCamera, sky: SkyArea) -> Option<HermitePatch> {
+fn build_patch(tile: &TileGeometry, observation: &Observation, camera: CartesianCamera, size: usize) -> Option<HermitePatch> {
     // Evaluate the direction and analytic derivatives at just the four outer texture corners.
     let maximum = TILE_EDGE_TEXELS as f64 - 0.5;
     let coordinates = [[-0.5, -0.5], [maximum, -0.5], [maximum, maximum], [-0.5, maximum]];
     let mut directions = [Vector3::default(); 4];
     let mut corners = [Corner::default(); 4];
-    let radius = (sky.size as f64 - 1.0) * 0.5;
+    let radius = (size as f64 - 1.0) * 0.5;
     for (index, [column, row]) in coordinates.into_iter().enumerate() {
         let direction = observation.apparent_star_derivatives(tile.direction_derivatives(column, row))?;
         directions[index] = direction.value;
@@ -53,7 +53,7 @@ fn build_patch(tile: &TileGeometry, observation: &Observation, camera: Cartesian
         let axes = [camera.right, camera.up];
         let scales = [radius, -radius];
         let mut corner = Corner {
-            position: [sky.x as f64 + radius + radius * projected.x, sky.y as f64 + radius - radius * projected.y],
+            position: [radius + radius * projected.x, radius - radius * projected.y],
             ..Corner::default()
         };
         for axis in 0..2 {
@@ -103,6 +103,7 @@ impl CurvedPatch for HermitePatch {
 
 #[cfg(test)]
 mod tests {
+    use crate::projection::Frame;
     use super::*;
     use crate::astro::{Observer};
     use crate::constants::{CURVED_PATCH_MAX_SUBDIVISIONS, GRID_DEPTH};
@@ -131,39 +132,39 @@ mod tests {
         }
     }
 
-    fn fixture(fov: f64, atmosphere: bool) -> (View, Observation, CartesianCamera, SkyArea) {
+    fn fixture(fov: f64, atmosphere: bool) -> (View, Observation, CartesianCamera, usize) {
         // Match the screenshot's camera and date, including the extreme zoom-out view.
         let site = Observer { latitude: 35.69_f64.to_radians(), longitude: 139.69_f64.to_radians() };
         let view = View { center: ViewCenter::Facing { azimuth: 334_f64.to_radians(), tilt: 0.0 }, fov_degrees: fov, ..View::default() };
         let time = crate::astro::utc_jd_to_time_ms(crate::astro::datetime_to_julian_date(&crate::astro::parse_utc_datetime("2025-03-01T11:00:00").unwrap())).unwrap();
         let observation = observe(&site, atmosphere, &view, time, &mut StepTimes::default());
-        (view, observation, prepare_camera(&view), SkyArea::centred(1917, 1116))
+        (view, observation, prepare_camera(&view), 1116)
     }
 
-    fn exact_position(tile: &TileGeometry, observation: &Observation, camera: CartesianCamera, sky: SkyArea, u: f64, v: f64) -> Point {
+    fn exact_position(tile: &TileGeometry, observation: &Observation, camera: CartesianCamera, size: usize, u: f64, v: f64) -> Point {
         // Test oracle: evaluate the real mapping at an arbitrary tile position, never used by the renderer.
         let direction = tile.direction_of(u * TILE_EDGE_TEXELS as f64 - 0.5, v * TILE_EDGE_TEXELS as f64 - 0.5);
         let projected = project_camera(camera, observation.apparent_star_direction(direction)).unwrap();
-        let radius = (sky.size as f64 - 1.0) * 0.5;
-        [sky.x as f64 + radius + radius * projected.x, sky.y as f64 + radius - radius * projected.y]
+        let radius = (size as f64 - 1.0) * 0.5;
+        [radius + radius * projected.x, radius - radius * projected.y]
     }
 
     #[test]
     fn analytic_mixed_derivatives_match_differences_of_the_real_mapping() {
         // Include directions near the extreme view's rim as well as the center, with and without refraction.
         for atmosphere in [false, true] {
-            let (_, observation, camera, sky) = fixture(351.6, atmosphere);
+            let (_, observation, camera, size) = fixture(351.6, atmosphere);
             for offset in [0.0_f64, 60.0, 150.0, 175.0] {
                 let direction = observation.to_catalog.apply(camera.forward * offset.to_radians().cos() + camera.up * offset.to_radians().sin());
                 let region = crate::model::hash_direction(GRID_DEPTH, direction);
                 let tile = TileGeometry::new(region);
-                let patch = build_patch(&tile, &observation, camera, sky).unwrap();
+                let patch = build_patch(&tile, &observation, camera, size).unwrap();
                 let step = 1e-3;
                 for (index, [u, v]) in [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]].into_iter().enumerate() {
-                    let pp = exact_position(&tile, &observation, camera, sky, u + step, v + step);
-                    let pm = exact_position(&tile, &observation, camera, sky, u + step, v - step);
-                    let mp = exact_position(&tile, &observation, camera, sky, u - step, v + step);
-                    let mm = exact_position(&tile, &observation, camera, sky, u - step, v - step);
+                    let pp = exact_position(&tile, &observation, camera, size, u + step, v + step);
+                    let pm = exact_position(&tile, &observation, camera, size, u + step, v - step);
+                    let mp = exact_position(&tile, &observation, camera, size, u - step, v + step);
+                    let mm = exact_position(&tile, &observation, camera, size, u - step, v - step);
                     for axis in 0..2 {
                         let numerical = (pp[axis] - pm[axis] - mp[axis] + mm[axis]) / (4.0 * step * step);
                         let analytic = patch.corners[index].mixed[axis];
@@ -180,15 +181,15 @@ mod tests {
         // measured separately: a smooth polynomial cannot exactly reproduce a derivative discontinuity.
         for fov in [10.0, 60.0, 180.0] {
             for atmosphere in [false, true] {
-                let (_, observation, camera, sky) = fixture(fov, atmosphere);
+                let (_, observation, camera, size) = fixture(fov, atmosphere);
                 let region = crate::model::hash_direction(GRID_DEPTH, observation.patch.center);
                 let tile = TileGeometry::new(region);
-                let patch = build_patch(&tile, &observation, camera, sky).unwrap();
-                let coons = super::super::coons_warp::build_patch(&tile, &observation, camera, sky).unwrap();
+                let patch = build_patch(&tile, &observation, camera, size).unwrap();
+                let coons = super::super::coons_warp::build_patch(&tile, &observation, camera, size).unwrap();
                 let mut worst: f64 = 0.0;
                 for u in [0.0, 0.25, 0.5, 0.75, 1.0] {
                     for v in [0.0, 0.25, 0.5, 0.75, 1.0] {
-                        let expected = exact_position(&tile, &observation, camera, sky, u, v);
+                        let expected = exact_position(&tile, &observation, camera, size, u, v);
                         let actual = patch.evaluate(u, v);
                         assert!(actual.into_iter().all(f64::is_finite));
                         worst = worst.max((expected[0] - actual[0]).hypot(expected[1] - actual[1]));
@@ -209,7 +210,7 @@ mod tests {
         // Exercise every geometric region at 351.6 degrees, recording approximation errors rather than claiming
         // that four-corner patches solve the singularity.
         for atmosphere in [false, true] {
-            let (_, observation, camera, sky) = fixture(351.6, atmosphere);
+            let (_, observation, camera, size) = fixture(351.6, atmosphere);
             let mut mesh = Vec::new();
             let (mut rejected, mut worst_error, mut checked) = (0, 0.0_f64, 0);
             let mut coons_worst_error: f64 = 0.0;
@@ -217,17 +218,17 @@ mod tests {
             let mut shared_hermite_worst: f64 = 0.0;
             for region in 0..region_caps().len() {
                 let tile = TileGeometry::new(region);
-                let Some(patch) = build_patch(&tile, &observation, camera, sky) else { rejected += 1; continue; };
+                let Some(patch) = build_patch(&tile, &observation, camera, size) else { rejected += 1; continue; };
                 if !build_mesh(&patch, &mut mesh) { rejected += 1; continue; }
                 assert!(mesh.len() <= 2 * CURVED_PATCH_MAX_SUBDIVISIONS.pow(2));
-                let coons = super::super::coons_warp::build_patch(&tile, &observation, camera, sky);
+                let coons = super::super::coons_warp::build_patch(&tile, &observation, camera, size);
                 for u in [0.25, 0.5, 0.75] {
                     for v in [0.25, 0.5, 0.75] {
-                        let expected = exact_position(&tile, &observation, camera, sky, u, v);
+                        let expected = exact_position(&tile, &observation, camera, size, u, v);
                         let actual = patch.evaluate(u, v);
                         assert!(actual.into_iter().all(f64::is_finite));
-                        let radius = (sky.size as f64 - 1.0) * 0.5;
-                        if (expected[0] - sky.x as f64 - radius).hypot(expected[1] - sky.y as f64 - radius) <= radius {
+                        let radius = (size as f64 - 1.0) * 0.5;
+                        if (expected[0] - radius).hypot(expected[1] - radius) <= radius {
                             checked += 1;
                             let error = (expected[0] - actual[0]).hypot(expected[1] - actual[1]);
                             worst_error = worst_error.max(error);
@@ -255,7 +256,8 @@ mod tests {
         for size in [0, 1, 9] {
             let mut frame = Frame::square(size);
             frame.stars_mut().fill(Texel { rgb: [0.5; 3], opacity: 0.5 });
-            project_hermite_tiles(&mut frame, &data, &selected, &observation, &View::default(), &mut StepTimes::default());
+            let projected_stars = project_hermite_tiles(frame.drawing_area_width_and_height, &data, &selected, &observation, &View::default(), &mut StepTimes::default());
+            frame.insert_projected_stars(&projected_stars);
             assert!(frame.stars().iter().all(|texel| texel.is_empty()));
         }
     }
@@ -275,16 +277,19 @@ mod tests {
         }
         let selected = Selected { regions, whole_sky: false };
         let mut frame = Frame::square(201);
-        project_hermite_tiles(&mut frame, &data, &selected, &observation, &view, &mut StepTimes::default());
+        let projected_stars = project_hermite_tiles(frame.drawing_area_width_and_height, &data, &selected, &observation, &view, &mut StepTimes::default());
+        frame.insert_projected_stars(&projected_stars);
         assert!(frame.stars().iter().any(|texel| texel.opacity > 0.0));
         assert!(frame.stars().iter().all(|texel| texel.opacity.is_finite() && texel.opacity <= 1.0
             && texel.rgb.iter().all(|&value| value.is_finite() && value >= 0.0 && value <= texel.opacity)));
 
         // Changing the experimental backend must not change the equidistant rendering path.
         let equidistant = View { projection: crate::model::ProjectionKind::Equidistant, ..view };
-        project_hermite_tiles(&mut frame, &data, &selected, &observation, &equidistant, &mut StepTimes::default());
+        let projected_stars = project_hermite_tiles(frame.drawing_area_width_and_height, &data, &selected, &observation, &equidistant, &mut StepTimes::default());
+        frame.insert_projected_stars(&projected_stars);
         let expected = frame.stars().to_vec();
-        super::super::tile_warp::project_whole_tiles(&mut frame, &data, &selected, &observation, &equidistant, &mut StepTimes::default());
+        let projected_stars = super::super::tile_warp::project_whole_tiles(frame.drawing_area_width_and_height, &data, &selected, &observation, &equidistant, &mut StepTimes::default());
+        frame.insert_projected_stars(&projected_stars);
         assert_eq!(frame.stars(), expected);
     }
 

@@ -115,7 +115,7 @@ fn clipping_notice_coexists_with_date_notice_and_the_tables_carry_it() {
     use astroterm::model::{RenderOptions, View};
     use astroterm::observation::observe;
     use astroterm::points::{draw_points};
-    use astroterm::projection::{Frame, SkyArea};
+    use astroterm::projection::Frame;
     use astroterm::regions::refresh_regions;
     use astroterm::selection::select_regions;
     use astroterm::solar_system::simulate_solar_system;
@@ -128,7 +128,7 @@ fn clipping_notice_coexists_with_date_notice_and_the_tables_carry_it() {
         let selected = select_regions(&tables.star_regions, &observation, &mut astroterm::time::StepTimes::default());
         let mut caches = tables.clone();
         refresh_regions(&mut caches, &selected, time, &view, &settings, &mut astroterm::time::StepTimes::default());
-        let mut frame = Frame::new(140, 60, SkyArea::centred(140, 60), (10, 20));
+        let mut frame = Frame::new(140, 60, 60, (10, 20));
         draw_points(&mut frame, &solar_system, &caches, &selected, None, &observation, &view, &settings, &mut astroterm::time::StepTimes::default()).notices
     };
     let clipped = tables(&prepare_owned_catalog(load_csv("ra,dec,mag,dist,rv\n0,0,-9.9,10,-100\n").unwrap(), &mut astroterm::progress::Report::quiet()).unwrap());

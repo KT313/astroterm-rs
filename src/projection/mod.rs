@@ -12,7 +12,7 @@ mod triangle_rows;
 mod tile_sampling;
 mod frame;
 
-pub use frame::{Frame, SkyArea};
+pub use frame::Frame;
 pub use geometry::{
     ArcPart, CartesianCamera, Polar, ProjectedArc, ScreenPoint,
     find_visible_arc_parts, find_visible_arc_parts_vectors, pan_view, polar_to_cell, prepare_camera,
@@ -21,15 +21,16 @@ pub use geometry::{
     project_constellation_segment, project_horizon_labels, project_horizon_line,
 };
 
-/// Step 5: forward-map merged tiles onto the screen. The selected backend owns projection and rasterization.
+/// Step 5: return a square image of projected stars, with no frame offsets or terminal margins.
+/// Pixels use row-major order and retain floating-point RGB and opacity until final presentation.
 pub fn project_stars_to_screen(
-    frame: &mut Frame, 
-    data: &crate::model::Data, 
+    drawing_area_width_and_height: usize,
+    data: &crate::model::Data,
     selected: &crate::selection::Selected,
-    observation: &crate::observation::Observation, 
-    view: &crate::model::View, 
+    observation: &crate::observation::Observation,
+    view: &crate::model::View,
     times: &mut StepTimes
-) {
-    // Map the whole region tiles onto the frame's star layer.
-    adaptive_warp::project_adaptive_tiles(frame, data, selected, observation, view, times);
+) -> Vec<crate::model::Texel> {
+    // Render in square-local coordinates; the caller places the result into the full frame.
+    adaptive_warp::project_adaptive_tiles(drawing_area_width_and_height, data, selected, observation, view, times)
 }

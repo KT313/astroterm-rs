@@ -55,7 +55,10 @@ pub(super) fn run_frame_loop(
         let refreshed = refresh_regions(data, &selected, time_ms, &current_view, &config.render, &mut time_manager.step_times);
 
         time_manager.measure("Projection");
-        project_stars_to_screen(frame, data, &selected, &observation, &current_view, &mut time_manager.step_times);
+        let projected_stars = project_stars_to_screen(frame.drawing_area_width_and_height, data, &selected, &observation, &current_view, &mut time_manager.step_times);
+        time_manager.measure("Projection.Frame insertion");
+        frame.insert_projected_stars(&projected_stars);
+        drop(projected_stars);
 
         time_manager.measure("Points");
         let drawn = draw_points(frame, &solar_system, data, &selected, transport_notice(&display.info()), &observation, &current_view, &config.render, &mut time_manager.step_times);

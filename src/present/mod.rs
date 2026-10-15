@@ -195,10 +195,9 @@ fn strip_alpha(rgba: &[u8], rgb: &mut Vec<u8>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::projection::SkyArea;
     use crate::model::Texel;
 
-    fn frame(width: usize, height: usize) -> Frame { Frame::new(width, height, SkyArea::centred(width, height), (10, 20)) }
+    fn frame(width: usize, height: usize) -> Frame { Frame::new(width, height, width.min(height), (10, 20)) }
     fn pixel(out: &[u8], frame: &Frame, row: usize, column: usize) -> [u8; 4] { out[(row * frame.width() + column) * 4..][..4].try_into().unwrap() }
     fn premultiplied(rgb: [f32; 3], opacity: f32) -> Texel { Texel { rgb: rgb.map(|c| c / 255.0 * opacity), opacity } }
 
@@ -315,7 +314,6 @@ mod tests {
 #[cfg(all(test, unix))]
 mod shared_tests {
     use super::*;
-    use crate::projection::SkyArea;
     use crate::model::Texel;
     use std::{ffi::CString, io::Read};
 
@@ -347,7 +345,7 @@ mod shared_tests {
     }
 
     fn frame() -> Frame {
-        let mut frame = Frame::new(16, 8, SkyArea::centred(16, 8), (4, 8));
+        let mut frame = Frame::new(16, 8, 8, (4, 8));
         frame.stars_mut()[20] = Texel { rgb: [1.0, 0.5, 0.25], opacity: 1.0 };
         frame
     }

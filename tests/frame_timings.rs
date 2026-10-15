@@ -26,7 +26,8 @@ fn render(data: &mut Data, frame: &mut Frame, terminal: &mut Terminal<Vec<u8>>, 
     times.measure("Regions");
     refresh_regions(data, &selected, time, &view, &settings, times);
     times.measure("Projection");
-    project_stars_to_screen(frame, data, &selected, &observation, &view, times);
+    let projected_stars = project_stars_to_screen(frame.drawing_area_width_and_height, data, &selected, &observation, &view, times);
+    frame.insert_projected_stars(&projected_stars);
     times.measure("Points");
     let drawn = draw_points(frame, &solar, data, &selected, None, &observation, &view, &settings, times);
     times.measure("Text overlay");

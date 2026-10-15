@@ -18,7 +18,7 @@ mod text_overlay;
 pub use text_overlay::draw_panel_and_notices;
 use crate::model::{StarLabels, RenderOptions, Data, StarColor, View};
 use crate::observation::Observation;
-use crate::projection::{Frame, ProjectedArc, ScreenPoint, SkyArea, prepare_camera, project_camera, project_constellation_segment, project_horizon_labels, project_horizon_line, project_light_direction, project_to_cell};
+use crate::projection::{Frame, ProjectedArc, ScreenPoint, prepare_camera, project_camera, project_constellation_segment, project_horizon_labels, project_horizon_line, project_light_direction, project_to_cell};
 use crate::regions::{UNPLACED, blend_star, order_star_rows, premultiplied_color, rows_wanted};
 use crate::text::draw_text_over;
 use crate::selection::Selected;
@@ -73,10 +73,12 @@ pub fn draw_points(
     times.measure("Points.Overlay clear");
     frame.clear_overlay();
     if frame.width() == 0 || frame.height() == 0 { return drawn; }                       // nothing to draw on
-    let sky = frame.sky();
-    let viewport = sky.viewport();
+    let size = frame.drawing_area_width_and_height;
+    let x_offset = frame.drawing_area_x_offset;
+    let y_offset = frame.drawing_area_y_offset;
+    let viewport = frame.drawing_area_viewport();
     let camera = prepare_camera(view);
-    let pixel_of = |horizon: Vector3| project_camera(camera, horizon).filter(|point| point.is_visible()).map(|point| sky.frame_pixel(project_to_cell(viewport, point)));
+    let pixel_of = |horizon: Vector3| project_camera(camera, horizon).filter(|point| point.is_visible()).map(|point| drawing_area_pixel(project_to_cell(viewport, point), x_offset, y_offset));
     let threshold = magnitude_code(settings.magnitude_threshold);
     let tt = crate::astro::AstronomicalTime::from_time_ms(observation.time_ms).tt_jd;
 
@@ -93,7 +95,7 @@ pub fn draw_points(
         for row in order_star_rows(&simulation.magnitudes()[..rows], &constellations.columns().id[..rows], threshold) {
             let code = simulation.magnitudes()[row];
             let Some(pixel) = endpoint_pixels[row] else { continue };
-            if !sky.glyph_fits((pixel.0 - sky.y as i32, pixel.1 - sky.x as i32)) { continue; }
+            if !glyph_fits(size, (pixel.0 - y_offset as i32, pixel.1 - x_offset as i32)) { continue; }
             let opacity = data.star_opacities.of(code);
             let premultiplied = premultiplied_color(constellations.columns().display_color[row], opacity);
             let (width, stars) = (frame.width(), frame.stars_mut());
@@ -113,16 +115,16 @@ pub fn draw_points(
         {
             if view.is_facing() {
                 for [a, b] in project_horizon_line(view, viewport) {
-                    stroke_segment(&mut canvas, sky.frame_pixel(a), sky.frame_pixel(b), HORIZON_RGB, 1.2);
+                    stroke_segment(&mut canvas, drawing_area_pixel(a, x_offset, y_offset), drawing_area_pixel(b, x_offset, y_offset), HORIZON_RGB, 1.2);
                     drawn.horizon_segments += 1;
                 }
             }
             if settings.constellations {
-                drawn.arcs = stroke_constellations(&mut canvas, sky, observation, view, data, simulation, threshold);
+                drawn.arcs = stroke_constellations(&mut canvas, size, x_offset, y_offset, observation, view, data, simulation, threshold);
             }
             if settings.grid && !view.is_facing() {
-                let (cx, cy) = (sky.x as f64 + (sky.size as f64 - 1.0) * 0.5, sky.y as f64 + (sky.size as f64 - 1.0) * 0.5);
-                let reach = (sky.size as f64 - 1.0) * 0.5;
+                let (cx, cy) = (x_offset as f64 + (size as f64 - 1.0) * 0.5, y_offset as f64 + (size as f64 - 1.0) * 0.5);
+                let reach = (size as f64 - 1.0) * 0.5;
                 for angle in (0..360).step_by(30) {
                     let (s, c) = (angle as f64).to_radians().sin_cos();
                     stroke_segment(&mut canvas, (cy as i32, cx as i32), ((cy - reach * s).round() as i32, (cx + reach * c).round() as i32), GRID_RGB, 0.7);
@@ -136,8 +138,8 @@ pub fn draw_points(
     // Select sky labels and report notices for the later text-overlay pass.
     times.measure("Points.Label selection");
     {
-        drawn.star_labels = select_star_labels(data, selected, observation, settings, &pixel_of, sky, &endpoint_pixels);
-        drawn.direction_labels = direction_labels(sky, view, settings, viewport);
+        drawn.star_labels = select_star_labels(data, selected, observation, settings, &pixel_of, size, x_offset, y_offset, &endpoint_pixels);
+        drawn.direction_labels = direction_labels(x_offset, y_offset, view, settings, viewport);
         drawn.notices = [needs_accuracy_warning(tt).then_some(ACCURACY_WARNING), data.clipping.any().then_some(MAGNITUDE_CLIPPING_WARNING), notice].into_iter().flatten().collect();
     };
     let cell = frame.text_cell();
@@ -155,6 +157,16 @@ pub fn draw_points(
     #[cfg(feature = "pixel-debug")]
     crate::pixel_debug::check_overlay("draw_points output", frame.overlay());
     drawn
+}
+
+/// Place a drawing-area pixel inside the full frame, leaving room for labels to extend into the margins.
+fn drawing_area_pixel((row, column): (i32, i32), x_offset: usize, y_offset: usize) -> (i32, i32) {
+    (row + y_offset as i32, column + x_offset as i32)
+}
+
+/// Check that a star pixel and the three pixels above and left of it fit in the drawing square.
+fn glyph_fits(size: usize, (row, column): (i32, i32)) -> bool {
+    row > 0 && column > 0 && (row as usize) < size && (column as usize) < size
 }
 
 /// Sun, planets (outermost first, the Sun on top) and moons, with their labels.
@@ -205,8 +217,9 @@ pub fn body_rgb(id: crate::astro::models::BodyId) -> [u8; 3] {
 }
 
 /// Stroke every figure whose endpoints are all bright enough, each arc its own subpath, one stroke call.
-fn stroke_constellations(canvas: &mut PixmapMut<'_>, sky: SkyArea, observation: &Observation, view: &View, data: &Data, simulation: &crate::model::SimulationCache, threshold: u16) -> usize {
-    let viewport = sky.viewport();
+#[allow(clippy::too_many_arguments)]
+fn stroke_constellations(canvas: &mut PixmapMut<'_>, size: usize, x_offset: usize, y_offset: usize, observation: &Observation, view: &View, data: &Data, simulation: &crate::model::SimulationCache, threshold: u16) -> usize {
+    let viewport = crate::model::ProjectionViewport { width: size, height: size };
     let mut path = PathBuilder::new();
     let mut arcs = 0;
     for figure in &data.constellation_figures {
@@ -216,7 +229,7 @@ fn stroke_constellations(canvas: &mut PixmapMut<'_>, sky: SkyArea, observation: 
         for &[from, to] in &figure.segments {
             let (a, b) = (observation.apparent_star_direction(simulation.directions()[from]), observation.apparent_star_direction(simulation.directions()[to])); // as the endpoint stars themselves are placed
             for arc in project_constellation_segment(view, viewport, a, b) {
-                add_arc(&mut path, sky, &arc);
+                add_arc(&mut path, x_offset, y_offset, &arc);
                 arcs += 1;
             }
         }
@@ -225,8 +238,8 @@ fn stroke_constellations(canvas: &mut PixmapMut<'_>, sky: SkyArea, observation: 
     arcs
 }
 
-fn add_arc(path: &mut PathBuilder, sky: SkyArea, arc: &ProjectedArc) {
-    let mut points = arc.points.iter().map(|&cell| { let (row, column) = sky.frame_pixel(cell); (column as f32, row as f32) });
+fn add_arc(path: &mut PathBuilder, x_offset: usize, y_offset: usize, arc: &ProjectedArc) {
+    let mut points = arc.points.iter().map(|&cell| { let (row, column) = drawing_area_pixel(cell, x_offset, y_offset); (column as f32, row as f32) });
     let Some((x, y)) = points.next() else { return };
     path.move_to(x, y);
     for (x, y) in points { path.line_to(x, y); }
@@ -235,7 +248,8 @@ fn add_arc(path: &mut PathBuilder, sky: SkyArea, arc: &ProjectedArc) {
 /// The dynamic names: the brightest drawable stars in view (at most `DYNAMIC_NAME_COUNT`), chosen over the
 /// simulated prefixes of the selected groups and the constellation stars, brighter current magnitude first and,
 /// at equal codes, the higher catalog id first, as the old renderer did; dimmest first in the result.
-fn select_star_labels(data: &Data, selected: &Selected, observation: &Observation, settings: &RenderOptions, pixel_of: &dyn Fn(Vector3) -> Option<(i32, i32)>, sky: SkyArea, endpoint_pixels: &[Option<(i32, i32)>]) -> Vec<Label> {
+#[allow(clippy::too_many_arguments)]
+fn select_star_labels(data: &Data, selected: &Selected, observation: &Observation, settings: &RenderOptions, pixel_of: &dyn Fn(Vector3) -> Option<(i32, i32)>, size: usize, x_offset: usize, y_offset: usize, endpoint_pixels: &[Option<(i32, i32)>]) -> Vec<Label> {
     if !settings.dynamic_names || DYNAMIC_NAME_COUNT == 0 { return Vec::new(); }
     let threshold = magnitude_code(settings.magnitude_threshold);
     let tt = crate::astro::AstronomicalTime::from_time_ms(observation.time_ms).tt_jd;
@@ -253,7 +267,7 @@ fn select_star_labels(data: &Data, selected: &Selected, observation: &Observatio
                 let code = simulation.magnitudes()[row];
                 if code > threshold || code == UNPLACED { continue; }
                 let Some(pixel) = pixel_of(observation.apparent_star_direction(simulation.directions()[row])) else { continue };
-                if !sky.glyph_fits((pixel.0 - sky.y as i32, pixel.1 - sky.x as i32)) { continue; }
+                if !glyph_fits(size, (pixel.0 - y_offset as i32, pixel.1 - x_offset as i32)) { continue; }
                 let id = columns.id[row];
                 best.offer((code, id), pixel, StarColor::rgb_of(columns.display_color[row]), || star_label(table.labels(), row, names, unicode));
             }
@@ -265,7 +279,7 @@ fn select_star_labels(data: &Data, selected: &Selected, observation: &Observatio
         let code = simulation.magnitudes()[row];
         if code > threshold || code == UNPLACED { continue; }
         let Some(pixel) = pixel else { continue };
-        if !sky.glyph_fits((pixel.0 - sky.y as i32, pixel.1 - sky.x as i32)) { continue; }
+        if !glyph_fits(size, (pixel.0 - y_offset as i32, pixel.1 - x_offset as i32)) { continue; }
         let id = constellations.columns().id[row];
         best.offer((code, id), pixel, StarColor::rgb_of(constellations.columns().display_color[row]), || star_label(constellations.labels(), row, names, unicode));
     }
@@ -310,15 +324,15 @@ pub fn star_label(labels: &StarLabels, row: usize, names: &crate::catalog::StarN
 }
 
 /// Compass points on the horizon (facing views) or on the frame edges and the grid angles (overhead views).
-fn direction_labels(sky: SkyArea, view: &View, settings: &RenderOptions, viewport: crate::model::ProjectionViewport) -> Vec<Label> {
+fn direction_labels(x_offset: usize, y_offset: usize, view: &View, settings: &RenderOptions, viewport: crate::model::ProjectionViewport) -> Vec<Label> {
     let mut labels = Vec::new();
     if view.is_facing() {
         for (cell, text) in project_horizon_labels(view, viewport) {
-            labels.push(Label { text: text.to_string(), pixel: sky.frame_pixel(cell), rgb: DIRECTION_RGB });
+            labels.push(Label { text: text.to_string(), pixel: drawing_area_pixel(cell, x_offset, y_offset), rgb: DIRECTION_RGB });
         }
         return labels;
     }
-    let (top, left, size) = (sky.y as i32, sky.x as i32, sky.size as i32);
+    let (top, left, size) = (y_offset as i32, x_offset as i32, viewport.width as i32);
     if !settings.grid {                                                                   // the grid's angles replace the compass letters, which would overlap them
         for (pixel, text) in [((top, left + size / 2), "N"), ((top + size - 1, left + size / 2), "S"), ((top + size / 2, left), "E"), ((top + size / 2, left + size - 1), "W")] {
             labels.push(Label { text: text.to_string(), pixel, rgb: DIRECTION_RGB });
@@ -582,8 +596,8 @@ mod tests {
                 name => solar_system.planets[tables.solar_system_planets.planets.iter().position(|body| body.name == name).unwrap()],
             };
             let point = project_camera(camera, observation.apparent_direction(position)).unwrap();
-            let expected = project_to_cell(frame.sky().viewport(), point);
-            assert_eq!(label.pixel, frame.sky().frame_pixel(expected), "{}", label.text);
+            let expected = project_to_cell(frame.drawing_area_viewport(), point);
+            assert_eq!(label.pixel, frame.drawing_area_pixel(expected), "{}", label.text);
             let pixel = overlay_pixel(&frame, label.pixel.0, label.pixel.1);
             assert_eq!(pixel[3], 255, "{} is drawn opaque at its centre", label.text);
         }
@@ -654,21 +668,23 @@ mod tests {
     #[test]
     fn the_overhead_view_shows_compass_letters_on_the_edges_and_the_grid_on_request() {
         let tables = stars(&[]);
-        let mut frame = Frame::new(301, 201, SkyArea::centred(301, 201), (10, 20));
+        let mut frame = Frame::new(301, 201, 201, (10, 20));
         let (plain, _) = draw(&tables, &View::default(), 0.0, &settings(), &mut frame);
-        let sky = frame.sky();
+        let size = frame.drawing_area_width_and_height;
+        let x_offset = frame.drawing_area_x_offset;
+        let y_offset = frame.drawing_area_y_offset;
         let find = |drawn: &Drawn, text: &str| drawn.direction_labels.iter().find(|label| label.text == text).map(|label| label.pixel);
-        assert_eq!(find(&plain, "N"), Some((sky.y as i32, sky.x as i32 + sky.size as i32 / 2)));
-        assert_eq!(find(&plain, "S"), Some((sky.y as i32 + sky.size as i32 - 1, sky.x as i32 + sky.size as i32 / 2)));
-        assert_eq!(find(&plain, "E"), Some((sky.y as i32 + sky.size as i32 / 2, sky.x as i32)));
-        assert_eq!(find(&plain, "W"), Some((sky.y as i32 + sky.size as i32 / 2, sky.x as i32 + sky.size as i32 - 1)));
+        assert_eq!(find(&plain, "N"), Some((y_offset as i32, x_offset as i32 + size as i32 / 2)));
+        assert_eq!(find(&plain, "S"), Some((y_offset as i32 + size as i32 - 1, x_offset as i32 + size as i32 / 2)));
+        assert_eq!(find(&plain, "E"), Some((y_offset as i32 + size as i32 / 2, x_offset as i32)));
+        assert_eq!(find(&plain, "W"), Some((y_offset as i32 + size as i32 / 2, x_offset as i32 + size as i32 - 1)));
         assert_eq!(plain.direction_labels.len(), 4);
         let before = lit_overlay(&frame);
         let (grid, _) = draw(&tables, &View::default(), 0.0, &RenderOptions { grid: true, ..settings() }, &mut frame);
         assert_eq!(grid.direction_labels.len(), 12);                                      // the angles replace the compass letters
         assert!(find(&grid, "90").is_some() && find(&grid, "330").is_some() && find(&grid, "N").is_none());
         assert!(lit_overlay(&frame) > before + 300, "twelve spokes");
-        let centre = overlay_pixel(&frame, sky.y as i32 + sky.size as i32 / 2, sky.x as i32 + sky.size as i32 / 2);
+        let centre = overlay_pixel(&frame, y_offset as i32 + size as i32 / 2, x_offset as i32 + size as i32 / 2);
         assert!(centre[3] > 0);
     }
 
@@ -717,13 +733,28 @@ mod tests {
         let mut caches = tables.clone();
         let settings = RenderOptions { magnitude_threshold: 9.0, ..settings() };
         refresh_regions(&mut caches, &selected, time, &view, &settings, &mut crate::time::StepTimes::default());
-        let mut frame = Frame::new(1920, 1100, SkyArea::centred(1920, 1100), (9, 17));
+        let mut frame = Frame::new(1920, 1100, 1100, (9, 17));
         draw_points(&mut frame, &solar_system, &caches, &selected, None, &observation, &view, &settings, &mut crate::time::StepTimes::default());
         let started = std::time::Instant::now();
         let frames = 10;
         let mut drawn = Drawn::default();
         for _ in 0..frames { drawn = draw_points(&mut frame, &solar_system, &caches, &selected, None, &observation, &view, &settings, &mut crate::time::StepTimes::default()); }
         eprintln!("draw_points {:?} per frame: {} endpoint stars, {} arcs, {} bodies, {} star labels, {} direction labels", started.elapsed() / frames, drawn.endpoint_stars, drawn.arcs, drawn.bodies, drawn.star_labels.len(), drawn.direction_labels.len());
+    }
+
+    #[test]
+    fn star_labels_can_extend_beyond_the_drawing_square_into_the_margin() {
+        let tables = stars(&[(catalog_direction(270.0, 5.0), 1.0, 1, Some("Across margin"))]);
+        let mut frame = Frame::new(401, 201, 201, (10, 20));
+        draw(&tables, &View::default(), 0.0, &RenderOptions { dynamic_names: false, ..settings() }, &mut frame);
+        let without_label = frame.overlay().to_vec();
+        let (drawn, _) = draw(&tables, &View::default(), 0.0, &settings(), &mut frame);
+        assert_eq!(drawn.star_labels.len(), 1);
+        let right_margin = frame.drawing_area_x_offset + frame.drawing_area_width_and_height;
+        assert!((0..frame.height()).any(|row| (right_margin..frame.width()).any(|column| {
+            let index = (row * frame.width() + column) * 4;
+            frame.overlay()[index..index + 4] != without_label[index..index + 4]
+        })), "the star label must remain visible beyond the square's right edge");
     }
 
     #[test]
@@ -735,7 +766,7 @@ mod tests {
         let selected = select_regions(&tables.star_regions, &observation, &mut crate::time::StepTimes::default());
         let caches = tables.clone();
         let fields = [MetadataField { label: "Date".into(), value: "2000-01-01".into() }, MetadataField { label: "Site".into(), value: "Boston".into() }];
-        let mut frame = Frame::new(301, 201, SkyArea::centred(301, 201), (10, 20));
+        let mut frame = Frame::new(301, 201, 201, (10, 20));
         let drawn = draw_points(&mut frame, &solar_system, &caches, &selected, None, &observation, &View::default(), &RenderOptions { dynamic_names: false, ..settings() }, &mut crate::time::StepTimes::default());
         draw_panel_and_notices(&mut frame, &fields, &drawn.notices);
         let line = |row: i32| (0..301).filter(|&column| overlay_pixel(&frame, row, column)[3] > 0).count();

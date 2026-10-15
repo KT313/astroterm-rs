@@ -4,9 +4,9 @@
 //! Replace the call in projection/mod.rs with tile_warp::project_whole_tiles to restore the straight warp.
 use crate::astro::Vector3;
 use crate::constants::TILE_EDGE_TEXELS;
-use crate::model::{Data, View};
+use crate::model::{Data, Texel, View};
 use crate::observation::Observation;
-use crate::projection::{CartesianCamera, Frame, SkyArea, project_camera};
+use crate::projection::{CartesianCamera, project_camera};
 use crate::regions::TileGeometry;
 use crate::selection::Selected;
 use crate::time::StepTimes;
@@ -17,10 +17,10 @@ use super::tile_warp::{contains_antipode, is_convex};
 /// Select the Coons fit while reusing the common forward mesh renderer.
 #[allow(dead_code)] // retained as a one-call alternative to the selected Hermite backend
 pub(super) fn project_coons_tiles(
-    frame: &mut Frame, data: &Data, selected: &Selected, observation: &Observation, view: &View, times: &mut StepTimes,
-) {
+    size: usize, data: &Data, selected: &Selected, observation: &Observation, view: &View, times: &mut StepTimes,
+) -> Vec<Texel> {
     // The backend controls the fitted surface; coverage and region composition are shared for comparison.
-    project_curved_tiles(frame, data, selected, observation, view, times, build_patch, "Projection.Coons mesh preparation");
+    project_curved_tiles(size, data, selected, observation, view, times, build_patch, "Projection.Coons mesh preparation")
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -33,7 +33,7 @@ struct Corner {
 pub(super) struct CoonsPatch { corners: [Corner; 4] }  // top-left, top-right, bottom-right, bottom-left
 
 /// Fit the boundary curves from values and tangents at exactly four tile positions.
-pub(super) fn build_patch(tile: &TileGeometry, observation: &Observation, camera: CartesianCamera, sky: SkyArea) -> Option<CoonsPatch> {
+pub(super) fn build_patch(tile: &TileGeometry, observation: &Observation, camera: CartesianCamera, size: usize) -> Option<CoonsPatch> {
     // Get the apparent directions and their derivatives at the four outer texture corners.
     let maximum = TILE_EDGE_TEXELS as f64 - 0.5;
     let coordinates = [[-0.5, -0.5], [maximum, -0.5], [maximum, maximum], [-0.5, maximum]];
@@ -46,7 +46,7 @@ pub(super) fn build_patch(tile: &TileGeometry, observation: &Observation, camera
     if contains_antipode(directions, camera.forward) { return None; }
 
     // Project each corner once; differentiate the stereographic divide in the two tile directions.
-    let radius = (sky.size as f64 - 1.0) * 0.5;
+    let radius = (size as f64 - 1.0) * 0.5;
     let empty = Corner { position: [0.0; 2], along_u: [0.0; 2], along_v: [0.0; 2] };
     let mut corners = [empty; 4];
     for index in 0..4 {
@@ -61,7 +61,7 @@ pub(super) fn build_patch(tile: &TileGeometry, observation: &Observation, camera
             ]
         });
         corners[index] = Corner {
-            position: [sky.x as f64 + radius + radius * projected.x, sky.y as f64 + radius - radius * projected.y],
+            position: [radius + radius * projected.x, radius - radius * projected.y],
             along_u: tangents[0],
             along_v: tangents[1],
         };
@@ -106,6 +106,7 @@ impl CurvedPatch for CoonsPatch {
 
 #[cfg(test)]
 mod tests {
+    use crate::projection::Frame;
     use super::*;
     use crate::constants::CURVED_PATCH_MAX_SUBDIVISIONS;
     use crate::model::{ProjectionKind, Texel};
@@ -135,7 +136,7 @@ mod tests {
         let mut sampler = TileSampler::new(TILE_EDGE_TEXELS);
         sampler.prepare(&super::super::tile_sampling::lit_rows_of(texels, TILE_EDGE_TEXELS));
         let mut pixels = RegionPixels::default();
-        pixels.prepare(&mesh, 9, 9, SkyArea { x: 0, y: 0, size: 9 });
+        pixels.prepare(&mesh, 9);
         for triangle in &mesh { pixels.draw_triangle(triangle, &sampler, texels); }
         pixels.composite(frame, 9);
     }
@@ -213,7 +214,7 @@ mod tests {
         // Compare analytic derivatives against independent finite differences used only by this test.
         let site = Observer { latitude: 0.6, longitude: 2.4 };
         let time = crate::astro::utc_jd_to_time_ms(J2000).unwrap();
-        let sky = SkyArea { x: 0, y: 0, size: 1101 };
+        let size = 1101;
         for atmosphere in [false, true] {
             for fov in [10.0, 60.0, 180.0] {
                 let view = View { center: ViewCenter::Facing { azimuth: 1.0, tilt: 0.2 }, projection: ProjectionKind::Stereographic, fov_degrees: fov };
@@ -221,7 +222,7 @@ mod tests {
                 let camera = prepare_camera(&view);
                 let region = hash_direction(crate::constants::GRID_DEPTH, observation.patch.center);
                 let tile = TileGeometry::new(region);
-                let patch = build_patch(&tile, &observation, camera, sky).unwrap();
+                let patch = build_patch(&tile, &observation, camera, size).unwrap();
                 let exact = |u: f64, v: f64| {
                     let direction = tile.direction_of(u * TILE_EDGE_TEXELS as f64 - 0.5, v * TILE_EDGE_TEXELS as f64 - 0.5);
                     let projected = project_camera(camera, observation.apparent_star_direction(direction)).unwrap();
@@ -260,15 +261,18 @@ mod tests {
             let settings = RenderOptions { magnitude_threshold: 6.0, unicode: true, braille: false, color: true, constellations: false, grid: false, dynamic_names: false };
             refresh_regions(&mut data, &selected, time, &view, &settings, &mut StepTimes::default());
             let mut frame = Frame::square(201);
-            project_coons_tiles(&mut frame, &data, &selected, &observation, &view, &mut StepTimes::default());
+            let projected_stars = project_coons_tiles(frame.drawing_area_width_and_height, &data, &selected, &observation, &view, &mut StepTimes::default());
+            frame.insert_projected_stars(&projected_stars);
             assert!(frame.stars().iter().any(|texel| texel.opacity > 0.0));
             assert!(frame.stars().iter().all(|texel| texel.opacity.is_finite() && texel.opacity <= 1.0));
             if projection == ProjectionKind::Equidistant {
                 let expected = frame.stars().to_vec();
-                super::super::tile_warp::project_whole_tiles(&mut frame, &data, &selected, &observation, &view, &mut StepTimes::default());
+                let projected_stars = super::super::tile_warp::project_whole_tiles(frame.drawing_area_width_and_height, &data, &selected, &observation, &view, &mut StepTimes::default());
+                frame.insert_projected_stars(&projected_stars);
                 assert_eq!(frame.stars(), expected);
             }
-            project_coons_tiles(&mut frame, &data, &Selected { regions: Vec::new(), whole_sky: false }, &observation, &view, &mut StepTimes::default());
+            let projected_stars = project_coons_tiles(frame.drawing_area_width_and_height, &data, &Selected { regions: Vec::new(), whole_sky: false }, &observation, &view, &mut StepTimes::default());
+            frame.insert_projected_stars(&projected_stars);
             assert!(frame.stars().iter().all(|texel| texel.is_empty()));
         }
     }
@@ -285,7 +289,7 @@ mod tests {
         let selected = crate::selection::select_regions(&data.star_regions, &observation, &mut StepTimes::default());
         let settings = RenderOptions { magnitude_threshold: 9.0, unicode: true, braille: false, color: true, constellations: false, grid: false, dynamic_names: false };
         refresh_regions(&mut data, &selected, time, &view, &settings, &mut StepTimes::default());
-        let mut frame = Frame::new(1920, 1100, SkyArea::centred(1920, 1100), (10, 20));
+        let mut frame = Frame::new(1920, 1100, 1100, (10, 20));
 
         for dense in [false, true] {
             if dense {
@@ -302,11 +306,14 @@ mod tests {
                 for backend in if run % 2 == 0 { [0, 1, 2] } else { [2, 1, 0] } {
                     let start = std::time::Instant::now();
                     if backend == 0 {
-                        super::super::tile_warp::project_whole_tiles(&mut frame, &data, &selected, &observation, &view, &mut StepTimes::default());
+                        let projected_stars = super::super::tile_warp::project_whole_tiles(frame.drawing_area_width_and_height, &data, &selected, &observation, &view, &mut StepTimes::default());
+                        frame.insert_projected_stars(&projected_stars);
                     } else if backend == 1 {
-                        project_coons_tiles(&mut frame, &data, &selected, &observation, &view, &mut StepTimes::default());
+                        let projected_stars = project_coons_tiles(frame.drawing_area_width_and_height, &data, &selected, &observation, &view, &mut StepTimes::default());
+                        frame.insert_projected_stars(&projected_stars);
                     } else {
-                        super::super::hermite_warp::project_hermite_tiles(&mut frame, &data, &selected, &observation, &view, &mut StepTimes::default());
+                        let projected_stars = super::super::hermite_warp::project_hermite_tiles(frame.drawing_area_width_and_height, &data, &selected, &observation, &view, &mut StepTimes::default());
+                        frame.insert_projected_stars(&projected_stars);
                     }
                     if run > 0 { elapsed[backend] += start.elapsed().as_secs_f64(); }
                     std::hint::black_box(frame.stars());

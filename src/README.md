@@ -31,3 +31,8 @@ Bottom-up. Every module exposes its symbols from its root `mod.rs`; callers use 
 Owned data at runtime: `Data` (immutable catalog columns beside mutable group/region caches), the `Frame`
 (star layer, overlay, text rasterizer), the `Display` with its `Terminal`, and the `TimeManager` (which owns `StepTimes`). All are created in
 `main.rs` or at the top of the frame loop and passed by reference to the steps.
+
+Star projection takes only the square drawing area's side length and returns row-major floating-point `Texel`
+pixels. The frame loop inserts that square using `Frame.drawing_area_x_offset` and `drawing_area_y_offset`;
+`drawing_area_width_and_height` stores its side length. Points and text overlays still use the full frame,
+so sky labels can extend into the margins. Projection backends never receive the full frame or its offsets.

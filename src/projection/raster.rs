@@ -6,7 +6,6 @@
 //! ends up a fraction of a pixel inside the outline keeps its light. Each row is split where the quad's
 //! diagonal crosses it, so each pixel maps through the affine mapping of the triangle it lies in. Rows and
 //! columns whose pixel centre lies outside the frame or the sky disc are skipped, as before.
-use crate::projection::SkyArea;
 
 pub(super) type Point = [f64; 2];
 
@@ -125,17 +124,17 @@ impl Row<'_> {
 }
 
 /// Visit every pixel row that the quad (corners in order, either winding) touches inside the frame and the sky disc.
-pub(super) fn scan_quad(corners: [Point; 4], width: usize, height: usize, sky: SkyArea, mut visit: impl FnMut(&mut Row<'_>)) {
+pub(super) fn scan_quad(corners: [Point; 4], size: usize, mut visit: impl FnMut(&mut Row<'_>)) {
     // Rows whose pixel square overlaps the quad's vertical extent, inside the frame.
     let (top, bottom) = corners.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(top, bottom), corner| (top.min(corner[1]), bottom.max(corner[1])));
-    if !(top.is_finite() && bottom.is_finite()) || width == 0 || height == 0 { return; }
-    let (first_row, last_row) = (((top - 0.5).floor() + 1.0).max(0.0), ((bottom + 0.5).ceil() - 1.0).min((height - 1) as f64)); // the square must overlap, not touch
+    if !(top.is_finite() && bottom.is_finite()) || size == 0 { return; }
+    let (first_row, last_row) = (((top - 0.5).floor() + 1.0).max(0.0), ((bottom + 0.5).ceil() - 1.0).min((size - 1) as f64)); // the square must overlap, not touch
     if first_row > last_row { return; }
     let quad = Quad::new(corners);
 
     // The sky disc, tested by pixel centre as before.
-    let radius = (sky.size as f64 - 1.0) * 0.5;
-    let (cx, cy) = (sky.x as f64 + radius, sky.y as f64 + radius);
+    let radius = (size as f64 - 1.0) * 0.5;
+    let (cx, cy) = (radius, radius);
 
     let mut upper = quad.span_at(first_row - 0.5);                                           // the span along the row's top edge; the next row's is this row's bottom
     for row in first_row as usize..=last_row as usize {
@@ -144,9 +143,9 @@ pub(super) fn scan_quad(corners: [Point; 4], width: usize, height: usize, sky: S
         let (upper_span, lower_span) = (upper, lower);
         upper = lower;
         let reach = radius * radius + 1e-9 - (y - cy) * (y - cy);
-        if reach < 0.0 { continue; }                                                         // the row misses the sky disc
+        if reach < 0.0 { continue; }                                                         // the row misses the size disc
         let half = reach.sqrt();
-        let (disc_first, disc_last) = ((cx - half).ceil().max(0.0), (cx + half).floor().min((width - 1) as f64));
+        let (disc_first, disc_last) = ((cx - half).ceil().max(0.0), (cx + half).floor().min((size - 1) as f64));
 
         // The columns the quad touches in this row: both edge spans and the corners inside the row.
         let (mut left, mut right) = (f64::INFINITY, f64::NEG_INFINITY);
@@ -185,7 +184,7 @@ mod tests {
 
     fn scan(corners: [Point; 4], size: usize) -> Vec<Scanned> {
         let mut rows = Vec::new();
-        scan_quad(corners, size, size, SkyArea { x: 0, y: 0, size }, |row| {
+        scan_quad(corners, size, |row| {
             let outline: Vec<usize> = (row.first..=row.last).filter(|&column| !row.is_whole(column)).collect();
             let edges = outline.into_iter().map(|column| (column, row.edge_pixel(column))).collect();
             rows.push(Scanned { row: row.row, first: row.first, last: row.last, full: row.full, split: row.split, left_triangle: row.left_triangle, edges });
