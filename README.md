@@ -129,7 +129,7 @@ source <(./target/release/astroterm --bash-completions)
 ```
 
 - `make build-debug`: build `target/pixel-debug/astroterm` with [pixel arithmetic checks](docs/pixel-debug.md).
-- `--debug-frametimes`: show each frame stage with indented sub-step timings, including cache work, adaptive tile projection, rasterization, and terminal output. Values use completed-frame averages.
+- `--debug-frametimes`: show each frame stage with indented sub-step timings, including cache work, region mapping, rasterization, and terminal output. Values use completed-frame averages.
 - `--debug-singleframe`: display one frame, then exit and print a detailed timing report.
 - Multi-frame timing: see [bounded frame captures](docs/frame-benchmarks.md) for reproducible per-frame reports.
 
@@ -157,7 +157,7 @@ Each region's stars are sorted into three speed groups with TTLs assigned from `
 startup: longest for the slowest group, shortest for the fastest (currently 365, 10 and 1 simulated days).
 Constellation stars use the fastest group's TTL. The drawn stars of a region are kept as a 64 × 64 sky-fixed tile that is
 re-rendered only when its simulation or the brightness threshold changes, and the screen is produced by mapping
-each tile's four corners onto the screen and filtering its texture. Tiles of regions that leave the view stay in memory for their return.
+every pixel of a region's screen image back to its tile and filtering the texels under it. Tiles of regions that leave the view stay in memory for their return.
 The fixed holds have known direction-error exceptions; the opt-in [offline hold audit](docs/stellar-hold-audit.md)
 reports them without changing the runtime policy.
 
@@ -172,31 +172,17 @@ been removed. Independent accuracy checks are documented in
 Stars use four-texel dots in their sky tiles, enlarged when zoomed in. Within each group, stars blend from dim
 to bright current magnitude (ascending ID for ties); group images merge from slowest to fastest, weighting stored RGB by opacity while opacity accumulates source-over. Zooming in boosts each star’s opacity, capped at full opacity before blending; changing the boost redraws the selected tiles.
 Stars whose complete dot would cross the image boundary are omitted. The Sun, planets and Moon retain their sizes.
-The stereographic and equidistant (`-e`) forward warp projects tile corners and checks the real projected positions of edge
-midpoints and the center against straight interpolation. Regions that exceed the sampled error target use a
-finer uniform grid; previously projected vertices are reused during refinement. Singular or folded pieces are
-subdivided too, instead of immediately discarding their entire region. Angular cap bounds discard pieces that
-cannot enter the view, including the hidden neighborhood of the stereographic antipode. No screen rays or fitted
-curved surfaces are used.
-A region's pieces share grid vertices to avoid internal cracks. Pixel coverage comes from triangle/pixel
-intersections, and all pieces accumulate before that region is blended source-over. The rasterizer scans row
-spans, clips only outline pixels, and skips footprints known to contain no light. Texture footprints remain
-rectangular area averages; the cached tile resolution is unchanged, so extreme magnification can still look
-blurry. Neighboring regions retain their existing overlapping tiles and drawing order.
-This is a bounded prototype: midpoint checks are not a proof of a global error bound. At the subdivision cap,
-stereographic pieces may exceed the target; singular/folded pieces are omitted individually. Equidistant also
-omits pieces still above the error target at the cap, avoiding long chords across the rear discontinuity.
-At a full 360° field, unresolved pieces can therefore leave gaps at the extreme outer rim. The detailed trace
-reports projection counts, maximum subdivision, capped cells and omitted cells.
-The backend is selected by one call in `src/projection/mod.rs`:
-
-- `adaptive_warp::project_adaptive_tiles` selects real-projection adaptive subdivision (current default).
-- `hermite_warp::project_hermite_tiles` retains the stereographic-only bicubic Hermite experiment, disabled by default.
-- `coons_warp::project_coons_tiles` retains the stereographic-only Coons experiment, disabled by default.
-- `tile_warp::project_whole_tiles` restores the straight renderer.
-
-Adaptive, Coons and Hermite share triangle coverage and composition in `patch_warp.rs`. The adaptive backend
-chooses a refinement level per region; it does not mix the old scanline renderer and the triangle renderer.
+Tiles are stereographic images of their region, as the screen is a stereographic image of the sky, so turning
+the sky maps a tile onto the screen by a closed formula. The stereographic warp uses it backwards: for every
+pixel inside a region's screen image it undoes the screen projection, refraction (through a fixed table) and
+aberration, rotates into the tile and applies the tile projection, then averages the texels under the pixel's
+footprint and blends the result source-over. Every pixel is exact; rows are stepped by forward differences and
+rows whose tile rows hold no light are skipped. The equidistant view (`-e`) still pushes each tile forward
+through an adaptive mesh: tile corners are projected, edge midpoints and the center are checked against
+straight interpolation, and regions above the sampled error target use a finer uniform grid up to a work cap,
+where unresolved pieces are omitted rather than drawn as long chords; at a full 360° field that can leave gaps
+at the extreme outer rim. Texture footprints are rectangular area averages; the cached tile resolution is
+unchanged, so extreme magnification can still look blurry.
 With the azimuthal grid on, its angle labels replace the compass letters.
 
 <details>

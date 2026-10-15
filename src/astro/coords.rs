@@ -118,60 +118,59 @@ pub fn refract_direction(direction: Vector3) -> Vector3 {
     }
 }
 
-/// Normalize a direction and propagate two derivatives through normalization. Derivatives describe changes
-/// along the two coordinates of a sky tile; they are not additional sampled directions.
-pub fn normalize_direction_tangents(vector: Vector3, tangents: [Vector3; 2]) -> (Vector3, [Vector3; 2]) {
-    // Remove the part of each derivative that points along the normalized vector.
-    let length = vector.length();
-    let direction = vector.normalized();
-    let derivatives = tangents.map(|tangent| (tangent - direction * direction.dot(tangent)) * (1.0 / length));
-    (direction, derivatives)
+/// Undo `refract_direction`: the geometric direction whose refracted image is `direction`. The inverse of
+/// Saemundsson's formula has no closed form, so it is read from a table over sin(apparent altitude), 8193
+/// entries built once from the forward formula. Linear interpolation keeps it within 0.01″ of the direct solve
+/// from the horizon up to 88.5°, within 0.5″ in the last degrees to the zenith (where the table's altitude steps
+/// widen and the lift itself is under 1″) and within 2″ around the formula's −1° clamp. This is a constant
+/// table of the formula, not a frame cache: it depends on nothing that changes at runtime.
+pub fn unrefract_direction(direction: Vector3) -> Vector3 {
+    // Look up sin(true altitude) and the horizontal scale cos(true) / cos(apparent) for this apparent altitude.
+    let z = direction.z.clamp(-1.0, 1.0);
+    let position = (z + 1.0) * (UNREFRACTION_STEPS as f64 / 2.0);
+    let index = (position as usize).min(UNREFRACTION_STEPS - 1);
+    let fraction = position - index as f64;
+    let [[sine_low, scale_low], [sine_high, scale_high]] = [UNREFRACTION[index], UNREFRACTION[index + 1]];
+    let sine = sine_low + (sine_high - sine_low) * fraction;
+    let scale = scale_low + (scale_high - scale_low) * fraction;
+    Vector3 { x: direction.x * scale, y: direction.y * scale, z: sine }
 }
 
-/// Apply the same aberration, horizon rotation and optional refraction as the observer, including analytic
-/// first derivatives. At the refraction clamps use the derivative of the active branch. At an exact pole
-/// where the refraction convention has no unique azimuth, return None rather than inventing a tangent.
-pub fn transform_direction_tangents(
-    direction: Vector3,
-    tangents: [Vector3; 2],
-    velocity: Vector3,
-    rotation: crate::astro::Matrix3,
-    atmosphere: bool,
-) -> Option<(Vector3, [Vector3; 2])> {
-    // Follow the two normalizations in apply_aberration, then rotate the value and its derivatives together.
-    let (unit, tangents) = normalize_direction_tangents(direction, tangents);
-    let (apparent, tangents) = normalize_direction_tangents(unit + velocity * (1.0 / crate::astro::LIGHT_SPEED_AU_DAY), tangents);
-    let horizon = rotation.apply(apparent);
-    let tangents = tangents.map(|tangent| rotation.apply(tangent));
-    if !atmosphere { return Some((horizon, tangents)); }
+const UNREFRACTION_STEPS: usize = 8192;
 
-    // Evaluate the existing refraction formula and its altitude derivative at this one direction.
-    let horizontal = horizon.x.hypot(horizon.y);
-    if horizontal < 1e-12 { return None; }
-    let altitude = horizon.z.atan2(horizontal);
-    let corrected = apply_refraction(Horizontal { azimuth: 0.0, altitude }).altitude;
-    let (altitude_slope, _) = refraction_derivatives(altitude);
+/// Per table entry at sin(apparent altitude) = −1 + 2i / steps: sin(true altitude), cos(true) / cos(apparent).
+static UNREFRACTION: std::sync::LazyLock<Vec<[f64; 2]>> = std::sync::LazyLock::new(|| {
+    (0..=UNREFRACTION_STEPS).map(|index| {
+        let apparent_sine = (-1.0 + 2.0 * index as f64 / UNREFRACTION_STEPS as f64).clamp(-1.0, 1.0);
+        let apparent = apparent_sine.asin();
+        let altitude = unrefract_altitude(apparent).max(-FRAC_PI_2);
+        let (sine, cosine) = altitude.sin_cos();
+        let apparent_cosine = apparent.cos();
+        let scale = if apparent_cosine < 1e-9 { 1.0 } else { cosine / apparent_cosine }; // at the poles the horizontal part is zero anyway
+        [sine, scale]
+    }).collect()
+});
 
-    // Differentiate the horizontal scale and vertical component used by refract_direction.
-    let (sine, cosine) = corrected.sin_cos();
-    let derivatives = tangents.map(|tangent| {
-        let horizontal_change = (horizon.x * tangent.x + horizon.y * tangent.y) / horizontal;
-        let altitude_change = (horizontal * tangent.z - horizon.z * horizontal_change) / horizon.dot(horizon);
-        let corrected_change = altitude_slope * altitude_change;
-        let scale = cosine / horizontal;
-        let scale_change = -sine * corrected_change / horizontal - cosine * horizontal_change / horizontal.powi(2);
-        Vector3 {
-            x: tangent.x * scale + horizon.x * scale_change,
-            y: tangent.y * scale + horizon.y * scale_change,
-            z: cosine * corrected_change,
-        }
-    });
-    Some((refract_direction(horizon), derivatives))
+/// The geometric altitude that `apply_refraction` lifts to `apparent`: Newton's method on the monotone formula.
+fn unrefract_altitude(apparent: f64) -> f64 {
+    let lift = |altitude: f64| apply_refraction(Horizontal { azimuth: 0.0, altitude }).altitude - apparent;
+    let mut altitude = apparent - lift(apparent);                                           // start one lift below the apparent altitude
+    for _ in 0..8 {
+        let step = lift(altitude) / refraction_derivatives(altitude).0;
+        altitude -= step;
+        if step.abs() < 1e-14 { break; }
+    }
+    altitude
+}
+
+/// Undo `apply_aberration` to the same first order: the catalog direction of an aberrated one.
+pub fn remove_aberration(direction: Vector3, velocity: Vector3) -> Vector3 {
+    (direction.normalized() - velocity * (1.0 / crate::astro::LIGHT_SPEED_AU_DAY)).normalized()
 }
 
 /// First and second derivatives of corrected altitude with respect to geometric altitude (radians).
 /// The clamped lift is constant below -1 degree and after its positive part reaches zero.
-pub(super) fn refraction_derivatives(altitude: f64) -> (f64, f64) {
+fn refraction_derivatives(altitude: f64) -> (f64, f64) {
     // Use the same clamp and positive-lift branches as apply_refraction.
     let degrees = altitude.to_degrees();
     let clamped_degrees = degrees.max(-1.0);
@@ -318,5 +317,44 @@ mod tests {
         let position = rectangular_to_equatorial(Vector3 { x: 0.0, y: 1.0, z: 1.0 });
         assert!((position.right_ascension - FRAC_PI_2).abs() < 1e-12);
         assert!((position.declination - PI / 4.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn unrefraction_inverts_refraction_at_every_altitude_including_the_clamp_and_the_poles() {
+        // Round trips through the table stay within 0.01″ down to 85° below the horizon; within the last few
+        // degrees above the nadir the constant clamped lift makes the inverse ill-conditioned, and it only has to
+        // stay finite and bounded there.
+        let (mut worst_above, mut worst_below): (f64, f64) = (0.0, 0.0);
+        for tenth_degree in -899..=900 {
+            let altitude = tenth_degree as f64 / 10.0 * TO_RAD;
+            for azimuth in [0.0, 1.0, 2.5, 4.0] {
+                let geometric = Horizontal { azimuth, altitude }.to_unit_vector();
+                let apparent = refract_direction(geometric);
+                let back = unrefract_direction(apparent);
+                assert!(back.length().is_finite() && back.length() < 1.01, "{altitude} {azimuth}: {back:?}");
+                if tenth_degree < -850 { continue; }
+                let error = (back.normalized() - geometric).length();
+                if (0..=885).contains(&tenth_degree) { worst_above = worst_above.max(error); } else { worst_below = worst_below.max(error); }
+                assert!((back.length() - 1.0).abs() < 1e-6, "{altitude} {azimuth}: {back:?}");       // interpolation leaves the length slightly off
+            }
+        }
+        assert!(worst_above < 0.01 / 3600.0 * TO_RAD, "{} arcseconds between the horizon and 88.5°", worst_above / TO_RAD * 3600.0);
+        assert!(worst_below < 3.0 / 3600.0 * TO_RAD, "{} arcseconds elsewhere", worst_below / TO_RAD * 3600.0); // the clamp's kink at −1° and the coarse altitude steps near the zenith
+        let zenith = Vector3 { x: 0.0, y: 0.0, z: 1.0 };
+        assert!((unrefract_direction(zenith) - zenith).length() < 1e-9);
+        let nadir = Vector3 { x: 0.0, y: 0.0, z: -1.0 };
+        assert!(unrefract_direction(nadir).z <= -0.9999 && unrefract_direction(nadir).length() <= 1.0 + 1e-9);
+        let lifted = unrefract_direction(Horizontal { azimuth: 0.3, altitude: 0.0 }.to_unit_vector());
+        assert!(lifted.z < -(28.0 / 60.0 * TO_RAD).sin() && lifted.z > -(36.0 / 60.0 * TO_RAD).sin(), "{lifted:?}"); // about 34′ below the apparent horizon
+    }
+
+    #[test]
+    fn removing_aberration_inverts_applying_it_to_first_order() {
+        let velocity = Vector3 { x: 0.0172, y: 0.001, z: -0.0004 };                            // Earth's orbital speed in AU/day
+        for direction in [Vector3 { x: 1.0, y: 0.0, z: 0.0 }, Vector3 { x: 0.3, y: -0.5, z: 0.8 }, Vector3 { x: -0.2, y: 0.9, z: -0.4 }] {
+            let direction = direction.normalized();
+            let back = remove_aberration(apply_aberration(direction, velocity), velocity);
+            assert!((back - direction).length() < 0.01 / 3600.0 * TO_RAD, "{direction:?}: {back:?}");
+        }
     }
 }

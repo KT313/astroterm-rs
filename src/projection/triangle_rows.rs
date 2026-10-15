@@ -1,5 +1,5 @@
 //! Exact row ranges for a triangle: full pixels use a cheap path; only its outline needs polygon clipping.
-use super::raster::Point;
+use super::mesh::Point;
 
 struct Edge { lower: Point, upper: Point, slope: f64 }
 

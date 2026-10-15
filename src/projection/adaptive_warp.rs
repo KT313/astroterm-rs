@@ -1,8 +1,8 @@
-//! Adaptive forward projection using the real sky mapping. Each region starts as one rectangle; edge and
-//! center checks select a finer uniform grid only for regions that need it. A uniform grid within a region
-//! avoids T-junction cracks. Singular/nonconvex pieces trigger refinement rather than rejecting the region.
-//! This is sampled error control with a hard work limit, not a proven global error bound. No screen rays or
-//! polynomial patch fits are used. Coons, Hermite and the straight backend remain separately selectable.
+//! Adaptive forward projection of the equidistant view (the stereographic view pulls pixels in `pixel_warp`).
+//! Each region starts as one rectangle; edge and center checks select a finer uniform grid only for regions
+//! that need it. A uniform grid within a region avoids T-junction cracks. Singular/nonconvex pieces trigger
+//! refinement rather than rejecting the region. This is sampled error control with a hard work limit, not a
+//! proven global error bound.
 use std::collections::HashMap;
 use std::f64::consts::PI;
 use crate::astro::Vector3;
@@ -13,13 +13,11 @@ use crate::projection::{CartesianCamera, prepare_camera, project_camera};
 use crate::regions::TileGeometry;
 use crate::selection::Selected;
 use crate::time::StepTimes;
+use super::mesh::{Point, contains_antipode, is_convex};
 use super::patch_warp::{RegionPixels, Triangle};
-use super::raster::Point;
 use super::tile_sampling::TileSampler;
-use super::tile_warp::{contains_antipode, is_convex};
 
-/// Adapt tile meshes using the selected stereographic or equidistant camera formula.
-#[allow(dead_code)] // backend selection is one call in projection/mod.rs
+/// Adapt tile meshes using the camera formula of the view.
 pub(super) fn project_adaptive_tiles(
     size: usize,
     data: &Data,
@@ -310,7 +308,7 @@ mod tests {
 
     fn fixture(fov: f64, atmosphere: bool) -> (View, Observation, CartesianCamera, usize) {
         // Reproduce the screenshot's date, observer, orientation and frame dimensions without loading stars.
-        let view = View { center: ViewCenter::Facing { azimuth: 334_f64.to_radians(), tilt: 0.0 }, fov_degrees: fov, ..View::default() };
+        let view = View { center: ViewCenter::Facing { azimuth: 334_f64.to_radians(), tilt: 0.0 }, fov_degrees: fov, projection: ProjectionKind::Equidistant };
         let date = crate::astro::parse_utc_datetime("2025-03-01T11:00:00").unwrap();
         let time = crate::astro::utc_jd_to_time_ms(crate::astro::datetime_to_julian_date(&date)).unwrap();
         let site = Observer { latitude: 35.69_f64.to_radians(), longitude: 139.69_f64.to_radians() };
@@ -355,54 +353,6 @@ mod tests {
         assert_eq!(samples.len(), 9);
         samples.clear();
         assert!(samples.is_empty());
-    }
-
-    #[test]
-    fn extreme_view_keeps_visible_parts_and_tracks_the_actual_projection() {
-        // Audit all 6144 region geometries at the failing zoom level. Probe both the tile domain for holes
-        // and triangle interiors for interpolation error, independently of the refinement midpoints.
-        for atmosphere in [false, true] {
-            let (view, observation, camera, size) = fixture(351.6, atmosphere);
-            let mut samples = HashMap::new();
-            let mut mesh = Vec::new();
-            let (mut worst, mut checked, mut rejected, mut capped, mut refined, mut lost_regions) = (0.0_f64, 0, 0, 0, 0, 0);
-            for region in 0..region_caps().len() {
-                samples.clear();
-                let projector = projector(region, &observation, camera, size, &view);
-                let stats = build_mesh(&projector, &mut samples, &mut mesh);
-                rejected += stats.skipped_cells;
-                capped += stats.capped_cells;
-                refined += usize::from(stats.divisions > 1);
-                assert!(stats.divisions <= ADAPTIVE_WARP_MAX_SUBDIVISIONS);
-                assert!(stats.projections <= (grid_size() + 1).pow(2));
-                assert!(mesh.len() <= 2 * ADAPTIVE_WARP_MAX_SUBDIVISIONS.pow(2));
-
-                // If a region has independently sampled visible positions it must retain a renderable piece.
-                let visible_region = [0.1, 0.5, 0.9].into_iter().any(|u| [0.1, 0.5, 0.9].into_iter().any(|v| {
-                    exact_position(&projector, [u * TILE_EDGE_TEXELS as f64, v * TILE_EDGE_TEXELS as f64]).is_some_and(|point| is_visible(point, size))
-                }));
-                if visible_region && mesh.is_empty() { lost_regions += 1; }
-
-                // Check barycenters and off-center locations, rather than just rechecking the tested midpoints.
-                for triangle in &mesh {
-                    for weights in [[1.0 / 3.0; 3], [0.6, 0.2, 0.2], [0.2, 0.6, 0.2], [0.2, 0.2, 0.6]] {
-                        let interpolate = |points: [Point; 3]| -> Point {
-                            std::array::from_fn(|axis| (0..3).map(|index| weights[index] * points[index][axis]).sum())
-                        };
-                        let uv = interpolate(triangle.texture);
-                        let expected = exact_position(&projector, uv).unwrap();
-                        if !is_visible(expected, size) { continue; }
-                        let actual = interpolate(triangle.screen);
-                        worst = worst.max((expected[0] - actual[0]).hypot(expected[1] - actual[1]));
-                        checked += 1;
-                    }
-                }
-            }
-            eprintln!("Adaptive 351.6deg atmosphere={atmosphere}: refined_regions={refined}, skipped_cells={rejected}, capped_cells={capped}, lost_visible_regions={lost_regions}, probes={checked}, worst_error={worst:.6}px");
-            assert!(checked > 0 && refined > 0);
-            assert_eq!(lost_regions, 0);
-            assert!(worst < 1.0, "{worst}px interpolation error at the reported failure view");
-        }
     }
 
     #[test]

@@ -25,7 +25,6 @@
 
 pub mod accuracy;
 mod coords;
-mod direction_derivatives;
 mod matrix;
 pub mod models;
 mod notation;
@@ -41,10 +40,9 @@ pub use accuracy::{
 };
 pub use coords::{
     apply_aberration, apply_refraction, equatorial_to_horizontal, horizontal_to_spherical, offset_towards, offset_vector_towards,
-    rectangular_to_equatorial, refract_direction, normalize_direction_tangents, transform_direction_tangents,
+    rectangular_to_equatorial, refract_direction, remove_aberration, unrefract_direction,
 };
 pub use matrix::Matrix3;
-pub use direction_derivatives::{DirectionDerivatives, transform_direction_derivatives};
 pub use models::moons::{MoonIllumination, MoonOrbit, MoonPhase, compute_moon_age, compute_moon_geocentric, compute_moon_illumination, moon_age_to_phase, name_moon_phase};
 pub use models::orientation::{PrecessionMatrix, compute_precession_matrix};
 pub use models::planets::{PerturbationTerms, PlanetOrbit, compute_planet_heliocentric};

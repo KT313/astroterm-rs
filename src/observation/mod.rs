@@ -8,7 +8,7 @@
 use crate::time::StepTimes;
 use crate::astro::models::orientation::{compute_body_fixed_rotation, compute_horizon_rotation, compute_site_state, compute_slow_orientation};
 use crate::astro::models::{BodyId, BodyState, planets::evaluate_planet};
-use crate::astro::{AstronomicalTime, LIGHT_SPEED_AU_DAY, Matrix3, Observer, Vector3, apply_aberration, refract_direction};
+use crate::astro::{AstronomicalTime, LIGHT_SPEED_AU_DAY, Matrix3, Observer, Vector3, apply_aberration, refract_direction, remove_aberration, unrefract_direction};
 use crate::constants::{ABERRATION_MARGIN, QUANTIZATION_MARGIN, REFRACTION_MARGIN, STELLAR_DRIFT_MARGIN};
 use crate::model::View;
 use std::f64::consts::PI;
@@ -73,18 +73,6 @@ pub fn calculate_observation_at_dates(site: &Observer, atmosphere: bool, view: &
 }
 
 impl Observation {
-    /// Apparent corner direction including the mixed derivative needed by bicubic Hermite interpolation.
-    pub fn apparent_star_derivatives(&self, direction: crate::astro::DirectionDerivatives) -> Option<crate::astro::DirectionDerivatives> {
-        // Apply the existing observer corrections and their derivatives in the astronomy layer.
-        crate::astro::transform_direction_derivatives(direction, self.observer.velocity, self.to_horizon, self.atmosphere)
-    }
-
-    /// Apparent direction and changes along both tile axes, evaluated only at one tile corner.
-    pub fn apparent_star_tangents(&self, direction: Vector3, tangents: [Vector3; 2]) -> Option<(Vector3, [Vector3; 2])> {
-        // Keep the astronomy and its analytic derivatives in the astronomy module.
-        crate::astro::transform_direction_tangents(direction, tangents, self.observer.velocity, self.to_horizon, self.atmosphere)
-    }
-
     /// How a point at barycentric `position` (where its light left it) appears: a unit East, North, Up direction
     /// with aberration and, with an atmosphere, refraction.
     pub fn apparent_direction(&self, position: Vector3) -> Vector3 {
@@ -95,6 +83,13 @@ impl Observation {
     pub fn apparent_star_direction(&self, direction: Vector3) -> Vector3 {
         let horizon = self.to_horizon.apply(apply_aberration(direction, self.observer.velocity));
         if self.atmosphere { refract_direction(horizon) } else { horizon }
+    }
+
+    /// The unit catalog direction a star must have to appear in the apparent `direction`: the inverse of
+    /// `apparent_star_direction`, used by the warp's tests as the reference and by the warp per region.
+    pub fn catalog_star_direction(&self, direction: Vector3) -> Vector3 {
+        let horizon = if self.atmosphere { unrefract_direction(direction) } else { direction };
+        remove_aberration(self.to_catalog.apply(horizon), self.observer.velocity)
     }
 }
 
@@ -145,6 +140,19 @@ mod tests {
         }
         assert!(refracted.apparent_star_direction(low).z > airless.apparent_star_direction(low).z + 0.002); // lifted by about 14′
         assert_eq!(airless.observer, refracted.observer);
+    }
+
+    #[test]
+    fn the_catalog_direction_inverts_the_apparent_one_with_and_without_atmosphere() {
+        let time = crate::astro::utc_jd_to_time_ms(J2000).unwrap();
+        for atmosphere in [false, true] {
+            let observation = observe(&boston(), atmosphere, &view(90.0), time, &mut crate::time::StepTimes::default());
+            for star in [Vector3 { x: 0.3, y: -0.5, z: 0.8 }, Vector3 { x: 0.6, y: 0.0, z: 0.05 }, Vector3 { x: -0.9, y: 0.1, z: -0.3 }] {
+                let star = observation.to_catalog.apply(star.normalized());                  // horizon directions, high, low and below the horizon
+                let back = observation.catalog_star_direction(observation.apparent_star_direction(star));
+                assert!((back - star).length() < 0.01_f64.to_radians() / 3600.0, "atmosphere={atmosphere} {star:?}: {back:?}");
+            }
+        }
     }
 
     #[test]

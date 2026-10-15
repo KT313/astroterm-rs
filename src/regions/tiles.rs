@@ -1,9 +1,11 @@
-//! The geometry of a sky tile: a gnomonic (flat tangent-plane) image of fixed size around a region's centre,
-//! sky-fixed, covering the region's bounding cap plus the star drift margin plus the glyph radius. The size is the
-//! same for every region (`TILE_EDGE_TEXELS` per edge, owner's decision of 2026-10-12), so the texels per radian
-//! follow from the region's cap and never from the view. Texel coordinates follow the screen's convention: texel
-//! `i` is centred at pixel coordinate `i`, columns grow the way screen columns grow to the right, rows grow
-//! downwards from celestial north.
+//! The geometry of a sky tile: a stereographic image of fixed size around a region's centre, sky-fixed, covering
+//! the region's bounding cap plus the star drift margin plus the glyph radius. The size is the same for every
+//! region (`TILE_EDGE_TEXELS` per edge, owner's decision of 2026-10-12), so the texels per radian follow from the
+//! region's cap and never from the view. Stereographic rather than gnomonic (owner's decision of 2026-10-15)
+//! because the screen is stereographic too: a rotation of the sky then maps tile to screen by a closed formula,
+//! which is what lets step 5 pull every screen pixel back to its texel. Texel coordinates follow the screen's
+//! convention: texel `i` is centred at pixel coordinate `i`, columns grow the way screen columns grow to the
+//! right, rows grow downwards from celestial north.
 use crate::astro::Vector3;
 use crate::constants::{STELLAR_DRIFT_MARGIN, TILE_EDGE_TEXELS};
 use crate::model::region_caps;
@@ -15,7 +17,7 @@ pub struct TileGeometry {
     center: Vector3,                        // unit, catalog axes: the region centre, at the tile's middle
     east: Vector3,                          // tangent axis of growing columns: as seen from inside the sphere with north up, screen right
     north: Vector3,                         // tangent axis of shrinking rows: celestial north at the centre
-    density: f64,                           // texels per radian at the centre (per tangent-plane unit)
+    density: f64,                           // texels per radian at the centre: 2·density·tan(θ/2) texels at angle θ
 }
 
 impl TileGeometry {
@@ -28,11 +30,13 @@ impl TileGeometry {
         let north = (pole - center * pole.dot(center)).normalized();
         let east = center.cross(north);                                                    // right = forward × up, as the camera does it
         let reach = Self::middle() - STAR_GLYPH_RADIUS as f64;                             // texels from the middle to where a glyph may still fit
-        let density = reach / (cap.radius + STELLAR_DRIFT_MARGIN).tan();
+        let density = reach / (2.0 * ((cap.radius + STELLAR_DRIFT_MARGIN) / 2.0).tan());
         Self { center, east, north, density }
     }
 
     pub fn center(&self) -> Vector3 { self.center }
+    pub fn east(&self) -> Vector3 { self.east }
+    pub fn north(&self) -> Vector3 { self.north }
     pub fn density(&self) -> f64 { self.density }
     pub const fn size() -> usize { TILE_EDGE_TEXELS }
     pub const fn texel_count() -> usize { TILE_EDGE_TEXELS * TILE_EDGE_TEXELS }
@@ -40,45 +44,22 @@ impl TileGeometry {
     pub fn middle() -> f64 { (TILE_EDGE_TEXELS as f64 - 1.0) / 2.0 }
 
     /// Tile pixel coordinates (column, row; texel centres at integers) of a catalog direction of any length, or
-    /// `None` for a direction at or behind the tangent plane.
+    /// `None` at the point opposite the centre, which the stereographic projection sends to infinity.
     pub fn project(&self, direction: Vector3) -> Option<(f64, f64)> {
+        let length = direction.length();
         let depth = direction.dot(self.center);
-        if depth <= 1e-9 { return None; }
-        let scale = self.density / depth;
+        if length + depth <= 1e-9 * length { return None; }
+        let scale = 2.0 * self.density / (length + depth);
         let middle = Self::middle();
         Some((middle + direction.dot(self.east) * scale, middle - direction.dot(self.north) * scale))
-    }
-
-    /// Direction, first derivatives and mixed derivative over the full 0..1 tile square.
-    pub fn direction_derivatives(&self, column: f64, row: f64) -> crate::astro::DirectionDerivatives {
-        // The tangent plane is linear; normalization supplies the spherical mixed derivative.
-        let middle = Self::middle();
-        let scale = TILE_EDGE_TEXELS as f64 / self.density;
-        crate::astro::DirectionDerivatives {
-            value: self.center + self.east * ((column - middle) / self.density) + self.north * ((middle - row) / self.density),
-            along_u: self.east * scale,
-            along_v: self.north * -scale,
-            mixed: Vector3::default(),
-        }.normalize()
-    }
-
-    /// Direction and derivatives per unit tile coordinate (0..1 across the full image). This supplies edge
-    /// tangents for a curved forward warp without evaluating any extra positions on the sky.
-    pub fn direction_tangents(&self, column: f64, row: f64) -> (Vector3, [Vector3; 2]) {
-        // Construct the tangent-plane vector at the requested corner and its two constant derivatives.
-        let middle = Self::middle();
-        let vector = self.center + self.east * ((column - middle) / self.density) + self.north * ((middle - row) / self.density);
-        let scale = TILE_EDGE_TEXELS as f64 / self.density;
-        let tangents = [self.east * scale, self.north * -scale];
-
-        // Account for the normalization that places this vector on the unit sphere.
-        crate::astro::normalize_direction_tangents(vector, tangents)
     }
 
     /// The unit catalog direction at tile pixel coordinates (column, row): the inverse of `project`.
     pub fn direction_of(&self, column: f64, row: f64) -> Vector3 {
         let middle = Self::middle();
-        (self.center + self.east * ((column - middle) / self.density) + self.north * ((middle - row) / self.density)).normalized()
+        let (x, y) = ((column - middle) / self.density, (middle - row) / self.density);
+        let q = (x * x + y * y) / 4.0;                                                      // tan²(θ/2) at this texel
+        (self.center * (1.0 - q) + self.east * x + self.north * y) * (1.0 / (1.0 + q))     // cos θ along the centre, sin θ across: unit
     }
 }
 
@@ -101,7 +82,14 @@ mod tests {
                 assert!((back.0 - c).abs() < 1e-7 && (back.1 - r).abs() < 1e-7, "{back:?} != ({c}, {r})");
             }
             assert_eq!(tile.project(tile.center() * -1.0), None);
-            assert_eq!(tile.project(tile.east), None);                                      // on the tangent plane's horizon
+            let (column, row) = tile.project(tile.east).unwrap();                           // 90° from the centre: 2·density texels out
+            assert!((column - TileGeometry::middle() - 2.0 * tile.density()).abs() < 1e-9 && (row - TileGeometry::middle()).abs() < 1e-9);
+            for theta in [0.01_f64, 0.3, 1.5, 2.5] {                                          // stereographic: 2·density·tan(θ/2) texels at angle θ
+                let (column, row) = tile.project(tile.center() * theta.cos() + tile.north * theta.sin()).unwrap();
+                assert!((column - TileGeometry::middle()).abs() < 1e-9, "{theta}");
+                assert!((TileGeometry::middle() - row - 2.0 * tile.density() * (theta / 2.0).tan()).abs() < 1e-9, "{theta}");
+            }
+            assert!((tile.direction_of(0.0, 0.0).length() - 1.0).abs() < 1e-12);
         }
     }
 
@@ -124,9 +112,9 @@ mod tests {
             let region = hash_direction(GRID_DEPTH, direction);
             let tile = TileGeometry::new(region);
             let cap = region_caps()[region];
-            let limit = (cap.radius + STELLAR_DRIFT_MARGIN).tan();
+            let (sine, cosine) = (cap.radius + STELLAR_DRIFT_MARGIN).sin_cos();
             for axis in [tile.east, tile.north, tile.east * -1.0, tile.north * -1.0] {
-                let edge = (cap.center + axis * limit).normalized();                       // a star at the covered angular limit
+                let edge = cap.center * cosine + axis * sine;                               // a star at the covered angular limit
                 let (column, row) = tile.project(edge).unwrap();
                 let reach = STAR_GLYPH_RADIUS as f64;
                 assert!(column >= reach - 1e-6 && column <= 63.0 - reach + 1e-6 && row >= reach - 1e-6 && row <= 63.0 - reach + 1e-6, "{column}, {row}");

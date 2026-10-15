@@ -13,12 +13,13 @@ pub(super) struct TileSampler {
     lit: [u64; TILE_EDGE_TEXELS],           // one bit per texel per row: which texels hold light
     lit_columns: u64,                       // the rows combined: which columns hold light anywhere
     lit_rows: u64,                          // one bit per row that holds light anywhere
+    near: [u64; TILE_EDGE_TEXELS],          // lit bits spread two texels each way: whether light lies within a small box
 }
 
 impl TileSampler {
     pub(super) fn new(edge: usize) -> Self {
         assert!(edge <= TILE_EDGE_TEXELS && edge <= 64, "lit rows are one word per tile row");
-        Self { edge, lit: [0; TILE_EDGE_TEXELS], lit_columns: 0, lit_rows: 0 }
+        Self { edge, lit: [0; TILE_EDGE_TEXELS], lit_columns: 0, lit_rows: 0, near: [0; TILE_EDGE_TEXELS] }
     }
 
     /// Adopt a tile's lit rows, replacing the preceding tile's masks completely.
@@ -27,7 +28,26 @@ impl TileSampler {
         self.lit[..self.edge].copy_from_slice(lit_rows);
         self.lit_columns = lit_rows.iter().fold(0, |all, &row| all | row);
         self.lit_rows = lit_rows.iter().enumerate().fold(0, |any, (index, &row)| if row != 0 { any | 1 << index } else { any });
+        for (index, near) in self.near[..self.edge].iter_mut().enumerate() {
+            let spread = |bits: u64| bits | bits << 1 | bits >> 1 | bits << 2 | bits >> 2;
+            *near = lit_rows[index.saturating_sub(2)..(index + 3).min(self.edge)].iter().fold(0, |all, &row| all | spread(row));
+        }
+    }
 
+    /// Whether any texel within two of the texel under `position` holds light: a quick rejection for filter
+    /// boxes of up to three texels, whose texels all lie within that reach.
+    #[inline]
+    pub(super) fn may_hold_light_near(&self, position: [f64; 2]) -> bool {
+        let column = ((position[0] + 0.5) as usize).min(self.edge - 1);
+        let row = ((position[1] + 0.5) as usize).min(self.edge - 1);
+        self.near[row] >> column & 1 != 0
+    }
+
+    /// Whether any texel in tile rows `first..=last` holds light.
+    #[inline]
+    pub(super) fn any_light_in_rows(&self, first: usize, last: usize) -> bool {
+        let last = last.min(self.edge - 1);
+        first <= last && (u64::MAX >> (63 - (last - first))) << first & self.lit_rows != 0
     }
 
     /// Conservative rejection before clipping an outline pixel. A clipped fragment may move its sampling
@@ -175,6 +195,21 @@ mod tests {
                 assert!((f64::from(actual) - expected).abs() < 1e-6, "{position:?} {footprint:?}: {actual} != {expected}");
             }
         }
+    }
+
+    #[test]
+    fn the_near_mask_covers_two_texels_around_every_lit_one() {
+        let mut texels = vec![Texel::default(); 16];
+        texels[5] = Texel { rgb: [0.5, 0.5, 0.5], opacity: 0.5 };                            // row 1, column 1
+        let sampler = sampler(&texels);
+        for row in 0..4 {
+            for column in 0..4 {
+                let near = (row - 1_i32).abs() <= 2 && (column - 1_i32).abs() <= 2;
+                assert_eq!(sampler.may_hold_light_near([column as f64, row as f64]), near, "{column} {row}");
+            }
+        }
+        assert!(sampler.may_hold_light_near([3.49, 3.49]) && sampler.may_hold_light_near([-0.5, -0.5]));
+        assert!(!self::sampler(&vec![Texel::default(); 16]).may_hold_light_near([1.0, 1.0]));
     }
 
     #[test]

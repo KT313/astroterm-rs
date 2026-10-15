@@ -1,65 +1,9 @@
-//! Shared bounded tessellation and coverage for replaceable forward curved-patch backends.
-use crate::constants::{CURVED_PATCH_FLATNESS_PIXELS, CURVED_PATCH_MAX_SUBDIVISIONS, TILE_EDGE_TEXELS};
-use crate::model::{Data, ProjectionKind, Texel, View};
-use crate::observation::Observation;
-use crate::projection::{CartesianCamera, prepare_camera};
-use crate::regions::{TileGeometry, blend_star};
-use crate::selection::Selected;
-use crate::time::StepTimes;
-use super::raster::Point;
+//! Textured triangles of the equidistant mesh warp: one region's fragments are accumulated in a temporary
+//! buffer with exact pixel coverage and blended into the star square once.
+use crate::model::Texel;
+use crate::regions::blend_star;
+use super::mesh::{Point, TextureMapping};
 use super::tile_sampling::TileSampler;
-use super::tile_warp::{TextureMapping, is_convex};
-
-/// A fitted mapping from tile coordinates (0..1) to screen coordinates. Evaluating it never projects sky rays.
-pub(super) trait CurvedPatch {
-    fn evaluate(&self, u: f64, v: f64) -> Point;
-}
-
-/// Forward-render stereographic tiles as curved patches; equidistant keeps the existing straight renderer.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn project_curved_tiles<P: CurvedPatch>(
-    size: usize, data: &Data, selected: &Selected, observation: &Observation, view: &View, times: &mut StepTimes,
-    build_patch: fn(&TileGeometry, &Observation, CartesianCamera, usize) -> Option<P>, mesh_stage: &'static str,
-) -> Vec<Texel> {
-    // Limit this prototype to stereographic views without changing the existing -e behavior.
-    if view.projection != ProjectionKind::Stereographic {
-        return super::tile_warp::project_whole_tiles(size, data, selected, observation, view, times);
-    }
-
-    // Allocate a square image and prepare the camera once for every selected region.
-    times.measure("Projection.Star buffer allocation");
-    let mut stars = vec![Texel::default(); size.checked_mul(size).expect("drawing area pixel count overflow")];
-    if size < 2 { return stars; }
-    times.measure("Projection.Camera preparation");
-    let camera = prepare_camera(view);
-    let mut sampler = TileSampler::new(TILE_EDGE_TEXELS);
-    let mut mesh = Vec::new();
-    let mut pixels = RegionPixels::default();
-
-    // Fit one patch per region, then reuse temporary mesh and pixel storage for the next region.
-    for &region in &selected.regions {
-        let image = &data.star_regions[region].merged_tile;
-        if image.is_empty() || image.lit_rows().iter().all(|&row| row == 0) { continue; }
-        times.measure("Projection.Tile geometry");
-        let geometry = TileGeometry::new(region);
-        times.measure("Projection.Tile corner projection");
-        let patch = build_patch(&geometry, observation, camera, size);
-        let Some(patch) = patch else { continue; };
-        times.measure(mesh_stage);
-        if !build_mesh(&patch, &mut mesh) { continue; }
-        times.measure("Projection.Tile filter preparation");
-        sampler.prepare(image.lit_rows());
-        times.measure("Projection.Tile rasterization");
-        pixels.prepare(&mesh, size);
-        for triangle in &mesh {
-            pixels.draw_triangle(triangle, &sampler, image.texels());
-        }
-        times.measure("Projection.Tile composition");
-        pixels.composite(&mut stars, size);
-    }
-    times.measure("Projection");
-    stars
-}
 
 pub(super) struct Triangle {
     pub(super) screen: [Point; 3],
@@ -76,53 +20,7 @@ impl Triangle {
     }
 }
 
-/// Subdivide the polynomial patch until sampled flatness is sufficient or the bounded work limit is reached.
-/// This controls rasterization of the fitted patch; it is not an error guarantee against the true projection.
-pub(super) fn build_mesh(patch: &impl CurvedPatch, mesh: &mut Vec<Triangle>) -> bool {
-    // Double a uniform grid so adjacent cells always share the same edge vertices (no T-junctions).
-    let mut divisions = 1;
-    loop {
-        mesh.clear();
-        let mut maximum_error: f64 = 0.0;
-        let mut winding: f64 = 0.0;
-        for row in 0..divisions {
-            for column in 0..divisions {
-                let (u0, u1) = (column as f64 / divisions as f64, (column + 1) as f64 / divisions as f64);
-                let (v0, v1) = (row as f64 / divisions as f64, (row + 1) as f64 / divisions as f64);
-                let coordinates = [[u0, v0], [u1, v0], [u1, v1], [u0, v1]];
-                let corners = coordinates.map(|[u, v]| patch.evaluate(u, v));
-                if !is_convex(corners) { mesh.clear(); return false; }
-                let turn = cross(corners[0], corners[1], corners[2]);
-                if winding != 0.0 && winding.signum() != turn.signum() { mesh.clear(); return false; }
-                winding = turn;
-
-                // Check quarter points as well as midpoints: an S-shaped edge can have a straight midpoint.
-                for (start, end) in [(0, 1), (1, 2), (2, 3), (3, 0), (0, 2)] {
-                    for fraction in [0.25, 0.5, 0.75] {
-                        let interpolate = |first: Point, second: Point| -> Point {
-                            std::array::from_fn(|axis| (1.0 - fraction) * first[axis] + fraction * second[axis])
-                        };
-                        let [u, v] = interpolate(coordinates[start], coordinates[end]);
-                        let curved = patch.evaluate(u, v);
-                        let straight = interpolate(corners[start], corners[end]);
-                        maximum_error = maximum_error.max((curved[0] - straight[0]).hypot(curved[1] - straight[1]));
-                    }
-                }
-
-                // Texture coordinates stay in the original full tile, including across cell boundaries.
-                let texture = coordinates.map(|point| point.map(|value| value * TILE_EDGE_TEXELS as f64));
-                for indices in [[0, 1, 2], [0, 2, 3]] {
-                    let screen = indices.map(|index| corners[index]);
-                    let Some(triangle) = Triangle::new(screen, indices.map(|index| texture[index])) else { mesh.clear(); return false; };
-                    mesh.push(triangle);
-                }
-            }
-        }
-        if maximum_error <= CURVED_PATCH_FLATNESS_PIXELS || divisions >= CURVED_PATCH_MAX_SUBDIVISIONS { return true; }
-        divisions = (divisions * 2).min(CURVED_PATCH_MAX_SUBDIVISIONS);
-    }
-}
-
+#[cfg(test)]
 fn cross(origin: Point, first: Point, second: Point) -> f64 {
     // Signed twice-area also identifies which side of an oriented edge a point lies on.
     (first[0] - origin[0]) * (second[1] - origin[1]) - (first[1] - origin[1]) * (second[0] - origin[0])
@@ -297,6 +195,7 @@ fn clip_outline_pixel(triangle: [Point; 3], pixel: Point) -> Option<PixelFragmen
 mod tests {
     use super::*;
     use super::super::tile_sampling::lit_rows_of;
+    use crate::constants::TILE_EDGE_TEXELS;
 
     #[test]
     fn row_spans_match_the_original_clipper_for_sparse_dense_and_thin_triangles() {

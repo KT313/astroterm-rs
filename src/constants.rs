@@ -115,10 +115,6 @@ pub const MAST_REQUEST_RETRIES: usize = 3;                                      
 
 pub const CACHE_CHUNK_BYTES: usize = 4 * 1024 * 1024;                                    // compress prepared data in bounded four-megabyte pieces
 
-// Curved forward tile prototype: limits the tessellation of the fitted patch, not its error against the sky.
-pub const CURVED_PATCH_FLATNESS_PIXELS: f64 = 0.25;                                            // sampled deviation from flat triangles before subdivision
-pub const CURVED_PATCH_MAX_SUBDIVISIONS: usize = 16;                                           // maximum cells along either tile edge
-
-// Adaptive forward prototype: actual sky projections are reused only while constructing one region's mesh.
+// Adaptive forward mesh of the equidistant view: actual sky projections are reused only while constructing one region's mesh.
 pub const ADAPTIVE_WARP_ERROR_PIXELS: f64 = 0.25;                                       // sampled screen-position deviation before refinement
 pub const ADAPTIVE_WARP_MAX_SUBDIVISIONS: usize = 64;                                   // maximum uniform cells per axis in a region
