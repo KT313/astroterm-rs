@@ -1,5 +1,4 @@
 use super::*;
-use astroterm::astro::J2000;
 use astroterm::cli::{Arguments, build_config};
 use astroterm::model::{ProjectionKind, ViewCenter};
 use astroterm::observation::observe;
@@ -32,8 +31,6 @@ fn controls_change_the_view_and_the_clock_and_quit_is_detected() {
     apply_frame_controls(&FrameInput { controls: vec![Control::ResetView], resized: false }, &config.view, &mut view, &mut clock);
     assert_eq!(view, config.view);
     assert!(stop_on_quit(&FrameInput { controls: vec![Control::PanLeft, Control::Quit], resized: false }));
-    assert_eq!(resolve_frame_time(true, J2000, &clock).utc, J2000);                                  // single-frame mode shows the requested epoch
-    assert_eq!(resolve_frame_time(false, J2000, &clock).utc, config.simulation.start_julian_date);
 }
 
 #[test]

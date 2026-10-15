@@ -74,9 +74,8 @@ fn terminal_controls_abort_and_existing_report_files_are_preserved() {
     let path = root.path().join("capture.jsonl");
     config.frame_benchmark.as_mut().unwrap().report = path.clone();
     let mut session = open_frame_benchmark(&config).unwrap();
-    let mut clock = SimulationClock::start_fixed_step(2451545.0, 0.0);
     let input = FrameInput { controls: Vec::new(), resized: true };
-    assert!(prepare_benchmark_frame(&session, &input, &mut clock).is_err());
+    assert!(validate_benchmark_input(&session, &input).is_err());
     assert!(finish_benchmark_report(&mut session, Ok(())).is_err());
     let bytes = std::fs::read(&path).unwrap();
     assert!(open_frame_benchmark(&config).is_err());

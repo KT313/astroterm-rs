@@ -98,12 +98,21 @@ pub(crate) fn begin_benchmark_capture(session: &mut Option<BenchmarkSession>, co
     Ok(())
 }
 
-pub(crate) fn prepare_benchmark_frame(session: &Option<BenchmarkSession>, input: &FrameInput, clock: &mut SimulationClock) -> io::Result<()> {
-    if let Some(session) = session {
-        if input.resized || !input.controls.is_empty() { return Err(io::Error::new(io::ErrorKind::Interrupted, "benchmark interrupted by terminal input or resize")); }
-        clock.set_frame_index(session.completed)?;
+/// Reject controls and resizes during a benchmark, before either can change the workload.
+pub(crate) fn validate_benchmark_input(session: &Option<BenchmarkSession>, input: &FrameInput) -> io::Result<()> {
+    // Interactive runs accept input; benchmarks require unchanged controls and terminal dimensions.
+    if session.is_none() { return Ok(()); }
+    if input.resized || !input.controls.is_empty() {
+        return Err(io::Error::new(io::ErrorKind::Interrupted, "benchmark interrupted by terminal input or resize"));
     }
     Ok(())
+}
+
+/// Set a benchmark's next frame date without changing the clock during interactive runs.
+pub(crate) fn set_benchmark_frame_time(session: &Option<BenchmarkSession>, clock: &mut SimulationClock) -> io::Result<()> {
+    // Completed frames determine the next zero-based frame index and its scheduled simulation date.
+    let Some(session) = session else { return Ok(()); };
+    clock.set_frame_index(session.completed)
 }
 
 pub(crate) fn validate_benchmark_time(session: &Option<BenchmarkSession>, time: FrameTime) -> io::Result<()> {

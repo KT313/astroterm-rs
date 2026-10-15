@@ -61,7 +61,7 @@ fn render_in_terminal(config: &Config, data: &mut Data, mut startup_timing: Star
     // Only the initialized manager can enter the loop; return its measurements after rendering.
     let frame_step_seconds = config.frame_benchmark.as_ref().map(|benchmark| benchmark.step_seconds);
     let mut time_manager = startup_timing.start_simulation(
-        config.simulation.start_julian_date, config.simulation.speed, config.fps, frame_step_seconds,
+        config.simulation.start_julian_date, config.simulation.speed, config.fps, frame_step_seconds, config.debug_singleframe,
     );
     let result = run_frame_loop(config, data, &mut display, &mut frame, &mut panel, &mut time_manager, benchmark);
     (result, time_manager.step_times)

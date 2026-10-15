@@ -4,6 +4,7 @@
 use std::io;
 use std::thread;
 
+use astroterm::astro::FrameTime;
 use astroterm::model::{Config, Data};
 use astroterm::observation::{Observation, observe};
 use astroterm::points::{PointInputs, draw_points};
@@ -12,52 +13,61 @@ use astroterm::projection::{Frame, project_stars_to_screen};
 use astroterm::regions::{RefreshReport, refresh_regions};
 use astroterm::selection::{Selected, select_regions};
 use astroterm::solar_system::simulate_solar_system;
-use astroterm::terminal::poll_frame_input;
 use astroterm::time::{StepTimes, TimeManager};
 
 use crate::helpers::{
-    BenchmarkSession, Panel, PanelFrame, apply_frame_controls, begin_frame_diagnostics, capture_display,
-    complete_benchmark_frame, finish_frame_diagnostics, prepare_benchmark_frame, resolve_frame_time, stop_on_quit, validate_benchmark_time,
+    BenchmarkSession, Panel, PanelFrame, handle_input, begin_frame_diagnostics, capture_display,
+    complete_benchmark_frame, finish_frame_diagnostics, validate_benchmark_time,
 };
 
 /// Draw frames at the configured rate until the user quits. Keys change the view and the simulation clock.
-pub(super) fn run_frame_loop(config: &Config, data: &mut Data, display: &mut Display, frame: &mut Frame, panel: &mut Panel, time_manager: &mut TimeManager, benchmark: &mut Option<BenchmarkSession>) -> io::Result<()> {
-    let (observer, atmosphere, settings) = (config.simulation.observer, config.simulation.refraction, &config.render);
-    let mut view = config.view;
+pub(super) fn run_frame_loop(
+    config: &Config,
+    data: &mut Data,
+    display: &mut Display,
+    frame: &mut Frame,
+    panel: &mut Panel,
+    time_manager: &mut TimeManager,
+    benchmark: &mut Option<BenchmarkSession>
+)-> io::Result<()> {
 
-    time_manager.step_times.reset_frame_timings(); // keep setup time out of the displayed frame timings
+    let mut current_view = config.view;
+    time_manager.step_times.reset_frame_timings();
 
     loop {
         let frame_start = begin_frame_diagnostics(&mut time_manager.step_times);
 
-        // input: keys, resize; may change the view or the clock
-        let input = poll_frame_input(config.terminal.quit_on_any_key)?;
-        prepare_benchmark_frame(benchmark, &input, &mut time_manager.clock)?;                                                 // a benchmark rejects input and sets the frame's date
-        if stop_on_quit(&input) { return Ok(()); }
-        apply_frame_controls(&input, &config.view, &mut view, &mut time_manager.clock);
-        if input.resized { display.fit(frame)?; }
-        let time = resolve_frame_time(config.debug_singleframe, config.simulation.start_julian_date, &time_manager.clock);
+        let should_quit = handle_input(config, &mut current_view, &mut time_manager.clock, display, frame, benchmark)?;
+        if should_quit { return Ok(()); }
+
+        // Read the selected simulation date and derive the time scales used by the astronomy calculations.
+        let simulation_date = time_manager.get_current_simulation_time();
+        let time = FrameTime::from_utc(simulation_date);
         validate_benchmark_time(benchmark, time)?;
 
-        // Run the seven steps directly; each checkpoint finishes the preceding interval.
         time_manager.measure("Solar system");
         let solar_system = simulate_solar_system(data, time, &mut time_manager.step_times);
+
         time_manager.measure("Observation");
-        let observation = observe(&observer, atmosphere, &view, time, &mut time_manager.step_times);
+        let observation = observe(&config.simulation.observer, config.simulation.refraction, &current_view, time, &mut time_manager.step_times);
+
         time_manager.measure("Selection");
         let selected = select_regions(&data.star_regions, &observation, &mut time_manager.step_times);
+
         time_manager.measure("Regions");
-        let refreshed = refresh_regions(data, &selected, time, &view, settings, &mut time_manager.step_times);
+        let refreshed = refresh_regions(data, &selected, time, &current_view, &config.render, &mut time_manager.step_times);
+
         time_manager.measure("Projection");
-        project_stars_to_screen(frame, data, &selected, &observation, &view, &mut time_manager.step_times);
+        project_stars_to_screen(frame, data, &selected, &observation, &current_view, &mut time_manager.step_times);
+
 
         // Include the panel and trace descriptions in the work needed to prepare point overlays.
         time_manager.measure("Points");
         describe_steps(&mut time_manager.step_times, &observation, &selected, refreshed, data);
         let info = display.info();
-        let lines = panel.lines(&PanelFrame { time, clock: &time_manager.clock, solar_system: &solar_system, selected: &selected, refreshed, display: info }, &observer, &view, data, &time_manager.step_times);
+        let lines = panel.lines(&PanelFrame { time, clock: &time_manager.clock, solar_system: &solar_system, selected: &selected, refreshed, display: info }, &config.simulation.observer, &current_view, data, &time_manager.step_times);
         let inputs = PointInputs { solar_system: &solar_system, data, selected: &selected, panel: lines, notice: transport_notice(&info) };
-        draw_points(frame, &inputs, &observation, &view, settings, &mut time_manager.step_times);
+        draw_points(frame, &inputs, &observation, &current_view, &config.render, &mut time_manager.step_times);
 
         // Stop timing on both successful and failed writes, before reporting or sleeping.
         time_manager.measure("Present");

@@ -1,6 +1,6 @@
 //! Optional trace descriptions and reporting after terminal cleanup.
 mod benchmark;
-pub(crate) use benchmark::{BenchmarkSession, open_frame_benchmark, begin_benchmark_capture, prepare_benchmark_frame,
+pub(crate) use benchmark::{BenchmarkSession, open_frame_benchmark, begin_benchmark_capture, validate_benchmark_input, set_benchmark_frame_time,
     validate_benchmark_time, complete_benchmark_frame, finish_benchmark_report};
 use std::fmt::Display;
 use std::io;

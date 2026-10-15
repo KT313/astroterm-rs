@@ -4,24 +4,52 @@ use astroterm::astro::{FrameTime, Observer, name_moon_phase};
 use astroterm::controls::{Control, apply_control};
 use astroterm::metadata::{MetadataField, ObserverTimeZone, append_step_time_fields, fill_metadata_fields, format_star_count, resolve_observer_timezone};
 use astroterm::model::{Config, Data, View};
-use astroterm::present::{DisplayInfo, describe_compression};
+use astroterm::present::{Display, DisplayInfo, describe_compression};
+use astroterm::projection::Frame;
 use astroterm::regions::RefreshReport;
 use astroterm::selection::Selected;
 use astroterm::solar_system::SolarSystem;
-use astroterm::terminal::FrameInput;
+use astroterm::terminal::{FrameInput, poll_frame_input};
 use astroterm::time::StepTimes;
 use ratatui_image::picker::ProtocolType;
+use std::io;
+
+use super::{BenchmarkSession, set_benchmark_frame_time, validate_benchmark_input};
+
+/// Handle this frame's input and benchmark clock. Return true when the frame loop should quit.
+pub(crate) fn handle_input(
+    config: &Config,
+    current_view: &mut View,
+    clock: &mut SimulationClock,
+    display: &mut Display,
+    frame: &mut Frame,
+    benchmark: &Option<BenchmarkSession>,
+) -> io::Result<bool> {
+    // Read pending key presses and terminal resize events.
+    let input = poll_frame_input(config.terminal.quit_on_any_key)?;
+
+    // Benchmarks reject input changes before setting the scheduled date for this frame.
+    validate_benchmark_input(benchmark, &input)?;
+    set_benchmark_frame_time(benchmark, clock)?;
+
+    // Stop on quit before applying other controls to the current view or simulation clock.
+    if stop_on_quit(&input) {
+        return Ok(true);
+    }
+    apply_frame_controls(&input, &config.view, current_view, clock);
+
+    // Resize the drawing buffers when the terminal dimensions have changed.
+    if input.resized {
+        display.fit(frame)?;
+    }
+    Ok(false)
+}
 
 /// Apply a frame's controls to the view and the clock. The caller checks for quit first.
 pub(crate) fn apply_frame_controls(input: &FrameInput, initial_view: &View, view: &mut View, clock: &mut SimulationClock) {
     for &control in &input.controls {
         apply_control(control, view, clock, initial_view);
     }
-}
-
-/// Use the exact requested epoch for single-frame diagnostics, otherwise read the running clock.
-pub(crate) fn resolve_frame_time(single_frame: bool, start_julian_date: f64, clock: &SimulationClock) -> FrameTime {
-    FrameTime::from_utc(if single_frame { start_julian_date } else { clock.julian_date() })
 }
 
 /// Stop on a quit key without processing any other control.

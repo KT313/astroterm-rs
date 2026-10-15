@@ -6,7 +6,7 @@ mod time;
 #[test]
 fn startup_and_frame_timing_work_without_application_types() {
     let startup = time::StartupTiming::new(true, true);
-    let mut manager = startup.start_simulation(2451545.0, 1.0, 60, Some(0.0));
+    let mut manager = startup.start_simulation(2451545.0, 1.0, 60, Some(0.0), false);
     manager.step_times.begin_frame();
     manager.measure("Frame.Work");
     manager.measure("END");
