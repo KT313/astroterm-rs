@@ -3,6 +3,7 @@
 use crate::time::StepTimes;
 mod geometry;
 mod pixel_warp;
+mod shared_screen;
 mod tile_sampling;
 mod frame;
 

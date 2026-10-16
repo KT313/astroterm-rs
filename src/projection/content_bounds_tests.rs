@@ -15,7 +15,7 @@ fn merge_image(texels: Vec<Texel>) -> RegionTileCache {
     image
 }
 
-pub(super) fn build_dense_image(region: usize, fill_square: bool) -> RegionTileCache {
+pub(in crate::projection) fn build_dense_image(region: usize, fill_square: bool) -> RegionTileCache {
     // Fill the region's own cell, leaving its tile padding empty, or fill the whole square for a stress case.
     let geometry = TileGeometry::new(region);
     let edge = TILE_EDGE_TEXELS;
@@ -53,6 +53,7 @@ fn compare_with_full_disc(region: usize, image: &RegionTileCache, observation: &
     let to_tile = axes.compose(observation.to_catalog);
     let aberration_horizon = observation.to_horizon.apply(observation.observer.velocity * (1.0 / LIGHT_SPEED_AU_DAY));
     let reference = RegionMapping {
+        tile_axes: axes,
         to_tile,
         aberration: to_tile.apply(aberration_horizon),
         aberration_horizon,

@@ -68,6 +68,7 @@ pub const STAR_BRIGHTNESS_ZOOM_POWER: f64 = 0.8;                                
 pub const MIN_STAR_PIXEL_OPACITY: f32 = 0.05;                                             // raise nonempty star pixels to this opacity after all stars are blended
 pub const TILE_EDGE_TEXELS: usize = 64;                                                   // every sky tile (one per speed group and per region) is this many texels wide and high, whatever the zoom
 pub const STEREOGRAPHIC_ROW_REBASE_PIXELS: usize = 512;                                  // restart transformed row coefficients to bound roundoff, tested through 8192-pixel rows
+pub const SHARED_SCREEN_STRIP_ROWS: usize = 32;                                          // reuse corrected screen directions within this many rows at a time
 pub const DYNAMIC_NAME_COUNT: usize = 5;                                                  // label at most this many visible stars; planets and Moon are separate
 pub const MAX_CACHED_GLYPHS: usize = 512;                                                 // maximum saved character images before clearing the glyph cache
 pub const METADATA_PANEL_WIDTH: usize = 45;                                               // width of the metadata text panel, in character columns

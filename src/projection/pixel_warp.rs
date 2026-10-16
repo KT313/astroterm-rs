@@ -8,7 +8,7 @@
 //! first-order aberration approximations. Sampling uses box footprints; portions outside a tile are transparent.
 use std::f64::consts::{FRAC_PI_2, PI, SQRT_2, TAU};
 use crate::formulas::{LIGHT_SPEED_AU_DAY, Matrix3, Vector3, apply_refraction, unrefract_direction, Horizontal};
-use crate::constants::{STEREOGRAPHIC_ROW_REBASE_PIXELS, TILE_EDGE_TEXELS};
+use crate::constants::{SHARED_SCREEN_STRIP_ROWS, STEREOGRAPHIC_ROW_REBASE_PIXELS, TILE_EDGE_TEXELS};
 use crate::model::{Region, ProjectionKind, Texel, View};
 #[cfg(test)]
 use crate::model::Data;
@@ -19,6 +19,7 @@ use crate::regions::{TileGeometry, blend_star};
 use crate::selection::Selected;
 use crate::time::StepTimes;
 use super::tile_sampling::TileSampler;
+use super::shared_screen::project_shared_tiles;
 
 pub(super) type Point = [f64; 2];
 
@@ -30,6 +31,18 @@ pub(super) fn project_tiles_by_pixel(size: usize, star_regions: &[Region], selec
     times.measure("Projection.Camera preparation");
     let screen = Screen::new(prepare_camera(view), size);
 
+    // Share expensive screen corrections where several region images can use the same pixel direction.
+    if observation.atmosphere || view.projection == ProjectionKind::Equidistant {
+        project_shared_tiles(&mut stars, &screen, star_regions, selected_regions, observation, times, SHARED_SCREEN_STRIP_ROWS);
+    } else {
+        draw_unshared_tiles(&mut stars, &screen, star_regions, selected_regions, observation, times);
+    }
+    times.measure("Projection");
+    stars
+}
+
+/// Draw regions independently using their transformed or general screen rows.
+pub(super) fn draw_unshared_tiles(stars: &mut [Texel], screen: &Screen, star_regions: &[Region], selected_regions: &[usize], observation: &Observation, times: &mut StepTimes) {
     // One sampler for every region; no projected result is cached between frames.
     let mut sampler = TileSampler::new(TILE_EDGE_TEXELS);
 
@@ -40,14 +53,12 @@ pub(super) fn project_tiles_by_pixel(size: usize, star_regions: &[Region], selec
         times.measure("Projection.Tile geometry");
         let geometry = TileGeometry::new(region);
         times.measure("Projection.Region mapping");
-        let Some(mapping) = RegionMapping::new(&geometry, observation, &screen, image.content_radius) else { continue; };
+        let Some(mapping) = RegionMapping::new(&geometry, observation, screen, image.content_radius) else { continue; };
         times.measure("Projection.Tile filter preparation");
         sampler.prepare(image.lit_rows());
         times.measure("Projection.Tile rasterization");
-        draw_region(&mut stars, &mapping, &sampler, image.texels());
+        draw_region(stars, &mapping, &sampler, image.texels());
     }
-    times.measure("Projection");
-    stars
 }
 
 /// Use cached image support only where it is qualified; unknown or invalid data keeps the full tile.
@@ -69,7 +80,7 @@ fn select_content_radius(content_radius: Option<f64>, atmosphere: bool) -> f64 {
 /// linear interpolation stays within 0.02″ of the formula at 360°.
 pub(super) struct Screen {
     camera: CartesianCamera,
-    size: usize,
+    pub(super) size: usize,
     radius: f64,                            // the sky disc: (size − 1) / 2 pixels around its centre
     inverse_pixel_scale: f64,               // 1 / (radius × camera scale), reused by every pixel footprint
     equidistant: Vec<[f64; 2]>,             // empty for the stereographic view
@@ -78,6 +89,16 @@ pub(super) struct Screen {
 const EQUIDISTANT_STEPS: usize = 4096;
 
 impl Screen {
+    /// Inclusive pixel columns inside the drawing disc on this row; shared preparation uses the same edge rule as mapping.
+    pub(super) fn disc_columns(&self, row: usize) -> Option<(usize, usize)> {
+        let squared_reach = self.radius * self.radius + 1e-9 - (row as f64 - self.radius).powi(2);
+        if squared_reach < 0.0 { return None; }
+        let half_width = squared_reach.sqrt();
+        let first = (self.radius - half_width).ceil().max(0.0) as usize;
+        let last = (self.radius + half_width).floor().min(self.size as f64 - 1.0) as usize;
+        (first <= last).then_some((first, last))
+    }
+
     pub(super) fn new(camera: CartesianCamera, size: usize) -> Self {
         let radius = (size as f64 - 1.0) * 0.5;
         let equidistant = match camera.kind {
@@ -137,6 +158,7 @@ pub(super) enum Image {
 /// Screen pixel to tile texel for one region and frame.
 #[derive(Clone, Copy)]
 pub(super) struct RegionMapping<'a> {
+    tile_axes: Matrix3,                     // catalog axes → tile axes, for already corrected shared screen directions
     to_tile: Matrix3,                       // horizon axes → tile axes (east, north, centre), aberration undone separately
     aberration: Vector3,                    // the observer's velocity over c in tile axes: subtracted before projecting
     aberration_horizon: Vector3,            // the same in horizon axes, for the length shortcut
@@ -155,7 +177,7 @@ impl<'a> RegionMapping<'a> {
         let to_tile = tile_axes.compose(observation.to_catalog);
         let aberration_horizon = observation.to_horizon.apply(observation.observer.velocity * (1.0 / LIGHT_SPEED_AU_DAY));
         let aberration = to_tile.apply(aberration_horizon);
-        let mapping = |image| Self { to_tile, aberration, aberration_horizon, density: tile.density(), atmosphere: observation.atmosphere, screen, image };
+        let mapping = |image| Self { tile_axes, to_tile, aberration, aberration_horizon, density: tile.density(), atmosphere: observation.atmosphere, screen, image };
 
         // Bound the light's cached support, keeping the whole tile for refraction or missing metadata.
         let support_radius = select_content_radius(content_radius, observation.atmosphere);
@@ -278,6 +300,18 @@ impl<'a> RegionMapping<'a> {
     fn tile_of_overlapping_footprint(&self, numerator: Vector3, spread: f64, factor: f64) -> Option<(Point, f64)> {
         let (w, length, denominator) = self.tile_frame(numerator, spread)?;
         self.project_overlapping_footprint(w, length, denominator, factor)
+    }
+
+    /// Finish a screen mapping whose refraction, aberration and catalog rotation were already calculated.
+    #[inline]
+    pub(super) fn project_corrected_direction(&self, catalog_direction: Vector3, length: f64, factor: f64) -> Option<(Point, f64)> {
+        let direction = self.tile_axes.apply(catalog_direction);
+        let denominator = length + direction.z;
+        if denominator > 1e-9 * length {
+            self.project_overlapping_footprint(direction, length, denominator, factor)
+        } else {
+            None
+        }
     }
 
     /// Project an already transformed direction, keeping the same filter and early rejection in both paths.
@@ -417,7 +451,7 @@ impl<'a> RegionMapping<'a> {
     }
 
     /// Candidate rows including filter support around the region's image, clipped to the square.
-    fn rows(&self) -> (usize, usize) {
+    pub(super) fn rows(&self) -> (usize, usize) {
         let (radius, limit) = (self.screen.radius, self.screen.size as f64 - 1.0);
         let (top, bottom) = match self.image {
             Image::Circle { centre, radius: image_radius } => ((centre[1] - image_radius).ceil().max(0.0), (centre[1] + image_radius).floor().min(limit)),
@@ -430,7 +464,7 @@ impl<'a> RegionMapping<'a> {
 
 /// Pull candidate pixel footprints back to the tile, retaining partial overlaps, and blend source-over. Rows
 /// whose tile rows hold no light are skipped before any pixel is mapped, which is what makes sparse tiles cheap.
-fn draw_region(stars: &mut [Texel], mapping: &RegionMapping<'_>, sampler: &TileSampler, texels: &[Texel]) {
+pub(super) fn draw_region(stars: &mut [Texel], mapping: &RegionMapping<'_>, sampler: &TileSampler, texels: &[Texel]) {
     // Select the row calculation once; refraction and equidistant views keep their general mapping.
     let screen = mapping.screen;
     let use_transformed_rows = screen.camera.kind == ProjectionKind::Stereographic && !mapping.atmosphere;
@@ -486,7 +520,7 @@ fn draw_screen_span(pixels: &mut [Texel], mapping: &RegionMapping<'_>, sampler: 
 
 /// Apply the common light rejection, coordinate convention, box filter and source-over composition.
 #[inline]
-fn sample_and_blend_pixel(pixel: &mut Texel, sampler: &TileSampler, texels: &[Texel], position: Point, footprint: f64) {
+pub(super) fn sample_and_blend_pixel(pixel: &mut Texel, sampler: &TileSampler, texels: &[Texel], position: Point, footprint: f64) {
     // Convert integer-centred tile coordinates to the sampler's edge coordinates exactly once.
     if footprint <= 3.0 && !sampler.may_hold_light_near(position) { return; }
     let sample_position = position.map(|value| value + 0.5);
@@ -563,13 +597,13 @@ impl TransformedRow {
 /// The apparent directions along one screen row, stepped one column at a time by forward differences: the
 /// stereographic numerator and spread are quadratics in the column, the equidistant pixel's squared distance
 /// from the centre is one too (its direction then comes from the table).
-enum RowRays {
+pub(super) enum RowRays {
     Stereographic { numerator: Vector3, numerator_step: Vector3, numerator_curve: Vector3, spread: f64, spread_step: f64, spread_curve: f64 },
     Equidistant { x: f64, x_step: f64, y: f64, squared: f64, squared_step: f64, squared_curve: f64 },
 }
 
 impl RowRays {
-    fn new(screen: &Screen, column: f64, row: f64) -> Self {
+    pub(super) fn new(screen: &Screen, column: f64, row: f64) -> Self {
         // Second differences of a quadratic are constant; the first differences start from the first column.
         match screen.camera.kind {
             ProjectionKind::Stereographic => {
@@ -593,14 +627,14 @@ impl RowRays {
         }
     }
     #[inline]
-    fn current(&self, screen: &Screen) -> (Vector3, f64, f64) {
+    pub(super) fn current(&self, screen: &Screen) -> (Vector3, f64, f64) {
         match *self {
             Self::Stereographic { numerator, spread, .. } => (numerator, spread, 2.0 / spread),
             Self::Equidistant { x, y, squared, .. } => (screen.equidistant_ray(x, y, squared), 1.0, FRAC_PI_2),
         }
     }
     #[inline]
-    fn advance(&mut self) {
+    pub(super) fn advance(&mut self) {
         match self {
             Self::Stereographic { numerator, numerator_step, numerator_curve, spread, spread_step, spread_curve } => {
                 *numerator = *numerator + *numerator_step;
@@ -1147,8 +1181,8 @@ mod tests {
 
 #[cfg(test)]
 #[path = "content_bounds_tests.rs"]
-mod content_bounds_tests;
+pub(super) mod content_bounds_tests;
 
 #[cfg(test)]
 #[path = "row_stepping_tests.rs"]
-mod row_stepping_tests;
+pub(super) mod row_stepping_tests;
