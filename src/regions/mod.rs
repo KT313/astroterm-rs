@@ -11,6 +11,7 @@
 //! The module holds the simulation caches (`simulation`), the star appearance
 //! (`appearance`), the tile geometry (`tiles`) and the image caches (`images`).
 mod appearance;
+mod content_bounds;
 mod images;
 mod simulation;
 mod tiles;

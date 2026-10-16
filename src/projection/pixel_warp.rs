@@ -40,7 +40,7 @@ pub(super) fn project_tiles_by_pixel(size: usize, star_regions: &[Region], selec
         times.measure("Projection.Tile geometry");
         let geometry = TileGeometry::new(region);
         times.measure("Projection.Region mapping");
-        let Some(mapping) = RegionMapping::new(&geometry, observation, &screen) else { continue; };
+        let Some(mapping) = RegionMapping::new(&geometry, observation, &screen, image.content_radius) else { continue; };
         times.measure("Projection.Tile filter preparation");
         sampler.prepare(image.lit_rows());
         times.measure("Projection.Tile rasterization");
@@ -48,6 +48,19 @@ pub(super) fn project_tiles_by_pixel(size: usize, star_regions: &[Region], selec
     }
     times.measure("Projection");
     stars
+}
+
+/// Use cached image support only where it is qualified; unknown or invalid data keeps the full tile.
+fn select_content_radius(content_radius: Option<f64>, atmosphere: bool) -> f64 {
+    // Refraction can bend the image outside the tighter cap; retain its original conservative bounds.
+    let full_radius = (TileGeometry::middle() + 1.0) * SQRT_2;
+    if atmosphere { return full_radius; }
+
+    // Empty images are skipped by the caller. A missing or unusable radius never means an empty image.
+    match content_radius {
+        Some(radius) if radius.is_finite() && radius > 0.0 && radius < full_radius => radius,
+        _ => full_radius,
+    }
 }
 
 /// The camera over the drawing square: the sky disc's radius and, for the equidistant view, cos θ and
@@ -135,7 +148,7 @@ pub(super) struct RegionMapping<'a> {
 
 impl<'a> RegionMapping<'a> {
     /// `None` when the region's image misses the sky disc.
-    pub(super) fn new(tile: &TileGeometry, observation: &Observation, screen: &'a Screen) -> Option<Self> {
+    pub(super) fn new(tile: &TileGeometry, observation: &Observation, screen: &'a Screen, content_radius: Option<f64>) -> Option<Self> {
         // Fold the rotation to catalog axes and the tile's axes into one matrix; aberration is a shift before it.
         let (east, north, centre) = (tile.east(), tile.north(), tile.center());
         let tile_axes = Matrix3([[east.x, east.y, east.z], [north.x, north.y, north.z], [centre.x, centre.y, centre.z]]);
@@ -144,9 +157,9 @@ impl<'a> RegionMapping<'a> {
         let aberration = to_tile.apply(aberration_horizon);
         let mapping = |image| Self { to_tile, aberration, aberration_horizon, density: tile.density(), atmosphere: observation.atmosphere, screen, image };
 
-        // Include the outer texel edges and the minimum filter's half-texel support outside them.
-        let half_width = TileGeometry::middle() + 1.0;
-        let corner = 2.0 * (half_width * SQRT_2 / (2.0 * tile.density())).atan();
+        // Bound the light's cached support, keeping the whole tile for refraction or missing metadata.
+        let support_radius = select_content_radius(content_radius, observation.atmosphere);
+        let corner = 2.0 * (support_radius / (2.0 * tile.density())).atan();
         let apparent = observation.apparent_star_direction(centre);
         let altitude = apparent.z.clamp(-1.0, 1.0).asin();
         let spread = if observation.atmosphere {
@@ -503,7 +516,7 @@ mod tests {
     use ProjectionKind::{Equidistant, Stereographic};
 
     fn tokyo() -> Observer { Observer { latitude: 35.69_f64.to_radians(), longitude: 139.69_f64.to_radians() } }
-    fn observation_at(fov: f64, atmosphere: bool, center: ViewCenter, projection: ProjectionKind) -> (View, Observation) {
+    pub(super) fn observation_at(fov: f64, atmosphere: bool, center: ViewCenter, projection: ProjectionKind) -> (View, Observation) {
         let view = View { center, fov_degrees: fov, projection };
         let date = crate::formulas::parse_utc_datetime("2025-03-01T11:00:00").unwrap();
         let time = crate::formulas::utc_jd_to_time_ms(crate::formulas::datetime_to_julian_date(&date)).unwrap();
@@ -517,7 +530,7 @@ mod tests {
         Some([radius + point.x * radius, radius - point.y * radius])
     }
     fn settings() -> RenderOptions { RenderOptions { magnitude_threshold: 6.0, unicode: true, braille: false, color: true, constellations: false, grid: false, dynamic_names: false } }
-    fn facing(azimuth: f64, tilt: f64) -> ViewCenter { ViewCenter::Facing { azimuth, tilt } }
+    pub(super) fn facing(azimuth: f64, tilt: f64) -> ViewCenter { ViewCenter::Facing { azimuth, tilt } }
 
     #[test]
     fn every_pixel_maps_back_to_the_direction_the_forward_chain_projects() {
@@ -533,7 +546,7 @@ mod tests {
             let screen = Screen::new(camera, size);
             for region in (0..region_caps().len()).step_by(97) {
                 let tile = TileGeometry::new(region);
-                let Some(mapping) = RegionMapping::new(&tile, &observation, &screen) else { continue; };
+                let Some(mapping) = RegionMapping::new(&tile, &observation, &screen, None) else { continue; };
                 let (top, bottom) = mapping.rows();
                 for row in (top..=bottom).step_by(7) {
                     for (first, last) in mapping.columns_of(row).into_iter().flatten() {
@@ -574,7 +587,7 @@ mod tests {
             let mut rows_checked = 0;
             for region in (0..region_caps().len()).step_by(13) {
                 let tile = TileGeometry::new(region);
-                let Some(mapping) = RegionMapping::new(&tile, &observation, &screen) else { continue; };
+                let Some(mapping) = RegionMapping::new(&tile, &observation, &screen, None) else { continue; };
                 let (top, bottom) = mapping.rows();
                 for row in top..=bottom {
                     for (first, last) in mapping.columns_of(row).into_iter().flatten() {
@@ -626,7 +639,7 @@ mod tests {
             let apparent = camera.forward * f64::cos(angle) + (camera.up * 0.6 + camera.right * 0.8) * f64::sin(angle); // `angle` from the view centre
             let region = hash_direction(GRID_DEPTH, observation.to_catalog.apply(apparent));
             let tile = TileGeometry::new(region);
-            let mapping = RegionMapping::new(&tile, &observation, &screen).unwrap();
+            let mapping = RegionMapping::new(&tile, &observation, &screen, None).unwrap();
             assert_eq!(matches!(mapping.image, Image::Circle { .. }), projection == Stereographic, "{projection:?} {angle}: {:?}", mapping.image);
             let everywhere = RegionMapping { image: Image::WholeDisc, ..mapping };
             let (mut covered, mut candidates) = (0, 0);
@@ -745,7 +758,7 @@ mod tests {
             let centre = Horizontal::from_vector(initial.apparent_star_direction(tile.center()));
             let (view, observation) = observation_at(10.0, false, facing(centre.azimuth, centre.altitude), projection);
             let screen = Screen::new(prepare_camera(&view), size);
-            let mapping = RegionMapping::new(&tile, &observation, &screen).unwrap();
+            let mapping = RegionMapping::new(&tile, &observation, &screen, None).unwrap();
             let (first_row, last_row) = mapping.rows();
 
             // These points lie in the outer quarter of each corner texel, still inside the tile.
@@ -776,7 +789,7 @@ mod tests {
                 let centre = Horizontal::from_vector(initial.apparent_star_direction(tile.center()));
                 let (view, observation) = observation_at(fov, atmosphere, facing(centre.azimuth, centre.altitude), projection);
                 let screen = Screen::new(prepare_camera(&view), size);
-                let mapping = RegionMapping::new(&tile, &observation, &screen).unwrap();
+                let mapping = RegionMapping::new(&tile, &observation, &screen, None).unwrap();
                 let mut actual = vec![Texel::default(); size * size];
                 draw_region(&mut actual, &mapping, &sampler, &texels);
 
@@ -881,7 +894,7 @@ mod tests {
         let tile = TileGeometry::new(region);
         let size = 201;
         let screen = Screen::new(camera, size);
-        let mapping = RegionMapping::new(&tile, &observation, &screen).unwrap();
+        let mapping = RegionMapping::new(&tile, &observation, &screen, None).unwrap();
         assert!(matches!(mapping.image, Image::OutsideCircle { .. }));
         let mut data = Data::default();
         let image = &mut data.star_regions[region].merged_tile;
@@ -919,7 +932,7 @@ mod tests {
         let behind_edge = Horizontal::from_vector(-(apparent * reach.cos() + tangent * reach.sin()));
         let view = View { center: facing(behind_edge.azimuth, behind_edge.altitude), projection: Stereographic, fov_degrees: 359.0 };
         let screen = Screen::new(prepare_camera(&view), 201);
-        let mapping = RegionMapping::new(&tile, &observation, &screen).unwrap();
+        let mapping = RegionMapping::new(&tile, &observation, &screen, None).unwrap();
         assert!(matches!(mapping.image, Image::HalfPlane { .. }));
 
         // An opaque rear tile can light its visible side but must not leak into the centre via a huge filter.
@@ -945,7 +958,7 @@ mod tests {
         let camera = prepare_camera(&view);
         let size = 201;
         let screen = Screen::new(camera, size);
-        let mapping = RegionMapping::new(&tile, &observation, &screen).unwrap();
+        let mapping = RegionMapping::new(&tile, &observation, &screen, None).unwrap();
         let Image::Annulus { inner, outer, .. } = mapping.image else { panic!("{:?}", mapping.image) };
         assert!(inner > 85.0 && outer >= 100.0, "{inner} {outer}");
         let mut data = Data::default();
@@ -995,6 +1008,7 @@ mod tests {
                         let image = &mut data.star_regions[region].merged_tile;
                         image.tile.texels = vec![Texel { rgb: [0.1, 0.15, 0.2], opacity: 0.3 }; TILE_EDGE_TEXELS.pow(2)];
                         image.lit_rows = vec![u64::MAX; TILE_EDGE_TEXELS];
+                        image.content_radius = None;
                     }
                 }
                 let mut elapsed = 0.0;
@@ -1017,3 +1031,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "content_bounds_tests.rs"]
+mod content_bounds_tests;

@@ -5,6 +5,7 @@ use crate::formulas::Vector3;
 use crate::constants::TILE_EDGE_TEXELS;
 use crate::model::{StarOpacities, Texel, StarTable, GroupTileKey, GroupTileCache, RegionTileCache, StarGroup};
 use crate::regions::{TileGeometry, blend_star, order_star_rows, premultiplied_color};
+use super::content_bounds::calculate_content_radius;
 
 impl GroupTileKey {
     /// The key of an image whose prefix is empty: nothing to draw, whatever the threshold.
@@ -53,7 +54,13 @@ fn round_half_away(v: f64) -> i64 { (v + 0.5_f64.copysign(v)) as i64 }
 impl RegionTileCache {
     pub fn texels(&self) -> &[Texel] { &self.tile.texels }
     pub fn is_empty(&self) -> bool { self.tile.texels.is_empty() }
-    pub fn bytes(&self) -> usize { self.tile.texels.len() * Texel::SIZE }
+    /// Populated image storage, including its masks and derived bound. Empty images hold no payload.
+    pub fn bytes(&self) -> usize {
+        let image_bytes = self.tile.texels.len() * Texel::SIZE;
+        let mask_bytes = self.lit_rows.len() * std::mem::size_of::<u64>();
+        let bound_bytes = if self.tile.texels.is_empty() { 0 } else { std::mem::size_of_val(&self.content_radius) };
+        image_bytes + mask_bytes + bound_bytes
+    }
     pub fn is_merged(&self) -> bool { self.group_keys.is_some() }
     /// One bit per texel, a word per tile row: which texels hold light. Empty when the image is.
     pub fn lit_rows(&self) -> &[u64] { &self.lit_rows }
@@ -65,9 +72,17 @@ impl RegionTileCache {
 
     /// Merge `groups` in ascending speed order, weighting their already-premultiplied RGB by opacity again.
     pub fn merge(&mut self, groups: &[StarGroup]) {
+        // Replace the image and all its derived data under the same group keys.
         self.group_keys = Some(std::array::from_fn(|group| groups[group].tile.key()));
         let mut parts = groups.iter().map(|group| &group.tile).filter(|image| !image.is_empty());
-        let Some(first) = parts.next() else { self.tile.texels = Vec::new(); self.lit_rows = Vec::new(); return; };
+        let Some(first) = parts.next() else {
+            self.tile.texels = Vec::new();
+            self.lit_rows = Vec::new();
+            self.content_radius = Some(0.0);
+            return;
+        };
+
+        // Keep the existing slowest-to-fastest colour and opacity composition.
         #[cfg(feature = "pixel-debug")]
         for texel in first.texels() { texel.check("RegionTileCache::merge base", 1.0); }
         self.tile.texels.clear();
@@ -75,8 +90,17 @@ impl RegionTileCache {
         for part in parts {
             for (merged, texel) in self.tile.texels.iter_mut().zip(part.texels()) { merge_group_texel(merged, *texel); }
         }
+
+        // Record which texels contain light and how far their filter support reaches from the centre.
         self.lit_rows.clear();
-        self.lit_rows.extend(self.tile.texels.chunks_exact(TILE_EDGE_TEXELS).map(|row| row.iter().enumerate().filter(|(_, texel)| !texel.is_empty()).fold(0_u64, |bits, (x, _)| bits | 1 << x)));
+        for row in self.tile.texels.chunks_exact(TILE_EDGE_TEXELS) {
+            let mut lit_columns = 0_u64;
+            for (column, texel) in row.iter().enumerate() {
+                if !texel.is_empty() { lit_columns |= 1 << column; }
+            }
+            self.lit_rows.push(lit_columns);
+        }
+        self.content_radius = Some(calculate_content_radius(&self.lit_rows));
     }
 }
 
@@ -264,5 +288,47 @@ mod tests {
         assert!((region_image.texels()[middle].opacity - 0.1).abs() < 1e-3);
         region_image.merge(&[StarGroup::default(), StarGroup::default(), StarGroup::default()]);
         assert!(region_image.is_empty() && region_image.bytes() == 0 && region_image.is_merged() && region_image.lit_rows().is_empty()); // only empty groups: no texels
+    }
+
+    #[test]
+    fn content_bounds_follow_merged_contents_and_release_on_empty_replacement() {
+        // Give one group a central texel and merge it through the real image preparation path.
+        let mut groups: [StarGroup; crate::constants::SPEED_GROUP_COUNT] = std::array::from_fn(|_| StarGroup::default());
+        groups[0].tile.key = Some(key(1, 6.0));
+        groups[0].tile.tile.texels = vec![Texel::default(); SIZE * SIZE];
+        groups[0].tile.tile.texels[MIDDLE * SIZE + MIDDLE] = Texel { rgb: [0.2; 3], opacity: 0.5 };
+        let mut image = RegionTileCache::default();
+        assert_eq!(image.content_radius, None);
+        image.merge(&groups);
+        assert_eq!(image.content_radius, Some((1.5_f64 * 1.5 * 2.0).sqrt()));
+        assert_eq!(image.bytes(), SIZE * SIZE * Texel::SIZE + SIZE * 8 + std::mem::size_of::<Option<f64>>());
+
+        // Unchanged keys retain the image and its bound; changed contents rebuild both together.
+        let previous = image.clone();
+        assert!(image.is_current(&groups));
+        groups[0].tile.key.as_mut().unwrap().simulated_at_ms += 1;
+        groups[0].tile.tile.texels[SIZE - 1] = Texel { rgb: [0.1; 3], opacity: 0.5 };
+        assert!(!image.is_current(&groups));
+        image.merge(&groups);
+        assert!(image.is_current(&groups));
+        assert!(image.content_radius.unwrap() > previous.content_radius.unwrap());
+
+        // Removing the outer light must shrink the bound even though the tile dimensions are unchanged.
+        groups[0].tile.key.as_mut().unwrap().simulated_at_ms += 1;
+        groups[0].tile.tile.texels[SIZE - 1] = Texel::default();
+        image.merge(&groups);
+        assert_eq!(image.content_radius, previous.content_radius);
+        groups[0].tile.tile.texels.fill(Texel::default());
+        groups[0].tile.key.as_mut().unwrap().simulated_at_ms += 1;
+        image.merge(&groups);
+        assert_eq!(image.content_radius, Some(0.0));
+        assert!(image.lit_rows().iter().all(|&bits| bits == 0));
+
+        // The canonical empty group releases the populated image payload and clears derived support.
+        groups[0] = StarGroup::default();
+        image.merge(&groups);
+        assert_eq!(image.content_radius, Some(0.0));
+        assert!(image.is_current(&groups) && image.is_empty());
+        assert_eq!(image.bytes(), 0);
     }
 }
