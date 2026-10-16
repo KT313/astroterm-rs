@@ -1,5 +1,6 @@
 //! The colour of one merged tile under a screen pixel. The pixel's footprint in texture space is an axis-aligned
-//! box of at least one texel; the texels under it are averaged by the area of the box inside each. Where the
+//! box of at least one texel; each texel contributes its overlap divided by the full box area. Space outside
+//! the tile is transparent, so partially covered pixels retain only their covered share. Where the
 //! tile shrinks on screen that is a box filter over a few texels, where it grows it is the bilinear mix of the
 //! four texels around the position. Boxes that touch only empty texels are rejected through the tile's lit-row
 //! bits before any arithmetic, which is what makes sparse tiles cheap. Nothing here is retained between frames.
@@ -60,13 +61,13 @@ impl TileSampler {
     }
 
     /// Average the box of `footprint` texels (at least one) centred at `position`, in texture coordinates from
-    /// 0 to edge, or `None` when every texel under it is empty. The box is clipped at the texture edges, where
-    /// partially covered screen pixels may have centres outside the tile.
+    /// 0 to edge, or `None` when every texel under it is empty. Space outside the tile is transparent:
+    /// clip the integration bounds, but divide by the full footprint area to retain partial coverage.
     #[inline]
     pub(super) fn sample(&self, texels: &[Texel], position: [f64; 2], footprint: [f64; 2]) -> Option<[f32; 4]> {
         let edge = self.edge as f64;
         let (half_width, half_height) = (footprint[0].max(1.0) * 0.5, footprint[1].max(1.0) * 0.5);
-        let (cu, cv) = (position[0].clamp(0.0, edge), position[1].clamp(0.0, edge));
+        let [cu, cv] = position;
         let (left, right) = ((cu - half_width).max(0.0), (cu + half_width).min(edge));
         let (top, bottom) = ((cv - half_height).max(0.0), (cv + half_height).min(edge));
         if right <= left || bottom <= top { return None; }
@@ -77,17 +78,17 @@ impl TileSampler {
         let (first_row, last_row) = (top as usize, (bottom.ceil() as usize - 1).min(last));
         if !self.has_lit_texels(first_column, last_column, first_row, last_row) { return None; }
 
-        let rgba = average(texels, self.edge, [left, right], [top, bottom], (first_column, last_column), (first_row, last_row));
+        let full_area = (2.0 * half_width) * (2.0 * half_height);
+        let rgba = average(texels, self.edge, [left, right], [top, bottom], (first_column, last_column), (first_row, last_row), full_area);
         #[cfg(feature = "pixel-debug")]
         crate::pixel_debug::check_pixel("whole tile filter output", rgba.map(f64::from), 1.0);
         Some(rgba)
     }
 }
 
-/// The area average of the texels under a box: each texel weighted by the box area inside it over the box area.
-fn average(texels: &[Texel], edge: usize, [left, right]: [f64; 2], [top, bottom]: [f64; 2], (first_column, last_column): (usize, usize), (first_row, last_row): (usize, usize)) -> [f32; 4] {
+/// Integrate only overlapping texels, weighted by the full filter area including transparent space.
+fn average(texels: &[Texel], edge: usize, [left, right]: [f64; 2], [top, bottom]: [f64; 2], (first_column, last_column): (usize, usize), (first_row, last_row): (usize, usize), area: f64) -> [f32; 4] {
     // Only the first and last columns can have fractional widths. Interior columns share one row weight.
-    let area = (right - left) * (bottom - top);
     let first_width = right.min(first_column as f64 + 1.0) - left;
     let last_width = right - last_column as f64;
     let mut rgba = [0.0_f64; 4];
@@ -129,10 +130,8 @@ mod tests {
     fn direct(texels: &[Texel], edge: usize, position: [f64; 2], footprint: [f64; 2]) -> [f64; 4] {
         let [x, y] = position;
         let [width, height] = footprint;
-        let limit = edge as f64;
-        let (x, y) = (x.clamp(0.0, limit), y.clamp(0.0, limit));
-        let (left, right) = ((x - width.max(1.0) / 2.0).max(0.0), (x + width.max(1.0) / 2.0).min(limit));
-        let (top, bottom) = ((y - height.max(1.0) / 2.0).max(0.0), (y + height.max(1.0) / 2.0).min(limit));
+        let (left, right) = (x - width.max(1.0) / 2.0, x + width.max(1.0) / 2.0);
+        let (top, bottom) = (y - height.max(1.0) / 2.0, y + height.max(1.0) / 2.0);
         let mut expected = [0.0; 4];
         for row in 0..edge {
             for column in 0..edge {
@@ -163,6 +162,21 @@ mod tests {
     }
 
     #[test]
+    fn partial_footprints_keep_transparent_space_in_their_area() {
+        let texels = vec![Texel { rgb: [0.5, 0.25, 0.125], opacity: 1.0 }; 16];
+        let sampler = sampler(&texels);
+        for (position, footprint, coverage) in [
+            ([2.0, 2.0], [8.0, 8.0], 0.25),       // entire 4 × 4 tile inside an 8 × 8 footprint
+            ([-0.5, 2.0], [2.0, 2.0], 0.25),     // centre is outside, but a quarter of the footprint overlaps
+            ([0.0, 0.0], [1.0, 1.0], 0.25),      // one quarter of the box touches the tile corner
+            ([2.0, 2.0], [1.0, 1.0], 1.0),       // interior pixels keep the existing value
+        ] {
+            assert_eq!(sampler.sample(&texels, position, footprint), Some([0.5 * coverage, 0.25 * coverage, 0.125 * coverage, coverage]));
+        }
+        assert_eq!(sampler.sample(&texels, [-1.0, 2.0], [2.0, 2.0]), None); // touching without overlap contributes nothing
+    }
+
+    #[test]
     fn dense_reductions_stay_within_the_opacity_range() {
         let texels = vec![Texel { rgb: [1.0; 3], opacity: 1.0 }; 64 * 64];
         let mut sampler = TileSampler::new(64);
@@ -176,7 +190,7 @@ mod tests {
         let sampler = sampler(&texels);
         for (position, footprint) in [([1.7, 2.2], [2.3, 1.8]), ([0.0, 4.0], [1.0, 1.0]), ([2.0, 2.0], [0.1, 0.1]), ([1.3, 2.6], [1.0, 1.0]),
             ([3.9, 0.2], [0.5, 0.5]), ([-2.0, 1.5], [1.0, 1.0]), ([4.0, 4.0], [3.0, 3.0]), ([2.0, 2.0], [40.0, 40.0])] {
-            let actual = sampler.sample(&texels, position, footprint).unwrap();
+            let actual = sampler.sample(&texels, position, footprint).unwrap_or([0.0; 4]);
             for (actual, expected) in actual.into_iter().zip(direct(&texels, 4, position, footprint)) {
                 assert!((f64::from(actual) - expected).abs() < 1e-6, "{position:?} {footprint:?}: {actual} != {expected}");
             }

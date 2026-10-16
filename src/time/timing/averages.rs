@@ -53,14 +53,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn averages_start_at_the_first_duration_and_then_move_slowly() {
+    fn averages_start_at_the_first_duration_then_use_configured_smoothing() {
+        // The first frame establishes the average directly, without smoothing against zero.
         let mut times = StepTimes::default();
         times.begin_frame();
         times.record("Stars", &[], 1.0);
         assert_eq!(times.steps()[0].average_seconds, 1.0);
+
+        // The next frame uses the configured weights for the previous average and new duration.
         times.begin_frame();
         times.record("Stars", &[], 3.0);
-        assert!((times.steps()[0].average_seconds - (0.95 + 0.15)).abs() < 1e-12);
+        let expected = 1.0 * TIMING_EMA_FACTOR + 3.0 * (1.0 - TIMING_EMA_FACTOR);
+        assert!((times.steps()[0].average_seconds - expected).abs() < 1e-12);
     }
 
     #[test]
@@ -75,15 +79,19 @@ mod tests {
 
     #[test]
     fn repeated_calls_are_summed_then_smoothed_once_per_frame() {
+        // Repeated calls in the first frame contribute to one total duration.
         let mut times = StepTimes::default();
         times.begin_frame();
         times.record("Samples", &[], 1.0);
         times.record("Samples", &[], 2.0);
         assert_eq!(times.steps()[0].average_seconds, 3.0);
+
+        // Smooth the next frame's combined duration once, rather than smoothing each call separately.
         times.begin_frame();
         times.record("Samples", &[], 4.0);
         times.record("Samples", &[], 5.0);
-        assert!((times.steps()[0].average_seconds - (3.0 * 0.95 + 9.0 * 0.05)).abs() < 1e-12);
+        let expected = 3.0 * TIMING_EMA_FACTOR + 9.0 * (1.0 - TIMING_EMA_FACTOR);
+        assert!((times.steps()[0].average_seconds - expected).abs() < 1e-12);
     }
 
     #[test]

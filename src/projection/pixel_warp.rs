@@ -4,14 +4,14 @@
 //! formula: undo the screen projection (one division for the stereographic view, a per-frame table for the
 //! equidistant one), undo refraction (a table) and aberration (a constant), rotate into the tile's frame (a
 //! 3 × 3 matrix prepared per region) and apply the tile projection (one division). No mesh, no triangles,
-//! nothing retained between frames. Every pixel is exact; the only approximations are the filter box of the
-//! sampler and the first-order aberration.
+//! nothing retained between frames. Pixel positions follow the inverse formulas, with table interpolation and
+//! first-order aberration approximations. Sampling uses box footprints; portions outside a tile are transparent.
 use std::f64::consts::{FRAC_PI_2, PI, SQRT_2, TAU};
 use crate::astro::{LIGHT_SPEED_AU_DAY, Matrix3, Vector3, apply_refraction, unrefract_direction, Horizontal};
 use crate::constants::TILE_EDGE_TEXELS;
 use crate::model::{Data, ProjectionKind, Texel, View};
 use crate::observation::Observation;
-use crate::projection::{CartesianCamera, prepare_camera, project_camera};
+use crate::projection::{CartesianCamera, prepare_camera};
 use crate::regions::{TileGeometry, blend_star};
 use crate::selection::Selected;
 use crate::time::StepTimes;
@@ -55,6 +55,7 @@ pub(super) struct Screen {
     camera: CartesianCamera,
     size: usize,
     radius: f64,                            // the sky disc: (size − 1) / 2 pixels around its centre
+    inverse_pixel_scale: f64,               // 1 / (radius × camera scale), reused by every pixel footprint
     equidistant: Vec<[f64; 2]>,             // empty for the stereographic view
 }
 
@@ -72,7 +73,7 @@ impl Screen {
                 [cosine, if distance > 0.0 { sine / distance } else { FRAC_PI_2 / camera.scale }]
             }).collect(),
         };
-        Self { camera, size, radius, equidistant }
+        Self { camera, size, radius, inverse_pixel_scale: 1.0 / (radius * camera.scale), equidistant }
     }
 
     /// The apparent direction of the pixel centre (`column`, `row`) in horizon axes as `numerator / spread`,
@@ -104,13 +105,15 @@ impl Screen {
     }
 }
 
-/// The screen area a region's tile can cover. Stereographic: the image of the tile's bounding cap is a circle,
-/// or the whole disc when the cap reaches the point behind the camera, whose image is unbounded. Equidistant:
+/// Candidate pixel centres whose filter footprints can overlap a region's tile. Stereographic caps map to
+/// circles, circle exteriors, or a half-plane when an edge passes through the antipode. Equidistant:
 /// the cap lies between two angles from the view centre, an annulus on the screen, within the box of its sector
 /// of directions around the centre.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum Image {
     Circle { centre: Point, radius: f64 },
+    OutsideCircle { centre: Point, radius: f64 }, // a cap containing the stereographic antipode covers the circle's exterior
+    HalfPlane { normal: Point, minimum: f64 },   // normal · pixel >= minimum when the cap edge passes through the antipode
     Annulus { inner: f64, outer: f64, left: f64, right: f64, top: f64, bottom: f64 },
     WholeDisc,
 }
@@ -138,41 +141,52 @@ impl<'a> RegionMapping<'a> {
         let aberration = to_tile.apply(aberration_horizon);
         let mapping = |image| Self { to_tile, aberration, aberration_horizon, density: tile.density(), atmosphere: observation.atmosphere, screen, image };
 
-        // Bound the tile's sky by the cap of its corners, widened by how much refraction can move its edges.
-        let corner = 2.0 * (TileGeometry::middle() * SQRT_2 / (2.0 * tile.density())).atan();
+        // Include the outer texel edges and the minimum filter's half-texel support outside them.
+        let half_width = TileGeometry::middle() + 1.0;
+        let corner = 2.0 * (half_width * SQRT_2 / (2.0 * tile.density())).atan();
         let apparent = observation.apparent_star_direction(centre);
         let altitude = apparent.z.clamp(-1.0, 1.0).asin();
         let spread = if observation.atmosphere {
             let lift = |altitude: f64| apply_refraction(Horizontal { azimuth: 0.0, altitude }).altitude - altitude;
             (lift((altitude - corner).max(-FRAC_PI_2)) - lift((altitude + corner).min(FRAC_PI_2))).abs()
         } else { 0.0 };
-        let reach = corner + spread;
         let (camera, radius) = (screen.camera, screen.radius);
+        let pixel_margin = SQRT_2 * 0.5;
+        let reach = corner + spread + if camera.kind == ProjectionKind::Equidistant {
+            pixel_margin * FRAC_PI_2 * screen.inverse_pixel_scale // radial footprint also bounds the wider equidistant filter
+        } else { 0.0 };
         let depth = camera.forward.dot(apparent);
         if reach >= PI { return Some(mapping(Image::WholeDisc)); }
 
         match camera.kind {
             ProjectionKind::Stereographic => {
-                // A cap projects to a circle whose diameter lies on the line through the view centre; a cap
-                // around the point behind the camera has no bounded image.
-                if depth <= -reach.cos() { return Some(mapping(Image::WholeDisc)); }
-                let towards_centre = {
-                    let tangent = camera.forward - apparent * depth;
-                    let length = tangent.length();
-                    if length < 1e-12 { camera.up - apparent * apparent.dot(camera.up) } else { tangent }
-                }.normalized();
+                // Solve the cap's stereographic image directly, avoiding extra point projections.
                 let (sine, cosine) = reach.sin_cos();
-                let mut ends = [[0.0; 2]; 2];
-                for (end, sign) in ends.iter_mut().zip([1.0, -1.0]) {
-                    let edge = apparent * cosine + towards_centre * (sine * sign);
-                    let point = project_camera(camera, edge)?;
-                    *end = [radius + point.x * radius, radius - point.y * radius];
+                let denominator = depth + cosine;
+                let horizontal = camera.right.dot(apparent);
+                let vertical = camera.up.dot(apparent);
+                let pixel_scale = radius * camera.scale;
+
+                // A cap edge through the antipode is a line. Avoid subtracting enormous circle radii there.
+                if denominator.abs() < 1e-8 {
+                    let normal = [horizontal, -vertical];
+                    let minimum = 0.5 * (cosine - depth) * pixel_scale + radius * (normal[0] + normal[1])
+                        - pixel_margin * normal[0].hypot(normal[1]);
+                    return Some(mapping(Image::HalfPlane { normal, minimum }));
                 }
-                let centre = [(ends[0][0] + ends[1][0]) * 0.5, (ends[0][1] + ends[1][1]) * 0.5];
-                let image_radius = (ends[0][0] - ends[1][0]).hypot(ends[0][1] - ends[1][1]) * 0.5;
-                if !image_radius.is_finite() { return None; }
-                if (centre[0] - radius).hypot(centre[1] - radius) > image_radius + radius + 0.5 { return None; } // the circle misses the disc entirely
-                Some(mapping(Image::Circle { centre, radius: image_radius }))
+                let outside_circle = denominator < 0.0;
+                let centre = [radius + pixel_scale * horizontal / denominator, radius - pixel_scale * vertical / denominator];
+                let image_radius = pixel_scale * sine / denominator.abs();
+                let distance = (centre[0] - radius).hypot(centre[1] - radius);
+                if outside_circle {
+                    let image_radius = (image_radius - pixel_margin).max(0.0);
+                    if distance + radius < image_radius { return None; }
+                    Some(mapping(Image::OutsideCircle { centre, radius: image_radius }))
+                } else {
+                    let image_radius = image_radius + pixel_margin;
+                    if distance > image_radius + radius { return None; }
+                    Some(mapping(Image::Circle { centre, radius: image_radius }))
+                }
             }
             ProjectionKind::Equidistant => {
                 // The cap spans the angles `angle ± reach` from the view centre, which the equidistant screen
@@ -213,7 +227,7 @@ impl<'a> RegionMapping<'a> {
     #[cfg(test)]
     pub(super) fn tile_position(&self, column: f64, row: f64) -> Option<(Point, f64)> {
         let (numerator, spread, factor) = self.screen.ray(column, row);
-        self.tile_of_inside(numerator, spread, factor)
+        self.tile_of(numerator, spread, factor).filter(|(position, _)| Self::inside_tile(*position))
     }
 
     /// The apparent direction `numerator / spread` in the tile's axes, unnormalized, with its length and the
@@ -243,14 +257,20 @@ impl<'a> RegionMapping<'a> {
         Some(self.tile_coordinates(w, length, denominator, factor))
     }
 
-    /// `tile_of` restricted to positions inside the tile, decided before the division.
+    /// Reject footprints entirely outside the tile before dividing, while retaining partial overlaps.
     #[inline]
-    fn tile_of_inside(&self, numerator: Vector3, spread: f64, factor: f64) -> Option<(Point, f64)> {
+    fn tile_of_overlapping_footprint(&self, numerator: Vector3, spread: f64, factor: f64) -> Option<(Point, f64)> {
         let (w, length, denominator) = self.tile_frame(numerator, spread)?;
-        let reach = (TileGeometry::middle() + 0.5) * denominator;                            // |2·density·w| ≤ reach ⟺ the position is within the tile
-        let (x, y) = (2.0 * self.density * w.x, 2.0 * self.density * w.y);
-        if x.abs() > reach || y.abs() > reach { return None; }
-        Some(self.tile_coordinates(w, length, denominator, factor))
+        let half_footprint = self.density * length * factor * self.screen.inverse_pixel_scale;
+        let reach = (TileGeometry::middle() + 0.5) * denominator + half_footprint.max(0.5 * denominator);
+        let scale_numerator = 2.0 * self.density;
+        let (x, y) = (scale_numerator * w.x, scale_numerator * w.y);
+        if x.abs() >= reach || y.abs() >= reach { return None; }
+
+        // One reciprocal supplies both texture coordinates and the full filter width.
+        let inverse = 1.0 / denominator;
+        let middle = TileGeometry::middle();
+        Some(([middle + x * inverse, middle - y * inverse], 2.0 * half_footprint * inverse))
     }
 
     /// The tile's stereographic projection, and texels per pixel: the tile's local scale over the screen's
@@ -259,7 +279,7 @@ impl<'a> RegionMapping<'a> {
     fn tile_coordinates(&self, w: Vector3, length: f64, denominator: f64, factor: f64) -> (Point, f64) {
         let scale = 2.0 * self.density / denominator;
         let middle = TileGeometry::middle();
-        let footprint = scale * length * factor / (self.screen.radius * self.screen.camera.scale);
+        let footprint = scale * length * factor * self.screen.inverse_pixel_scale;
         ([middle + w.x * scale, middle - w.y * scale], footprint)
     }
 
@@ -335,6 +355,19 @@ impl<'a> RegionMapping<'a> {
                 first = first.max(centre[0] - half);
                 last = last.min(centre[0] + half);
             }
+            Image::HalfPlane { normal, minimum } => {
+                let boundary = minimum - normal[1] * y;
+                if normal[0] > 0.0 { first = first.max(boundary / normal[0]); }
+                else if normal[0] < 0.0 { last = last.min(boundary / normal[0]); }
+                else if boundary > 0.0 { return [None; 2]; }
+            }
+            Image::OutsideCircle { centre, radius: image_radius } => {
+                let gap = image_radius * image_radius - (y - centre[1]).powi(2);
+                if gap > 0.0 {
+                    let half = gap.sqrt();
+                    hole = Some((centre[0] - half, centre[0] + half));
+                }
+            }
             Image::Annulus { inner, outer, left, right, top, bottom } => {
                 if y < top || y > bottom { return [None; 2]; }
                 let reach = outer * outer - (y - radius).powi(2);
@@ -343,7 +376,7 @@ impl<'a> RegionMapping<'a> {
                 first = first.max(radius - half).max(left);
                 last = last.min(radius + half).min(right);
                 let gap = inner * inner - (y - radius).powi(2);
-                if gap > 0.0 { hole = Some(gap.sqrt()); }
+                if gap > 0.0 { let half = gap.sqrt(); hole = Some((radius - half, radius + half)); }
             }
             Image::WholeDisc => {}
         }
@@ -351,28 +384,28 @@ impl<'a> RegionMapping<'a> {
         if first > last { return [None; 2]; }
         match hole {
             None => [Some((first as usize, last as usize)), None],
-            Some(half) => {
+            Some((hole_left, hole_right)) => {
                 // Pixels strictly inside the hole are skipped; a centre on the inner circle is kept, once.
-                let before = (first, (radius - half).floor().min(last));
-                let after = ((radius + half).ceil().max(first).max(before.1 + 1.0), last);
+                let before = (first, hole_left.floor().min(last));
+                let after = (hole_right.ceil().max(first).max(before.1 + 1.0), last);
                 [(before.0 <= before.1).then_some((before.0 as usize, before.1 as usize)), (after.0 <= after.1).then_some((after.0 as usize, after.1 as usize))]
             }
         }
     }
 
-    /// The pixel rows the region's image can touch inside the square.
+    /// Candidate rows including filter support around the region's image, clipped to the square.
     fn rows(&self) -> (usize, usize) {
         let (radius, limit) = (self.screen.radius, self.screen.size as f64 - 1.0);
         let (top, bottom) = match self.image {
             Image::Circle { centre, radius: image_radius } => ((centre[1] - image_radius).ceil().max(0.0), (centre[1] + image_radius).floor().min(limit)),
             Image::Annulus { outer, top, bottom, .. } => (top.max(radius - outer).ceil().max(0.0), bottom.min(radius + outer).floor().min(limit)),
-            Image::WholeDisc => (0.0, limit),
+            Image::WholeDisc | Image::OutsideCircle { .. } | Image::HalfPlane { .. } => (0.0, limit),
         };
         if top > bottom { (1, 0) } else { (top as usize, bottom as usize) }
     }
 }
 
-/// Pull every candidate pixel back to the tile, sample it and blend it source-over onto the star layer. Rows
+/// Pull candidate pixel footprints back to the tile, retaining partial overlaps, and blend source-over. Rows
 /// whose tile rows hold no light are skipped before any pixel is mapped, which is what makes sparse tiles cheap.
 fn draw_region(stars: &mut [Texel], mapping: &RegionMapping<'_>, sampler: &TileSampler, texels: &[Texel]) {
     let screen = mapping.screen;
@@ -386,9 +419,10 @@ fn draw_region(stars: &mut [Texel], mapping: &RegionMapping<'_>, sampler: &TileS
             for texel in pixels {
                 let (numerator, spread, factor) = rays.current(screen);
                 rays.advance();
-                let Some((position, footprint)) = mapping.tile_of_inside(numerator, spread, factor) else { continue; };
+                let Some((position, footprint)) = mapping.tile_of_overlapping_footprint(numerator, spread, factor) else { continue; };
                 if footprint <= 3.0 && !sampler.may_hold_light_near(position) { continue; }
-                let Some(rgba) = sampler.sample(texels, position, [footprint, footprint]) else { continue; };
+                let sample_position = position.map(|value| value + 0.5);                  // integer texel centres become half-integer centres in the sampler's edge coordinates
+                let Some(rgba) = sampler.sample(texels, sample_position, [footprint, footprint]) else { continue; };
                 blend_star(texel, [rgba[0], rgba[1], rgba[2]], rgba[3]);
                 texel.rgb = texel.rgb.map(|value| value.min(1.0));                          // absorb last-bit rounding of the blend at opaque pixels
                 texel.opacity = texel.opacity.min(1.0);
@@ -456,7 +490,7 @@ impl RowRays {
 
 #[cfg(test)]
 mod tests {
-    use crate::projection::Frame;
+    use crate::projection::{Frame, project_camera};
     use super::*;
     use crate::astro::{J2000, Observer};
     use crate::constants::GRID_DEPTH;
@@ -654,6 +688,145 @@ mod tests {
     }
 
     #[test]
+    fn texel_centres_render_at_their_forward_projected_positions() {
+        // Aim a narrow view at one region so a half-texel error becomes several screen pixels.
+        let region = hash_direction(GRID_DEPTH, Vector3 { x: 0.3, y: 0.8, z: -0.2 });
+        let tile = TileGeometry::new(region);
+        let size = 501;
+        for projection in [Stereographic, Equidistant] {
+            let (_, initial) = observation_at(2.0, false, facing(0.0, 0.0), projection);
+            let centre = Horizontal::from_vector(initial.apparent_star_direction(tile.center()));
+            let (view, observation) = observation_at(2.0, false, facing(centre.azimuth, centre.altitude), projection);
+
+            // One lit texel has a known centre at integer tile coordinates (32, 32).
+            let mut data = Data::default();
+            let image = &mut data.star_regions[region].merged_tile;
+            image.tile.texels = vec![Texel::default(); TILE_EDGE_TEXELS.pow(2)];
+            image.tile.texels[32 * TILE_EDGE_TEXELS + 32] = Texel { rgb: [1.0; 3], opacity: 1.0 };
+            image.lit_rows = vec![0; TILE_EDGE_TEXELS];
+            image.lit_rows[32] = 1 << 32;
+            let selected = Selected { regions: vec![region], whole_sky: false };
+            let stars = project_tiles_by_pixel(size, &data, &selected, &observation, &view, &mut StepTimes::default());
+
+            // Compare the rendered light's centre with the independent forward geometry, not the inverse mapper.
+            let expected = forward(&tile, &observation, prepare_camera(&view), size, [32.0, 32.0]).unwrap();
+            let mut opacity_sum = 0.0;
+            let mut weighted_position = [0.0; 2];
+            for (index, texel) in stars.iter().enumerate() {
+                let opacity = f64::from(texel.opacity);
+                opacity_sum += opacity;
+                weighted_position[0] += (index % size) as f64 * opacity;
+                weighted_position[1] += (index / size) as f64 * opacity;
+            }
+            assert!(opacity_sum > 0.0);
+            let actual = weighted_position.map(|value| value / opacity_sum);
+            let error = (actual[0] - expected[0]).hypot(actual[1] - expected[1]);
+            assert!(error < 0.05, "{projection:?}: expected {expected:?}, rendered {actual:?}, error {error} pixels");
+        }
+    }
+
+    #[test]
+    fn candidate_bounds_include_the_outer_texel_edges() {
+        // Magnify each tile corner enough to distinguish its last texel centre from its outer edge.
+        let region = hash_direction(GRID_DEPTH, Vector3 { x: 0.3, y: 0.8, z: -0.2 });
+        let tile = TileGeometry::new(region);
+        let size = 2001;
+        for projection in [Stereographic, Equidistant] {
+            let (_, initial) = observation_at(10.0, false, facing(0.0, 0.0), projection);
+            let centre = Horizontal::from_vector(initial.apparent_star_direction(tile.center()));
+            let (view, observation) = observation_at(10.0, false, facing(centre.azimuth, centre.altitude), projection);
+            let screen = Screen::new(prepare_camera(&view), size);
+            let mapping = RegionMapping::new(&tile, &observation, &screen).unwrap();
+            let (first_row, last_row) = mapping.rows();
+
+            // These points lie in the outer quarter of each corner texel, still inside the tile.
+            for tile_row in [-0.25, 63.25] {
+                for tile_column in [-0.25, 63.25] {
+                    let projected = forward(&tile, &observation, screen.camera, size, [tile_column, tile_row]).unwrap();
+                    let (column, row) = (projected[0].round() as usize, projected[1].round() as usize);
+                    let (position, _) = mapping.tile_position(column as f64, row as f64).expect("the pixel centre remains inside the tile");
+                    assert!((first_row..=last_row).contains(&row), "{projection:?}: row {row} excluded for {position:?}");
+                    let included = mapping.columns_of(row).into_iter().flatten().any(|(first, last)| (first..=last).contains(&column));
+                    assert!(included, "{projection:?}: pixel ({column}, {row}) excluded for tile position {position:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn boundary_candidates_and_row_skips_match_a_full_pixel_scan() {
+        // In nonsingular views, compare the optimized candidate spans against every pixel in the disc.
+        let region = hash_direction(GRID_DEPTH, Vector3 { x: 0.3, y: 0.8, z: -0.2 });
+        let tile = TileGeometry::new(region);
+        let texels = vec![Texel { rgb: [0.5, 0.25, 0.125], opacity: 1.0 }; TILE_EDGE_TEXELS.pow(2)];
+        let mut sampler = TileSampler::new(TILE_EDGE_TEXELS);
+        sampler.prepare(&[u64::MAX; TILE_EDGE_TEXELS]);
+        for projection in [Stereographic, Equidistant] {
+            for (fov, size, atmosphere) in [(60.0, 23, false), (180.0, 101, false), (60.0, 201, true)] {
+                let (_, initial) = observation_at(fov, atmosphere, facing(0.0, 0.0), projection);
+                let centre = Horizontal::from_vector(initial.apparent_star_direction(tile.center()));
+                let (view, observation) = observation_at(fov, atmosphere, facing(centre.azimuth, centre.altitude), projection);
+                let screen = Screen::new(prepare_camera(&view), size);
+                let mapping = RegionMapping::new(&tile, &observation, &screen).unwrap();
+                let mut actual = vec![Texel::default(); size * size];
+                draw_region(&mut actual, &mapping, &sampler, &texels);
+
+                // This reference bypasses candidate bounds, row masks and the pre-division overlap check.
+                for row in 0..size {
+                    for column in 0..size {
+                        let distance = (column as f64 - screen.radius).powi(2) + (row as f64 - screen.radius).powi(2);
+                        if distance > screen.radius * screen.radius + 1e-9 { continue; }
+                        let (numerator, spread, factor) = screen.ray(column as f64, row as f64);
+                        let expected = mapping.tile_of(numerator, spread, factor).and_then(|(position, footprint)| {
+                            sampler.sample(&texels, position.map(|value| value + 0.5), [footprint; 2])
+                        }).unwrap_or([0.0; 4]);
+                        let pixel = actual[row * size + column];
+                        for (value, expected) in pixel.rgb.into_iter().chain([pixel.opacity]).zip(expected) {
+                            assert!((value - expected).abs() < 1e-5, "{projection:?} fov={fov} size={size} pixel=({column},{row}): {value} != {expected}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn subpixel_tiles_keep_partial_light_as_the_camera_moves() {
+        // Reproduce the review's region: a dense tile smaller than a pixel must retain partial light.
+        let region = 3000;
+        let tile = TileGeometry::new(region);
+        let mut data = Data::default();
+        let image = &mut data.star_regions[region].merged_tile;
+        image.tile.texels = vec![Texel { rgb: [0.5, 0.25, 0.125], opacity: 1.0 }; TILE_EDGE_TEXELS.pow(2)];
+        image.lit_rows = vec![u64::MAX; TILE_EDGE_TEXELS];
+        let selected = Selected { regions: vec![region], whole_sky: false };
+        for (projection, fov, size) in [(Stereographic, 351.6, 401), (Equidistant, 360.0, 51)] {
+            let (_, initial) = observation_at(fov, false, facing(0.0, 0.0), projection);
+            let centre = Horizontal::from_vector(initial.apparent_star_direction(tile.center()));
+            for offset in [0.0, 0.05, 0.1, 0.2] {
+                let (view, observation) = observation_at(fov, false, facing(centre.azimuth + offset, centre.altitude), projection);
+                let stars = project_tiles_by_pixel(size, &data, &selected, &observation, &view, &mut StepTimes::default());
+                let total: f64 = stars.iter().map(|texel| f64::from(texel.opacity)).sum();
+                assert!(total > 0.0 && total < 0.5, "{projection:?} offset={offset}: {total}");
+
+                // The forward outline provides an independent area check; allow the existing box-filter approximation.
+                let camera = prepare_camera(&view);
+                let corners = [[-0.5, -0.5], [63.5, -0.5], [63.5, 63.5], [-0.5, 63.5]]
+                    .map(|position| forward(&tile, &observation, camera, size, position).unwrap());
+                let area = (0..4).map(|index| {
+                    let next = (index + 1) % 4;
+                    corners[index][0] * corners[next][1] - corners[index][1] * corners[next][0]
+                }).sum::<f64>().abs() * 0.5;
+                assert!((total - area).abs() < area * 0.15, "{projection:?} offset={offset}: opacity {total}, projected area {area}");
+                for texel in stars {
+                    assert!((texel.rgb[0] - texel.opacity * 0.5).abs() < 1e-7);
+                    assert!((texel.rgb[1] - texel.opacity * 0.25).abs() < 1e-7);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn region_images_blend_source_over_once_per_pixel() {
         // Two half-opaque regions over the same sky give 0.75, not four half-blends; an opaque one stays bounded.
         for projection in [Stereographic, Equidistant] {
@@ -690,8 +863,8 @@ mod tests {
 
     #[test]
     fn a_region_behind_the_camera_draws_only_at_the_rim() {
-        // At 359° the region around the view's antipode has an unbounded image: it is tested over the whole disc
-        // and lights only the outer ring beyond its nearest corner, never the centre. (Stereographic stretches
+        // At 359° the region around the view's antipode covers the exterior of a circle:
+        // only the outer ring beyond its nearest corner is tested, never the centre. (Stereographic stretches
         // the last degrees over most of the disc: the ring starts about a third of the way out.)
         let (view, observation) = observation_at(359.0, false, facing(2.0, 0.5), Stereographic);
         let camera = prepare_camera(&view);
@@ -700,7 +873,7 @@ mod tests {
         let size = 201;
         let screen = Screen::new(camera, size);
         let mapping = RegionMapping::new(&tile, &observation, &screen).unwrap();
-        assert_eq!(mapping.image, Image::WholeDisc);
+        assert!(matches!(mapping.image, Image::OutsideCircle { .. }));
         let mut data = Data::default();
         let image = &mut data.star_regions[region].merged_tile;
         image.tile.texels = vec![Texel { rgb: [1.0; 3], opacity: 1.0 }; TILE_EDGE_TEXELS.pow(2)];
@@ -723,6 +896,31 @@ mod tests {
             }
         }
         assert!(lit > 0 && frame.star(100, 100).is_empty());
+    }
+
+    #[test]
+    fn a_cap_edge_through_the_antipode_keeps_the_front_of_the_view_empty() {
+        // Aim exactly at a cap boundary's antipode: its unbounded image must be a half-plane, not the full disc.
+        let (_, observation) = observation_at(359.0, false, facing(2.0, 0.5), Stereographic);
+        let region = hash_direction(GRID_DEPTH, observation.patch.center);
+        let tile = TileGeometry::new(region);
+        let apparent = observation.apparent_star_direction(tile.center());
+        let tangent = apparent.cross(Vector3 { x: 0.0, y: 0.0, z: 1.0 }).normalized();
+        let reach = 2.0 * ((TileGeometry::middle() + 1.0) * SQRT_2 / (2.0 * tile.density())).atan();
+        let behind_edge = Horizontal::from_vector(-(apparent * reach.cos() + tangent * reach.sin()));
+        let view = View { center: facing(behind_edge.azimuth, behind_edge.altitude), projection: Stereographic, fov_degrees: 359.0 };
+        let screen = Screen::new(prepare_camera(&view), 201);
+        let mapping = RegionMapping::new(&tile, &observation, &screen).unwrap();
+        assert!(matches!(mapping.image, Image::HalfPlane { .. }));
+
+        // An opaque rear tile can light its visible side but must not leak into the centre via a huge filter.
+        let texels = vec![Texel { rgb: [1.0; 3], opacity: 1.0 }; TILE_EDGE_TEXELS.pow(2)];
+        let mut sampler = TileSampler::new(TILE_EDGE_TEXELS);
+        sampler.prepare(&[u64::MAX; TILE_EDGE_TEXELS]);
+        let mut stars = vec![Texel::default(); 201 * 201];
+        draw_region(&mut stars, &mapping, &sampler, &texels);
+        assert!(stars[100 * 201 + 100].is_empty());
+        assert!(stars.iter().any(|texel| texel.opacity > 0.0));
     }
 
     #[test]

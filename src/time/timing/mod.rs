@@ -1,8 +1,8 @@
 //! Measure startup and frame checkpoints and expose the opt-in execution trace.
 //! Use this module's exports; recording and the trace implementation remain private.
 
-/// Keep 95% of the previous timing average and add 5% of the current frame's duration.
-const TIMING_EMA_FACTOR: f64 = 0.95;
+/// Weight of the previous timing average; the current frame's duration receives the remaining weight.
+const TIMING_EMA_FACTOR: f64 = 0.80;
 
 mod pipeline;
 mod checkpoints;

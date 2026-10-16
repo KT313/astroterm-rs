@@ -177,8 +177,9 @@ of the sky, so every pixel's place in a tile follows from a closed formula. The 
 pixel inside a region's screen image it undoes the screen projection (a division for the stereographic view, a
 small per-frame table for the equidistant one), refraction (through a fixed table) and aberration, rotates into
 the tile and applies the tile projection, then averages the texels under the pixel's footprint and blends the
-result source-over. Every pixel is exact, including the 360° rim, where the point behind the observer spreads
-along the whole edge. Rows are stepped by forward differences, and in the stereographic view rows whose tile rows
+result source-over. Filter footprints may overlap the tile even when their centres are outside it; the uncovered
+part stays transparent instead of being renormalized to full brightness. Candidate bounds include this filter
+support. At the 360° rim, the point behind the observer spreads along the whole edge. Rows are stepped by forward differences, and in the stereographic view rows whose tile rows
 hold no light are skipped. Texture footprints are square area averages of the screen's radial scale (the
 equidistant view blurs a little more along the rim than across it); the cached tile resolution is unchanged, so
 extreme magnification can still look blurry.
