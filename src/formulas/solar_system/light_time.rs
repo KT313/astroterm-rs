@@ -33,7 +33,60 @@ pub fn correct_moon_light_time(moon: BodyState, earth_position: Vector3, observe
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::formulas::compute_barycentric_position;
+    use crate::formulas::{COMPUTATIONAL_INTERVAL, compute_barycentric_position};
+
+    /// Re-evaluate both the body and its parent at the requested date, without extrapolation.
+    fn evaluate_direct_body_state(body: BodyId, tt: f64) -> BodyState {
+        match body {
+            BodyId::Moon => evaluate_moon(tt).add_parent(evaluate_planet(BodyId::Earth, tt).state()),
+            planet => evaluate_planet(planet, tt).state(),
+        }
+    }
+
+    /// Repeat the light-time iterations with full model evaluations at each emission date.
+    fn evaluate_direct_emission(body: BodyId, tt: f64, receiver: Vector3) -> BodyState {
+        let mut emitted = evaluate_direct_body_state(body, tt);
+        for _ in 0..2 {
+            let light_time = (emitted.position - receiver).length() / LIGHT_SPEED_AU_DAY;
+            emitted = evaluate_direct_body_state(body, tt - light_time);
+        }
+        emitted
+    }
+
+    #[test]
+    fn expansion_matches_direct_models_across_the_computational_interval() {
+        // Sample the full interval, including its first date and its last representable date.
+        let start = COMPUTATIONAL_INTERVAL.start_tt;
+        let end = COMPUTATIONAL_INTERVAL.end_tt;
+        let bodies = [BodyId::Sun, BodyId::Mercury, BodyId::Venus, BodyId::Mars, BodyId::Jupiter,
+            BodyId::Saturn, BodyId::Uranus, BodyId::Neptune, BodyId::Moon];
+        for index in 0..=40 {
+            let tt = (start + (end - start) * f64::from(index) / 40.0).min(end.next_down());
+            assert!(COMPUTATIONAL_INTERVAL.contains(tt));
+            let earth = evaluate_planet(BodyId::Earth, tt);
+
+            // Check the approximation against fresh position and velocity calculations.
+            for &body in &bodies {
+                let motion = evaluate_body_motion(body, tt, earth);
+                let emitted = compute_emission_state(motion, earth.position);
+                let reference = evaluate_direct_emission(body, tt, earth.position);
+                let position_error = (emitted.position - reference.position).length();
+                let velocity_error = (emitted.velocity - reference.velocity).length();
+                assert!(position_error < 1e-10, "{body:?} TT {tt}: position error {position_error:e} AU");
+                assert!(velocity_error < 1e-8, "{body:?} TT {tt}: velocity error {velocity_error:e} AU/day");
+
+                // Angular checks also account for the Moon's much shorter distance to the observer.
+                // These regression limits include floating-point emission-date rounding; they do not
+                // assert the physical accuracy of the underlying models over this entire interval.
+                let direction = (emitted.position - earth.position).normalized();
+                let reference_direction = (reference.position - earth.position).normalized();
+                let angular_error = direction.cross(reference_direction).length()
+                    .atan2(direction.dot(reference_direction)).to_degrees() * 3600.0;
+                let angular_limit = if body == BodyId::Moon { 0.005 } else { 0.0001 };
+                assert!(angular_error < angular_limit, "{body:?} TT {tt}: angular error {angular_error:e} arcseconds");
+            }
+        }
+    }
 
     #[test]
     fn the_expansion_lands_where_the_series_was_at_the_emission_time() {
