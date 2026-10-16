@@ -168,9 +168,11 @@ This setting does not change catalog loading, downloading, sorting or other fram
 worker execution use the same independent region loop; workers borrow only their assigned tiles. Each worker
 draws its full image, and results combine in region order. One worker writes directly into the final image;
 additional workers need a temporary float RGBA image each (about 19 MiB per image at 1116 × 1116 pixels).
-Multi-worker composition can change floating-point rounding slightly. Region counts are divided roughly
-equally, so uneven projected region sizes can limit speedup. Screen corrections are calculated independently
-for each region, including equidistant and refraction views.
+Multi-worker composition can change floating-point rounding slightly. Stereographic views with multiple
+workers balance consecutive chunks using a cheap projected-area estimate. Direct execution, one worker and
+equidistant views do not calculate estimates; equidistant keeps roughly equal region counts. A single large
+region can still limit speedup because regions are not split between tasks. Screen corrections are calculated
+independently for each region, including equidistant and refraction views.
 
 This port draws pixel graphics instead of characters (the character renderer of the original was removed), adds
 interactive pan/zoom/time controls and optional AT-HYG downloads, and improves astronomical calculations, curved

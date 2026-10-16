@@ -2,13 +2,13 @@
 //! image. The caller combines consecutive region chunks in selection order, after all tasks finish.
 use std::io;
 use rayon::{ThreadPool, ThreadPoolBuilder};
-use crate::model::{Region, Texel, View};
+use crate::model::{ProjectionKind, Region, Texel, View};
 use crate::observation::Observation;
 use crate::regions::blend_star;
 use crate::time::StepTimes;
 use super::prepare_camera;
 use super::pixel_warp::Screen;
-use super::region_drawing::{SelectedTile, draw_regions, select_region_tiles};
+use super::region_drawing::{SelectedTile, draw_regions, estimate_stereographic_work, select_region_tiles};
 
 /// Lives outside the frame loop. Zero workers runs the region loop locally; positive counts use a
 /// dedicated pool, never Rayon's global pool. Buffers retain capacity only, not valid image contents.
@@ -43,7 +43,8 @@ impl ProjectionExecutor {
         let mut stars = vec![Texel::default(); pixel_count];
         if size < 2 || selected.is_empty() { return stars; }
         times.measure("Projection.Camera preparation");
-        let screen = Screen::new(prepare_camera(view), size);
+        let camera = prepare_camera(view);
+        let screen = Screen::new(camera, size);
         times.measure("Projection.Tile selection");
         let tiles = select_region_tiles(regions, selected);
 
@@ -54,9 +55,18 @@ impl ProjectionExecutor {
             return stars;
         };
 
-        // Split consecutive region lists evenly. Only additional chunks need temporary images.
+        // Estimate only when stereographic rendering has multiple tasks. Other paths keep equal counts.
+        let workers = pool.current_num_threads();
+        let chunks = if workers > 1 && tiles.len() > 1 && view.projection == ProjectionKind::Stereographic {
+            times.measure("Projection.Work estimation");
+            let work = estimate_stereographic_work(&tiles, &observation.patch.center, camera.scale, size, view.fov_degrees);
+            split_regions_by_work(&tiles, &work, workers)
+        } else {
+            split_region_chunks(&tiles, workers)
+        };
+
+        // Only additional chunks need temporary images; every chunk retains the original region order.
         times.measure("Projection.Worker preparation");
-        let chunks = split_region_chunks(&tiles, pool.current_num_threads());
         self.buffers.resize_with(chunks.len() - 1, Vec::new);
         for buffer in &mut self.buffers {
             buffer.clear();
@@ -94,6 +104,36 @@ fn split_region_chunks<T>(regions: &[T], workers: usize) -> Vec<&[T]> {
         chunks.push(chunk);
         remaining = rest;
     }
+    chunks
+}
+
+/// Balance approximate work without reordering or splitting individual regions. Boundaries follow
+/// cumulative work targets; reserving one region per remaining task prevents empty chunks.
+fn split_regions_by_work<'a, T>(regions: &'a [T], work: &[f64], workers: usize) -> Vec<&'a [T]> {
+    assert!(workers > 0);
+    assert_eq!(regions.len(), work.len());
+    let count = workers.min(regions.len());
+    let total_work: f64 = work.iter().sum();
+    if count <= 1 || total_work == 0.0 { return split_region_chunks(regions, workers); }
+
+    // Walk the selected list once, cutting when the next share of total estimated work has been reached.
+    let mut chunks = Vec::with_capacity(count);
+    let mut first = 0;
+    let mut completed_work = 0.0;
+    for (index, &cost) in work.iter().enumerate() {
+        let remaining_chunks = count - chunks.len() - 1;
+        if remaining_chunks == 0 { break; }
+        completed_work += cost;
+        let target = total_work * ((chunks.len() + 1) as f64 / count as f64);
+        let remaining_regions = regions.len() - index - 1;
+        if completed_work >= target || remaining_regions == remaining_chunks {
+            chunks.push(&regions[first..=index]);
+            first = index + 1;
+        }
+    }
+
+    // Always retain the final suffix, including cheap regions after the last expensive one.
+    chunks.push(&regions[first..]);
     chunks
 }
 
