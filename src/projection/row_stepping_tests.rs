@@ -57,19 +57,6 @@ fn project_reference_tiles(size: usize, regions: &[Region], selected: &[usize], 
     stars
 }
 
-/// Exercise the live unshared kernel explicitly, so later shared-screen changes do not alter this baseline.
-pub(in crate::projection) fn project_unshared_tiles(size: usize, regions: &[Region], selected: &[usize], observation: &Observation, view: &View) -> Vec<Texel> {
-    let mut times = StepTimes::default();
-    times.measure("Projection.Star buffer allocation");
-    let mut stars = vec![Texel::default(); size * size];
-    if size < 2 { return stars; }
-    times.measure("Projection.Camera preparation");
-    let screen = Screen::new(prepare_camera(view), size);
-    draw_unshared_tiles(&mut stars, &screen, regions, selected, observation, &mut times);
-    times.measure("Projection");
-    stars
-}
-
 pub(in crate::projection) fn compare_images(actual: &[Texel], expected: &[Texel]) -> f32 {
     assert_eq!(actual.len(), expected.len());
     let mut greatest_error = 0.0_f32;
@@ -162,7 +149,7 @@ fn transformed_rows_preserve_composition_and_general_modes_are_identical() {
         let (view, observation) = observation_at(fov, atmosphere, centre, projection);
         for size in [0, 1, 301] {
             let expected = project_reference_tiles(size, &data.star_regions, &selected, &observation, &view);
-            let actual = project_unshared_tiles(size, &data.star_regions, &selected, &observation, &view);
+            let actual = ProjectionExecutor::default().project(size, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default());
             let error = compare_images(&actual, &expected);
             if atmosphere || projection == Equidistant { assert_eq!(error, 0.0); }
         }
@@ -191,7 +178,7 @@ fn time_transformed_rows_with_content_bounds() {
                 for transformed in if round % 2 == 0 { [false, true] } else { [true, false] } {
                     let start = Instant::now();
                     let stars = if transformed {
-                        project_unshared_tiles(1116, &data.star_regions, &selected, &observation, &view)
+                        ProjectionExecutor::default().project(1116, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default())
                     } else {
                         project_reference_tiles(1116, &data.star_regions, &selected, &observation, &view)
                     };
@@ -206,7 +193,7 @@ fn time_transformed_rows_with_content_bounds() {
 
             // Compare full-frame output outside timing, with both paths using the same cached content bounds.
             let expected = project_reference_tiles(1116, &data.star_regions, &selected, &observation, &view);
-            let actual = project_unshared_tiles(1116, &data.star_regions, &selected, &observation, &view);
+            let actual = ProjectionExecutor::default().project(1116, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default());
             let error = compare_images(&actual, &expected);
             if atmosphere || projection == Equidistant { assert_eq!(error, 0.0); }
             eprintln!("Transformed rows full={full} {projection:?} fov={fov} atmosphere={atmosphere}: phase1 {:.3} ms, transformed {:.3} ms, maximum RGBA difference {error}",

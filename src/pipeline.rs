@@ -9,7 +9,7 @@ use astroterm::model::{Config, Data};
 use astroterm::observation::observe;
 use astroterm::points::{draw_points};
 use astroterm::present::{Display, present, transport_notice};
-use astroterm::projection::{Frame, project_stars_to_screen};
+use astroterm::projection::{Frame, ProjectionExecutor, project_stars_to_screen};
 use astroterm::regions::{RefreshReport, refresh_regions};
 use astroterm::selection::{Selected, select_regions};
 use astroterm::solar_system::simulate_solar_system;
@@ -21,6 +21,7 @@ use crate::helpers::{
 };
 
 /// Draw frames at the configured rate until the user quits. Keys change the view and the simulation clock.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn run_frame_loop(
     config: &Config,
     data: &mut Data,
@@ -28,6 +29,7 @@ pub(super) fn run_frame_loop(
     frame: &mut Frame,
     panel: &mut Panel,
     time_manager: &mut TimeManager,
+    projection: &mut ProjectionExecutor,
     benchmark: &mut Option<BenchmarkSession>
 )-> io::Result<()> {
 
@@ -61,7 +63,7 @@ pub(super) fn run_frame_loop(
         );
 
         time_manager.measure("Projection");
-        let projected_stars = project_stars_to_screen(frame.drawing_area_width_and_height, &data.star_regions, &selected.regions, &observation, &current_view, &mut time_manager.step_times);
+        let projected_stars = project_stars_to_screen(frame.drawing_area_width_and_height, &data.star_regions, &selected.regions, &observation, &current_view, projection, &mut time_manager.step_times);
         time_manager.measure("Projection.Frame insertion");
         frame.insert_projected_stars(&projected_stars);
         drop(projected_stars);

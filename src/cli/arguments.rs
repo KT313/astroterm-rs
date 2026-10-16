@@ -62,6 +62,11 @@ pub struct Arguments {
     #[arg(short = 'f', long, value_name = "int", allow_negative_numbers = true)]
     pub fps: Option<i64>,
 
+    /// Projection workers: 0 runs directly, -1 uses available logical CPUs, positive values create that many threads
+    #[arg(long, value_name = "int", default_value_t = 0, allow_negative_numbers = true,
+        value_parser = clap::value_parser!(i64).range(-1..))]
+    pub n_jobs: i64,
+
     /// Animation speed multiplier (default: 1.0)
     #[arg(
         short = 's',

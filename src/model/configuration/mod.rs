@@ -22,6 +22,7 @@ pub struct Config {
     pub terminal: TerminalSettings,
     /// Frames per second.
     pub fps: u32,
+    pub projection_jobs: usize,                // resolved projection worker count; zero creates no pool
     /// Star dataset to load instead of the embedded catalog.
     pub dataset: Option<Dataset>,
     pub dataset_parallel_blocks: u8,                                                     // maximum simultaneous MAST block downloads

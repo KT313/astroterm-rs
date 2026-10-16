@@ -84,6 +84,7 @@ Use `--text-scale 0.7` for smaller pixel text or `--text-scale 1.2` for larger t
 | `-t 8` | Show fainter stars; default is `5`. Higher values show more stars and can be slower |
 | `--fov 60` | Zoom into a smaller patch of sky |
 | `--fps 24` | Set the frame-rate target; the default is 12 |
+| `--n-jobs 4` | Use four projection worker threads; `0` (default) runs directly, `-1` uses available logical CPUs |
 | `-R` | Include atmospheric refraction near the horizon |
 
 For all options: `./target/release/astroterm --help`.
@@ -160,6 +161,16 @@ re-rendered only when its simulation or the brightness threshold changes, and th
 every pixel of a region's screen image back to its tile and filtering the texels under it. Tiles of regions that leave the view stay in memory for their return.
 The fixed holds have known direction-error exceptions; the opt-in [offline hold audit](docs/stellar-hold-audit.md)
 reports them without changing the runtime policy.
+
+Projection can use a dedicated thread pool with `--n-jobs`: `0` creates no projection pool, `1` creates one
+worker, and positive values request that many workers. `-1` uses the logical CPUs available to the process.
+This setting does not change catalog loading, downloading, sorting or other frame steps. Both direct and
+worker execution use the same independent region loop; workers borrow only their assigned tiles. Each worker
+draws its full image, and results combine in region order. One worker writes directly into the final image;
+additional workers need a temporary float RGBA image each (about 19 MiB per image at 1116 × 1116 pixels).
+Multi-worker composition can change floating-point rounding slightly. Region counts are divided roughly
+equally, so uneven projected region sizes can limit speedup. Screen corrections are calculated independently
+for each region, including equidistant and refraction views.
 
 This port draws pixel graphics instead of characters (the character renderer of the original was removed), adds
 interactive pan/zoom/time controls and optional AT-HYG downloads, and improves astronomical calculations, curved

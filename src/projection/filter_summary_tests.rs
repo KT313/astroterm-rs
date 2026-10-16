@@ -3,7 +3,8 @@ use crate::formulas::{Observer, evaluate_earth_state};
 use crate::model::{Data, ProjectionKind, View, ViewCenter};
 use crate::observation::observe;
 use crate::time::StepTimes;
-use super::pixel_warp::{project_tiles_by_pixel, content_bounds_tests::build_dense_image};
+use super::pixel_warp::content_bounds_tests::build_dense_image;
+use super::ProjectionExecutor;
 use super::pixel_warp::row_stepping_tests::compare_images;
 use ProjectionKind::{Equidistant, Stereographic};
 
@@ -89,7 +90,7 @@ fn time_filtering_summaries() {
                         }
                     }
                     let start = Instant::now();
-                    let stars = project_tiles_by_pixel(1116, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default());
+                    let stars = ProjectionExecutor::default().project(1116, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default());
                     black_box(&stars);
                     let elapsed = start.elapsed().as_secs_f64() * 1000.0;
                     if round > 0 {
@@ -101,11 +102,11 @@ fn time_filtering_summaries() {
             summary_times.sort_by(f64::total_cmp);
 
             // The final round ends with direct sampling. Restore the same summaries for output comparison.
-            let direct = project_tiles_by_pixel(1116, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default());
+            let direct = ProjectionExecutor::default().project(1116, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default());
             for (region, saved) in data.star_regions.iter_mut().zip(&mut saved) {
                 std::mem::swap(&mut region.merged_tile.filter_summary, saved);
             }
-            let summarized = project_tiles_by_pixel(1116, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default());
+            let summarized = ProjectionExecutor::default().project(1116, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default());
             eprintln!("Filtering full={full} {projection:?} fov={fov} atmosphere={atmosphere}: direct {:.3} ms [{:.3}, {:.3}], summaries {:.3} ms [{:.3}, {:.3}], RGBA error {}",
                 direct_times[2], direct_times[0], direct_times[4], summary_times[2], summary_times[0], summary_times[4], compare_images(&direct, &summarized));
         }

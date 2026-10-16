@@ -51,7 +51,7 @@ impl<W: Write> BenchmarkSession<W> {
             "effective_config": {"view": format!("{:?}", config.view),
                 "render": format!("{:?}", config.render), "observer": format!("{:?}", config.simulation.observer),
                 "refraction": config.simulation.refraction, "metadata_panel": config.terminal.metadata_panel,
-                "fps": config.fps, "text_scale": config.text_scale, "dataset": format!("{:?}", config.dataset)}
+                "fps": config.fps, "projection_jobs": config.projection_jobs, "text_scale": config.text_scale, "dataset": format!("{:?}", config.dataset)}
         }))?;
         self.write_record(&Segment { r#type: "startup", trace_complete: true, steps: times.capture_steps()? })?;
         times.clear_capture_segment()?;

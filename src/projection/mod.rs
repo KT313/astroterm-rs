@@ -3,10 +3,12 @@
 use crate::time::StepTimes;
 mod geometry;
 mod pixel_warp;
-mod shared_screen;
+mod region_drawing;
+mod executor;
 mod tile_sampling;
 mod frame;
 
+pub use executor::ProjectionExecutor;
 pub use frame::Frame;
 pub use geometry::{
     ArcPart, CartesianCamera, Polar, ProjectedArc, ScreenPoint,
@@ -25,10 +27,11 @@ pub fn project_stars_to_screen(
     selected_regions: &[usize],
     observation: &crate::observation::Observation,
     view: &crate::model::View,
+    executor: &mut ProjectionExecutor,
     times: &mut StepTimes
 ) -> Vec<crate::model::Texel> {
     // Render in square-local coordinates; the caller places the result into the full frame.
-    pixel_warp::project_tiles_by_pixel(drawing_area_width_and_height, star_regions, selected_regions, observation, view, times)
+    executor.project(drawing_area_width_and_height, star_regions, selected_regions, observation, view, times)
 }
 
 #[cfg(test)]

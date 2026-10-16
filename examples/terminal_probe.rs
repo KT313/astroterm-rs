@@ -30,7 +30,7 @@ fn main() {
                 &selected.regions, time, config.view.fov_degrees, config.render.magnitude_threshold,
                 &mut astroterm::time::StepTimes::default(),
             );
-            let projected_stars = project_stars_to_screen(frame.drawing_area_width_and_height, &tables.star_regions, &selected.regions, &observation, &config.view, &mut astroterm::time::StepTimes::default());
+            let projected_stars = project_stars_to_screen(frame.drawing_area_width_and_height, &tables.star_regions, &selected.regions, &observation, &config.view, &mut astroterm::projection::ProjectionExecutor::new(0).unwrap(), &mut astroterm::time::StepTimes::default());
             frame.insert_projected_stars(&projected_stars);
             let drawn = draw_points(
                 &mut frame, &solar_system,

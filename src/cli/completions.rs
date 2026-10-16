@@ -89,6 +89,7 @@ mod tests {
             "    --bash-completions\n",
             "    -h\n",
             "    --help\n",
+            "    --n-jobs\n",
         ] {
             assert!(script.contains(option), "{option:?}");
         }

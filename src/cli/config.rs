@@ -113,9 +113,24 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
         render,
         terminal,
         fps,
+        projection_jobs: resolve_projection_jobs(arguments.n_jobs)?,
         dataset,
         dataset_parallel_blocks: arguments.dataset_parallel_blocks.unwrap_or(crate::constants::MAST_PARALLEL_BLOCKS),
     })
+}
+
+/// Resolve the projection setting once; other application pools retain their own settings.
+fn resolve_projection_jobs(requested: i64) -> Result<usize, ConfigError> {
+    // Automatic mode respects the logical CPUs available to this process.
+    if requested == -1 {
+        return std::thread::available_parallelism()
+            .map(usize::from)
+            .map_err(|error| ConfigError(format!("Cannot determine projection worker count: {error}")));
+    }
+
+    // Keep explicit counts unchanged, including zero for direct execution.
+    usize::try_from(requested)
+        .map_err(|_| ConfigError("--n-jobs must be -1, 0, or a positive integer representable on this device".into()))
 }
 
 /// Parse an azimuth in degrees [0, 360] or a 16-point compass direction such as "NNW" (case insensitive), in degrees.
@@ -234,6 +249,25 @@ mod tests {
     fn misspelled_city_gets_suggestions() {
         assert!(error_from(&["-i", "Tokio"]).contains("Tokyo"));
         assert!(error_from(&["-i", "zzzzzzzzzz"]).ends_with("\"zzzzzzzzzz\""));
+    }
+
+    #[test]
+    fn projection_worker_counts_are_validated_and_do_not_change_other_settings() {
+        let direct = config_from(&[]).unwrap();
+        assert_eq!(direct.projection_jobs, 0);
+        for requested in ["0", "1", "4", "32"] {
+            let mut actual = config_from(&["--n-jobs", requested]).unwrap();
+            assert_eq!(actual.projection_jobs, requested.parse::<usize>().unwrap());
+            actual.projection_jobs = 0;
+            actual.simulation.start_time_ms = direct.simulation.start_time_ms;
+            assert_eq!(actual, direct);
+        }
+        assert_eq!(config_from(&["--n-jobs", "-1"]).unwrap().projection_jobs,
+            std::thread::available_parallelism().unwrap().get());
+        for invalid in ["-2", "1.5", "hello", "9223372036854775808"] {
+            assert!(Arguments::try_parse_from(["astroterm", "--n-jobs", invalid]).is_err());
+        }
+        assert!(resolve_projection_jobs(-2).is_err());
     }
 
     #[test]

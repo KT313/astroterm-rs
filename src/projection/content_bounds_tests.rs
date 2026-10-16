@@ -53,7 +53,6 @@ fn compare_with_full_disc(region: usize, image: &RegionTileCache, observation: &
     let to_tile = axes.compose(observation.to_catalog);
     let aberration_horizon = observation.to_horizon.apply(observation.observer.velocity * (1.0 / LIGHT_SPEED_AU_DAY));
     let reference = RegionMapping {
-        tile_axes: axes,
         to_tile,
         aberration: to_tile.apply(aberration_horizon),
         aberration_horizon,
@@ -219,7 +218,7 @@ fn time_cached_content_bounds() {
                         region.merged_tile.content_radius = if cached { radius } else { None };
                     }
                     let start = Instant::now();
-                    let stars = project_tiles_by_pixel(1116, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default());
+                    let stars = ProjectionExecutor::default().project(1116, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default());
                     black_box(&stars);
                     let elapsed = start.elapsed().as_secs_f64() * 1000.0;
                     if round == 0 { continue; }
@@ -233,9 +232,9 @@ fn time_cached_content_bounds() {
 
             // Compare complete compositions outside the timed loop, including overlapping regions.
             for region in &mut data.star_regions { region.merged_tile.content_radius = None; }
-            let original = project_tiles_by_pixel(1116, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default());
+            let original = ProjectionExecutor::default().project(1116, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default());
             for (region, &radius) in data.star_regions.iter_mut().zip(&radii) { region.merged_tile.content_radius = radius; }
-            let cached = project_tiles_by_pixel(1116, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default());
+            let cached = ProjectionExecutor::default().project(1116, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default());
             let mut greatest_error = 0.0_f32;
             for (original, cached) in original.iter().zip(&cached) {
                 for (original, cached) in original.rgb.into_iter().chain([original.opacity]).zip(cached.rgb.into_iter().chain([cached.opacity])) {

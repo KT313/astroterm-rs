@@ -12,6 +12,7 @@ use astroterm::catalog::datasets::DatasetDirectories;
 use astroterm::cli::Arguments;
 use astroterm::constants::{SPEED_GROUP_BOUNDS, SPEED_GROUP_TTL_MS};
 use astroterm::model::{Config, Data};
+use astroterm::projection::ProjectionExecutor;
 use astroterm::time::{StartupTiming, StepTimes};
 
 use helpers::{
@@ -44,6 +45,13 @@ fn main() -> ExitCode {
 
 /// Keep the display alive through the frame loop and restore the terminal before main prints the result.
 fn render_in_terminal(config: &Config, data: &mut Data, mut startup_timing: StartupTiming, benchmark: &mut Option<BenchmarkSession>) -> (io::Result<()>, StepTimes) {
+    // Create only the requested projection pool, before terminal setup and the frame loop.
+    startup_timing.step_times.measure("Projection worker startup");
+    let mut projection = match ProjectionExecutor::new(config.projection_jobs) {
+        Ok(projection) => projection,
+        Err(error) => return (Err(error), startup_timing.step_times),
+    };
+
     // Prepare the display and drawing state before simulated time starts advancing.
     let mut display = match open_display(config, &mut startup_timing.step_times) {
         Ok(display) => display,
@@ -63,7 +71,7 @@ fn render_in_terminal(config: &Config, data: &mut Data, mut startup_timing: Star
     let mut time_manager = startup_timing.start_simulation(
         config.simulation.start_time_ms, config.simulation.speed, config.fps, frame_step_ms, config.debug_singleframe,
     );
-    let result = run_frame_loop(config, data, &mut display, &mut frame, &mut panel, &mut time_manager, benchmark);
+    let result = run_frame_loop(config, data, &mut display, &mut frame, &mut panel, &mut time_manager, &mut projection, benchmark);
     (result, time_manager.step_times)
 }
 

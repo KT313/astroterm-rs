@@ -32,7 +32,7 @@ fn render(data: &mut Data, frame: &mut Frame, terminal: &mut Terminal<Vec<u8>>, 
         times,
     );
     times.measure("Projection");
-    let projected_stars = project_stars_to_screen(frame.drawing_area_width_and_height, &data.star_regions, &selected.regions, &observation, &view, times);
+    let projected_stars = project_stars_to_screen(frame.drawing_area_width_and_height, &data.star_regions, &selected.regions, &observation, &view, &mut astroterm::projection::ProjectionExecutor::new(0).unwrap(), times);
     frame.insert_projected_stars(&projected_stars);
     times.measure("Points");
     let drawn = draw_points(
