@@ -5,6 +5,8 @@ mod geometry;
 mod pixel_warp;
 mod region_drawing;
 mod executor;
+mod worker_images;
+mod screen_blend;
 mod tile_sampling;
 mod frame;
 
@@ -19,17 +21,18 @@ pub use geometry::{
 };
 
 /// Step 5: return a square image of projected stars, with no frame offsets or terminal margins.
+/// The returned image borrows executor-owned storage until the next projection call.
 /// Pixels use row-major order and retain floating-point RGB and opacity until final presentation. Every
 /// pixel inside a region's image is pulled back to the region's tile and sampled there (`pixel_warp`).
-pub fn project_stars_to_screen(
+pub fn project_stars_to_screen<'a>(
     drawing_area_width_and_height: usize,
     star_regions: &[crate::model::Region],
     selected_regions: &[usize],
     observation: &crate::observation::Observation,
     view: &crate::model::View,
-    executor: &mut ProjectionExecutor,
+    executor: &'a mut ProjectionExecutor,
     times: &mut StepTimes
-) -> Vec<crate::model::Texel> {
+) -> &'a [crate::model::Texel] {
     // Render in square-local coordinates; the caller places the result into the full frame.
     executor.project(drawing_area_width_and_height, star_regions, selected_regions, observation, view, times)
 }

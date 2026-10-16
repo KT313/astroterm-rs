@@ -18,7 +18,7 @@ Bottom-up. Every module exposes its symbols from its root `mod.rs`; callers use 
 | `observation/` | step 2, `observe` |
 | `selection/` | step 3, `select_regions` |
 | `regions/` | step 4, `refresh_regions`: simulation caches, star appearance, tile geometry, group and region images, merged-image bounds and filtering summaries |
-| `projection/` | step 5, `project_stars_to_screen`: optional dedicated worker pool, ordered workload splitting and full-size chunk images (`executor.rs`), restricted read-only tile inputs, rough stereographic work estimates and the independent region loop (`region_drawing.rs`), inverse warp and transformed rows (`pixel_warp.rs`), texel sampling (`tile_sampling.rs`), frame buffers (`frame.rs`), shared projection geometry (`geometry/`) |
+| `projection/` | step 5, `project_stars_to_screen`: optional dedicated worker pool and workload splitting (`executor.rs`), reusable image handoff and completion-order collection (`worker_images.rs`), screen composition (`screen_blend.rs`), restricted read-only tile inputs, rough stereographic work estimates and the independent region loop (`region_drawing.rs`), inverse warp and transformed rows (`pixel_warp.rs`), texel sampling (`tile_sampling.rs`), frame buffers (`frame.rs`), shared projection geometry (`geometry/`) |
 | `points/` | step 6, `draw_points` |
 | `present/` | step 7, `present`, and `Display` (terminal session, protocol detection, frame layout) |
 | `terminal/` | startup progress display, raw-mode session, key and resize input, graphics encoders and protocol detection |
@@ -29,11 +29,12 @@ Bottom-up. Every module exposes its symbols from its root `mod.rs`; callers use 
 | `main.rs`, `pipeline.rs`, `helpers/` | the binary: startup, the frame loop, controls, separate metadata text overlay, diagnostics and the frame benchmark |
 
 Owned data at runtime: `Data` (immutable catalog columns beside mutable group/region caches), the `Frame`
-(star layer, overlay, text rasterizer), the `Display` with its `Terminal`, the `TimeManager` (which owns `StepTimes`), and the `ProjectionExecutor` (optional pool and reusable scratch). All are created in
+(star layer, overlay, text rasterizer), the `Display` with its `Terminal`, the `TimeManager` (which owns `StepTimes`), and the `ProjectionExecutor` (optional pool and reusable images). All are created in
 `main.rs` or at the top of the frame loop and passed by reference to the steps.
 
-Star projection takes only the square drawing area's side length and returns row-major floating-point `Texel`
-pixels. The frame loop inserts that square using `Frame.drawing_area_x_offset` and `drawing_area_y_offset`;
+Star projection takes the square drawing area's side length and returns a borrowed slice of row-major
+floating-point `Texel` pixels owned by its executor. Worker buffers are resized/cleared by their jobs and
+merged as they complete; the first completed image supplies the final storage. The frame loop inserts that square using `Frame.drawing_area_x_offset` and `drawing_area_y_offset`;
 `drawing_area_width_and_height` stores its side length. Points and text overlays still use the full frame,
 so sky labels can extend into the margins. Projection backends never receive the full frame or its offsets.
 

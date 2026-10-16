@@ -41,8 +41,9 @@ fn run_frame(data: &mut Data, frame: &mut Frame, view: &View, settings: &RenderO
         &selected.regions, time, view.fov_degrees, settings.magnitude_threshold,
         &mut astroterm::time::StepTimes::default(),
     );                                       // 4
-    let projected_stars = project_stars_to_screen(frame.drawing_area_width_and_height, &data.star_regions, &selected.regions, &observation, view, &mut astroterm::projection::ProjectionExecutor::new(0).unwrap(), &mut astroterm::time::StepTimes::default());                            // 5
-    frame.insert_projected_stars(&projected_stars);
+    let mut projection = astroterm::projection::ProjectionExecutor::default();
+    let projected_stars = project_stars_to_screen(frame.drawing_area_width_and_height, &data.star_regions, &selected.regions, &observation, view, &mut projection, &mut astroterm::time::StepTimes::default());                            // 5
+    frame.insert_projected_stars(projected_stars);
     let drawn = draw_points(
         frame, &solar_system,
         &data.solar_system_sun, &data.solar_system_planets, &data.solar_system_moons,

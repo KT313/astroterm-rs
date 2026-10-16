@@ -5,7 +5,7 @@ use super::tests::{facing, observation_at};
 use crate::model::{ViewCenter, region_caps};
 use ProjectionKind::{Equidistant, Stereographic};
 
-// Preserve the phase-1 loop as a test oracle, including its separate screen stepping and per-pixel transform.
+// Preserve the phase-1 mapping loop as an oracle, using the current screen compositor.
 fn draw_reference_region(stars: &mut [Texel], mapping: &RegionMapping<'_>, sampler: &TileSampler<'_>, texels: &[Texel]) {
     let screen = mapping.screen;
     let (top, bottom) = mapping.rows();
@@ -22,7 +22,7 @@ fn draw_reference_region(stars: &mut [Texel], mapping: &RegionMapping<'_>, sampl
                 if footprint <= 3.0 && !sampler.may_hold_light_near(position) { continue; }
                 let sample_position = position.map(|value| value + 0.5);                  // integer texel centres become half-integer centres in the sampler's edge coordinates
                 let Some(rgba) = sampler.sample(texels, sample_position, [footprint, footprint]) else { continue; };
-                blend_star(texel, [rgba[0], rgba[1], rgba[2]], rgba[3]);
+                blend_screen_pixel(texel, Texel { rgb: [rgba[0], rgba[1], rgba[2]], opacity: rgba[3] });
                 texel.rgb = texel.rgb.map(|value| value.min(1.0));                          // absorb last-bit rounding of the blend at opaque pixels
                 texel.opacity = texel.opacity.min(1.0);
             }
@@ -149,7 +149,7 @@ fn transformed_rows_preserve_composition_and_general_modes_are_identical() {
         let (view, observation) = observation_at(fov, atmosphere, centre, projection);
         for size in [0, 1, 301] {
             let expected = project_reference_tiles(size, &data.star_regions, &selected, &observation, &view);
-            let actual = ProjectionExecutor::default().project(size, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default());
+            let actual = project_test_image(size, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default());
             let error = compare_images(&actual, &expected);
             if atmosphere || projection == Equidistant { assert_eq!(error, 0.0); }
         }
@@ -178,7 +178,7 @@ fn time_transformed_rows_with_content_bounds() {
                 for transformed in if round % 2 == 0 { [false, true] } else { [true, false] } {
                     let start = Instant::now();
                     let stars = if transformed {
-                        ProjectionExecutor::default().project(1116, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default())
+                        project_test_image(1116, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default())
                     } else {
                         project_reference_tiles(1116, &data.star_regions, &selected, &observation, &view)
                     };
@@ -193,7 +193,7 @@ fn time_transformed_rows_with_content_bounds() {
 
             // Compare full-frame output outside timing, with both paths using the same cached content bounds.
             let expected = project_reference_tiles(1116, &data.star_regions, &selected, &observation, &view);
-            let actual = ProjectionExecutor::default().project(1116, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default());
+            let actual = project_test_image(1116, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default());
             let error = compare_images(&actual, &expected);
             if atmosphere || projection == Equidistant { assert_eq!(error, 0.0); }
             eprintln!("Transformed rows full={full} {projection:?} fov={fov} atmosphere={atmosphere}: phase1 {:.3} ms, transformed {:.3} ms, maximum RGBA difference {error}",

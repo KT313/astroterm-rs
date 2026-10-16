@@ -218,7 +218,7 @@ fn time_cached_content_bounds() {
                         region.merged_tile.content_radius = if cached { radius } else { None };
                     }
                     let start = Instant::now();
-                    let stars = ProjectionExecutor::default().project(1116, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default());
+                    let stars = project_test_image(1116, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default());
                     black_box(&stars);
                     let elapsed = start.elapsed().as_secs_f64() * 1000.0;
                     if round == 0 { continue; }
@@ -232,9 +232,9 @@ fn time_cached_content_bounds() {
 
             // Compare complete compositions outside the timed loop, including overlapping regions.
             for region in &mut data.star_regions { region.merged_tile.content_radius = None; }
-            let original = ProjectionExecutor::default().project(1116, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default());
+            let original = project_test_image(1116, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default());
             for (region, &radius) in data.star_regions.iter_mut().zip(&radii) { region.merged_tile.content_radius = radius; }
-            let cached = ProjectionExecutor::default().project(1116, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default());
+            let cached = project_test_image(1116, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default());
             let mut greatest_error = 0.0_f32;
             for (original, cached) in original.iter().zip(&cached) {
                 for (original, cached) in original.rgb.into_iter().chain([original.opacity]).zip(cached.rgb.into_iter().chain([cached.opacity])) {

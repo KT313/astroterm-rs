@@ -65,8 +65,7 @@ pub(super) fn run_frame_loop(
         time_manager.measure("Projection");
         let projected_stars = project_stars_to_screen(frame.drawing_area_width_and_height, &data.star_regions, &selected.regions, &observation, &current_view, projection, &mut time_manager.step_times);
         time_manager.measure("Projection.Frame insertion");
-        frame.insert_projected_stars(&projected_stars);
-        drop(projected_stars);
+        frame.insert_projected_stars(projected_stars);
 
         time_manager.measure("Points");
         let drawn = draw_points(

@@ -165,14 +165,17 @@ reports them without changing the runtime policy.
 Projection can use a dedicated thread pool with `--n-jobs`: `0` creates no projection pool, `1` creates one
 worker, and positive values request that many workers. `-1` uses the logical CPUs available to the process.
 This setting does not change catalog loading, downloading, sorting or other frame steps. Both direct and
-worker execution use the same independent region loop; workers borrow only their assigned tiles. Each worker
-draws its full image, and results combine in region order. One worker writes directly into the final image;
-additional workers need a temporary float RGBA image each (about 19 MiB per image at 1116 × 1116 pixels).
-Multi-worker composition can change floating-point rounding slightly. Stereographic views with multiple
-workers balance consecutive chunks using a cheap projected-area estimate. Direct execution, one worker and
-equidistant views do not calculate estimates; equidistant keeps roughly equal region counts. A single large
-region can still limit speedup because regions are not split between tasks. Screen corrections are calculated
-independently for each region, including equidistant and refraction views.
+worker execution use the same independent region loop; workers borrow only their assigned tiles. The executor
+creates one reusable image vector per worker. Each job resizes and clears its own image, then returns it through
+a completion channel. The main thread uses the first completed image as the accumulator and screen-blends later
+results while other jobs continue drawing. Image allocations are retained; the completed square is borrowed for
+frame insertion. Each active image costs about 19 MiB at 1116 × 1116 pixels; capacity can retain a larger prior size.
+
+Stereographic views with multiple workers balance chunks using a cheap projected-area estimate. Direct execution,
+one worker and equidistant views do not calculate estimates; equidistant keeps roughly equal region counts.
+Screen blending between regions and worker images is mathematically independent of order and grouping, though
+completion order can cause tiny floating-point differences. A single large region can still limit speedup.
+Screen corrections are calculated independently for each region, including equidistant and refraction views.
 
 This port draws pixel graphics instead of characters (the character renderer of the original was removed), adds
 interactive pan/zoom/time controls and optional AT-HYG downloads, and improves astronomical calculations, curved
@@ -190,7 +193,10 @@ of the sky, so every pixel's place in a tile follows from a closed formula. The 
 pixel inside a region's screen image it undoes the screen projection (a division for the stereographic view, a
 small per-frame table for the equidistant one), refraction (through a fixed table) and aberration, rotates into
 the tile and applies the tile projection, then averages the texels under the pixel's footprint and blends the
-result source-over. Filter footprints may overlap the tile even when their centres are outside it; the uncovered
+result with screen blending (`a + b * (1 - a)` for each stored RGB channel and opacity). This keeps stored
+channels bounded and never darkens them during merging. The existing final faint-pixel brightness floor still
+rescales RGB by opacity, so this is not a guarantee that every displayed colour channel is monotonic.
+Filter footprints may overlap the tile even when their centres are outside it; the uncovered
 part stays transparent instead of being renormalized to full brightness. Candidate bounds include this filter
 support. At the 360° rim, the point behind the observer spreads along the whole edge. Rows are stepped by forward differences, and in the stereographic view rows whose tile rows
 hold no light are skipped. Texture footprints are square area averages of the screen's radial scale (the
