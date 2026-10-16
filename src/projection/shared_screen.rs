@@ -12,7 +12,7 @@ use super::tile_sampling::TileSampler;
 /// One region's drawing inputs for this frame. Masks and mapping are prepared once, not once per strip.
 struct PreparedRegion<'a> {
     mapping: RegionMapping<'a>,
-    sampler: TileSampler,
+    sampler: TileSampler<'a>,
     image: &'a RegionTileCache,
     first_row: usize,
     last_row: usize,
@@ -162,7 +162,7 @@ fn prepare_regions<'a>(screen: &'a Screen, regions: &'a [Region], selected: &[us
         // Store the masks once so visiting another strip never rebuilds a tile's sampling data.
         times.measure("Projection.Tile filter preparation");
         let mut sampler = TileSampler::new(TILE_EDGE_TEXELS);
-        sampler.prepare(image.lit_rows());
+        sampler.prepare(image.lit_rows(), image.filter_summary.as_ref());
         prepared.push(PreparedRegion { mapping, sampler, image, first_row, last_row });
     }
     prepared

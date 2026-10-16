@@ -12,6 +12,7 @@
 //! (`appearance`), the tile geometry (`tiles`) and the image caches (`images`).
 mod appearance;
 mod content_bounds;
+mod filter_summary;
 mod images;
 mod simulation;
 mod tiles;

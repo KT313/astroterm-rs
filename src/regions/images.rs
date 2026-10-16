@@ -6,6 +6,7 @@ use crate::constants::TILE_EDGE_TEXELS;
 use crate::model::{StarOpacities, Texel, StarTable, GroupTileKey, GroupTileCache, RegionTileCache, StarGroup};
 use crate::regions::{TileGeometry, blend_star, order_star_rows, premultiplied_color};
 use super::content_bounds::calculate_content_radius;
+use super::filter_summary::build_filter_summary;
 
 impl GroupTileKey {
     /// The key of an image whose prefix is empty: nothing to draw, whatever the threshold.
@@ -54,12 +55,16 @@ fn round_half_away(v: f64) -> i64 { (v + 0.5_f64.copysign(v)) as i64 }
 impl RegionTileCache {
     pub fn texels(&self) -> &[Texel] { &self.tile.texels }
     pub fn is_empty(&self) -> bool { self.tile.texels.is_empty() }
-    /// Populated image storage, including its masks and derived bound. Empty images hold no payload.
+    /// Populated image storage, including masks, bounds and filtering data. Empty images hold no payload.
     pub fn bytes(&self) -> usize {
         let image_bytes = self.tile.texels.len() * Texel::SIZE;
         let mask_bytes = self.lit_rows.len() * std::mem::size_of::<u64>();
         let bound_bytes = if self.tile.texels.is_empty() { 0 } else { std::mem::size_of_val(&self.content_radius) };
-        image_bytes + mask_bytes + bound_bytes
+        let summary_bytes = if self.tile.texels.is_empty() { 0 } else {
+            let blocks = self.filter_summary.as_ref().map_or(0, |summary| summary.block_sums.len());
+            std::mem::size_of_val(&self.filter_summary) + blocks * std::mem::size_of::<[f64; 4]>()
+        };
+        image_bytes + mask_bytes + bound_bytes + summary_bytes
     }
     pub fn is_merged(&self) -> bool { self.group_keys.is_some() }
     /// One bit per texel, a word per tile row: which texels hold light. Empty when the image is.
@@ -79,6 +84,7 @@ impl RegionTileCache {
             self.tile.texels = Vec::new();
             self.lit_rows = Vec::new();
             self.content_radius = Some(0.0);
+            self.filter_summary = None;
             return;
         };
 
@@ -101,6 +107,7 @@ impl RegionTileCache {
             self.lit_rows.push(lit_columns);
         }
         self.content_radius = Some(calculate_content_radius(&self.lit_rows));
+        self.filter_summary = Some(build_filter_summary(&self.tile.texels));
     }
 }
 
@@ -301,7 +308,9 @@ mod tests {
         assert_eq!(image.content_radius, None);
         image.merge(&groups);
         assert_eq!(image.content_radius, Some((1.5_f64 * 1.5 * 2.0).sqrt()));
-        assert_eq!(image.bytes(), SIZE * SIZE * Texel::SIZE + SIZE * 8 + std::mem::size_of::<Option<f64>>());
+        assert_eq!(image.bytes(), SIZE * SIZE * Texel::SIZE + SIZE * 8 + std::mem::size_of::<Option<f64>>()
+            + std::mem::size_of::<Option<crate::model::TileFilterSummary>>()
+            + (SIZE / crate::constants::TILE_FILTER_BLOCK_EDGE).pow(2) * 32);
 
         // Unchanged keys retain the image and its bound; changed contents rebuild both together.
         let previous = image.clone();
@@ -312,16 +321,19 @@ mod tests {
         image.merge(&groups);
         assert!(image.is_current(&groups));
         assert!(image.content_radius.unwrap() > previous.content_radius.unwrap());
+        assert!(image.filter_summary.as_ref().unwrap().rgba_sum[3] > previous.filter_summary.as_ref().unwrap().rgba_sum[3]);
 
         // Removing the outer light must shrink the bound even though the tile dimensions are unchanged.
         groups[0].tile.key.as_mut().unwrap().simulated_at_ms += 1;
         groups[0].tile.tile.texels[SIZE - 1] = Texel::default();
         image.merge(&groups);
         assert_eq!(image.content_radius, previous.content_radius);
+        assert_eq!(image.filter_summary, previous.filter_summary);
         groups[0].tile.tile.texels.fill(Texel::default());
         groups[0].tile.key.as_mut().unwrap().simulated_at_ms += 1;
         image.merge(&groups);
         assert_eq!(image.content_radius, Some(0.0));
+        assert_eq!(image.filter_summary.as_ref().unwrap().rgba_sum, [0.0; 4]);
         assert!(image.lit_rows().iter().all(|&bits| bits == 0));
 
         // The canonical empty group releases the populated image payload and clears derived support.
@@ -329,6 +341,7 @@ mod tests {
         image.merge(&groups);
         assert_eq!(image.content_radius, Some(0.0));
         assert!(image.is_current(&groups) && image.is_empty());
+        assert!(image.filter_summary.is_none());
         assert_eq!(image.bytes(), 0);
     }
 }

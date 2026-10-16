@@ -17,7 +17,7 @@ Bottom-up. Every module exposes its symbols from its root `mod.rs`; callers use 
 | `solar_system/` | step 1, `simulate_solar_system` |
 | `observation/` | step 2, `observe` |
 | `selection/` | step 3, `select_regions` |
-| `regions/` | step 4, `refresh_regions`: simulation caches, star appearance, tile geometry, group and region images |
+| `regions/` | step 4, `refresh_regions`: simulation caches, star appearance, tile geometry, group and region images, merged-image bounds and filtering summaries |
 | `projection/` | step 5, `project_stars_to_screen`: inverse warp and transformed rows (`pixel_warp.rs`), frame-local shared screen corrections (`shared_screen.rs`), texel sampling (`tile_sampling.rs`), frame buffers (`frame.rs`), shared projection geometry (`geometry/`) |
 | `points/` | step 6, `draw_points` |
 | `present/` | step 7, `present`, and `Display` (terminal session, protocol detection, frame layout) |

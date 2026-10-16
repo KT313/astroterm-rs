@@ -6,7 +6,7 @@ use crate::model::{ViewCenter, region_caps};
 use ProjectionKind::{Equidistant, Stereographic};
 
 // Preserve the phase-1 loop as a test oracle, including its separate screen stepping and per-pixel transform.
-fn draw_reference_region(stars: &mut [Texel], mapping: &RegionMapping<'_>, sampler: &TileSampler, texels: &[Texel]) {
+fn draw_reference_region(stars: &mut [Texel], mapping: &RegionMapping<'_>, sampler: &TileSampler<'_>, texels: &[Texel]) {
     let screen = mapping.screen;
     let (top, bottom) = mapping.rows();
     for row in top..=bottom {
@@ -49,7 +49,7 @@ fn project_reference_tiles(size: usize, regions: &[Region], selected: &[usize], 
         times.measure("Projection.Region mapping");
         let Some(mapping) = RegionMapping::new(&geometry, observation, &screen, image.content_radius) else { continue; };
         times.measure("Projection.Tile filter preparation");
-        sampler.prepare(image.lit_rows());
+        sampler.prepare(image.lit_rows(), image.filter_summary.as_ref());
         times.measure("Projection.Tile rasterization");
         draw_reference_region(&mut stars, &mapping, &sampler, image.texels());
     }

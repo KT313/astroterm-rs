@@ -186,6 +186,7 @@ fn shared_strips_preserve_ordered_images_across_view_and_observer_changes() {
             for texel in &mut data.star_regions[region].merged_tile.tile.texels {
                 texel.rgb[ordinal % 3] *= 0.2;
             }
+            data.star_regions[region].merged_tile.filter_summary = None;
         }
         for size in [0, 1, 101, 301] {
             let reference = project_unshared_tiles(size, &data.star_regions, &selected, &observation, &view);

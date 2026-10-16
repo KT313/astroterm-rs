@@ -143,13 +143,22 @@ pub struct GroupTileCache {
 
 /// Cached region image, merged slowest group first. Key: the group keys used by the last merge.
 /// Rebuild if absent or any group key differs. Keep the image while all keys match, even outside the view.
-/// Lit rows and content radius are rebuilt with the image; neither has an independent time or view key.
+/// Lit rows, content radius and filtering summary are rebuilt with the image under the same key.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct RegionTileCache {
     pub group_keys: Option<[Option<GroupTileKey>; SPEED_GROUP_COUNT]>,
     pub tile: Tile,
     pub lit_rows: Vec<u64>,                     // one bit per texel in each row, allowing projection to skip empty areas
     pub content_radius: Option<f64>,            // texels from the tile centre, including filter support; None until merged, zero for no light
+    pub filter_summary: Option<TileFilterSummary>, // absent for an empty/unprepared image; borrowed read-only by projection
+}
+
+/// Whole-tile and complete-block integrals derived from one merged image. Key: the owner's group keys;
+/// replace with every merge and clear with an empty image. No independent view or time key.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TileFilterSummary {
+    pub rgba_sum: [f64; 4],                     // whole-tile integral of stored RGB and opacity, before footprint normalization
+    pub block_sums: Vec<[f64; 4]>,              // row-major integrals of fixed-size blocks; partial borders still read base texels
 }
 
 /// A sky-fixed image: TILE_EDGE_TEXELS squared entries in row order, or no entries for an empty group/region.

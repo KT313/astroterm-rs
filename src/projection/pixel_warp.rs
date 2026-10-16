@@ -55,7 +55,7 @@ pub(super) fn draw_unshared_tiles(stars: &mut [Texel], screen: &Screen, star_reg
         times.measure("Projection.Region mapping");
         let Some(mapping) = RegionMapping::new(&geometry, observation, screen, image.content_radius) else { continue; };
         times.measure("Projection.Tile filter preparation");
-        sampler.prepare(image.lit_rows());
+        sampler.prepare(image.lit_rows(), image.filter_summary.as_ref());
         times.measure("Projection.Tile rasterization");
         draw_region(stars, &mapping, &sampler, image.texels());
     }
@@ -464,7 +464,7 @@ impl<'a> RegionMapping<'a> {
 
 /// Pull candidate pixel footprints back to the tile, retaining partial overlaps, and blend source-over. Rows
 /// whose tile rows hold no light are skipped before any pixel is mapped, which is what makes sparse tiles cheap.
-pub(super) fn draw_region(stars: &mut [Texel], mapping: &RegionMapping<'_>, sampler: &TileSampler, texels: &[Texel]) {
+pub(super) fn draw_region(stars: &mut [Texel], mapping: &RegionMapping<'_>, sampler: &TileSampler<'_>, texels: &[Texel]) {
     // Select the row calculation once; refraction and equidistant views keep their general mapping.
     let screen = mapping.screen;
     let use_transformed_rows = screen.camera.kind == ProjectionKind::Stereographic && !mapping.atmosphere;
@@ -488,7 +488,7 @@ pub(super) fn draw_region(stars: &mut [Texel], mapping: &RegionMapping<'_>, samp
 }
 
 /// Draw a span whose tile-space direction and length can be advanced by additions alone.
-fn draw_transformed_span(pixels: &mut [Texel], mapping: &RegionMapping<'_>, sampler: &TileSampler, texels: &[Texel], first_column: usize, row: usize) {
+fn draw_transformed_span(pixels: &mut [Texel], mapping: &RegionMapping<'_>, sampler: &TileSampler<'_>, texels: &[Texel], first_column: usize, row: usize) {
     // Rebase long spans from the formula periodically, keeping accumulated roundoff below the tested limit.
     for (chunk, pixels) in pixels.chunks_mut(STEREOGRAPHIC_ROW_REBASE_PIXELS).enumerate() {
         let column = first_column + chunk * STEREOGRAPHIC_ROW_REBASE_PIXELS;
@@ -506,7 +506,7 @@ fn draw_transformed_span(pixels: &mut [Texel], mapping: &RegionMapping<'_>, samp
 }
 
 /// Draw a span using the general screen-ray path, including nonlinear refraction or equidistant mapping.
-fn draw_screen_span(pixels: &mut [Texel], mapping: &RegionMapping<'_>, sampler: &TileSampler, texels: &[Texel], first_column: usize, row: usize) {
+fn draw_screen_span(pixels: &mut [Texel], mapping: &RegionMapping<'_>, sampler: &TileSampler<'_>, texels: &[Texel], first_column: usize, row: usize) {
     // Preserve the existing per-pixel transform and its numerical evaluation order.
     let mut rays = RowRays::new(mapping.screen, first_column as f64, row as f64);
     for pixel in pixels {
@@ -520,7 +520,7 @@ fn draw_screen_span(pixels: &mut [Texel], mapping: &RegionMapping<'_>, sampler: 
 
 /// Apply the common light rejection, coordinate convention, box filter and source-over composition.
 #[inline]
-pub(super) fn sample_and_blend_pixel(pixel: &mut Texel, sampler: &TileSampler, texels: &[Texel], position: Point, footprint: f64) {
+pub(super) fn sample_and_blend_pixel(pixel: &mut Texel, sampler: &TileSampler<'_>, texels: &[Texel], position: Point, footprint: f64) {
     // Convert integer-centred tile coordinates to the sampler's edge coordinates exactly once.
     if footprint <= 3.0 && !sampler.may_hold_light_near(position) { return; }
     let sample_position = position.map(|value| value + 0.5);
@@ -929,7 +929,7 @@ mod tests {
         let tile = TileGeometry::new(region);
         let texels = vec![Texel { rgb: [0.5, 0.25, 0.125], opacity: 1.0 }; TILE_EDGE_TEXELS.pow(2)];
         let mut sampler = TileSampler::new(TILE_EDGE_TEXELS);
-        sampler.prepare(&[u64::MAX; TILE_EDGE_TEXELS]);
+        sampler.prepare(&[u64::MAX; TILE_EDGE_TEXELS], None);
         for projection in [Stereographic, Equidistant] {
             for (fov, size, atmosphere) in [(60.0, 23, false), (180.0, 101, false), (60.0, 201, true)] {
                 let (_, initial) = observation_at(fov, atmosphere, facing(0.0, 0.0), projection);
@@ -1085,7 +1085,7 @@ mod tests {
         // An opaque rear tile can light its visible side but must not leak into the centre via a huge filter.
         let texels = vec![Texel { rgb: [1.0; 3], opacity: 1.0 }; TILE_EDGE_TEXELS.pow(2)];
         let mut sampler = TileSampler::new(TILE_EDGE_TEXELS);
-        sampler.prepare(&[u64::MAX; TILE_EDGE_TEXELS]);
+        sampler.prepare(&[u64::MAX; TILE_EDGE_TEXELS], None);
         let mut stars = vec![Texel::default(); 201 * 201];
         draw_region(&mut stars, &mapping, &sampler, &texels);
         assert!(stars[100 * 201 + 100].is_empty());
@@ -1156,6 +1156,7 @@ mod tests {
                         image.tile.texels = vec![Texel { rgb: [0.1, 0.15, 0.2], opacity: 0.3 }; TILE_EDGE_TEXELS.pow(2)];
                         image.lit_rows = vec![u64::MAX; TILE_EDGE_TEXELS];
                         image.content_radius = None;
+                        image.filter_summary = None;
                     }
                 }
                 let mut elapsed = 0.0;

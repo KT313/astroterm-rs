@@ -3,13 +3,16 @@
 //! the tile is transparent, so partially covered pixels retain only their covered share. Where the
 //! tile shrinks on screen that is a box filter over a few texels, where it grows it is the bilinear mix of the
 //! four texels around the position. Boxes that touch only empty texels are rejected through the tile's lit-row
-//! bits before any arithmetic, which is what makes sparse tiles cheap. Nothing here is retained between frames.
-use crate::constants::TILE_EDGE_TEXELS;
-use crate::model::Texel;
+//! bits before any arithmetic, which is what makes sparse tiles cheap. Whole-tile and block integrals are
+//! borrowed from the merged image; partially covered borders still use its original texels.
+use crate::constants::{TILE_EDGE_TEXELS, TILE_FILTER_BLOCK_EDGE, TILE_FILTER_MIN_TEXELS};
+use crate::model::{Texel, TileFilterSummary};
 
-/// Frame-local light masks for the tile most recently supplied to prepare. The supplied rows are the key;
-/// every prepare call replaces all derived data, and the owner drops the scratch at frame end.
-pub(super) struct TileSampler {
+/// Frame-local sampling data for the most recently prepared image. Every prepare replaces the masks and
+/// borrowed summary together, even when only colours changed. Summary validity belongs to the owning
+/// RegionTileCache's image key; this scratch has no independent lifetime beyond the current frame.
+pub(super) struct TileSampler<'a> {
+    summary: Option<&'a TileFilterSummary>, // belongs to the same image as the copied light masks
     edge: usize,
     lit: [u64; TILE_EDGE_TEXELS],           // one bit per texel per row: which texels hold light
     lit_columns: u64,                       // the rows combined: which columns hold light anywhere
@@ -17,15 +20,16 @@ pub(super) struct TileSampler {
     near: [u64; TILE_EDGE_TEXELS],          // lit bits spread two texels each way: whether light lies within a small box
 }
 
-impl TileSampler {
+impl<'a> TileSampler<'a> {
     pub(super) fn new(edge: usize) -> Self {
         assert!(edge <= TILE_EDGE_TEXELS && edge <= 64, "lit rows are one word per tile row");
-        Self { edge, lit: [0; TILE_EDGE_TEXELS], lit_columns: 0, lit_rows: 0, near: [0; TILE_EDGE_TEXELS] }
+        Self { summary: None, edge, lit: [0; TILE_EDGE_TEXELS], lit_columns: 0, lit_rows: 0, near: [0; TILE_EDGE_TEXELS] }
     }
 
     /// Adopt a tile's lit rows, replacing the preceding tile's masks completely.
-    pub(super) fn prepare(&mut self, lit_rows: &[u64]) {
+    pub(super) fn prepare(&mut self, lit_rows: &[u64], summary: Option<&'a TileFilterSummary>) {
         assert_eq!(lit_rows.len(), self.edge);
+        self.summary = summary;
         self.lit[..self.edge].copy_from_slice(lit_rows);
         self.lit_columns = lit_rows.iter().fold(0, |all, &row| all | row);
         self.lit_rows = lit_rows.iter().enumerate().fold(0, |any, (index, &row)| if row != 0 { any | 1 << index } else { any });
@@ -72,14 +76,35 @@ impl TileSampler {
         let (top, bottom) = ((cv - half_height).max(0.0), (cv + half_height).min(edge));
         if right <= left || bottom <= top { return None; }
 
+        // Reuse the image's total only when all four tile edges lie inside the footprint.
+        if left == 0.0 && right == edge && top == 0.0 && bottom == edge {
+            if self.lit_rows == 0 { return None; }
+            if let Some(summary) = self.summary {
+                let full_area = (2.0 * half_width) * (2.0 * half_height);
+                let rgba = summary.rgba_sum.map(|sum| (sum / full_area) as f32);
+                #[cfg(feature = "pixel-debug")]
+                crate::pixel_debug::check_pixel("whole tile summary output", rgba.map(f64::from), 1.0);
+                return Some(rgba);
+            }
+        }
+
         // Reject the box when none of the texels it touches holds light: columns, then rows, then the exact bits.
         let last = self.edge - 1;
         let (first_column, last_column) = (left as usize, (right.ceil() as usize - 1).min(last));
         let (first_row, last_row) = (top as usize, (bottom.ceil() as usize - 1).min(last));
         if !self.has_lit_texels(first_column, last_column, first_row, last_row) { return None; }
 
+        // Small boxes stay on the direct path; larger ones may reuse complete blocks from the image.
         let full_area = (2.0 * half_width) * (2.0 * half_height);
-        let rgba = average(texels, self.edge, [left, right], [top, bottom], (first_column, last_column), (first_row, last_row), full_area);
+        let touched_texels = (last_column - first_column + 1) * (last_row - first_row + 1);
+        let mut summarized = None;
+        if touched_texels >= TILE_FILTER_MIN_TEXELS && let Some(summary) = self.summary {
+            summarized = average_with_blocks(summary, texels, self.edge, [left, right], [top, bottom], full_area);
+        }
+        let rgba = match summarized {
+            Some(rgba) => rgba,
+            None => average(texels, self.edge, [left, right], [top, bottom], (first_column, last_column), (first_row, last_row), full_area),
+        };
         #[cfg(feature = "pixel-debug")]
         crate::pixel_debug::check_pixel("whole tile filter output", rgba.map(f64::from), 1.0);
         Some(rgba)
@@ -88,24 +113,72 @@ impl TileSampler {
 
 /// Integrate only overlapping texels, weighted by the full filter area including transparent space.
 fn average(texels: &[Texel], edge: usize, [left, right]: [f64; 2], [top, bottom]: [f64; 2], (first_column, last_column): (usize, usize), (first_row, last_row): (usize, usize), area: f64) -> [f32; 4] {
+    let mut rgba = [0.0_f64; 4];
+    accumulate_texels(&mut rgba, texels, edge, [left, right], [top, bottom], (first_column, last_column), (first_row, last_row), area);
+    rgba.map(|value| value as f32)
+}
+
+/// Add a rectangle's contribution in f64; callers may combine disjoint rectangles before converting to f32.
+#[inline]
+#[allow(clippy::too_many_arguments)]
+fn accumulate_texels(rgba: &mut [f64; 4], texels: &[Texel], edge: usize, [left, right]: [f64; 2], [top, bottom]: [f64; 2], (first_column, last_column): (usize, usize), (first_row, last_row): (usize, usize), area: f64) {
     // Only the first and last columns can have fractional widths. Interior columns share one row weight.
     let first_width = right.min(first_column as f64 + 1.0) - left;
     let last_width = right - last_column as f64;
-    let mut rgba = [0.0_f64; 4];
     for row in first_row..=last_row {
         let height = bottom.min(row as f64 + 1.0) - top.max(row as f64);
         let offset = row * edge;
-        add_weighted_texel(&mut rgba, texels[offset + first_column], first_width * height / area);
+        add_weighted_texel(rgba, texels[offset + first_column], first_width * height / area);
         if first_column == last_column { continue; }
 
         // Preserve the original accumulation order, avoiding a division for every full-width texel.
         let weight = height / area;
         for column in first_column + 1..last_column {
-            add_weighted_texel(&mut rgba, texels[offset + column], weight);
+            add_weighted_texel(rgba, texels[offset + column], weight);
         }
-        add_weighted_texel(&mut rgba, texels[offset + last_column], last_width * height / area);
+        add_weighted_texel(rgba, texels[offset + last_column], last_width * height / area);
     }
-    rgba.map(|value| value as f32)
+}
+
+fn average_with_blocks(summary: &TileFilterSummary, texels: &[Texel], edge: usize, [left, right]: [f64; 2], [top, bottom]: [f64; 2], area: f64) -> Option<[f32; 4]> {
+    // Use summaries only for complete blocks lying wholly inside this box.
+    let block_edge = TILE_FILTER_BLOCK_EDGE;
+    if block_edge == 0 || !edge.is_multiple_of(block_edge) { return None; }
+    let blocks_per_edge = edge / block_edge;
+    if summary.block_sums.len() != blocks_per_edge * blocks_per_edge { return None; }
+    let first_column = (left / block_edge as f64).ceil() as usize;
+    let end_column = (right / block_edge as f64).floor() as usize;
+    let first_row = (top / block_edge as f64).ceil() as usize;
+    let end_row = (bottom / block_edge as f64).floor() as usize;
+    if first_column >= end_column || first_row >= end_row { return None; }
+
+    // Complete interior blocks contribute their stored integrals, without subtracting large prefixes.
+    let mut rgba = [0.0_f64; 4];
+    for row in first_row..end_row {
+        for column in first_column..end_column {
+            for (sum, value) in rgba.iter_mut().zip(summary.block_sums[row * blocks_per_edge + column]) {
+                *sum += value / area;
+            }
+        }
+    }
+
+    // Four disjoint border strips retain exact fractional coverage and tiny contributions.
+    let inner_left = (first_column * block_edge) as f64;
+    let inner_right = (end_column * block_edge) as f64;
+    let inner_top = (first_row * block_edge) as f64;
+    let inner_bottom = (end_row * block_edge) as f64;
+    accumulate_border(&mut rgba, texels, edge, [left, right], [top, inner_top], area);
+    accumulate_border(&mut rgba, texels, edge, [left, right], [inner_bottom, bottom], area);
+    accumulate_border(&mut rgba, texels, edge, [left, inner_left], [inner_top, inner_bottom], area);
+    accumulate_border(&mut rgba, texels, edge, [inner_right, right], [inner_top, inner_bottom], area);
+    Some(rgba.map(|value| value as f32))
+}
+
+fn accumulate_border(rgba: &mut [f64; 4], texels: &[Texel], edge: usize, [left, right]: [f64; 2], [top, bottom]: [f64; 2], area: f64) {
+    if right <= left || bottom <= top { return; }
+    let columns = (left as usize, (right.ceil() as usize - 1).min(edge - 1));
+    let rows = (top as usize, (bottom.ceil() as usize - 1).min(edge - 1));
+    accumulate_texels(rgba, texels, edge, [left, right], [top, bottom], columns, rows, area);
 }
 
 #[inline]
@@ -147,9 +220,9 @@ mod tests {
     fn gradient() -> Vec<Texel> {
         (0..16).map(|index| { let value = (index + 1) as f32 / 17.0; Texel { rgb: [value, value * 0.5, 0.0], opacity: value } }).collect()
     }
-    fn sampler(texels: &[Texel]) -> TileSampler {
+    fn sampler(texels: &[Texel]) -> TileSampler<'static> {
         let mut sampler = TileSampler::new(4);
-        sampler.prepare(&lit_rows_of(texels, 4));
+        sampler.prepare(&lit_rows_of(texels, 4), None);
         sampler
     }
 
@@ -180,7 +253,7 @@ mod tests {
     fn dense_reductions_stay_within_the_opacity_range() {
         let texels = vec![Texel { rgb: [1.0; 3], opacity: 1.0 }; 64 * 64];
         let mut sampler = TileSampler::new(64);
-        sampler.prepare(&[u64::MAX; 64]);
+        sampler.prepare(&[u64::MAX; 64], None);
         assert_eq!(sampler.sample(&texels, [32.0, 32.0], [40.0, 40.0]), Some([1.0; 4]));
     }
 
@@ -235,7 +308,7 @@ mod tests {
             Texel { rgb: [alpha * 0.2, alpha * 0.7, alpha], opacity: alpha }
         }).collect();
         let mut sampler = TileSampler::new(edge);
-        sampler.prepare(&lit_rows_of(&texels, edge));
+        sampler.prepare(&lit_rows_of(&texels, edge), None);
         for position in [[32.0, 32.0], [0.0, 0.0], [62.99, 0.25], [31.3, 24.7]] {
             for footprint in [[64.0, 64.0], [7.5, 13.2], [1.0, 0.1], [12.0, 5.0]] {
                 let expected = direct(&texels, edge, position, footprint);
@@ -246,7 +319,7 @@ mod tests {
 
         // Bright data before the queried rectangle must not leak into an empty interior through cancellation.
         for row in 16..48 { for column in 16..48 { texels[row * edge + column] = Texel::default(); } }
-        sampler.prepare(&lit_rows_of(&texels, edge));
+        sampler.prepare(&lit_rows_of(&texels, edge), None);
         assert_eq!(sampler.sample(&texels, [32.0, 32.0], [20.0, 20.0]), None);
         for epsilon in [0.0, 1e-12, 1e-9, 1e-6] {
             let position = [32.0, 32.0];
@@ -261,8 +334,39 @@ mod tests {
 
         // Replacing a dense tile with an empty one invalidates all light masks.
         texels.fill(Texel::default());
-        sampler.prepare(&lit_rows_of(&texels, edge));
+        sampler.prepare(&lit_rows_of(&texels, edge), None);
         assert_eq!(sampler.sample(&texels, [32.0, 32.0], [64.0; 2]), None);
+    }
+
+    #[test]
+    fn cached_totals_require_full_coverage_and_keep_the_full_footprint_area() {
+        let texels = gradient();
+        let mut sum = [0.0_f64; 4];
+        for texel in &texels {
+            for (sum, value) in sum.iter_mut().zip(texel.rgb.into_iter().chain([texel.opacity])) { *sum += f64::from(value); }
+        }
+        let summary = TileFilterSummary { rgba_sum: sum, ..Default::default() };
+        let mut sampler = TileSampler::new(4);
+        sampler.prepare(&lit_rows_of(&texels, 4), Some(&summary));
+
+        // A wide footprint can still cover only part of a tile when its centre is displaced.
+        for (position, footprint) in [([2.0, 2.0], [4.0, 4.0]), ([2.0, 2.0], [8.0, 8.0]),
+            ([5.0, 2.0], [8.0, 8.0]), ([2.0, -1.0], [8.0, 8.0]), ([1.0, 1.0], [2.0, 7.0]),
+            ([4.0, 4.0], [1.0, 1.0]), ([-50.0, 0.0], [2.0, 2.0]), ([2.0, 2.0], [1e6, 1e6])]
+        {
+            let expected = direct(&texels, 4, position, footprint);
+            let actual = sampler.sample(&texels, position, footprint).unwrap_or([0.0; 4]);
+            for channel in 0..4 {
+                assert!((f64::from(actual[channel]) - expected[channel]).abs() <= 1e-6 * expected[channel].abs().max(1e-30));
+            }
+        }
+
+        // Returning to an image without a summary must not reuse the previous image's totals.
+        let replacement = vec![Texel { rgb: [0.1, 0.2, 0.3], opacity: 0.5 }; 16];
+        sampler.prepare(&lit_rows_of(&replacement, 4), None);
+        assert_eq!(sampler.sample(&replacement, [2.0; 2], [4.0; 2]), Some([0.1, 0.2, 0.3, 0.5]));
+        sampler.prepare(&[0; 4], Some(&summary));
+        assert_eq!(sampler.sample(&vec![Texel::default(); 16], [2.0; 2], [8.0; 2]), None);
     }
 
 }

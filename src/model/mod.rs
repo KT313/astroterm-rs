@@ -3,7 +3,7 @@
 mod data;
 mod catalog;
 pub use data::{Data, Region, StarGroup, StarTable, StarColumns, StarColumn, StarRowVec, StarRowSlice, StarLabels,
-    Body, Satellite, SunTable, PlanetsTable, MoonsTable, SimulationCache, GroupTileKey, GroupTileCache, RegionTileCache, Tile, Texel, StarOpacities};
+    Body, Satellite, SunTable, PlanetsTable, MoonsTable, SimulationCache, GroupTileKey, GroupTileCache, RegionTileCache, TileFilterSummary, Tile, Texel, StarOpacities};
 mod configuration;
 
 pub use catalog::{

@@ -5,7 +5,7 @@ use crate::constants::{GRID_DEPTH, SPEED_GROUP_COUNT};
 use crate::model::{GroupTileKey, RegionTileCache, StarGroup, hash_direction};
 use ProjectionKind::{Equidistant, Stereographic};
 
-fn merge_image(texels: Vec<Texel>) -> RegionTileCache {
+pub(in crate::projection) fn merge_image(texels: Vec<Texel>) -> RegionTileCache {
     // Synthetic group contents still go through the real merge and derived-bound calculation.
     let mut groups: [StarGroup; SPEED_GROUP_COUNT] = std::array::from_fn(|_| StarGroup::default());
     groups[0].tile.key = Some(GroupTileKey { star_count: 1, ..GroupTileKey::EMPTY });
@@ -29,7 +29,7 @@ pub(in crate::projection) fn build_dense_image(region: usize, fill_square: bool)
     merge_image(texels)
 }
 
-fn count_candidates(mapping: &RegionMapping<'_>, sampler: &TileSampler) -> usize {
+fn count_candidates(mapping: &RegionMapping<'_>, sampler: &TileSampler<'_>) -> usize {
     // Count exactly the pixels that reach the mapping loop, excluding rows the sparse masks skip.
     let mut count = 0;
     let (top, bottom) = mapping.rows();
@@ -63,7 +63,7 @@ fn compare_with_full_disc(region: usize, image: &RegionTileCache, observation: &
         image: Image::WholeDisc,
     };
     let mut sampler = TileSampler::new(TILE_EDGE_TEXELS);
-    sampler.prepare(image.lit_rows());
+    sampler.prepare(image.lit_rows(), image.filter_summary.as_ref());
     let mut actual = vec![Texel::default(); size * size];
     if let Some(mapping) = RegionMapping::new(&geometry, observation, &screen, image.content_radius) {
         draw_region(&mut actual, &mapping, &sampler, image.texels());
@@ -163,7 +163,7 @@ fn content_bounds_reduce_work_without_changing_the_refracted_image() {
     let geometry = TileGeometry::new(region);
     let screen = Screen::new(prepare_camera(&view), 1116);
     let mut sampler = TileSampler::new(TILE_EDGE_TEXELS);
-    sampler.prepare(image.lit_rows());
+    sampler.prepare(image.lit_rows(), image.filter_summary.as_ref());
     let original = RegionMapping::new(&geometry, &observation, &screen, None).unwrap();
     let tight = RegionMapping::new(&geometry, &observation, &screen, image.content_radius).unwrap();
     assert!(count_candidates(&tight, &sampler) < count_candidates(&original, &sampler));

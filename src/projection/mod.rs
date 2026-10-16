@@ -30,3 +30,8 @@ pub fn project_stars_to_screen(
     // Render in square-local coordinates; the caller places the result into the full frame.
     pixel_warp::project_tiles_by_pixel(drawing_area_width_and_height, star_regions, selected_regions, observation, view, times)
 }
+
+#[cfg(test)]
+mod filter_integral;
+#[cfg(test)]
+mod filter_summary_tests;
