@@ -8,7 +8,7 @@
 //! first-order aberration approximations. Sampling uses box footprints; portions outside a tile are transparent.
 use std::f64::consts::{FRAC_PI_2, PI, SQRT_2, TAU};
 use crate::formulas::{LIGHT_SPEED_AU_DAY, Matrix3, Vector3, apply_refraction, unrefract_direction, Horizontal};
-use crate::constants::TILE_EDGE_TEXELS;
+use crate::constants::{STEREOGRAPHIC_ROW_REBASE_PIXELS, TILE_EDGE_TEXELS};
 use crate::model::{Region, ProjectionKind, Texel, View};
 #[cfg(test)]
 use crate::model::Data;
@@ -277,10 +277,17 @@ impl<'a> RegionMapping<'a> {
     #[inline]
     fn tile_of_overlapping_footprint(&self, numerator: Vector3, spread: f64, factor: f64) -> Option<(Point, f64)> {
         let (w, length, denominator) = self.tile_frame(numerator, spread)?;
+        self.project_overlapping_footprint(w, length, denominator, factor)
+    }
+
+    /// Project an already transformed direction, keeping the same filter and early rejection in both paths.
+    #[inline]
+    fn project_overlapping_footprint(&self, direction: Vector3, length: f64, denominator: f64, factor: f64) -> Option<(Point, f64)> {
+        // Reject a pixel whose entire filter lies outside the tile, before taking a reciprocal.
         let half_footprint = self.density * length * factor * self.screen.inverse_pixel_scale;
         let reach = (TileGeometry::middle() + 0.5) * denominator + half_footprint.max(0.5 * denominator);
         let scale_numerator = 2.0 * self.density;
-        let (x, y) = (scale_numerator * w.x, scale_numerator * w.y);
+        let (x, y) = (scale_numerator * direction.x, scale_numerator * direction.y);
         if x.abs() >= reach || y.abs() >= reach { return None; }
 
         // One reciprocal supplies both texture coordinates and the full filter width.
@@ -424,26 +431,132 @@ impl<'a> RegionMapping<'a> {
 /// Pull candidate pixel footprints back to the tile, retaining partial overlaps, and blend source-over. Rows
 /// whose tile rows hold no light are skipped before any pixel is mapped, which is what makes sparse tiles cheap.
 fn draw_region(stars: &mut [Texel], mapping: &RegionMapping<'_>, sampler: &TileSampler, texels: &[Texel]) {
+    // Select the row calculation once; refraction and equidistant views keep their general mapping.
     let screen = mapping.screen;
+    let use_transformed_rows = screen.camera.kind == ProjectionKind::Stereographic && !mapping.atmosphere;
     let (top, bottom) = mapping.rows();
+
+    // Retain the same candidate spans and empty-row rejection before drawing any pixels.
     for row in top..=bottom {
         for (first, last) in mapping.columns_of(row).into_iter().flatten() {
             let Some((first_tile_row, last_tile_row)) = mapping.tile_rows_of(row, first, last) else { continue; };
             if !sampler.any_light_in_rows(first_tile_row, last_tile_row) { continue; }
             let pixels = &mut stars[row * screen.size..][first..=last];
-            let mut rays = RowRays::new(screen, first as f64, row as f64);
-            for texel in pixels {
-                let (numerator, spread, factor) = rays.current(screen);
-                rays.advance();
-                let Some((position, footprint)) = mapping.tile_of_overlapping_footprint(numerator, spread, factor) else { continue; };
-                if footprint <= 3.0 && !sampler.may_hold_light_near(position) { continue; }
-                let sample_position = position.map(|value| value + 0.5);                  // integer texel centres become half-integer centres in the sampler's edge coordinates
-                let Some(rgba) = sampler.sample(texels, sample_position, [footprint, footprint]) else { continue; };
-                blend_star(texel, [rgba[0], rgba[1], rgba[2]], rgba[3]);
-                texel.rgb = texel.rgb.map(|value| value.min(1.0));                          // absorb last-bit rounding of the blend at opaque pixels
-                texel.opacity = texel.opacity.min(1.0);
+
+            // Keep the choice outside the pixel loop so each loop has only the state it needs.
+            if use_transformed_rows {
+                draw_transformed_span(pixels, mapping, sampler, texels, first, row);
+            } else {
+                draw_screen_span(pixels, mapping, sampler, texels, first, row);
             }
         }
+    }
+}
+
+/// Draw a span whose tile-space direction and length can be advanced by additions alone.
+fn draw_transformed_span(pixels: &mut [Texel], mapping: &RegionMapping<'_>, sampler: &TileSampler, texels: &[Texel], first_column: usize, row: usize) {
+    // Rebase long spans from the formula periodically, keeping accumulated roundoff below the tested limit.
+    for (chunk, pixels) in pixels.chunks_mut(STEREOGRAPHIC_ROW_REBASE_PIXELS).enumerate() {
+        let column = first_column + chunk * STEREOGRAPHIC_ROW_REBASE_PIXELS;
+        let mut rays = TransformedRow::new(mapping, column as f64, row as f64);
+
+        // No matrix multiplication or rebase decision is needed inside this pixel loop.
+        for pixel in pixels {
+            let sample = rays.project_footprint(mapping);
+            rays.advance();
+            if let Some((position, footprint)) = sample {
+                sample_and_blend_pixel(pixel, sampler, texels, position, footprint);
+            }
+        }
+    }
+}
+
+/// Draw a span using the general screen-ray path, including nonlinear refraction or equidistant mapping.
+fn draw_screen_span(pixels: &mut [Texel], mapping: &RegionMapping<'_>, sampler: &TileSampler, texels: &[Texel], first_column: usize, row: usize) {
+    // Preserve the existing per-pixel transform and its numerical evaluation order.
+    let mut rays = RowRays::new(mapping.screen, first_column as f64, row as f64);
+    for pixel in pixels {
+        let (numerator, spread, factor) = rays.current(mapping.screen);
+        rays.advance();
+        if let Some((position, footprint)) = mapping.tile_of_overlapping_footprint(numerator, spread, factor) {
+            sample_and_blend_pixel(pixel, sampler, texels, position, footprint);
+        }
+    }
+}
+
+/// Apply the common light rejection, coordinate convention, box filter and source-over composition.
+#[inline]
+fn sample_and_blend_pixel(pixel: &mut Texel, sampler: &TileSampler, texels: &[Texel], position: Point, footprint: f64) {
+    // Convert integer-centred tile coordinates to the sampler's edge coordinates exactly once.
+    if footprint <= 3.0 && !sampler.may_hold_light_near(position) { return; }
+    let sample_position = position.map(|value| value + 0.5);
+    let Some(rgba) = sampler.sample(texels, sample_position, [footprint, footprint]) else { return; };
+
+    // Preserve blending order and absorb last-bit rounding at fully opaque pixels.
+    blend_star(pixel, [rgba[0], rgba[1], rgba[2]], rgba[3]);
+    pixel.rgb = pixel.rgb.map(|value| value.min(1.0));
+    pixel.opacity = pixel.opacity.min(1.0);
+}
+
+/// A stereographic row already rotated into a tile's axes, with first-order aberration included.
+/// All three sequences are quadratic in screen column. Refraction would break that property.
+/// Each step is the change to the next pixel; each curve is the change in that step.
+struct TransformedRow {
+    direction: Vector3,
+    direction_step: Vector3,
+    direction_curve: Vector3,
+    length: f64,
+    length_step: f64,
+    length_curve: f64,
+    spread: f64,
+    spread_step: f64,
+    spread_curve: f64,
+}
+
+impl TransformedRow {
+    fn new(mapping: &RegionMapping<'_>, first_column: f64, row: f64) -> Self {
+        // Use the existing screen-row differences, transforming their coefficients only once per span.
+        debug_assert!(!mapping.atmosphere);
+        let RowRays::Stereographic { numerator, numerator_step, numerator_curve, spread, spread_step, spread_curve } =
+            RowRays::new(mapping.screen, first_column, row)
+        else {
+            unreachable!("transformed rows require stereographic projection");
+        };
+
+        // Keep the general mapper's first-order length approximation; do not normalize the direction.
+        Self {
+            direction: mapping.to_tile.apply(numerator) - mapping.aberration * spread,
+            direction_step: mapping.to_tile.apply(numerator_step) - mapping.aberration * spread_step,
+            direction_curve: mapping.to_tile.apply(numerator_curve) - mapping.aberration * spread_curve,
+            length: spread - numerator.dot(mapping.aberration_horizon),
+            length_step: spread_step - numerator_step.dot(mapping.aberration_horizon),
+            length_curve: spread_curve - numerator_curve.dot(mapping.aberration_horizon),
+            spread,
+            spread_step,
+            spread_curve,
+        }
+    }
+
+    #[inline]
+    fn project_footprint(&self, mapping: &RegionMapping<'_>) -> Option<(Point, f64)> {
+        // Match the general mapper's singularity guard before computing tile coordinates or filter size.
+        let denominator = self.length + self.direction.z;
+        if denominator > 1e-9 * self.length {
+            mapping.project_overlapping_footprint(self.direction, self.length, denominator, 2.0 / self.spread)
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    fn advance(&mut self) {
+        // Consume the current values first, then advance each quadratic sequence to the next pixel.
+        self.direction = self.direction + self.direction_step;
+        self.direction_step = self.direction_step + self.direction_curve;
+        self.length += self.length_step;
+        self.length_step += self.length_curve;
+        self.spread += self.spread_step;
+        self.spread_step += self.spread_curve;
     }
 }
 
@@ -1035,3 +1148,7 @@ mod tests {
 #[cfg(test)]
 #[path = "content_bounds_tests.rs"]
 mod content_bounds_tests;
+
+#[cfg(test)]
+#[path = "row_stepping_tests.rs"]
+mod row_stepping_tests;
