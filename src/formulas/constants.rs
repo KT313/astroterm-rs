@@ -13,6 +13,9 @@ pub const SINGULAR_RATIO: f64 = 1e-3;
 /// Fixed J2000 obliquity used by the existing ecliptic-to-equatorial model adapters, radians.
 pub(crate) const OBLIQUITY_J2000: f64 = 84381.448 / 3600.0 * (std::f64::consts::PI / 180.0);
 
+/// Exactly represented offset for symmetric velocity samples: 1/1024 day, roughly 84 seconds.
+pub(super) const VELOCITY_SAMPLE_OFFSET_DAYS: f64 = 1.0 / 1024.0;
+
 // Accuracy coverage and budgets.
 /// Catalog proper motions use Julian years, regardless of the input calendar.
 pub const JULIAN_YEAR_DAYS: f64 = 365.25;

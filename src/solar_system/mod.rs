@@ -37,21 +37,20 @@ pub fn calculate_solar_system_at_tt(sun_table: &SunTable, planets_table: &Planet
     // Evaluate Earth's state at reception before calculating when each body's light was emitted.
     times.measure("Solar system.Earth state");
     let earth = evaluate_planet(BodyId::Earth, tt_jd);
-    let emitted = |id: BodyId| compute_emission_position(id, tt_jd, earth.position);
 
     // Calculate the Sun, moons and planets in separate measured intervals.
     times.measure("Solar system.Sun light time");
-    let sun = emitted(sun_table.sun.id);
+    let sun = compute_emission_position(sun_table.sun.id, tt_jd, earth.position);
 
     times.measure("Solar system.Moon light time");
     let moons = moons_table.moons.iter().map(|moon| {
-        let position = emitted(moon.id);
+        let position = compute_emission_position(moon.id, tt_jd, earth.position);
         BodyState { position, velocity: compute_emission_velocity(moon.id, tt_jd, position, earth.position) }
     }).collect();
 
     times.measure("Solar system.Planet light time");
     let planets = planets_table.planets.iter().map(|planet| {
-        if planet.id == BodyId::Earth { earth.position } else { emitted(planet.id) }
+        if planet.id == BodyId::Earth { earth.position } else { compute_emission_position(planet.id, tt_jd, earth.position) }
     }).collect();
 
     SolarSystem { time_ms, earth, sun, moons, planets }

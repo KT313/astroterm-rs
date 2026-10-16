@@ -1,6 +1,7 @@
 //! Earth orientation, f64: Vondrak precession and IAU 2000B nutation use TT, fast ERA spin uses UT1.
 //! The slow matrix includes the model-consistent equation of origins. WGS84 geometry supplies the site state.
 use std::f64::consts::PI;
+use crate::formulas::math::evaluate_polynomial;
 use crate::formulas::{J2000, Matrix3, Observer, Vector3, Equatorial, PrecessionMatrix, earth_rotation_angle, rectangular_to_equatorial};
 use crate::formulas::constants::{OBLIQUITY_J2000, XYPER, XYPOL, PQPER, PQPOL, NUTATION_TERMS};
 
@@ -30,7 +31,7 @@ fn compute_pole_components(tt: f64, polynomial: &[[f64; 4]; 2], periodic: &[[f64
         }
     }
     for i in 0..2 {
-        xy[i] += polynomial[i].iter().rev().fold(0.0, |v, c| v * t + c);
+        xy[i] += evaluate_polynomial(t, &polynomial[i]);
         xy[i] *= PI / (180.0 * 3600.0);
     }
     (xy[0], xy[1])
@@ -63,10 +64,7 @@ impl PrecessionMatrix {
 
     /// Rotate rectangular J2000 equatorial coordinates to the equator and equinox of date.
     pub fn apply(&self, position: Vector3) -> Vector3 {
-        let [x, y, z] = self
-            .0
-            .map(|row| row[0] * position.x + row[1] * position.y + row[2] * position.z);
-        Vector3 { x, y, z }
+        self.matrix().apply(position)
     }
 
     /// Precess a J2000 right ascension and declination to the equator and equinox of date.
@@ -82,17 +80,24 @@ impl PrecessionMatrix {
 pub fn compute_nutation(tt: f64) -> (f64, f64) {
     let t = (tt - J2000) / 36525.0;
     let as2r = std::f64::consts::PI / (180.0 * 3600.0);
-    let arguments = [
+    let argument_coefficients = [
         (485868.249036, 1717915923.2178),
         (1287104.79305, 129596581.0481),
         (335779.526232, 1739527262.8478),
         (1072260.70369, 1602961601.2090),
         (450160.398036, -6962890.5431),
-    ]
-    .map(|(a, b)| (a + b * t).rem_euclid(1296000.0) * as2r);
+    ];
+    let mut arguments = [0.0; 5];
+    for (argument, (a, b)) in arguments.iter_mut().zip(argument_coefficients) {
+        *argument = (a + b * t).rem_euclid(1296000.0) * as2r;
+    }
     let (mut psi, mut eps) = (0.0, 0.0);
     for row in NUTATION_TERMS.iter().rev() {
-        let argument: f64 = row[..5].iter().zip(arguments).map(|(n, a)| n * a).sum();
+        let mut products = [0.0; 5];
+        for (index, product) in products.iter_mut().enumerate() {
+            *product = row[index] * arguments[index];
+        }
+        let argument: f64 = products.into_iter().sum();
         let (s, c) = argument.sin_cos();
         psi += (row[5] + row[6] * t) * s + row[7] * c;
         eps += (row[8] + row[9] * t) * c + row[10] * s;
@@ -135,16 +140,9 @@ pub fn compute_mean_equation_of_origins(tt: f64) -> f64 {
         .clamp(2, 20000)
         .next_multiple_of(2);
     let h = centuries / panels as f64;
-    let integrand = |t: f64| {
-        let epoch = J2000 + t * 36525.0;
-        let p = compute_equator_pole(epoch);
-        let v = (compute_equator_pole(epoch + 3.6525) - compute_equator_pole(epoch - 3.6525))
-            * 5000.0;
-        (p.x * v.y - p.y * v.x) / (1.0 + p.z)
-    };
-    let mut integral = integrand(0.0) + integrand(centuries);
+    let mut integral = compute_origin_integrand(0.0) + compute_origin_integrand(centuries);
     for i in 1..panels {
-        integral += (if i % 2 == 0 { 2.0 } else { 4.0 }) * integrand(i as f64 * h);
+        integral += (if i % 2 == 0 { 2.0 } else { 4.0 }) * compute_origin_integrand(i as f64 * h);
     }
     let angle = integral * h / 3.0 + (0.014506_f64 / 3600.0).to_radians();
     let p = compute_equator_pole(tt);
@@ -157,6 +155,17 @@ pub fn compute_mean_equation_of_origins(tt: f64) -> f64 {
     let origin = Matrix3::rotate_z(angle).compose(basis);
     let relative = origin.compose(compute_precession_matrix(tt).matrix().transpose());
     -relative.0[0][1].atan2(relative.0[0][0])
+}
+
+/// Contribution of the moving equator pole to the equation-of-origins integral.
+fn compute_origin_integrand(centuries: f64) -> f64 {
+    // Evaluate the pole and its symmetric derivative at this integration sample.
+    let epoch = J2000 + centuries * 36525.0;
+    let pole = compute_equator_pole(epoch);
+    let derivative = (compute_equator_pole(epoch + 3.6525) - compute_equator_pole(epoch - 3.6525)) * 5000.0;
+
+    // Measure how the pole's motion turns the transported reference direction.
+    (pole.x * derivative.y - pole.y * derivative.x) / (1.0 + pole.z)
 }
 
 /// Slow true-equator rotation C = R3(−EO) N P, sampled in TT. No Earth spin here.
@@ -233,7 +242,8 @@ mod tests {
             let PrecessionMatrix(m) = compute_precession_matrix(julian_date);
             for i in 0..3 {
                 for j in 0..3 {
-                    let dot: f64 = (0..3).map(|k| m[k][i] * m[k][j]).sum();
+                    let products = [m[0][i] * m[0][j], m[1][i] * m[1][j], m[2][i] * m[2][j]];
+                    let dot: f64 = products.into_iter().sum();
                     let expected = if i == j { 1.0 } else { 0.0 };
                     assert!((dot - expected).abs() < 1e-12);
                 }

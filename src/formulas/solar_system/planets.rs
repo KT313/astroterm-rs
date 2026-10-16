@@ -3,6 +3,8 @@
 //! Observer corrections live in observer.rs and apparent_position.rs. Physical accuracy is qualified separately from cache error.
 use crate::formulas::{BodyId, BodyState};
 use crate::formulas::{Vector3, ecliptic_to_equatorial};
+use crate::formulas::constants::VELOCITY_SAMPLE_OFFSET_DAYS;
+use crate::formulas::math::compute_velocity;
 
 /// Evaluate one barycentric position at TT (the periodic TDB−TT difference is neglected).
 pub fn compute_barycentric_position(body: BodyId, tt: f64) -> Vector3 {
@@ -24,17 +26,38 @@ pub fn compute_barycentric_position(body: BodyId, tt: f64) -> Vector3 {
 
 /// One body's barycentric state at one TT epoch: three position evaluations for the finite-difference velocity.
 pub fn evaluate_planet(body: BodyId, tt: f64) -> BodyState {
-    crate::formulas::math::evaluate_with_velocity(tt, |t| compute_barycentric_position(body, t))
+    // Evaluate the central position and the two velocity samples in the original order.
+    let before_tt = tt - VELOCITY_SAMPLE_OFFSET_DAYS;
+    let after_tt = tt + VELOCITY_SAMPLE_OFFSET_DAYS;
+    let position = compute_barycentric_position(body, tt);
+    let after_position = compute_barycentric_position(body, after_tt);
+    let before_position = compute_barycentric_position(body, before_tt);
+
+    // The two samples are separated by one offset before and one offset after the requested date.
+    let velocity = compute_velocity(before_position, after_position, VELOCITY_SAMPLE_OFFSET_DAYS + VELOCITY_SAMPLE_OFFSET_DAYS);
+    BodyState { position, velocity }
 }
 
 /// Planetary batch, including the moving Sun and Earth, at one TT epoch.
 pub fn evaluate_planets(tt: f64) -> [BodyState; 9] {
-    BodyId::PLANETS.map(|body| evaluate_planet(body, tt))
+    let mut states = [BodyState::default(); 9];
+    for (state, body) in states.iter_mut().zip(BodyId::PLANETS) {
+        *state = evaluate_planet(body, tt);
+    }
+    states
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn read_reference_position(row: &serde_json::Value) -> Vector3 {
+        Vector3 {
+            x: row["position_au"][0].as_f64().unwrap(),
+            y: row["position_au"][1].as_f64().unwrap(),
+            z: row["position_au"][2].as_f64().unwrap(),
+        }
+    }
+
     #[test]
     fn earth_heliocentric_position_matches_independent_horizons_near_today() {
         let references: serde_json::Value =
@@ -42,12 +65,7 @@ mod tests {
         let earth = &references["barycentric_vectors"]["earth"]["rows"][0];
         let sun = &references["barycentric_vectors"]["sun"]["rows"][0];
         let tt = earth["jd_tdb"].as_f64().unwrap(); // TT≈TDB, as documented by the reference generator
-        let vector = |row: &serde_json::Value| Vector3 {
-            x: row["position_au"][0].as_f64().unwrap(),
-            y: row["position_au"][1].as_f64().unwrap(),
-            z: row["position_au"][2].as_f64().unwrap(),
-        };
-        let error = ((compute_barycentric_position(BodyId::Earth, tt) - compute_barycentric_position(BodyId::Sun, tt)) - (vector(earth) - vector(sun))).length();
+        let error = ((compute_barycentric_position(BodyId::Earth, tt) - compute_barycentric_position(BodyId::Sun, tt)) - (read_reference_position(earth) - read_reference_position(sun))).length();
         assert!(error < 0.0001, "Earth position error {error} AU");
     }
 }

@@ -59,14 +59,14 @@ pub fn accuracy_target_arcseconds(class: ObjectClass, julian_date_tt: f64) -> Op
 
 /// One stable warning for all classes currently rendered, independent of viewport visibility.
 pub fn needs_accuracy_warning(tt: f64) -> bool {
-    !COMPUTATIONAL_INTERVAL.contains(tt)
-        || [
-            STAR_VALIDATED_INTERVAL,
-            PLANET_VALIDATED_INTERVAL,
-            MOON_VALIDATED_INTERVAL,
-        ]
-        .into_iter()
-        .any(|range| range.is_none_or(|range| !range.contains(tt)))
+    if !COMPUTATIONAL_INTERVAL.contains(tt) { return true; }
+    for range in [STAR_VALIDATED_INTERVAL, PLANET_VALIDATED_INTERVAL, MOON_VALIDATED_INTERVAL] {
+        match range {
+            Some(range) if range.contains(tt) => {},
+            _ => return true,
+        }
+    }
+    false
 }
 
 #[cfg(test)]
@@ -74,13 +74,16 @@ mod tests {
     use super::*;
     use crate::formulas::{datetime_to_julian_date, parse_utc_datetime};
 
+    fn parse_reference_julian_date(text: &str) -> f64 {
+        datetime_to_julian_date(&parse_utc_datetime(text).unwrap())
+    }
+
     #[test]
     fn indexing_endpoints_match_the_declared_calendar() {
-        let jd = |text| datetime_to_julian_date(&parse_utc_datetime(text).unwrap());
-        assert_eq!(COMPUTATIONAL_INTERVAL.start_tt, jd("-7974-01-01T00:00:00"));
-        assert_eq!(COMPUTATIONAL_INTERVAL.end_tt, jd("+12027-01-01T00:00:00"));
+        assert_eq!(COMPUTATIONAL_INTERVAL.start_tt, parse_reference_julian_date("-7974-01-01T00:00:00"));
+        assert_eq!(COMPUTATIONAL_INTERVAL.end_tt, parse_reference_julian_date("+12027-01-01T00:00:00"));
         assert!(COMPUTATIONAL_INTERVAL.contains(COMPUTATIONAL_INTERVAL.start_tt));
-        assert!(COMPUTATIONAL_INTERVAL.contains(jd("+12026-12-31T12:00:00")));
+        assert!(COMPUTATIONAL_INTERVAL.contains(parse_reference_julian_date("+12026-12-31T12:00:00")));
         for date in [
             COMPUTATIONAL_INTERVAL.start_tt - 1.0,
             COMPUTATIONAL_INTERVAL.end_tt,

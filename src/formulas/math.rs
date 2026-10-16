@@ -116,20 +116,34 @@ pub fn normalize_radians(angle: f64) -> f64 {
 impl Matrix3 {
 
     pub fn apply(self, v: Vector3) -> Vector3 {
-        let [x, y, z] = self.0.map(|row| row[0] * v.x + row[1] * v.y + row[2] * v.z);
+        let mut components = [0.0; 3];
+        for (component, row) in components.iter_mut().zip(self.0) {
+            *component = row[0] * v.x + row[1] * v.y + row[2] * v.z;
+        }
+        let [x, y, z] = components;
         Vector3 { x, y, z }
     }
 
     pub fn transpose(self) -> Self {
-        Self(std::array::from_fn(|i| std::array::from_fn(|j| self.0[j][i])))
+        let mut transposed = [[0.0; 3]; 3];
+        for (row_index, row) in transposed.iter_mut().enumerate() {
+            for (column_index, value) in row.iter_mut().enumerate() {
+                *value = self.0[column_index][row_index];
+            }
+        }
+        Self(transposed)
     }
 
     pub fn compose(self, right: Self) -> Self {
-        Self(std::array::from_fn(|i| {
-            std::array::from_fn(|j| {
-                self.0[i][0] * right.0[0][j] + self.0[i][1] * right.0[1][j] + self.0[i][2] * right.0[2][j]
-            })
-        }))
+        let mut product = [[0.0; 3]; 3];
+        for (row_index, row) in product.iter_mut().enumerate() {
+            for (column_index, value) in row.iter_mut().enumerate() {
+                *value = self.0[row_index][0] * right.0[0][column_index]
+                    + self.0[row_index][1] * right.0[1][column_index]
+                    + self.0[row_index][2] * right.0[2][column_index];
+            }
+        }
+        Self(product)
     }
 
     /// Passive rotation about +Z, as in ERFA R3.
@@ -153,15 +167,20 @@ impl BodyState {
     }
 }
 
-/// Symmetric velocity with an exactly represented 1/1024-day offset (~84 seconds). Divides by the actual date
-/// difference to retain precision at large Julian dates; both ends use the same frame adapter.
-pub(crate) fn evaluate_with_velocity(epoch: f64, position: impl Fn(f64) -> Vector3) -> BodyState {
-    let (before, after) = (epoch - 1.0 / 1024.0, epoch + 1.0 / 1024.0);
-    BodyState {
-        position: position(epoch),
-        velocity: (position(after) - position(before)) * (1.0 / (after - before)),
-    }
+/// Velocity between two position samples in AU/day, using the supplied sampling interval.
+pub(crate) fn compute_velocity(before_position: Vector3, after_position: Vector3, elapsed_days: f64) -> Vector3 {
+    (after_position - before_position) * (1.0 / elapsed_days)
 }
+
+/// Evaluate ascending-power coefficients with Horner's method, keeping the original arithmetic order.
+pub(crate) fn evaluate_polynomial(value: f64, coefficients: &[f64]) -> f64 {
+    let mut result = 0.0;
+    for coefficient in coefficients.iter().rev() {
+        result = result * value + coefficient;
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

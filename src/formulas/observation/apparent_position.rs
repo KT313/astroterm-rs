@@ -139,28 +139,37 @@ pub fn unrefract_direction(direction: Vector3) -> Vector3 {
 }
 
 /// Per table entry at sin(apparent altitude) = −1 + 2i / steps: sin(true altitude), cos(true) / cos(apparent).
-static UNREFRACTION: std::sync::LazyLock<Vec<[f64; 2]>> = std::sync::LazyLock::new(|| {
-    (0..=UNREFRACTION_STEPS).map(|index| {
+static UNREFRACTION: std::sync::LazyLock<Vec<[f64; 2]>> = std::sync::LazyLock::new(build_unrefraction_table);
+
+/// Build the fixed inverse-refraction samples once, in ascending apparent altitude.
+fn build_unrefraction_table() -> Vec<[f64; 2]> {
+    let mut table = Vec::with_capacity(UNREFRACTION_STEPS + 1);
+    for index in 0..=UNREFRACTION_STEPS {
         let apparent_sine = (-1.0 + 2.0 * index as f64 / UNREFRACTION_STEPS as f64).clamp(-1.0, 1.0);
         let apparent = apparent_sine.asin();
         let altitude = unrefract_altitude(apparent).max(-FRAC_PI_2);
         let (sine, cosine) = altitude.sin_cos();
         let apparent_cosine = apparent.cos();
         let scale = if apparent_cosine < 1e-9 { 1.0 } else { cosine / apparent_cosine }; // at the poles the horizontal part is zero anyway
-        [sine, scale]
-    }).collect()
-});
+        table.push([sine, scale]);
+    }
+    table
+}
 
 /// The geometric altitude that `apply_refraction` lifts to `apparent`: Newton's method on the monotone formula.
 fn unrefract_altitude(apparent: f64) -> f64 {
-    let lift = |altitude: f64| apply_refraction(Horizontal { azimuth: 0.0, altitude }).altitude - apparent;
-    let mut altitude = apparent - lift(apparent);                                           // start one lift below the apparent altitude
+    let mut altitude = apparent - compute_refraction_residual(apparent, apparent);                                           // start one lift below the apparent altitude
     for _ in 0..8 {
-        let step = lift(altitude) / refraction_derivatives(altitude).0;
+        let step = compute_refraction_residual(altitude, apparent) / refraction_derivatives(altitude).0;
         altitude -= step;
         if step.abs() < 1e-14 { break; }
     }
     altitude
+}
+
+/// Difference between a refracted trial altitude and the requested apparent altitude.
+fn compute_refraction_residual(altitude: f64, apparent: f64) -> f64 {
+    apply_refraction(Horizontal { azimuth: 0.0, altitude }).altitude - apparent
 }
 
 /// Undo `apply_aberration` to the same first order: the catalog direction of an aberrated one.
@@ -260,33 +269,35 @@ mod tests {
         assert!((zenith.altitude - FRAC_PI_2).abs() < 1e-12);
     }
 
+    fn compute_refraction_lift_arcminutes(altitude_degrees: f64) -> f64 {
+        let position = Horizontal {
+            azimuth: 1.0,
+            altitude: altitude_degrees * TO_RAD,
+        };
+        let refracted = apply_refraction(position);
+        assert_eq!(refracted.azimuth, 1.0);
+        (refracted.altitude - position.altitude) / TO_RAD * 60.0 // in arcminutes
+    }
+
     #[test]
     fn refraction_lifts_objects_near_the_horizon_most() {
-        let lift_at = |altitude_degrees: f64| {
-            let position = Horizontal {
-                azimuth: 1.0,
-                altitude: altitude_degrees * TO_RAD,
-            };
-            let refracted = apply_refraction(position);
-            assert_eq!(refracted.azimuth, 1.0);
-            (refracted.altitude - position.altitude) / TO_RAD * 60.0 // in arcminutes
-        };
-        assert!((lift_at(0.0) - 28.98).abs() < 0.05, "{}", lift_at(0.0));
-        assert!((lift_at(45.0) - 1.0).abs() < 0.05, "{}", lift_at(45.0));
-        assert_eq!(lift_at(90.0), 0.0);
-        assert!((lift_at(-10.0) - lift_at(-1.0)).abs() < 1e-9);
+        assert!((compute_refraction_lift_arcminutes(0.0) - 28.98).abs() < 0.05, "{}", compute_refraction_lift_arcminutes(0.0));
+        assert!((compute_refraction_lift_arcminutes(45.0) - 1.0).abs() < 0.05, "{}", compute_refraction_lift_arcminutes(45.0));
+        assert_eq!(compute_refraction_lift_arcminutes(90.0), 0.0);
+        assert!((compute_refraction_lift_arcminutes(-10.0) - compute_refraction_lift_arcminutes(-1.0)).abs() < 1e-9);
 
         // higher true altitudes always appear higher
-        let apparent: Vec<f64> = (-100..=900)
-            .map(|tenth_degree| {
-                apply_refraction(Horizontal {
-                    azimuth: 0.0,
-                    altitude: f64::from(tenth_degree) / 10.0 * TO_RAD,
-                })
-            })
-            .map(|position| position.altitude)
-            .collect();
-        assert!(apparent.windows(2).all(|pair| pair[0] < pair[1]));
+        let mut apparent = Vec::with_capacity(1001);
+        for tenth_degree in -100..=900 {
+            let refracted = apply_refraction(Horizontal {
+                azimuth: 0.0,
+                altitude: f64::from(tenth_degree) / 10.0 * TO_RAD,
+            });
+            apparent.push(refracted.altitude);
+        }
+        for pair in apparent.windows(2) {
+            assert!(pair[0] < pair[1]);
+        }
     }
 
     #[test]

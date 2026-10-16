@@ -149,14 +149,13 @@ impl StellarMotion {
     /// Exact endpoint angular bound for a non-singular straight line; atan2 is stable at poles and small angles.
     pub fn motion_bound(self) -> f64 {
         let (start, end) = computational_years();
-        [start, end]
-            .into_iter()
-            .map(|t| {
-                let q = self.u0 + self.w * t;
-                length(self.u0.cross(q)).atan2(self.u0.dot(q))
-            })
-            .fold(0.0, f64::max)
-            .next_up()
+        let mut bound = 0.0_f64;
+        for time in [start, end] {
+            let direction = self.u0 + self.w * time;
+            let angle = length(self.u0.cross(direction)).atan2(self.u0.dot(direction));
+            bound = bound.max(angle);
+        }
+        bound.next_up()
     }
 }
 

@@ -1,7 +1,9 @@
 //! Meeus chapter 47 (truncated ELP-2000/82), geometric mean ecliptic of date, TT, f64.
 //! Conversion uses the date's obliquity and inverse long-term precession to form an Earth-relative J2000
 //! equatorial AU state. The coordinator composes Earth's translation at the requested epoch.
-use crate::formulas::{J2000, Vector3, MoonPhase, MoonIllumination};
+use crate::formulas::{J2000, Vector3, BodyState, MoonPhase, MoonIllumination};
+use crate::formulas::constants::VELOCITY_SAMPLE_OFFSET_DAYS;
+use crate::formulas::math::compute_velocity;
 use crate::formulas::constants::{MOON_PHASE_NAMES, MOON_PHASE_UPPER_BOUNDS, MOON_LONGITUDE_DISTANCE, MOON_LATITUDE};
 
 /// Geometric mean ecliptic longitude, latitude and distance at TT, in radians and kilometres.
@@ -9,35 +11,33 @@ use crate::formulas::constants::{MOON_PHASE_NAMES, MOON_PHASE_UPPER_BOUNDS, MOON
 pub fn compute_lunar_ecliptic(tt: f64) -> (f64, f64, f64) {
     // fundamental arguments, reduced before trigonometry
     let t = (tt - J2000) / 36525.0;
-    let radians = |degrees: f64| degrees.rem_euclid(360.0).to_radians();
     let l =
-        radians(218.3164477 + 481267.88123421 * t - 0.0015786 * t * t + t.powi(3) / 538841.0 - t.powi(4) / 65194000.0);
+        wrap_degrees_to_radians(218.3164477 + 481267.88123421 * t - 0.0015786 * t * t + t.powi(3) / 538841.0 - t.powi(4) / 65194000.0);
     let d =
-        radians(297.8501921 + 445267.1114034 * t - 0.0018819 * t * t + t.powi(3) / 545868.0 - t.powi(4) / 113065000.0);
-    let m = radians(357.5291092 + 35999.0502909 * t - 0.0001536 * t * t + t.powi(3) / 24490000.0);
+        wrap_degrees_to_radians(297.8501921 + 445267.1114034 * t - 0.0018819 * t * t + t.powi(3) / 545868.0 - t.powi(4) / 113065000.0);
+    let m = wrap_degrees_to_radians(357.5291092 + 35999.0502909 * t - 0.0001536 * t * t + t.powi(3) / 24490000.0);
     let mp =
-        radians(134.9633964 + 477198.8675055 * t + 0.0087414 * t * t + t.powi(3) / 69699.0 - t.powi(4) / 14712000.0);
+        wrap_degrees_to_radians(134.9633964 + 477198.8675055 * t + 0.0087414 * t * t + t.powi(3) / 69699.0 - t.powi(4) / 14712000.0);
     let f =
-        radians(93.2720950 + 483202.0175233 * t - 0.0036539 * t * t - t.powi(3) / 3526000.0 + t.powi(4) / 863310000.0);
+        wrap_degrees_to_radians(93.2720950 + 483202.0175233 * t - 0.0036539 * t * t - t.powi(3) / 3526000.0 + t.powi(4) / 863310000.0);
     let e = 1.0 - 0.002516 * t - 0.0000074 * t * t;
-    let argument = |row: &[f64]| row[0] * d + row[1] * m + row[2] * mp + row[3] * f;
 
     // periodic longitude, distance and latitude
     let (mut longitude, mut distance, mut latitude) = (0.0, 0.0, 0.0);
     for row in MOON_LONGITUDE_DISTANCE {
-        let (s, c) = argument(&row).sin_cos();
+        let (s, c) = compute_lunar_argument(&row, d, m, mp, f).sin_cos();
         let factor = e.powi(row[1].abs() as i32);
         longitude += row[4] * factor * s;
         distance += row[5] * factor * c;
     }
     for row in MOON_LATITUDE {
-        latitude += row[4] * e.powi(row[1].abs() as i32) * argument(&row).sin();
+        latitude += row[4] * e.powi(row[1].abs() as i32) * compute_lunar_argument(&row, d, m, mp, f).sin();
     }
 
     // additive planetary/figure-of-Earth terms, in the tables' microdegree units
-    let a1 = radians(119.75 + 131.849 * t);
-    let a2 = radians(53.09 + 479264.290 * t);
-    let a3 = radians(313.45 + 481266.484 * t);
+    let a1 = wrap_degrees_to_radians(119.75 + 131.849 * t);
+    let a2 = wrap_degrees_to_radians(53.09 + 479264.290 * t);
+    let a3 = wrap_degrees_to_radians(313.45 + 481266.484 * t);
     longitude += 3958.0 * a1.sin() + 1962.0 * (l - f).sin() + 318.0 * a2.sin();
     latitude +=
         -2235.0 * l.sin() + 382.0 * a3.sin() + 175.0 * (a1 - f).sin() + 175.0 * (a1 + f).sin() + 127.0 * (l - mp).sin()
@@ -61,8 +61,10 @@ pub fn moon_age_to_phase(age: f64) -> MoonPhase {
     if !(0.03..=0.97).contains(&age) {
         return MoonPhase::New;
     }
-    let index = MOON_PHASE_UPPER_BOUNDS.iter().position(|&bound| age < bound).unwrap_or(7);
-    MoonPhase::ALL[index]
+    for (index, &bound) in MOON_PHASE_UPPER_BOUNDS.iter().enumerate() {
+        if age < bound { return MoonPhase::ALL[index]; }
+    }
+    MoonPhase::ALL[7]
 }
 
 /// Resolve the named phase from the continuous phase angle and the waxing direction.
@@ -91,22 +93,44 @@ pub fn compute_moon_illumination(moon: Vector3, sun: Vector3, reference_north: V
 
 /// Parent-relative common-frame lunar state. Its only frame dependency is the source precession evaluated at
 /// each finite-difference epoch; Earth's translation is composed at the requested epoch by the coordinator.
-pub fn evaluate_moon(julian_date_tt: f64) -> crate::formulas::BodyState {
-    crate::formulas::math::evaluate_with_velocity(julian_date_tt, |tt| {
-        let (longitude, latitude, distance_km) = compute_lunar_ecliptic(tt);
-        let (sl, cl) = longitude.sin_cos();
-        let (sb, cb) = latitude.sin_cos();
-        let native = Vector3 {
-            x: cb * cl,
-            y: cb * sl,
-            z: sb,
-        } * (distance_km / 149597870.7);
-        let eps = crate::formulas::compute_obliquity(tt);
-        crate::formulas::compute_precession_matrix(tt)
-            .matrix()
-            .transpose()
-            .apply(crate::formulas::rotate_x(-eps).apply(native))
-    })
+pub fn evaluate_moon(julian_date_tt: f64) -> BodyState {
+    // Evaluate the central position and both velocity samples with their own orientation.
+    let before_tt = julian_date_tt - VELOCITY_SAMPLE_OFFSET_DAYS;
+    let after_tt = julian_date_tt + VELOCITY_SAMPLE_OFFSET_DAYS;
+    let position = compute_moon_position(julian_date_tt);
+    let after_position = compute_moon_position(after_tt);
+    let before_position = compute_moon_position(before_tt);
+
+    // The two samples are separated by one offset before and one offset after the requested date.
+    let velocity = compute_velocity(before_position, after_position, VELOCITY_SAMPLE_OFFSET_DAYS + VELOCITY_SAMPLE_OFFSET_DAYS);
+    BodyState { position, velocity }
+}
+
+/// Earth-relative lunar position in J2000 equatorial axes, in AU.
+fn compute_moon_position(tt: f64) -> Vector3 {
+    let (longitude, latitude, distance_km) = compute_lunar_ecliptic(tt);
+    let (sl, cl) = longitude.sin_cos();
+    let (sb, cb) = latitude.sin_cos();
+    let native = Vector3 {
+        x: cb * cl,
+        y: cb * sl,
+        z: sb,
+    } * (distance_km / 149597870.7);
+    let eps = crate::formulas::compute_obliquity(tt);
+    crate::formulas::compute_precession_matrix(tt)
+        .matrix()
+        .transpose()
+        .apply(crate::formulas::rotate_x(-eps).apply(native))
+}
+
+/// Reduce a periodic angle before converting degrees to radians.
+fn wrap_degrees_to_radians(degrees: f64) -> f64 {
+    degrees.rem_euclid(360.0).to_radians()
+}
+
+/// Combine one periodic term's coefficients with the four fundamental lunar arguments.
+fn compute_lunar_argument(coefficients: &[f64], elongation: f64, sun_anomaly: f64, moon_anomaly: f64, latitude_argument: f64) -> f64 {
+    coefficients[0] * elongation + coefficients[1] * sun_anomaly + coefficients[2] * moon_anomaly + coefficients[3] * latitude_argument
 }
 
 /// Lunar illumination for positions in the common barycentric J2000 frame, seen from Earth's centre.
