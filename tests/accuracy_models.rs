@@ -35,7 +35,7 @@ fn observe(tt: f64, ut1: f64) -> Sky {
     };
     let bodies = Data::default();
     let system = astroterm::solar_system::calculate_solar_system_at_tt(&bodies.solar_system_sun, &bodies.solar_system_planets, &bodies.solar_system_moons, time_ms, tt, &mut astroterm::time::StepTimes::default());
-    let observation = astroterm::observation::calculate_observation_at_dates(&site, false, &View::default(), time_ms, &dates, &mut astroterm::time::StepTimes::default());
+    let observation = astroterm::observation::calculate_observation_at_dates(&site, false, &View::default(), time_ms, &dates, system.earth, &mut astroterm::time::StepTimes::default());
     let catalog = astroterm::sky::prepare_owned_catalog(load_embedded_catalog(&mut astroterm::progress::Report::quiet()).unwrap(), &mut astroterm::progress::Report::quiet()).unwrap();
     Sky { bodies, system, observation, catalog, tt_jd: tt }
 }

@@ -47,7 +47,6 @@ toml = "0.9"
 tzf-rs = { version = "2.1.2", default-features = false, features = ["bundled"] }
 unicode-width = "0.2.2"
 ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
-vsop87 = "3.0.0"
 zstd = { version = "0.14", default-features = false }
 
 [target.'cfg(unix)'.dependencies]

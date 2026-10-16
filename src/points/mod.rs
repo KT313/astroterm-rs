@@ -496,7 +496,7 @@ mod tests {
     /// The whole frame for `tables` at `view`: steps 1 to 4 and 6 (the star layer stays empty unless asked).
     fn draw(tables: &Data, view: &View, days: f64, settings: &RenderOptions, frame: &mut Frame) -> (Drawn, Observation) {
         let time = crate::formulas::utc_jd_to_time_ms(J2000 + days).unwrap();
-        let observation = observe(&boston(), false, view, time, &mut crate::time::StepTimes::default());
+        let observation = observe(&boston(), false, view, time, crate::formulas::evaluate_earth_state(time), &mut crate::time::StepTimes::default());
         let solar_system = simulate_solar_system(&tables.solar_system_sun, &tables.solar_system_planets, &tables.solar_system_moons, time, &mut crate::time::StepTimes::default());
         let selected = select_regions(&tables.star_regions, &observation.patch, observation.time_ms, &mut crate::time::StepTimes::default());
         let mut caches = tables.clone();
@@ -521,7 +521,7 @@ mod tests {
 
     /// Catalog directions at the given horizon altitude and azimuth (degrees) for the zenith view at J2000.
     fn catalog_direction(azimuth_degrees: f64, altitude_degrees: f64) -> Vector3 {
-        let observation = observe(&boston(), false, &View::default(), crate::formulas::utc_jd_to_time_ms(J2000).unwrap(), &mut crate::time::StepTimes::default());
+        let observation = observe(&boston(), false, &View::default(), crate::formulas::utc_jd_to_time_ms(J2000).unwrap(), crate::formulas::evaluate_earth_state(crate::formulas::utc_jd_to_time_ms(J2000).unwrap()), &mut crate::time::StepTimes::default());
         observation.to_catalog.apply(crate::formulas::Horizontal { azimuth: azimuth_degrees.to_radians(), altitude: altitude_degrees.to_radians() }.to_unit_vector())
     }
 
@@ -768,7 +768,7 @@ mod tests {
         let (none, _) = draw(&tables, &View::default(), 0.0, &settings(), &mut frame);
         assert!(none.notices.is_empty());
         let time = crate::formulas::utc_jd_to_time_ms(J2000 + 30000.0 * 365.25).unwrap();
-        let observation = observe(&boston(), false, &View::default(), time, &mut crate::time::StepTimes::default());
+        let observation = observe(&boston(), false, &View::default(), time, crate::formulas::evaluate_earth_state(time), &mut crate::time::StepTimes::default());
         let solar_system = simulate_solar_system(&clipped.solar_system_sun, &clipped.solar_system_planets, &clipped.solar_system_moons, time, &mut crate::time::StepTimes::default());
         let selected = select_regions(&clipped.star_regions, &observation.patch, observation.time_ms, &mut crate::time::StepTimes::default());
         let mut caches = clipped.clone();
@@ -797,7 +797,7 @@ mod tests {
         let tables = bsc5();
         let view = View { center: ViewCenter::Facing { azimuth: 3.5, tilt: 0.6 }, projection: ProjectionKind::Stereographic, fov_degrees: 120.0 };
         let time = crate::formulas::utc_jd_to_time_ms(J2000).unwrap();
-        let observation = observe(&boston(), true, &view, time, &mut crate::time::StepTimes::default());
+        let observation = observe(&boston(), true, &view, time, crate::formulas::evaluate_earth_state(time), &mut crate::time::StepTimes::default());
         let solar_system = simulate_solar_system(&tables.solar_system_sun, &tables.solar_system_planets, &tables.solar_system_moons, time, &mut crate::time::StepTimes::default());
         let selected = select_regions(&tables.star_regions, &observation.patch, observation.time_ms, &mut crate::time::StepTimes::default());
         let mut caches = tables.clone();
@@ -851,7 +851,7 @@ mod tests {
     fn the_metadata_panel_is_painted_at_the_top_left() {
         let tables = stars(&[]);
         let time = crate::formulas::utc_jd_to_time_ms(J2000).unwrap();
-        let observation = observe(&boston(), true, &View::default(), time, &mut crate::time::StepTimes::default());
+        let observation = observe(&boston(), true, &View::default(), time, crate::formulas::evaluate_earth_state(time), &mut crate::time::StepTimes::default());
         let solar_system = simulate_solar_system(&tables.solar_system_sun, &tables.solar_system_planets, &tables.solar_system_moons, time, &mut crate::time::StepTimes::default());
         let selected = select_regions(&tables.star_regions, &observation.patch, observation.time_ms, &mut crate::time::StepTimes::default());
         let caches = tables.clone();

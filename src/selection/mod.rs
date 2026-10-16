@@ -90,7 +90,7 @@ mod tests {
 
     #[test]
     fn empty_tables_select_nothing() {
-        let observation = observe(&boston(), false, &facing(360.0), crate::formulas::utc_jd_to_time_ms(J2000).unwrap(), &mut crate::time::StepTimes::default());
+        let observation = observe(&boston(), false, &facing(360.0), crate::formulas::utc_jd_to_time_ms(J2000).unwrap(), crate::formulas::evaluate_earth_state(crate::formulas::utc_jd_to_time_ms(J2000).unwrap()), &mut crate::time::StepTimes::default());
         let selected = select_regions(&Data::default().star_regions, &observation.patch, observation.time_ms, &mut crate::time::StepTimes::default());
         assert_eq!(selected, Selected { regions: Vec::new(), whole_sky: true });
     }
@@ -98,7 +98,7 @@ mod tests {
     #[test]
     fn narrow_views_select_few_regions_that_cover_the_patch() {
         let tables = bsc5();
-        let observation = observe(&boston(), true, &facing(5.0), crate::formulas::utc_jd_to_time_ms(J2000).unwrap(), &mut crate::time::StepTimes::default());
+        let observation = observe(&boston(), true, &facing(5.0), crate::formulas::utc_jd_to_time_ms(J2000).unwrap(), crate::formulas::evaluate_earth_state(crate::formulas::utc_jd_to_time_ms(J2000).unwrap()), &mut crate::time::StepTimes::default());
         let selected = select_regions(&tables.star_regions, &observation.patch, observation.time_ms, &mut crate::time::StepTimes::default());
         assert!(!selected.whole_sky);
         assert!(!selected.regions.is_empty() && selected.regions.len() < 60, "{}", selected.regions.len());
@@ -111,7 +111,7 @@ mod tests {
     fn medium_views_use_coarse_caps_and_cover_the_patch() {
         let tables = bsc5();
         for fov in [60.0, 120.0, 180.0, 240.0] {
-            let observation = observe(&boston(), false, &facing(fov), crate::formulas::utc_jd_to_time_ms(J2000).unwrap(), &mut crate::time::StepTimes::default());
+            let observation = observe(&boston(), false, &facing(fov), crate::formulas::utc_jd_to_time_ms(J2000).unwrap(), crate::formulas::evaluate_earth_state(crate::formulas::utc_jd_to_time_ms(J2000).unwrap()), &mut crate::time::StepTimes::default());
             let selected = select_regions(&tables.star_regions, &observation.patch, observation.time_ms, &mut crate::time::StepTimes::default());
             assert!(!selected.whole_sky, "{fov}");
             check_covers_the_patch(&tables, &selected, &observation);
@@ -124,11 +124,11 @@ mod tests {
     fn wide_views_and_times_outside_the_interval_select_the_whole_sky() {
         let tables = bsc5();
         let filled: Vec<_> = (0..CELL_COUNT).filter(|&region| tables.star_regions[region].speed_groups.iter().map(|group| &group.stars).any(|table| !table.is_empty())).collect();
-        let observation = observe(&boston(), true, &facing(300.0), crate::formulas::utc_jd_to_time_ms(J2000).unwrap(), &mut crate::time::StepTimes::default());
+        let observation = observe(&boston(), true, &facing(300.0), crate::formulas::utc_jd_to_time_ms(J2000).unwrap(), crate::formulas::evaluate_earth_state(crate::formulas::utc_jd_to_time_ms(J2000).unwrap()), &mut crate::time::StepTimes::default());
         let wide = select_regions(&tables.star_regions, &observation.patch, observation.time_ms, &mut crate::time::StepTimes::default());
         assert_eq!(wide, Selected { regions: filled.clone(), whole_sky: true });
         let outside = crate::formulas::utc_jd_to_time_ms(COMPUTATIONAL_INTERVAL.end_tt + 1.0).unwrap();
-        let observation = observe(&boston(), false, &facing(1.0), outside, &mut crate::time::StepTimes::default());
+        let observation = observe(&boston(), false, &facing(1.0), outside, crate::formulas::evaluate_earth_state(outside), &mut crate::time::StepTimes::default());
         let late = select_regions(&tables.star_regions, &observation.patch, observation.time_ms, &mut crate::time::StepTimes::default());
         assert_eq!(late, Selected { regions: filled, whole_sky: true });
     }
@@ -138,7 +138,7 @@ mod tests {
         let tables = bsc5();
         for (azimuth, tilt) in [(0.0, 0.1), (1.0, 1.2), (3.0, -0.4), (5.5, 0.9)] {
             let view = View { center: ViewCenter::Facing { azimuth, tilt }, ..facing(2.0) };
-            let observation = observe(&boston(), false, &view, crate::formulas::utc_jd_to_time_ms(J2000).unwrap(), &mut crate::time::StepTimes::default());
+            let observation = observe(&boston(), false, &view, crate::formulas::utc_jd_to_time_ms(J2000).unwrap(), crate::formulas::evaluate_earth_state(crate::formulas::utc_jd_to_time_ms(J2000).unwrap()), &mut crate::time::StepTimes::default());
             let selected = select_regions(&tables.star_regions, &observation.patch, observation.time_ms, &mut crate::time::StepTimes::default());
             let centre = hash_direction(GRID_DEPTH, observation.patch.center);
             let holds_stars = tables.star_regions[centre].speed_groups.iter().map(|group| &group.stars).any(|table| !table.is_empty());

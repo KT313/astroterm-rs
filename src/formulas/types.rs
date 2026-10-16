@@ -70,6 +70,15 @@ pub struct BodyState {
     pub velocity: Vector3,
 }
 
+/// A body's barycentric state together with its acceleration, AU, AU/day and AU/day²: enough to move the state
+/// across a light time by a second-order expansion instead of evaluating the series again.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct BodyMotion {
+    pub position: Vector3,
+    pub velocity: Vector3,
+    pub acceleration: Vector3,
+}
+
 /// Observer's barycentric state and rotations between J2000 and local East/North/Up axes.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ObserverState {

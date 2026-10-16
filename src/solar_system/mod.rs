@@ -3,11 +3,12 @@
 //! Inputs: the body tables and the simulated time. Output: where the Sun, the moons and the planets were when the
 //! light now reaching the Earth left them, plus the Earth's own state at reception, all barycentric J2000
 //! equatorial in AU and AU/day. Runs every frame and evaluates the ephemerides directly (no samples, no cache):
-//! three position evaluations per body for the two light-time iterations, about 4 ms in all in release builds
-//! (`dev/pipeline-restructuring-results/7/steps-1-2.md`). Light time is iterated against the geocentre; `moon_position` moves a
-//! moon by the few milliseconds the observer's site changes its light time, which matters only for the Moon.
+//! one pass over each body's series gives its position, velocity and acceleration, and the light time moves that
+//! motion back without evaluating the series again (`formulas::compute_emission_state`), about 1.1 ms in all in
+//! release builds (`dev/performance.md`, 2026-10-16). Light time is iterated against the geocentre; `moon_position`
+//! moves a moon by the few milliseconds the observer's site changes its light time, which matters only for the Moon.
 use crate::time::StepTimes;
-use crate::formulas::{BodyId, BodyState, evaluate_planet, compute_emission_position, compute_emission_velocity, correct_moon_light_time};
+use crate::formulas::{BodyId, BodyState, evaluate_planet, evaluate_body_motion, compute_emission_state, correct_moon_light_time};
 #[cfg(test)]
 use crate::formulas::compute_barycentric_position;
 use crate::formulas::{AstronomicalTime, MoonIllumination, Vector3, compute_geocentric_moon_illumination};
@@ -34,26 +35,24 @@ pub fn simulate_solar_system(sun_table: &SunTable, planets_table: &PlanetsTable,
 /// Numerical ephemeris boundary: retain fractional TT for light-time calculations and independent references.
 /// The result's application timestamp remains the supplied integer millisecond stamp.
 pub fn calculate_solar_system_at_tt(sun_table: &SunTable, planets_table: &PlanetsTable, moons_table: &MoonsTable, time_ms: i64, tt_jd: f64, times: &mut StepTimes) -> SolarSystem {
-    // Evaluate Earth's state at reception before calculating when each body's light was emitted.
+    // Evaluate the Earth's motion at reception once; every light time below is measured against its position,
+    // and step 2 takes the same state instead of evaluating the Earth again.
     times.measure("Solar system.Earth state");
     let earth = evaluate_planet(BodyId::Earth, tt_jd);
 
-    // Calculate the Sun, moons and planets in separate measured intervals.
+    // Each other body: one evaluation at reception, then its motion moved back by its light time.
     times.measure("Solar system.Sun light time");
-    let sun = compute_emission_position(sun_table.sun.id, tt_jd, earth.position);
+    let sun = compute_emission_state(evaluate_planet(sun_table.sun.id, tt_jd), earth.position).position;
 
     times.measure("Solar system.Moon light time");
-    let moons = moons_table.moons.iter().map(|moon| {
-        let position = compute_emission_position(moon.id, tt_jd, earth.position);
-        BodyState { position, velocity: compute_emission_velocity(moon.id, tt_jd, position, earth.position) }
-    }).collect();
+    let moons = moons_table.moons.iter().map(|moon| compute_emission_state(evaluate_body_motion(moon.id, tt_jd, earth), earth.position)).collect();
 
     times.measure("Solar system.Planet light time");
     let planets = planets_table.planets.iter().map(|planet| {
-        if planet.id == BodyId::Earth { earth.position } else { compute_emission_position(planet.id, tt_jd, earth.position) }
+        if planet.id == BodyId::Earth { earth.position } else { compute_emission_state(evaluate_planet(planet.id, tt_jd), earth.position).position }
     }).collect();
 
-    SolarSystem { time_ms, earth, sun, moons, planets }
+    SolarSystem { time_ms, earth: earth.state(), sun, moons, planets }
 }
 
 impl SolarSystem {

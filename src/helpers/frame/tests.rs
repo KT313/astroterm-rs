@@ -39,7 +39,7 @@ fn the_panel_is_empty_when_off_and_lists_time_counts_display_and_timings_when_on
     let time = config(&[]).simulation.start_time_ms;
     let clock = SimulationClock::start(time, 0.0);
     let view = View { center: ViewCenter::Zenith, fov_degrees: 360.0, projection: ProjectionKind::Equidistant };     // the whole sky, as chunk 10 tests it
-    let observation = observe(&config(&[]).simulation.observer, false, &view, time, &mut astroterm::time::StepTimes::default());
+    let observation = observe(&config(&[]).simulation.observer, false, &view, time, astroterm::formulas::evaluate_earth_state(time), &mut astroterm::time::StepTimes::default());
     let solar_system = simulate_solar_system(&tables.solar_system_sun, &tables.solar_system_planets, &tables.solar_system_moons, time, &mut astroterm::time::StepTimes::default());
     let selected = select_regions(&tables.star_regions, &observation.patch, observation.time_ms, &mut astroterm::time::StepTimes::default());
     let refreshed = refresh_regions(

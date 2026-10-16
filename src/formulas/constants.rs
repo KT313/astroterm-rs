@@ -16,6 +16,15 @@ pub(crate) const OBLIQUITY_J2000: f64 = 84381.448 / 3600.0 * (std::f64::consts::
 /// Exactly represented offset for symmetric velocity samples: 1/1024 day, roughly 84 seconds.
 pub(super) const VELOCITY_SAMPLE_OFFSET_DAYS: f64 = 1.0 / 1024.0;
 
+/// The complete VSOP87E series of the Sun and the eight planets, packed at build time by `build.rs` from the
+/// published text files in `data/vsop87/` (provenance there): the magic `VSOP87E1`, then per body in `BodyId`
+/// order 18 little-endian u32 term counts (coordinate-major, powers 0 to 5 of `t`) followed by that body's terms
+/// as little-endian f64 triples (amplitude, phase, frequency), each contributing `a·cos(b + c·t)`.
+pub(super) const VSOP87E_TERMS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/vsop87e.bin"));
+
+/// VSOP87's time unit: days per thousand Julian years.
+pub(super) const VSOP87_MILLENNIUM_DAYS: f64 = 365_250.0;
+
 // Accuracy coverage and budgets.
 /// Catalog proper motions use Julian years, regardless of the input calendar.
 pub const JULIAN_YEAR_DAYS: f64 = 365.25;

@@ -507,7 +507,7 @@ mod tests {
         let view = View { center, fov_degrees: fov, projection };
         let date = crate::formulas::parse_utc_datetime("2025-03-01T11:00:00").unwrap();
         let time = crate::formulas::utc_jd_to_time_ms(crate::formulas::datetime_to_julian_date(&date)).unwrap();
-        (view, observe(&tokyo(), atmosphere, &view, time, &mut StepTimes::default()))
+        (view, observe(&tokyo(), atmosphere, &view, time, crate::formulas::evaluate_earth_state(time), &mut StepTimes::default()))
     }
     /// The screen pixel of a texel position through the forward chain: the oracle for the inverse mapping.
     fn forward(tile: &TileGeometry, observation: &Observation, camera: CartesianCamera, size: usize, position: Point) -> Option<Point> {
@@ -654,7 +654,7 @@ mod tests {
         let site = Observer { latitude: 0.6, longitude: 2.4 };
         for (fov, atmosphere, projection) in [(180.0, false, Stereographic), (60.0, true, Stereographic), (10.0, true, Stereographic), (10.0, true, Equidistant), (300.0, false, Equidistant)] {
             let view = View { center: facing(1.0, 0.02), projection, fov_degrees: fov };
-            let observation = observe(&site, atmosphere, &view, time, &mut StepTimes::default());
+            let observation = observe(&site, atmosphere, &view, time, crate::formulas::evaluate_earth_state(time), &mut StepTimes::default());
             let direction = observation.patch.center;
             let region = hash_direction(GRID_DEPTH, direction);
             let star = fixtures::row(direction, 0.0, 3.0, 1);

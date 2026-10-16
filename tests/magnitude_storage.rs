@@ -124,7 +124,7 @@ fn clipping_notice_coexists_with_date_notice_and_the_tables_carry_it() {
         let view = View::default();
         let settings = RenderOptions { unicode: true, braille: false, color: false, constellations: false, grid: false, magnitude_threshold: -50.0, dynamic_names: false };
         let solar_system = simulate_solar_system(&tables.solar_system_sun, &tables.solar_system_planets, &tables.solar_system_moons, time, &mut astroterm::time::StepTimes::default());
-        let observation = observe(&Observer::default(), false, &view, time, &mut astroterm::time::StepTimes::default());
+        let observation = observe(&Observer::default(), false, &view, time, astroterm::formulas::evaluate_earth_state(time), &mut astroterm::time::StepTimes::default());
         let selected = select_regions(&tables.star_regions, &observation.patch, observation.time_ms, &mut astroterm::time::StepTimes::default());
         let mut caches = tables.clone();
         refresh_regions(

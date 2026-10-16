@@ -25,11 +25,12 @@ fn main() {
         let frame = astroterm::formulas::AstronomicalTime { utc_jd: ut1 + 59.0 / 86400.0, ut1_jd: ut1 + 59.0 / 86400.0, tt_jd: tt + 59.0 / 86400.0 };
         let stamp_ms = astroterm::formulas::utc_jd_to_time_ms(frame.utc_jd).unwrap();
         let system = astroterm::solar_system::calculate_solar_system_at_tt(&bodies.solar_system_sun, &bodies.solar_system_planets, &bodies.solar_system_moons, stamp_ms, frame.tt_jd, &mut astroterm::time::StepTimes::default());
-        let observation = astroterm::observation::calculate_observation_at_dates(&site, false, &View::default(), stamp_ms, &frame, &mut astroterm::time::StepTimes::default());
+        let observation = astroterm::observation::calculate_observation_at_dates(&site, false, &View::default(), stamp_ms, &frame, system.earth, &mut astroterm::time::StepTimes::default());
         let states = evaluate_planets(tt);
-        let moon = evaluate_moon(tt).add_parent(states[BodyId::Earth as usize]);
+        let moon = evaluate_moon(tt).add_parent(states[BodyId::Earth as usize].state());
         let raw: Vec<_> = states
             .into_iter()
+            .map(astroterm::formulas::BodyMotion::state)
             .chain([moon])
             .map(|s| vec![s.position.x, s.position.y, s.position.z, s.velocity.x, s.velocity.y, s.velocity.z])
             .collect();

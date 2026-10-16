@@ -145,7 +145,6 @@ dependencies = [
  "tzf-rs",
  "unicode-width",
  "ureq",
- "vsop87",
  "zstd",
 ]
 
@@ -2380,12 +2379,6 @@ name = "vsimd"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5c3082ca00d5a5ef149bb8b555a72ae84c9c59f7250f013ac822ac2e49b19c64"
-
-[[package]]
-name = "vsop87"
-version = "3.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37cde47f1fc639613a2a48a6a8685db063693c55ea6b09260b78f95c9e775575"
 
 [[package]]
 name = "wait-timeout"

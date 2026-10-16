@@ -20,7 +20,7 @@ fn render(data: &mut Data, frame: &mut Frame, terminal: &mut Terminal<Vec<u8>>, 
     times.measure("Solar system");
     let solar = simulate_solar_system(&data.solar_system_sun, &data.solar_system_planets, &data.solar_system_moons, time, times);
     times.measure("Observation");
-    let observation = observe(&Observer::default(), true, &view, time, times);
+    let observation = observe(&Observer::default(), true, &view, time, astroterm::formulas::evaluate_earth_state(time), times);
     times.measure("Selection");
     let selected = select_regions(&data.star_regions, &observation.patch, observation.time_ms, times);
     times.measure("Regions");

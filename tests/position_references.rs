@@ -19,7 +19,7 @@ fn boston_sky(julian_date_ut1: f64) -> BostonSky {
     let time = astroterm::formulas::utc_jd_to_time_ms(julian_date_ut1).unwrap();
     let bodies = Data::default();
     let system = simulate_solar_system(&bodies.solar_system_sun, &bodies.solar_system_planets, &bodies.solar_system_moons, time, &mut astroterm::time::StepTimes::default());
-    let observation = observe(&site, false, &View::default(), time, &mut astroterm::time::StepTimes::default());
+    let observation = observe(&site, false, &View::default(), time, system.earth, &mut astroterm::time::StepTimes::default());
     BostonSky { catalog, bodies, system, observation }
 }
 

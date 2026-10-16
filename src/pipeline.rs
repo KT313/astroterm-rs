@@ -46,7 +46,7 @@ pub(super) fn run_frame_loop(
         let solar_system = simulate_solar_system(&data.solar_system_sun, &data.solar_system_planets, &data.solar_system_moons, time_ms, &mut time_manager.step_times);
 
         time_manager.measure("Observation");
-        let observation = observe(&config.simulation.observer, config.simulation.refraction, &current_view, time_ms, &mut time_manager.step_times);
+        let observation = observe(&config.simulation.observer, config.simulation.refraction, &current_view, time_ms, solar_system.earth, &mut time_manager.step_times);
 
         time_manager.measure("Selection");
         let selected = select_regions(&data.star_regions, &observation.patch, observation.time_ms, &mut time_manager.step_times);

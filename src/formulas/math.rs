@@ -1,6 +1,6 @@
 //! Vector, matrix and shared numerical operations used by the physical formulas.
 use std::f64::consts::TAU;
-use super::{Vector3, Matrix3, Equatorial, Horizontal, BodyState};
+use super::{Vector3, Matrix3, Equatorial, Horizontal, BodyState, BodyMotion};
 
 impl Horizontal {
     /// Unit vector pointing at this position, with x East, y North and z up.
@@ -163,6 +163,28 @@ impl BodyState {
         Self {
             position: self.position + parent.position,
             velocity: self.velocity + parent.velocity,
+        }
+    }
+    /// This parent-relative state carried along by its parent's motion; the parent's acceleration stands for
+    /// the whole, which omits the Moon's own 2.7 mm/s² around the Earth (2 mm over its light time).
+    pub fn carried_by(self, parent: BodyMotion) -> BodyMotion {
+        BodyMotion {
+            position: self.position + parent.position,
+            velocity: self.velocity + parent.velocity,
+            acceleration: parent.acceleration,
+        }
+    }
+}
+impl BodyMotion {
+    /// The state alone.
+    pub fn state(self) -> BodyState {
+        BodyState { position: self.position, velocity: self.velocity }
+    }
+    /// The state `days` later (earlier when negative) along the second-order expansion.
+    pub fn after(self, days: f64) -> BodyState {
+        BodyState {
+            position: self.position + self.velocity * days + self.acceleration * (0.5 * days * days),
+            velocity: self.velocity + self.acceleration * days,
         }
     }
 }

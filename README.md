@@ -208,8 +208,9 @@ Resources used by the original astroterm and this port:
 
 Additional accuracy-model sources:
 
-- [Bretagnon & Francou (1988), VSOP87](https://ui.adsabs.harvard.edu/abs/1988A%26A...202..309B/abstract),
-  through the [VSOP87E Rust implementation](https://docs.rs/vsop87/3.0.0/vsop87/vsop87e/).
+- [Bretagnon & Francou (1988), VSOP87](https://ui.adsabs.harvard.edu/abs/1988A%26A...202..309B/abstract): the
+  complete VSOP87E series from [IMCCE](https://ftp.imcce.fr/pub/ephem/planets/vsop87/) in `data/vsop87/`, packed
+  at build time and summed with their time derivatives (`data/vsop87/provenance.md`).
 - [Vondrák, Capitaine & Wallace (2011/2012), long-term precession](https://www.aanda.org/articles/aa/abs/2011/10/aa17274-11/aa17274-11.html).
 - [ERFA](https://github.com/liberfa/erfa): long-term pole and IAU 2000B nutation coefficients; translated code is
   covered by [LICENSE-ERFA](LICENSE-ERFA), with its SOFA heritage acknowledged there.
@@ -237,6 +238,12 @@ The files in `data/` are taken from the original astroterm repository:
   derived from © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright), distributed through
   [tzf-dist](https://github.com/ringsaturn/tzf-dist) under the [ODbL 1.0](https://opendatacommons.org/licenses/odbl/1-0/).
 - Planet orbital elements: [NASA Jet Propulsion Laboratory](https://ssd.jpl.nasa.gov/planets/approx_pos.html)
+
+Added by this port:
+
+- Planetary ephemeris: the complete [VSOP87E](https://ftp.imcce.fr/pub/ephem/planets/vsop87/) series of
+  Bretagnon & Francou (IMCCE), the unmodified published text files in `data/vsop87/`, packed by `build.rs` at
+  compile time; checksums in `data/vsop87/provenance.md`.
 
 Optional, not distributed with this repository:
 

@@ -14,8 +14,8 @@ fn the_moon_shifts_by_its_parallax_between_sites() {
     let bodies = Data::default();
     let time = astroterm::formulas::utc_jd_to_time_ms(J2000).unwrap();
     let system = simulate_solar_system(&bodies.solar_system_sun, &bodies.solar_system_planets, &bodies.solar_system_moons, time, &mut astroterm::time::StepTimes::default());
-    let a = observe(&Observer::default(), false, &View::default(), time, &mut astroterm::time::StepTimes::default());
-    let b = observe(&Observer { latitude: 0.7, longitude: 1.1 }, false, &View::default(), time, &mut astroterm::time::StepTimes::default());
+    let a = observe(&Observer::default(), false, &View::default(), time, astroterm::formulas::evaluate_earth_state(time), &mut astroterm::time::StepTimes::default());
+    let b = observe(&Observer { latitude: 0.7, longitude: 1.1 }, false, &View::default(), time, astroterm::formulas::evaluate_earth_state(time), &mut astroterm::time::StepTimes::default());
     let moon_a = a.apparent_direction(system.moon_position(0, a.observer.position));
     let moon_b = b.apparent_direction(system.moon_position(0, b.observer.position));
     let geocentric = a.to_horizon.apply((system.moons[0].position - system.earth.position).normalized());
@@ -50,14 +50,14 @@ fn refraction_is_applied_once_and_the_sun_follows_the_aberration_formula() {
     let time = astroterm::formulas::utc_jd_to_time_ms(2459146.0).unwrap();
     let site = Observer { latitude: 0.74, longitude: -1.24 };
     let system = simulate_solar_system(&bodies.solar_system_sun, &bodies.solar_system_planets, &bodies.solar_system_moons, time, &mut astroterm::time::StepTimes::default());
-    let airless = observe(&site, false, &View::default(), time, &mut astroterm::time::StepTimes::default());
-    let refracted = observe(&site, true, &View::default(), time, &mut astroterm::time::StepTimes::default());
+    let airless = observe(&site, false, &View::default(), time, astroterm::formulas::evaluate_earth_state(time), &mut astroterm::time::StepTimes::default());
+    let refracted = observe(&site, true, &View::default(), time, astroterm::formulas::evaluate_earth_state(time), &mut astroterm::time::StepTimes::default());
     let sun = airless.apparent_direction(system.sun);
     let expected = airless.to_horizon.apply(apply_aberration(system.sun - airless.observer.position, airless.observer.velocity));
     assert!((sun - expected).length() < 1e-8);
     assert_eq!(refracted.apparent_direction(system.sun), refract_direction(sun));
     assert_ne!(refract_direction(refract_direction(sun)), refract_direction(sun));        // refraction is not idempotent, so it must be applied exactly once
-    let again = observe(&site, true, &View::default(), time, &mut astroterm::time::StepTimes::default());
+    let again = observe(&site, true, &View::default(), time, astroterm::formulas::evaluate_earth_state(time), &mut astroterm::time::StepTimes::default());
     assert_eq!(again, refracted);                                                         // the same inputs give the same observation
 }
 
@@ -74,10 +74,13 @@ fn time_the_first_two_steps() {
         std::hint::black_box(simulate_solar_system(&bodies.solar_system_sun, &bodies.solar_system_planets, &bodies.solar_system_moons, time, &mut astroterm::time::StepTimes::default()));
     }
     let solar = started.elapsed() / frames;
-    let started = std::time::Instant::now();
-    for frame in 0..frames {
+    let earths: Vec<_> = (0..frames).map(|frame| {
         let time = astroterm::formulas::utc_jd_to_time_ms(J2000 + f64::from(frame) / 86_400.0).unwrap();
-        std::hint::black_box(observe(&site, true, &View::default(), time, &mut astroterm::time::StepTimes::default()));
+        (time, astroterm::formulas::evaluate_earth_state(time))                                   // step 1's Earth, outside the timed loop
+    }).collect();
+    let started = std::time::Instant::now();
+    for (time, earth) in earths {
+        std::hint::black_box(observe(&site, true, &View::default(), time, earth, &mut astroterm::time::StepTimes::default()));
     }
     eprintln!("simulate_solar_system {solar:?} per frame; observe {:?} per frame", started.elapsed() / frames);
 }

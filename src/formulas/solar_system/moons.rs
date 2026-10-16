@@ -166,6 +166,18 @@ mod tests {
         }
     }
 
+    /// Release-mode cost of one lunar state (three positions); run with `--release --ignored --nocapture`.
+    #[test]
+    #[ignore = "timing only"]
+    fn time_one_moon_evaluation() {
+        let started = std::time::Instant::now();
+        let evaluations = 2000;
+        for index in 0..evaluations {
+            std::hint::black_box(evaluate_moon(J2000 + f64::from(index) / 1024.0));
+        }
+        eprintln!("evaluate_moon {:?} per call", started.elapsed() / evaluations);
+    }
+
     #[test]
     fn moon_age_to_phase_covers_all_phases() {
         let cases = [

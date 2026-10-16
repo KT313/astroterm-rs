@@ -32,7 +32,7 @@ fn settings() -> RenderOptions {
 fn run_frame(data: &mut Data, frame: &mut Frame, view: &View, settings: &RenderOptions) -> (Observation, Drawn) {
     let time = astroterm::formulas::utc_jd_to_time_ms(UTC_2025_03_01_11H).unwrap();
     let solar_system = simulate_solar_system(&data.solar_system_sun, &data.solar_system_planets, &data.solar_system_moons, time, &mut astroterm::time::StepTimes::default());                                  // 1
-    let observation = observe(&TOKYO, true, view, time, &mut astroterm::time::StepTimes::default());                                              // 2
+    let observation = observe(&TOKYO, true, view, time, astroterm::formulas::evaluate_earth_state(time), &mut astroterm::time::StepTimes::default());                                              // 2
     let selected = select_regions(&data.star_regions, &observation.patch, observation.time_ms, &mut astroterm::time::StepTimes::default());                                       // 3
     refresh_regions(
         &mut data.star_regions, &data.constellation_stars,
