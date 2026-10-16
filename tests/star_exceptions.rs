@@ -22,7 +22,7 @@ fn ordinary_catalog_exposes_an_empty_allocation_free_exception_table() {
 
 #[test]
 fn supported_fast_motion_prepares_without_exceptions_and_is_filed_in_its_region() {
-    use astroterm::astro::{J2000, JULIAN_YEAR_DAYS};
+    use astroterm::formulas::{J2000, JULIAN_YEAR_DAYS};
     use astroterm::constants::GRID_DEPTH;
     use astroterm::model::hash_direction;
     use astroterm::regions::rows_wanted;

@@ -20,12 +20,12 @@ pub use geometry::{
 /// pixel inside a region's image is pulled back to the region's tile and sampled there (`pixel_warp`).
 pub fn project_stars_to_screen(
     drawing_area_width_and_height: usize,
-    data: &crate::model::Data,
-    selected: &crate::selection::Selected,
+    star_regions: &[crate::model::Region],
+    selected_regions: &[usize],
     observation: &crate::observation::Observation,
     view: &crate::model::View,
     times: &mut StepTimes
 ) -> Vec<crate::model::Texel> {
     // Render in square-local coordinates; the caller places the result into the full frame.
-    pixel_warp::project_tiles_by_pixel(drawing_area_width_and_height, data, selected, observation, view, times)
+    pixel_warp::project_tiles_by_pixel(drawing_area_width_and_height, star_regions, selected_regions, observation, view, times)
 }

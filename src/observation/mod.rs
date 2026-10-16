@@ -6,9 +6,9 @@
 //! catalog sky the view can show, margins included. Runs every frame; one Earth evaluation and a few rotations.
 //! `apparent_direction` is the one place that turns a position or a star direction into what the observer sees.
 use crate::time::StepTimes;
-use crate::astro::models::orientation::{compute_body_fixed_rotation, compute_horizon_rotation, compute_site_state, compute_slow_orientation};
-use crate::astro::models::{BodyId, BodyState, planets::evaluate_planet};
-use crate::astro::{AstronomicalTime, LIGHT_SPEED_AU_DAY, Matrix3, Observer, Vector3, apply_aberration, refract_direction, remove_aberration, unrefract_direction};
+use crate::formulas::{ObserverState, compute_observer_state};
+use crate::formulas::{BodyId, BodyState, evaluate_planet};
+use crate::formulas::{AstronomicalTime, LIGHT_SPEED_AU_DAY, Matrix3, Observer, Vector3, compute_apparent_body_direction, compute_apparent_star_direction, compute_catalog_star_direction};
 use crate::constants::{ABERRATION_MARGIN, QUANTIZATION_MARGIN, REFRACTION_MARGIN, STELLAR_DRIFT_MARGIN};
 use crate::model::View;
 use std::f64::consts::PI;
@@ -47,16 +47,7 @@ pub fn calculate_observation_at_dates(site: &Observer, atmosphere: bool, view: &
     times.measure("Observation.Earth state");
     let earth = evaluate_planet(BodyId::Earth, astronomical_time.tt_jd);
     times.measure("Observation.Observer and orientation");
-    let (observer, to_horizon, to_catalog) = {
-        let to_fixed = compute_body_fixed_rotation(compute_slow_orientation(astronomical_time.tt_jd), astronomical_time.ut1_jd);
-        let from_fixed = to_fixed.transpose();
-        let site_state = compute_site_state(*site);
-        let offset = BodyState { position: from_fixed.apply(site_state.position), velocity: from_fixed.apply(site_state.velocity) };
-        let observer = offset.add_parent(earth);
-        let to_horizon = compute_horizon_rotation(site).compose(to_fixed);
-        let to_catalog = to_horizon.transpose();
-        (observer, to_horizon, to_catalog)
-    };
+    let ObserverState { observer, to_horizon, to_catalog } = compute_observer_state(earth, site, astronomical_time.ut1_jd, astronomical_time.tt_jd);
 
     // the patch of catalog sky the view can show
     times.measure("Observation.Visible sky patch");
@@ -76,27 +67,25 @@ impl Observation {
     /// How a point at barycentric `position` (where its light left it) appears: a unit East, North, Up direction
     /// with aberration and, with an atmosphere, refraction.
     pub fn apparent_direction(&self, position: Vector3) -> Vector3 {
-        self.apparent_star_direction((position - self.observer.position).normalized())
+        compute_apparent_body_direction(position, self.observer, self.to_horizon, self.atmosphere)
     }
 
     /// How a star in the unit catalog `direction` appears: aberration, rotation to the horizon, then refraction.
     pub fn apparent_star_direction(&self, direction: Vector3) -> Vector3 {
-        let horizon = self.to_horizon.apply(apply_aberration(direction, self.observer.velocity));
-        if self.atmosphere { refract_direction(horizon) } else { horizon }
+        compute_apparent_star_direction(direction, self.observer.velocity, self.to_horizon, self.atmosphere)
     }
 
     /// The unit catalog direction a star must have to appear in the apparent `direction`: the inverse of
     /// `apparent_star_direction`, used by the warp's tests as the reference and by the warp per region.
     pub fn catalog_star_direction(&self, direction: Vector3) -> Vector3 {
-        let horizon = if self.atmosphere { unrefract_direction(direction) } else { direction };
-        remove_aberration(self.to_catalog.apply(horizon), self.observer.velocity)
+        compute_catalog_star_direction(direction, self.observer.velocity, self.to_catalog, self.atmosphere)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::astro::J2000;
+    use crate::formulas::{J2000, refract_direction};
     use crate::model::{ProjectionKind, ViewCenter};
 
     fn boston() -> Observer { Observer { latitude: 42.3601_f64.to_radians(), longitude: -71.0589_f64.to_radians() } }
@@ -104,8 +93,8 @@ mod tests {
 
     #[test]
     fn the_observer_sits_on_the_earth_and_looks_up() {
-        let observation = observe(&boston(), false, &View::default(), crate::astro::utc_jd_to_time_ms(J2000).unwrap(), &mut crate::time::StepTimes::default());
-        let earth = evaluate_planet(BodyId::Earth, crate::astro::AstronomicalTime::from_time_ms(observation.time_ms).tt_jd);
+        let observation = observe(&boston(), false, &View::default(), crate::formulas::utc_jd_to_time_ms(J2000).unwrap(), &mut crate::time::StepTimes::default());
+        let earth = evaluate_planet(BodyId::Earth, crate::formulas::AstronomicalTime::from_time_ms(observation.time_ms).tt_jd);
         let offset = observation.observer.position - earth.position;
         assert!((offset.length() * 149_597_870.7 - 6368.0).abs() < 10.0, "{} km", offset.length() * 149_597_870.7); // Boston's distance from the geocentre
         let up = observation.to_horizon.apply(offset).normalized();
@@ -121,7 +110,7 @@ mod tests {
 
     #[test]
     fn a_target_straight_above_the_site_appears_at_the_zenith() {
-        let observation = observe(&boston(), false, &View::default(), crate::astro::utc_jd_to_time_ms(J2000).unwrap(), &mut crate::time::StepTimes::default());
+        let observation = observe(&boston(), false, &View::default(), crate::formulas::utc_jd_to_time_ms(J2000).unwrap(), &mut crate::time::StepTimes::default());
         let target = observation.observer.position + observation.to_catalog.apply(Vector3 { x: 0.0, y: 0.0, z: 1.0 }) * 1.0e6;
         let apparent = observation.apparent_direction(target);
         assert!((apparent.z - 1.0).abs() < 1e-7 && apparent.x.abs() < 2e-4, "{apparent:?}"); // aberration shifts by up to 20″
@@ -132,7 +121,7 @@ mod tests {
 
     #[test]
     fn refraction_is_applied_once_after_the_rotation() {
-        let (airless, refracted) = (observe(&boston(), false, &view(90.0), crate::astro::utc_jd_to_time_ms(J2000).unwrap(), &mut crate::time::StepTimes::default()), observe(&boston(), true, &view(90.0), crate::astro::utc_jd_to_time_ms(J2000).unwrap(), &mut crate::time::StepTimes::default()));
+        let (airless, refracted) = (observe(&boston(), false, &view(90.0), crate::formulas::utc_jd_to_time_ms(J2000).unwrap(), &mut crate::time::StepTimes::default()), observe(&boston(), true, &view(90.0), crate::formulas::utc_jd_to_time_ms(J2000).unwrap(), &mut crate::time::StepTimes::default()));
         let direction = Vector3 { x: 0.3, y: -0.5, z: 0.8 }.normalized();
         let low = airless.to_catalog.apply(Vector3 { x: 0.6, y: 0.0, z: 0.05 }.normalized());  // a star 3° above the horizon
         for star in [direction, low] {
@@ -144,7 +133,7 @@ mod tests {
 
     #[test]
     fn the_catalog_direction_inverts_the_apparent_one_with_and_without_atmosphere() {
-        let time = crate::astro::utc_jd_to_time_ms(J2000).unwrap();
+        let time = crate::formulas::utc_jd_to_time_ms(J2000).unwrap();
         for atmosphere in [false, true] {
             let observation = observe(&boston(), atmosphere, &view(90.0), time, &mut crate::time::StepTimes::default());
             for star in [Vector3 { x: 0.3, y: -0.5, z: 0.8 }, Vector3 { x: 0.6, y: 0.0, z: 0.05 }, Vector3 { x: -0.9, y: 0.1, z: -0.3 }] {
@@ -157,7 +146,7 @@ mod tests {
 
     #[test]
     fn the_patch_covers_the_view_plus_the_margins() {
-        let time = crate::astro::utc_jd_to_time_ms(J2000).unwrap();
+        let time = crate::formulas::utc_jd_to_time_ms(J2000).unwrap();
         let airless = observe(&boston(), false, &view(90.0), time, &mut crate::time::StepTimes::default());
         let refracted = observe(&boston(), true, &view(90.0), time, &mut crate::time::StepTimes::default());
         let center = airless.to_horizon.apply(airless.patch.center);

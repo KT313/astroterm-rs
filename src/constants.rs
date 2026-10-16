@@ -34,7 +34,6 @@ pub const REFRACTION_MARGIN: f64 = 0.647 * PI / 180.0;                          
 pub const ABERRATION_MARGIN: f64 = 22.0 * PI / (180.0 * 3600.0);                          // allow apparent shifts from observer motion (at least 22 arcseconds)
 pub const QUANTIZATION_MARGIN: f64 = 0.1 * std::f64::consts::PI / (180.0 * 3600.0);       // allow rounding when matching stars to regions (0.1 arcsecond)
 pub const MAX_DIRECTION_ERROR: f64 = 0.5 * std::f64::consts::PI / (180.0 * 3600.0);       // maximum position error from compact star storage (0.5 arcsecond)
-pub const SINGULAR_RATIO: f64 = 1e-3;                                                     // trigger close-pass handling below 0.1% of a star’s starting distance
 
 // Reused-sample error limits (AU = Earth–Sun distance; arcsecond = 1/3600°)
 pub const PLANET_POSITION_ERROR_AU: f64 = 3e-8;                                           // maximum planet-position error compared with a fresh calculation

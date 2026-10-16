@@ -1,8 +1,8 @@
 //! Phase-6 model/correction probe. Reads TT/UT1 epochs from stdin; never an independent reference. Data and
 //! stars go through the frame loop's steps 1 and 2 and the stellar motion model, airless.
-use astroterm::astro::{
+use astroterm::formulas::{
     Observer, Vector3,
-    models::{BodyId, moons::evaluate_moon, orientation::*, planets::evaluate_planets, stars::years_since_j2000},
+    BodyId, evaluate_moon, *, evaluate_planets, years_since_j2000,
 };
 use astroterm::model::{Data, View};
 
@@ -22,9 +22,9 @@ fn main() {
         let tt = fields[0];
         let ut1 = fields.get(1).copied().unwrap_or(tt);
         // Observe 59 s after the requested epoch, as the old sampled pipeline did for its composed comparisons.
-        let frame = astroterm::astro::AstronomicalTime { utc_jd: ut1 + 59.0 / 86400.0, ut1_jd: ut1 + 59.0 / 86400.0, tt_jd: tt + 59.0 / 86400.0 };
-        let stamp_ms = astroterm::astro::utc_jd_to_time_ms(frame.utc_jd).unwrap();
-        let system = astroterm::solar_system::calculate_solar_system_at_tt(&bodies, stamp_ms, frame.tt_jd, &mut astroterm::time::StepTimes::default());
+        let frame = astroterm::formulas::AstronomicalTime { utc_jd: ut1 + 59.0 / 86400.0, ut1_jd: ut1 + 59.0 / 86400.0, tt_jd: tt + 59.0 / 86400.0 };
+        let stamp_ms = astroterm::formulas::utc_jd_to_time_ms(frame.utc_jd).unwrap();
+        let system = astroterm::solar_system::calculate_solar_system_at_tt(&bodies.solar_system_sun, &bodies.solar_system_planets, &bodies.solar_system_moons, stamp_ms, frame.tt_jd, &mut astroterm::time::StepTimes::default());
         let observation = astroterm::observation::calculate_observation_at_dates(&site, false, &View::default(), stamp_ms, &frame, &mut astroterm::time::StepTimes::default());
         let states = evaluate_planets(tt);
         let moon = evaluate_moon(tt).add_parent(states[BodyId::Earth as usize]);
@@ -45,7 +45,7 @@ fn main() {
                 components(observation.apparent_star_direction(sample.direction))
             })
             .into();
-        use astroterm::astro::{
+        use astroterm::formulas::{
             MOON_VALIDATED_INTERVAL, ObjectClass, PLANET_VALIDATED_INTERVAL, STAR_VALIDATED_INTERVAL,
             accuracy_target_arcseconds,
         };

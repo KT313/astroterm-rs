@@ -2,7 +2,25 @@
 
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
-use super::{Equatorial, Horizontal, Observer, Vector3};
+use crate::formulas::constants::UNREFRACTION_STEPS;
+use crate::formulas::{BodyState, Equatorial, Horizontal, Matrix3, Observer, Vector3};
+
+/// Apparent horizon direction of a barycentric body position, including observer displacement.
+pub fn compute_apparent_body_direction(position: Vector3, observer: BodyState, to_horizon: Matrix3, atmosphere: bool) -> Vector3 {
+    compute_apparent_star_direction((position - observer.position).normalized(), observer.velocity, to_horizon, atmosphere)
+}
+
+/// Aberration, orientation and optional refraction of a unit catalog direction, in that order.
+pub fn compute_apparent_star_direction(direction: Vector3, observer_velocity: Vector3, to_horizon: Matrix3, atmosphere: bool) -> Vector3 {
+    let horizon = to_horizon.apply(apply_aberration(direction, observer_velocity));
+    if atmosphere { refract_direction(horizon) } else { horizon }
+}
+
+/// Undo refraction, orientation and aberration to recover a unit catalog direction.
+pub fn compute_catalog_star_direction(direction: Vector3, observer_velocity: Vector3, to_catalog: Matrix3, atmosphere: bool) -> Vector3 {
+    let horizon = if atmosphere { unrefract_direction(direction) } else { direction };
+    remove_aberration(to_catalog.apply(horizon), observer_velocity)
+}
 
 /// Convert equatorial coordinates to the horizontal coordinates of an observer, given Greenwich mean sidereal time.
 ///
@@ -79,26 +97,10 @@ pub fn apply_refraction(position: Horizontal) -> Horizontal {
     }
 }
 
-/// The point `angle` radians from `from` along the great circle towards `to`. If the two points coincide or are
-/// opposite, there is no unique direction and `from` is returned.
-pub fn offset_towards(from: Horizontal, to: Horizontal, angle: f64) -> Horizontal {
-    // the tangent at `from` pointing towards `to`
-    let (a, b) = (from.to_unit_vector(), to.to_unit_vector());
-    let tangent = b - a * a.dot(b);
-    let tangent_length = tangent.length();
-    if tangent_length < 1e-12 {
-        return from;
-    }
-
-    // rotate along the great circle
-    let (sin, cos) = angle.sin_cos();
-    Horizontal::from_vector(a * cos + tangent * (sin / tangent_length))
-}
-
 /// First-order annual plus diurnal aberration of a direction seen by an observer moving at `velocity` (AU/day);
 /// the error is O(β²), below 0.002 arcseconds for the Earth.
 pub fn apply_aberration(direction: Vector3, velocity: Vector3) -> Vector3 {
-    (direction.normalized() + velocity * (1.0 / crate::astro::LIGHT_SPEED_AU_DAY)).normalized()
+    (direction.normalized() + velocity * (1.0 / crate::formulas::LIGHT_SPEED_AU_DAY)).normalized()
 }
 
 /// Apply refraction without recovering azimuth. The horizontal direction is preserved, including across azimuth 0.
@@ -136,8 +138,6 @@ pub fn unrefract_direction(direction: Vector3) -> Vector3 {
     Vector3 { x: direction.x * scale, y: direction.y * scale, z: sine }
 }
 
-const UNREFRACTION_STEPS: usize = 8192;
-
 /// Per table entry at sin(apparent altitude) = −1 + 2i / steps: sin(true altitude), cos(true) / cos(apparent).
 static UNREFRACTION: std::sync::LazyLock<Vec<[f64; 2]>> = std::sync::LazyLock::new(|| {
     (0..=UNREFRACTION_STEPS).map(|index| {
@@ -165,7 +165,7 @@ fn unrefract_altitude(apparent: f64) -> f64 {
 
 /// Undo `apply_aberration` to the same first order: the catalog direction of an aberrated one.
 pub fn remove_aberration(direction: Vector3, velocity: Vector3) -> Vector3 {
-    (direction.normalized() - velocity * (1.0 / crate::astro::LIGHT_SPEED_AU_DAY)).normalized()
+    (direction.normalized() - velocity * (1.0 / crate::formulas::LIGHT_SPEED_AU_DAY)).normalized()
 }
 
 /// First and second derivatives of corrected altitude with respect to geometric altitude (radians).
@@ -201,8 +201,7 @@ pub fn offset_vector_towards(from: Vector3, to: Vector3, angle: f64) -> Vector3 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    const TO_RAD: f64 = PI / 180.0;
+    use crate::formulas::constants::DEGREES_TO_RADIANS as TO_RAD;
 
     #[test]
     fn south_celestial_pole_sits_due_south_at_latitude_altitude() {
@@ -291,7 +290,7 @@ mod tests {
     }
 
     #[test]
-    fn offset_towards_moves_along_the_great_circle() {
+    fn vector_offset_moves_along_the_great_circle() {
         let east = Horizontal {
             azimuth: FRAC_PI_2,
             altitude: 0.0,
@@ -300,16 +299,16 @@ mod tests {
             azimuth: 0.0,
             altitude: FRAC_PI_2,
         };
-        let step = offset_towards(east, zenith, 10.0 * TO_RAD);
+        let step = Horizontal::from_vector(offset_vector_towards(east.to_unit_vector(), zenith.to_unit_vector(), 10.0 * TO_RAD));
         assert!((step.azimuth - FRAC_PI_2).abs() < 1e-9 && (step.altitude - 10.0 * TO_RAD).abs() < 1e-9);
 
         let north = Horizontal {
             azimuth: 0.0,
             altitude: 0.0,
         };
-        let step = offset_towards(north, east, 30.0 * TO_RAD);
+        let step = Horizontal::from_vector(offset_vector_towards(north.to_unit_vector(), east.to_unit_vector(), 30.0 * TO_RAD));
         assert!((step.azimuth - 30.0 * TO_RAD).abs() < 1e-9 && step.altitude.abs() < 1e-9);
-        assert_eq!(offset_towards(north, north, 0.1), north);
+        assert_eq!(Horizontal::from_vector(offset_vector_towards(north.to_unit_vector(), north.to_unit_vector(), 0.1)), north);
     }
 
     #[test]

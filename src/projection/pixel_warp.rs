@@ -7,19 +7,22 @@
 //! nothing retained between frames. Pixel positions follow the inverse formulas, with table interpolation and
 //! first-order aberration approximations. Sampling uses box footprints; portions outside a tile are transparent.
 use std::f64::consts::{FRAC_PI_2, PI, SQRT_2, TAU};
-use crate::astro::{LIGHT_SPEED_AU_DAY, Matrix3, Vector3, apply_refraction, unrefract_direction, Horizontal};
+use crate::formulas::{LIGHT_SPEED_AU_DAY, Matrix3, Vector3, apply_refraction, unrefract_direction, Horizontal};
 use crate::constants::TILE_EDGE_TEXELS;
-use crate::model::{Data, ProjectionKind, Texel, View};
+use crate::model::{Region, ProjectionKind, Texel, View};
+#[cfg(test)]
+use crate::model::Data;
 use crate::observation::Observation;
 use crate::projection::{CartesianCamera, prepare_camera};
 use crate::regions::{TileGeometry, blend_star};
+#[cfg(test)]
 use crate::selection::Selected;
 use crate::time::StepTimes;
 use super::tile_sampling::TileSampler;
 
 pub(super) type Point = [f64; 2];
 
-pub(super) fn project_tiles_by_pixel(size: usize, data: &Data, selected: &Selected, observation: &Observation, view: &View, times: &mut StepTimes) -> Vec<Texel> {
+pub(super) fn project_tiles_by_pixel(size: usize, star_regions: &[Region], selected_regions: &[usize], observation: &Observation, view: &View, times: &mut StepTimes) -> Vec<Texel> {
     // Allocate a square image and prepare the current camera over it.
     times.measure("Projection.Star buffer allocation");
     let mut stars = vec![Texel::default(); size.checked_mul(size).expect("drawing area pixel count overflow")];
@@ -31,8 +34,8 @@ pub(super) fn project_tiles_by_pixel(size: usize, data: &Data, selected: &Select
     let mut sampler = TileSampler::new(TILE_EDGE_TEXELS);
 
     // Map each region once, then pull every pixel of its screen image back to the tile.
-    for &region in &selected.regions {
-        let image = &data.star_regions[region].merged_tile;
+    for &region in selected_regions {
+        let image = &star_regions[region].merged_tile;
         if image.is_empty() || image.lit_rows().iter().all(|&row| row == 0) { continue; }
         times.measure("Projection.Tile geometry");
         let geometry = TileGeometry::new(region);
@@ -492,7 +495,7 @@ impl RowRays {
 mod tests {
     use crate::projection::{Frame, project_camera};
     use super::*;
-    use crate::astro::{J2000, Observer};
+    use crate::formulas::{J2000, Observer};
     use crate::constants::GRID_DEPTH;
     use crate::model::{RenderOptions, ViewCenter, fixtures, hash_direction, region_caps};
     use crate::observation::observe;
@@ -502,8 +505,8 @@ mod tests {
     fn tokyo() -> Observer { Observer { latitude: 35.69_f64.to_radians(), longitude: 139.69_f64.to_radians() } }
     fn observation_at(fov: f64, atmosphere: bool, center: ViewCenter, projection: ProjectionKind) -> (View, Observation) {
         let view = View { center, fov_degrees: fov, projection };
-        let date = crate::astro::parse_utc_datetime("2025-03-01T11:00:00").unwrap();
-        let time = crate::astro::utc_jd_to_time_ms(crate::astro::datetime_to_julian_date(&date)).unwrap();
+        let date = crate::formulas::parse_utc_datetime("2025-03-01T11:00:00").unwrap();
+        let time = crate::formulas::utc_jd_to_time_ms(crate::formulas::datetime_to_julian_date(&date)).unwrap();
         (view, observe(&tokyo(), atmosphere, &view, time, &mut StepTimes::default()))
     }
     /// The screen pixel of a texel position through the forward chain: the oracle for the inverse mapping.
@@ -647,7 +650,7 @@ mod tests {
 
     #[test]
     fn a_star_lands_where_the_point_renderer_puts_it_and_an_empty_selection_clears() {
-        let time = crate::astro::utc_jd_to_time_ms(J2000).unwrap();
+        let time = crate::formulas::utc_jd_to_time_ms(J2000).unwrap();
         let site = Observer { latitude: 0.6, longitude: 2.4 };
         for (fov, atmosphere, projection) in [(180.0, false, Stereographic), (60.0, true, Stereographic), (10.0, true, Stereographic), (10.0, true, Equidistant), (300.0, false, Equidistant)] {
             let view = View { center: facing(1.0, 0.02), projection, fov_degrees: fov };
@@ -657,9 +660,15 @@ mod tests {
             let star = fixtures::row(direction, 0.0, 3.0, 1);
             let mut data = fixtures::layout(&[(region, 0, star)]);
             let selected = Selected { regions: vec![region], whole_sky: false };
-            refresh_regions(&mut data, &selected, time, &view, &settings(), &mut StepTimes::default());
+            refresh_regions(
+                &mut data.star_regions, &data.constellation_stars,
+                &mut data.constellation_simulation, &mut data.constellation_last_update_ms,
+                &mut data.star_opacities, &mut data.tile_bytes,
+                &selected.regions, time, view.fov_degrees, settings().magnitude_threshold,
+                &mut StepTimes::default(),
+            );
             let mut frame = Frame::square(401);
-            let projected_stars = project_tiles_by_pixel(frame.drawing_area_width_and_height, &data, &selected, &observation, &view, &mut StepTimes::default());
+            let projected_stars = project_tiles_by_pixel(frame.drawing_area_width_and_height, &data.star_regions, &selected.regions, &observation, &view, &mut StepTimes::default());
             frame.insert_projected_stars(&projected_stars);
 
             let expected = project_camera(prepare_camera(&view), observation.apparent_star_direction(direction)).unwrap();
@@ -681,7 +690,7 @@ mod tests {
                 "{fov} {projection:?}: center {center:?} / {total}, expected {expected:?}, tolerance {tolerance}");
             assert!(frame.stars().iter().all(|texel| texel.opacity.is_finite() && texel.opacity <= 1.0));
 
-            let projected_stars = project_tiles_by_pixel(frame.drawing_area_width_and_height, &data, &Selected { regions: Vec::new(), whole_sky: false }, &observation, &view, &mut StepTimes::default());
+            let projected_stars = project_tiles_by_pixel(frame.drawing_area_width_and_height, &data.star_regions, &(Selected { regions: Vec::new(), whole_sky: false }).regions, &observation, &view, &mut StepTimes::default());
             frame.insert_projected_stars(&projected_stars);
             assert!(frame.stars().iter().all(|texel| texel.is_empty()));
         }
@@ -706,7 +715,7 @@ mod tests {
             image.lit_rows = vec![0; TILE_EDGE_TEXELS];
             image.lit_rows[32] = 1 << 32;
             let selected = Selected { regions: vec![region], whole_sky: false };
-            let stars = project_tiles_by_pixel(size, &data, &selected, &observation, &view, &mut StepTimes::default());
+            let stars = project_tiles_by_pixel(size, &data.star_regions, &selected.regions, &observation, &view, &mut StepTimes::default());
 
             // Compare the rendered light's centre with the independent forward geometry, not the inverse mapper.
             let expected = forward(&tile, &observation, prepare_camera(&view), size, [32.0, 32.0]).unwrap();
@@ -805,7 +814,7 @@ mod tests {
             let centre = Horizontal::from_vector(initial.apparent_star_direction(tile.center()));
             for offset in [0.0, 0.05, 0.1, 0.2] {
                 let (view, observation) = observation_at(fov, false, facing(centre.azimuth + offset, centre.altitude), projection);
-                let stars = project_tiles_by_pixel(size, &data, &selected, &observation, &view, &mut StepTimes::default());
+                let stars = project_tiles_by_pixel(size, &data.star_regions, &selected.regions, &observation, &view, &mut StepTimes::default());
                 let total: f64 = stars.iter().map(|texel| f64::from(texel.opacity)).sum();
                 assert!(total > 0.0 && total < 0.5, "{projection:?} offset={offset}: {total}");
 
@@ -842,7 +851,7 @@ mod tests {
             let regions = if neighbour == region { vec![region] } else { vec![region.min(neighbour), region.max(neighbour)] };
             let selected = Selected { regions, whole_sky: false };
             let mut frame = Frame::square(201);
-            let projected_stars = project_tiles_by_pixel(frame.drawing_area_width_and_height, &data, &selected, &observation, &view, &mut StepTimes::default());
+            let projected_stars = project_tiles_by_pixel(frame.drawing_area_width_and_height, &data.star_regions, &selected.regions, &observation, &view, &mut StepTimes::default());
             frame.insert_projected_stars(&projected_stars);
             let centre = frame.star(100, 100);
             if neighbour != region {
@@ -854,7 +863,7 @@ mod tests {
 
             let image = &mut data.star_regions[region].merged_tile;
             image.tile.texels = vec![Texel { rgb: [1.0; 3], opacity: 1.0 }; TILE_EDGE_TEXELS.pow(2)];
-            let projected_stars = project_tiles_by_pixel(frame.drawing_area_width_and_height, &data, &selected, &observation, &view, &mut StepTimes::default());
+            let projected_stars = project_tiles_by_pixel(frame.drawing_area_width_and_height, &data.star_regions, &selected.regions, &observation, &view, &mut StepTimes::default());
             frame.insert_projected_stars(&projected_stars);
             assert_eq!(frame.star(100, 100).opacity, 1.0);
             assert!(frame.stars().iter().all(|texel| texel.opacity.is_finite() && texel.opacity <= 1.0 && texel.rgb.iter().all(|&c| c <= 1.0)));
@@ -880,7 +889,7 @@ mod tests {
         image.lit_rows = vec![u64::MAX; TILE_EDGE_TEXELS];
         let selected = Selected { regions: vec![region], whole_sky: true };
         let mut frame = Frame::square(size);
-        let projected_stars = project_tiles_by_pixel(size, &data, &selected, &observation, &view, &mut StepTimes::default());
+        let projected_stars = project_tiles_by_pixel(size, &data.star_regions, &selected.regions, &observation, &view, &mut StepTimes::default());
         frame.insert_projected_stars(&projected_stars);
         let corner = 2.0 * (TileGeometry::middle() * SQRT_2 / (2.0 * tile.density())).atan();
         let offset = observation.apparent_star_direction(tile.center()).dot(camera.forward * -1.0).clamp(-1.0, 1.0).acos();
@@ -931,7 +940,7 @@ mod tests {
         let region = hash_direction(GRID_DEPTH, observation.patch.center);
         let tile = TileGeometry::new(region);
         let apparent = observation.apparent_star_direction(tile.direction_of(-0.5, -0.5));
-        let behind = crate::astro::Horizontal::from_vector(-apparent);
+        let behind = crate::formulas::Horizontal::from_vector(-apparent);
         let view = View { center: facing(behind.azimuth, behind.altitude), projection: Equidistant, fov_degrees: 360.0 };
         let camera = prepare_camera(&view);
         let size = 201;
@@ -945,7 +954,7 @@ mod tests {
         image.lit_rows = vec![u64::MAX; TILE_EDGE_TEXELS];
         let selected = Selected { regions: vec![region], whole_sky: true };
         let mut frame = Frame::square(size);
-        let projected_stars = project_tiles_by_pixel(size, &data, &selected, &observation, &view, &mut StepTimes::default());
+        let projected_stars = project_tiles_by_pixel(size, &data.star_regions, &selected.regions, &observation, &view, &mut StepTimes::default());
         frame.insert_projected_stars(&projected_stars);
         let mut lit = 0;
         for (index, texel) in frame.stars().iter().enumerate() {
@@ -970,9 +979,15 @@ mod tests {
         for (fov, projection) in [(180.0, Stereographic), (351.6, Stereographic), (360.0, Equidistant)] {
             let (view, observation) = observation_at(fov, false, facing(334_f64.to_radians(), 0.0), projection);
             let mut data = original.clone();
-            let selected = crate::selection::select_regions(&data.star_regions, &observation, &mut StepTimes::default());
+            let selected = crate::selection::select_regions(&data.star_regions, &observation.patch, observation.time_ms, &mut StepTimes::default());
             let settings = RenderOptions { magnitude_threshold: 9.0, ..settings() };
-            refresh_regions(&mut data, &selected, observation.time_ms, &view, &settings, &mut StepTimes::default());
+            refresh_regions(
+                &mut data.star_regions, &data.constellation_stars,
+                &mut data.constellation_simulation, &mut data.constellation_last_update_ms,
+                &mut data.star_opacities, &mut data.tile_bytes,
+                &selected.regions, observation.time_ms, view.fov_degrees, settings.magnitude_threshold,
+                &mut StepTimes::default(),
+            );
             let mut frame = Frame::new(1917, 1116, 1116, (10, 20));
             for dense in [false, true] {
                 if dense {
@@ -985,14 +1000,14 @@ mod tests {
                 let mut elapsed = 0.0;
                 for run in 0..4 {
                     let start = std::time::Instant::now();
-                    let projected_stars = project_tiles_by_pixel(frame.drawing_area_width_and_height, &data, &selected, &observation, &view, &mut StepTimes::default());
+                    let projected_stars = project_tiles_by_pixel(frame.drawing_area_width_and_height, &data.star_regions, &selected.regions, &observation, &view, &mut StepTimes::default());
                     frame.insert_projected_stars(&projected_stars);
                     if run > 0 { elapsed += start.elapsed().as_secs_f64(); }
                     std::hint::black_box(frame.stars());
                 }
                 eprintln!("Pixel warp fov={fov} {projection:?}, dense={dense}, regions={}: {:.3}ms; three frames after warmup", selected.regions.len(), elapsed * 1000.0 / 3.0);
                 let mut detail = StepTimes::with_trace(true);
-                let projected_stars = project_tiles_by_pixel(frame.drawing_area_width_and_height, &data, &selected, &observation, &view, &mut detail);
+                let projected_stars = project_tiles_by_pixel(frame.drawing_area_width_and_height, &data.star_regions, &selected.regions, &observation, &view, &mut detail);
                 frame.insert_projected_stars(&projected_stars);
                 detail.measure("END");
                 for step in detail.steps().iter().filter(|step| matches!(step.name, "Region mapping" | "Tile filter preparation" | "Tile rasterization")) {

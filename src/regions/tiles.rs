@@ -6,7 +6,7 @@
 //! which is what lets step 5 pull every screen pixel back to its texel. Texel coordinates follow the screen's
 //! convention: texel `i` is centred at pixel coordinate `i`, columns grow the way screen columns grow to the
 //! right, rows grow downwards from celestial north.
-use crate::astro::Vector3;
+use crate::formulas::Vector3;
 use crate::constants::{STELLAR_DRIFT_MARGIN, TILE_EDGE_TEXELS};
 use crate::model::region_caps;
 use crate::regions::appearance::STAR_GLYPH_RADIUS;

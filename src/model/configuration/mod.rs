@@ -1,6 +1,6 @@
 //! Validated application settings, independent of CLI parsing and terminal operations.
 use crate::catalog::datasets::Dataset;
-use crate::astro::Observer;
+use crate::formulas::Observer;
 mod view;
 pub use view::{ViewCenter, ProjectionKind, View, Cell, ProjectionViewport, RenderOptions};
 

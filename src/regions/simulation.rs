@@ -7,9 +7,9 @@
 //! deeper magnitude threshold appends the rows it needs, evaluated at the stored epoch so that all rows share
 //! one epoch; a shallower threshold keeps the rows (the drawing step uses its own prefix count). Outside the
 //! computational interval the stored brightness keys do not apply, so the whole table is simulated.
-use crate::astro::models::stars::years_since_j2000;
-use crate::astro::{COMPUTATIONAL_INTERVAL, Vector3};
-use crate::catalog::decode_magnitude;
+use crate::formulas::years_since_j2000;
+use crate::formulas::{COMPUTATIONAL_INTERVAL, Vector3};
+use crate::catalog::{decode_magnitude, magnitude_code};
 use crate::model::{StarGroup, StarTable, SimulationCache};
 
 /// A row the motion model cannot place (its straight line passes through the Sun); never drawn.
@@ -63,7 +63,7 @@ impl SimulationCache {
         let missing = rows.saturating_sub(self.len());
         if missing == 0 { return Refresh::Unchanged; }
         let stored_date = last_update_ms.expect("an epoch exists once the hold did not expire");
-        self.evaluate_rows(table, crate::astro::AstronomicalTime::from_time_ms(stored_date).tt_jd, rows);
+        self.evaluate_rows(table, crate::formulas::AstronomicalTime::from_time_ms(stored_date).tt_jd, rows);
         Refresh::Extended(missing)
     }
 
@@ -73,7 +73,7 @@ impl SimulationCache {
         for row in self.len()..rows {
             let sample = table.motion(row).evaluate(years, decode_magnitude(columns.magnitude[row]));
             self.directions.push(sample.direction);
-            self.magnitudes.push(if sample.used_singular_fallback { UNPLACED } else { sample.magnitude });
+            self.magnitudes.push(if sample.used_singular_fallback { UNPLACED } else { magnitude_code(sample.magnitude) });
         }
     }
 }
@@ -88,7 +88,7 @@ pub fn rows_wanted(table: &StarTable, tt: f64, threshold: f64) -> usize {
 mod tests {
     use crate::model::get_ttl_of_speed_group_ms;
     use super::*;
-    use crate::astro::{J2000, JULIAN_YEAR_DAYS};
+    use crate::formulas::{J2000, JULIAN_YEAR_DAYS};
     use crate::catalog::{SpaceMotion, StarId, load_embedded_catalog, magnitude_code};
     use crate::constants::{GRID_DEPTH, SPEED_GROUP_COUNT};
     use crate::model::{Data, hash_direction};
@@ -121,8 +121,8 @@ mod tests {
         tables.star_tables().find_map(|(_, group, table)| (!table.is_empty()).then_some((table, group))).unwrap()
     }
 
-    fn date_ms(days_from_j2000: f64) -> i64 { crate::astro::utc_jd_to_time_ms(J2000 + days_from_j2000).unwrap() }
-    fn tt(time_ms: i64) -> f64 { crate::astro::AstronomicalTime::from_time_ms(time_ms).tt_jd }
+    fn date_ms(days_from_j2000: f64) -> i64 { crate::formulas::utc_jd_to_time_ms(J2000 + days_from_j2000).unwrap() }
+    fn tt(time_ms: i64) -> f64 { crate::formulas::AstronomicalTime::from_time_ms(time_ms).tt_jd }
 
     #[test]
     fn the_hold_boundary_is_absolute_in_both_directions_for_every_group() {
@@ -181,7 +181,7 @@ mod tests {
         let years = years_since_j2000(tt(date_ms(0.0)));
         for row in 0..table.len() {                                                           // every row, old and new, is the model's value at the epoch
             let sample = table.motion(row).evaluate(years, decode_magnitude(columns.magnitude[row]));
-            assert_eq!((simulation.directions()[row], simulation.magnitudes()[row]), (sample.direction, sample.magnitude), "row {row}");
+            assert_eq!((simulation.directions()[row], simulation.magnitudes()[row]), (sample.direction, magnitude_code(sample.magnitude)), "row {row}");
         }
         assert_eq!((simulations.star_regions[region].speed_groups[group].update_simulation(later, tt(later), rows_wanted(table, tt(later), bright))), Refresh::Unchanged);
         assert_eq!(simulations.star_regions[region].speed_groups[group].simulation.len(), table.len());
@@ -200,7 +200,7 @@ mod tests {
             for row in 0..table.len() {
                 let sample = table.motion(row).evaluate(years_since_j2000(tt(time)), decode_magnitude(table.columns().magnitude[row]));
                 assert_eq!(simulation.directions()[row], sample.direction);
-                assert_eq!(simulation.magnitudes()[row], sample.magnitude);
+                assert_eq!(simulation.magnitudes()[row], magnitude_code(sample.magnitude));
             }
         }
     }
@@ -222,7 +222,7 @@ mod tests {
         simulation.update(table, time, tt(time), rows_wanted(table, tt(time), 5.0), 0, &mut last_update_ms);
         assert_eq!(simulation.magnitudes(), [UNPLACED]);
         let sample = table.motion(0).evaluate(20000.0, 5.5);
-        assert!(sample.used_singular_fallback && sample.magnitude_value() == 5.5);           // the model falls back to the catalog brightness
+        assert!(sample.used_singular_fallback && sample.magnitude == 5.5);           // the model falls back to the catalog brightness
         assert_eq!(group, 0);                                                                // radial motion is no proper motion: the slow group
     }
 

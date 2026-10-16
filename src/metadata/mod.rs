@@ -1,5 +1,7 @@
 //! What the metadata panel shows: local date and time, zodiac sign, lunar phase, observer location, elapsed simulation
 //! time and speed, and view settings. How the fields are laid out is up to the renderer.
+mod notation;
+pub use notation::{DegreesMinutesSeconds, ElapsedTime, ZodiacSign, azimuth_to_compass, compass_point_to_azimuth};
 
 mod local_time;
 mod records;
@@ -7,8 +9,8 @@ pub use records::{ObserverTimeZone, MetadataField};
 
 use chrono::{Datelike, Timelike};
 
-use crate::astro::{
-    DegreesMinutesSeconds, ElapsedTime, MoonPhase, Observer, ZodiacSign, azimuth_to_compass,
+use crate::formulas::{
+    MoonPhase, Observer,
 };
 use crate::model::{ProjectionKind, View, ViewCenter};
 use crate::time::{SimulationClock, StepTime, time_ms_to_utc, format_ms_as_seconds};
@@ -206,7 +208,7 @@ mod tests {
         let observer = Observer::default();
         let zone = resolve_observer_timezone(&observer);
         for (step, expected) in [(0, "paused"), (1000, "+1 s/frame"), (-2500, "-2.5 s/frame")] {
-            let mut clock = SimulationClock::start_fixed_step(crate::astro::utc_jd_to_time_ms(crate::astro::J2000).unwrap(), step);
+            let mut clock = SimulationClock::start_fixed_step(crate::formulas::utc_jd_to_time_ms(crate::formulas::J2000).unwrap(), step);
             clock.set_frame_index(2).unwrap();
             let fields = collect_metadata_fields(clock.get_current_time_ms().unwrap(), &clock, MoonPhase::Full, &observer, &View::default(), true, &zone);
             assert_eq!(fields.iter().find(|field| field.label == "Speed").unwrap().value, expected);
@@ -226,7 +228,7 @@ mod tests {
     fn refilling_metadata_and_timings_retains_vector_capacity_without_stale_entries() {
         let observer = Observer::default();
         let zone = resolve_observer_timezone(&observer);
-        let clock = SimulationClock::start(crate::astro::utc_jd_to_time_ms(crate::astro::J2000).unwrap(), 0.0);
+        let clock = SimulationClock::start(crate::formulas::utc_jd_to_time_ms(crate::formulas::J2000).unwrap(), 0.0);
         let mut fields = Vec::with_capacity(64);
         let mut timing_fields = Vec::with_capacity(32);
         let field_pointer = fields.as_ptr();
@@ -234,8 +236,8 @@ mod tests {
         let capacities = (fields.capacity(), timing_fields.capacity());
         let steps = [StepTime { name: "Draw", depth: 0, average_seconds: 0.001 }];
         for view in [View { fov_degrees: 90.0, ..View::default() }, View::default()] {
-            fill_metadata_fields(&mut fields, crate::astro::utc_jd_to_time_ms(crate::astro::J2000).unwrap(), &clock, MoonPhase::Full, &observer, &view, true, &zone);
-            let expected = collect_metadata_fields(crate::astro::utc_jd_to_time_ms(crate::astro::J2000).unwrap(), &clock, MoonPhase::Full, &observer, &view, true, &zone);
+            fill_metadata_fields(&mut fields, crate::formulas::utc_jd_to_time_ms(crate::formulas::J2000).unwrap(), &clock, MoonPhase::Full, &observer, &view, true, &zone);
+            let expected = collect_metadata_fields(crate::formulas::utc_jd_to_time_ms(crate::formulas::J2000).unwrap(), &clock, MoonPhase::Full, &observer, &view, true, &zone);
             assert_eq!(fields, expected);
             assert_eq!(fields.as_ptr(), field_pointer);
             timing_fields.clear();
@@ -269,7 +271,7 @@ mod tests {
             projection: ProjectionKind::Equidistant,
             fov_degrees: 120.0,
         };
-        let start = crate::astro::utc_jd_to_time_ms(2460678.25).unwrap();
+        let start = crate::formulas::utc_jd_to_time_ms(2460678.25).unwrap();
         let elapsed_days = 366.25 + 1.0 + 2.0 / 24.0 + 3.0 / 1440.0 + 4.5 / 86400.0;
         let mut clock = SimulationClock::start(start, -100.0);
         clock.toggle_pause().unwrap();
@@ -306,10 +308,10 @@ mod tests {
 
     #[test]
     fn default_view_settings_are_left_out() {
-        let clock = SimulationClock::start(crate::astro::utc_jd_to_time_ms(2460678.25).unwrap(), 1.0);
+        let clock = SimulationClock::start(crate::formulas::utc_jd_to_time_ms(2460678.25).unwrap(), 1.0);
         let fields = |view: &View| {
             collect_metadata_fields(
-                crate::astro::utc_jd_to_time_ms(2460678.25).unwrap(),
+                crate::formulas::utc_jd_to_time_ms(2460678.25).unwrap(),
                 &clock,
                 MoonPhase::Full,
                 &Observer::default(),

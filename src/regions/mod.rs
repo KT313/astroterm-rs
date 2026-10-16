@@ -20,10 +20,13 @@ pub use simulation::{Refresh, UNPLACED, rows_wanted};
 pub use tiles::TileGeometry;
 
 use crate::time::StepTimes;
-use crate::astro::AstronomicalTime;
+use crate::formulas::AstronomicalTime;
 use crate::catalog::magnitude_code;
 use crate::constants::SPEED_GROUP_COUNT;
-use crate::model::{RenderOptions, Data, View, get_ttl_of_speed_group_ms};
+use crate::model::{Region, StarTable, SimulationCache, StarOpacities, get_ttl_of_speed_group_ms};
+#[cfg(test)]
+use crate::model::{Data, RenderOptions};
+#[cfg(test)]
 use crate::selection::Selected;
 
 /// What one refresh did, for timing and tests.
@@ -35,44 +38,56 @@ pub struct RefreshReport {
 }
 
 /// Bring the images of the selected regions and the constellation simulation up to date for this frame.
-pub fn refresh_regions(data: &mut Data, selected: &Selected, time_ms: i64, view: &View, settings: &RenderOptions, times: &mut StepTimes) -> RefreshReport {
+#[allow(clippy::too_many_arguments)]
+pub fn refresh_regions(
+    star_regions: &mut [Region],
+    constellation_stars: &StarTable,
+    constellation_simulation: &mut SimulationCache,
+    constellation_last_update_ms: &mut Option<i64>,
+    star_opacities: &mut StarOpacities,
+    tile_bytes: &mut usize,
+    selected_regions: &[usize],
+    time_ms: i64,
+    fov_degrees: f64,
+    magnitude_threshold: f64,
+    times: &mut StepTimes,
+) -> RefreshReport {
     // Start the refresh counters and read the requested simulation time.
     let mut report = RefreshReport::default();
     let tt = AstronomicalTime::from_time_ms(time_ms).tt_jd;
 
     // Prepare star opacities for the current zoom, reusing the lookup table when unchanged.
-    let zoom_boost = zoom_opacity_boost(view.fov_degrees);
+    let zoom_boost = zoom_opacity_boost(fov_degrees);
     times.measure("Regions.Opacity table");
-    data.star_opacities.prepare(zoom_boost);
+    star_opacities.prepare(zoom_boost);
 
     // Read the brightness limit and encode it for comparisons with stored star magnitudes.
-    let threshold = settings.magnitude_threshold;
+    let threshold = magnitude_threshold;
     let threshold_code = magnitude_code(threshold);
 
     // Refresh the constellation cache when needed, covering every endpoint star with the fastest group's TTL.
     times.measure("Regions.Constellation simulation");
     {
-        let constellation_stars = &data.constellation_stars;
         let star_count = constellation_stars.len();
         let fastest_group_index = SPEED_GROUP_COUNT - 1;
         let ttl_ms = get_ttl_of_speed_group_ms(fastest_group_index);
 
-        data.constellation_simulation.update(
+        constellation_simulation.update(
             constellation_stars,
             time_ms,
             tt,
             star_count,
             ttl_ms,
-            &mut data.constellation_last_update_ms,
+            constellation_last_update_ms,
         )
     };
 
     // Refresh each selected region, accumulating repeated timing paths within the frame.
-    for &region_index in &selected.regions {
+    for &region_index in selected_regions {
         // Prepare the sky-to-tile mapping shared by this region's groups.
         times.measure("Regions.Tile geometry");
         let tile = TileGeometry::new(region_index);
-        let region = &mut data.star_regions[region_index];
+        let region = &mut star_regions[region_index];
 
         for group in &mut region.speed_groups {
             // Find the stars that could be bright enough to draw.
@@ -82,9 +97,9 @@ pub fn refresh_regions(data: &mut Data, selected: &Selected, time_ms: i64, view:
 
             // Clear the old image if this group has no stars to draw.
             if star_count == 0 {
-                data.tile_bytes -= group.tile.bytes();
+                *tile_bytes -= group.tile.bytes();
                 times.measure("Regions.Group image rendering");
-                group.tile.render(GroupTileKey::EMPTY, &tile, table, &[], &[], &data.star_opacities);
+                group.tile.render(GroupTileKey::EMPTY, &tile, table, &[], &[], star_opacities);
                 continue;
             }
 
@@ -115,7 +130,7 @@ pub fn refresh_regions(data: &mut Data, selected: &Selected, time_ms: i64, view:
             }
 
             // Redraw the image and account for any change in its memory use.
-            data.tile_bytes -= image.bytes();
+            *tile_bytes -= image.bytes();
             times.measure("Regions.Group image rendering");
             image.render(
                 image_key,
@@ -123,9 +138,9 @@ pub fn refresh_regions(data: &mut Data, selected: &Selected, time_ms: i64, view:
                 table,
                 simulation.directions(),
                 simulation.magnitudes(),
-                &data.star_opacities,
+                star_opacities,
             );
-            data.tile_bytes += image.bytes();
+            *tile_bytes += image.bytes();
             report.rendered += 1;
         }
 
@@ -141,10 +156,10 @@ pub fn refresh_regions(data: &mut Data, selected: &Selected, time_ms: i64, view:
         }
 
         // Merge the updated group images and account for their combined image.
-        data.tile_bytes -= region_image.bytes();
+        *tile_bytes -= region_image.bytes();
         times.measure("Regions.Region image merging");
         region_image.merge(groups);
-        data.tile_bytes += region_image.bytes();
+        *tile_bytes += region_image.bytes();
         report.merged += 1;
     }
 
@@ -157,7 +172,7 @@ mod tests {
     use crate::constants::{CELL_COUNT, SPEED_GROUP_COUNT};
     use crate::model::{RegionTileCache, Texel};
     use super::*;
-    use crate::astro::{J2000, Observer};
+    use crate::formulas::{J2000, Observer};
     use crate::model::{ProjectionKind, View, ViewCenter};
     use crate::observation::observe;
     use crate::selection::select_regions;
@@ -170,13 +185,19 @@ mod tests {
     fn view(fov_degrees: f64, azimuth: f64) -> View { View { center: ViewCenter::Facing { azimuth, tilt: 0.5 }, projection: ProjectionKind::Stereographic, fov_degrees } }
     fn whole_sky_view(azimuth: f64) -> View { View { center: ViewCenter::Facing { azimuth, tilt: 0.5 }, projection: ProjectionKind::Equidistant, fov_degrees: 360.0 } }
     fn settings(threshold: f64) -> RenderOptions { RenderOptions { unicode: true, braille: false, color: true, constellations: true, grid: false, magnitude_threshold: threshold, dynamic_names: true } }
-    fn time(days: f64) -> i64 { crate::astro::utc_jd_to_time_ms(J2000 + days).unwrap() }
+    fn time(days: f64) -> i64 { crate::formulas::utc_jd_to_time_ms(J2000 + days).unwrap() }
 
     /// One refresh: observe, select and refresh for the given inputs.
     fn frame(caches: &mut Data, tables: &Data, days: f64, view: &View, threshold: f64) -> (Selected, RefreshReport) {
         let observation = observe(&boston(), true, view, time(days), &mut crate::time::StepTimes::default());
-        let selected = select_regions(&tables.star_regions, &observation, &mut crate::time::StepTimes::default());
-        let report = refresh_regions(caches, &selected, time(days), view, &settings(threshold), &mut crate::time::StepTimes::default());
+        let selected = select_regions(&tables.star_regions, &observation.patch, observation.time_ms, &mut crate::time::StepTimes::default());
+        let report = refresh_regions(
+            &mut caches.star_regions, &caches.constellation_stars,
+            &mut caches.constellation_simulation, &mut caches.constellation_last_update_ms,
+            &mut caches.star_opacities, &mut caches.tile_bytes,
+            &selected.regions, time(days), view.fov_degrees, settings(threshold).magnitude_threshold,
+            &mut crate::time::StepTimes::default(),
+        );
         (selected, report)
     }
 
@@ -185,13 +206,13 @@ mod tests {
         let mut counts = [0; SPEED_GROUP_COUNT];
         for &region in &selected.regions {
             for (group, table) in tables.star_regions[region].speed_groups.iter().map(|group| &group.stars).enumerate() {
-                if rows_wanted(table, crate::astro::AstronomicalTime::from_time_ms(time(days)).tt_jd, threshold) > 0 { counts[group] += 1; }
+                if rows_wanted(table, crate::formulas::AstronomicalTime::from_time_ms(time(days)).tt_jd, threshold) > 0 { counts[group] += 1; }
             }
         }
         counts
     }
     fn regions_with(tables: &Data, selected: &Selected, days: f64, threshold: f64, group: usize) -> usize {
-        selected.regions.iter().filter(|&&region| rows_wanted(tables.star_table(region, group), crate::astro::AstronomicalTime::from_time_ms(time(days)).tt_jd, threshold) > 0).count()
+        selected.regions.iter().filter(|&&region| rows_wanted(tables.star_table(region, group), crate::formulas::AstronomicalTime::from_time_ms(time(days)).tt_jd, threshold) > 0).count()
     }
 
     #[test]
@@ -207,19 +228,37 @@ mod tests {
 
         // Give this slow group a shorter TTL than the configured default.
         data.star_regions[region].speed_groups[0].ttl_ms = 60_000;
-        let start = crate::astro::utc_jd_to_time_ms(J2000).unwrap();
-        let first = refresh_regions(&mut data, &selected, start, &view, &settings, &mut times);
+        let start = crate::formulas::utc_jd_to_time_ms(J2000).unwrap();
+        let first = refresh_regions(
+            &mut data.star_regions, &data.constellation_stars,
+            &mut data.constellation_simulation, &mut data.constellation_last_update_ms,
+            &mut data.star_opacities, &mut data.tile_bytes,
+            &selected.regions, start, view.fov_degrees, settings.magnitude_threshold,
+            &mut times,
+        );
         assert_eq!(first, RefreshReport { simulated: 1, rendered: 1, merged: 1 });
 
         // Paused time and times inside the stored TTL reuse all three caches.
         for milliseconds in [0, 30_000] {
             let later = start + milliseconds;
-            assert_eq!(refresh_regions(&mut data, &selected, later, &view, &settings, &mut times), RefreshReport::default());
+            assert_eq!(refresh_regions(
+                &mut data.star_regions, &data.constellation_stars,
+                &mut data.constellation_simulation, &mut data.constellation_last_update_ms,
+                &mut data.star_opacities, &mut data.tile_bytes,
+                &selected.regions, later, view.fov_degrees, settings.magnitude_threshold,
+                &mut times,
+            ), RefreshReport::default());
         }
 
         // Crossing that TTL recalculates the group and invalidates its merged region image.
         let expired = start + 61_000;
-        let refreshed = refresh_regions(&mut data, &selected, expired, &view, &settings, &mut times);
+        let refreshed = refresh_regions(
+            &mut data.star_regions, &data.constellation_stars,
+            &mut data.constellation_simulation, &mut data.constellation_last_update_ms,
+            &mut data.star_opacities, &mut data.tile_bytes,
+            &selected.regions, expired, view.fov_degrees, settings.magnitude_threshold,
+            &mut times,
+        );
         assert_eq!(refreshed, first);
         assert_eq!(data.star_regions[region].speed_groups[0].last_update_ms, Some(expired));
     }
@@ -235,21 +274,51 @@ mod tests {
         let both = Selected { regions: vec![0, 1], whole_sky: false };
         let wide = view(180.0, 1.0);
         let narrow = view(60.0, 1.0);
-        refresh_regions(&mut caches, &both, time(0.0), &wide, &settings(9.0), &mut crate::time::StepTimes::default());
+        refresh_regions(
+            &mut caches.star_regions, &caches.constellation_stars,
+            &mut caches.constellation_simulation, &mut caches.constellation_last_update_ms,
+            &mut caches.star_opacities, &mut caches.tile_bytes,
+            &both.regions, time(0.0), wide.fov_degrees, settings(9.0).magnitude_threshold,
+            &mut crate::time::StepTimes::default(),
+        );
         let original = [caches.star_regions[0].merged_tile.clone(), caches.star_regions[1].merged_tile.clone()];
         for region in [0, 1] {
             let selected = Selected { regions: vec![region], whole_sky: false };
-            let changed = refresh_regions(&mut caches, &selected, time(0.0), &narrow, &settings(9.0), &mut crate::time::StepTimes::default());
+            let changed = refresh_regions(
+                &mut caches.star_regions, &caches.constellation_stars,
+                &mut caches.constellation_simulation, &mut caches.constellation_last_update_ms,
+                &mut caches.star_opacities, &mut caches.tile_bytes,
+                &selected.regions, time(0.0), narrow.fov_degrees, settings(9.0).magnitude_threshold,
+                &mut crate::time::StepTimes::default(),
+            );
             assert_eq!(changed, RefreshReport { simulated: 0, rendered: 1, merged: 1 });
             assert_eq!(caches.star_regions[region].speed_groups[0].tile.key().unwrap().zoom_boost, zoom_opacity_boost(60.0));
             assert_ne!((&caches.star_regions[region].merged_tile), &original[region]);
             if region == 0 { assert_eq!((&caches.star_regions[1].merged_tile), &original[1]); }            // hidden tile retains its old key until selected again
-            assert_eq!(refresh_regions(&mut caches, &selected, time(0.0), &narrow, &settings(9.0), &mut crate::time::StepTimes::default()), RefreshReport::default());
+            assert_eq!(refresh_regions(
+                &mut caches.star_regions, &caches.constellation_stars,
+                &mut caches.constellation_simulation, &mut caches.constellation_last_update_ms,
+                &mut caches.star_opacities, &mut caches.tile_bytes,
+                &selected.regions, time(0.0), narrow.fov_degrees, settings(9.0).magnitude_threshold,
+                &mut crate::time::StepTimes::default(),
+            ), RefreshReport::default());
         }
-        let restored = refresh_regions(&mut caches, &both, time(0.0), &wide, &settings(9.0), &mut crate::time::StepTimes::default());
+        let restored = refresh_regions(
+            &mut caches.star_regions, &caches.constellation_stars,
+            &mut caches.constellation_simulation, &mut caches.constellation_last_update_ms,
+            &mut caches.star_opacities, &mut caches.tile_bytes,
+            &both.regions, time(0.0), wide.fov_degrees, settings(9.0).magnitude_threshold,
+            &mut crate::time::StepTimes::default(),
+        );
         assert_eq!(restored, RefreshReport { simulated: 0, rendered: 2, merged: 2 });
         for (region, image) in original.iter().enumerate() { assert_eq!((&caches.star_regions[region].merged_tile), image); }
-        assert_eq!(refresh_regions(&mut caches, &both, time(0.0), &view(360.0, 2.0), &settings(9.0), &mut crate::time::StepTimes::default()), RefreshReport::default()); // same boost, no redraw
+        assert_eq!(refresh_regions(
+            &mut caches.star_regions, &caches.constellation_stars,
+            &mut caches.constellation_simulation, &mut caches.constellation_last_update_ms,
+            &mut caches.star_opacities, &mut caches.tile_bytes,
+            &both.regions, time(0.0), view(360.0, 2.0).fov_degrees, settings(9.0).magnitude_threshold,
+            &mut crate::time::StepTimes::default(),
+        ), RefreshReport::default()); // same boost, no redraw
     }
 
     #[test]
@@ -264,7 +333,13 @@ mod tests {
         let tables = crate::model::fixtures::layout(&[(region, 0, slow), (region, 0, top)]);
         let mut caches = tables.clone();
         let selected = Selected { regions: vec![region], whole_sky: false };
-        refresh_regions(&mut caches, &selected, time(0.0), &view(60.0, 1.0), &settings(magnitude + 1.0), &mut crate::time::StepTimes::default());
+        refresh_regions(
+            &mut caches.star_regions, &caches.constellation_stars,
+            &mut caches.constellation_simulation, &mut caches.constellation_last_update_ms,
+            &mut caches.star_opacities, &mut caches.tile_bytes,
+            &selected.regions, time(0.0), view(60.0, 1.0).fov_degrees, settings(magnitude + 1.0).magnitude_threshold,
+            &mut crate::time::StepTimes::default(),
+        );
         let expected = Texel { rgb: premultiplied_color(top.display_color, 1.0), opacity: 1.0 };
         let lit: Vec<_> = caches.star_regions[region].merged_tile.texels().iter().filter(|texel| !texel.is_empty()).collect();
         assert_eq!(lit.len(), 4);
@@ -309,7 +384,7 @@ mod tests {
         let (_, deeper) = frame(&mut caches, &tables, medium_day, &wide, 7.0);
         let deep = drawn_groups(&tables, &selected, medium_day, 7.0);
         assert_eq!(deeper.rendered, deep.iter().sum::<usize>());
-        let grown = tables.star_tables().filter(|(_, _, table)| rows_wanted(table, crate::astro::AstronomicalTime::from_time_ms(time(medium_day)).tt_jd, 7.0) > rows_wanted(table, crate::astro::AstronomicalTime::from_time_ms(time(medium_day)).tt_jd, 6.0)).count();
+        let grown = tables.star_tables().filter(|(_, _, table)| rows_wanted(table, crate::formulas::AstronomicalTime::from_time_ms(time(medium_day)).tt_jd, 7.0) > rows_wanted(table, crate::formulas::AstronomicalTime::from_time_ms(time(medium_day)).tt_jd, 6.0)).count();
         assert_eq!(deeper.simulated, grown);                                                 // extended where the prefix grew, nothing re-evaluated
         assert!(grown > 0 && grown < deeper.rendered);
         let (_, shallower) = frame(&mut caches, &tables, medium_day, &wide, 3.0);
@@ -331,7 +406,7 @@ mod tests {
         let (after, second) = frame(&mut caches, &tables, 1.0 / 24.0, &narrow, 6.5);        // an hour later: the sky has turned
         let entered: Vec<usize> = after.regions.iter().copied().filter(|region| !before.regions.contains(region)).collect();
         assert!(!entered.is_empty());
-        let expected: usize = entered.iter().map(|&region| tables.star_regions[region].speed_groups.iter().map(|group| &group.stars).filter(|table| rows_wanted(table, crate::astro::AstronomicalTime::from_time_ms(time(0.0)).tt_jd, 6.5) > 0).count()).sum();
+        let expected: usize = entered.iter().map(|&region| tables.star_regions[region].speed_groups.iter().map(|group| &group.stars).filter(|table| rows_wanted(table, crate::formulas::AstronomicalTime::from_time_ms(time(0.0)).tt_jd, 6.5) > 0).count()).sum();
         assert_eq!(second.rendered, expected);
         assert_eq!(second.merged, entered.len());
         for (&region, image) in before.regions.iter().zip(&kept) { assert_eq!((&caches.star_regions[region].merged_tile), image); } // regions that left the view keep their images
@@ -363,7 +438,13 @@ mod tests {
         let (region, group, table) = tables.star_tables().find(|(_, _, table)| table.len() == 1).unwrap();
         let mut caches = tables.clone();
         let selected = Selected { regions: vec![region], whole_sky: false };
-        refresh_regions(&mut caches, &selected, time(0.0), &View::default(), &settings(9.0), &mut crate::time::StepTimes::default());
+        refresh_regions(
+            &mut caches.star_regions, &caches.constellation_stars,
+            &mut caches.constellation_simulation, &mut caches.constellation_last_update_ms,
+            &mut caches.star_opacities, &mut caches.tile_bytes,
+            &selected.regions, time(0.0), View::default().fov_degrees, settings(9.0).magnitude_threshold,
+            &mut crate::time::StepTimes::default(),
+        );
         let image = &caches.star_regions[region].speed_groups[group].tile;
         let tile = TileGeometry::new(region);
         let simulation = &caches.star_regions[region].speed_groups[group].simulation;
@@ -388,9 +469,15 @@ mod tests {
             let view = view(fov, 1.0);
             let timed = |caches: &mut Data, days: f64, threshold: f64, what: &str| {
                 let observation = observe(&boston(), true, &view, time(days), &mut crate::time::StepTimes::default());
-                let selected = select_regions(&tables.star_regions, &observation, &mut crate::time::StepTimes::default());
+                let selected = select_regions(&tables.star_regions, &observation.patch, observation.time_ms, &mut crate::time::StepTimes::default());
                 let started = std::time::Instant::now();
-                let report = refresh_regions(caches, &selected, time(days), &view, &settings(threshold), &mut crate::time::StepTimes::default());
+                let report = refresh_regions(
+                    &mut caches.star_regions, &caches.constellation_stars,
+                    &mut caches.constellation_simulation, &mut caches.constellation_last_update_ms,
+                    &mut caches.star_opacities, &mut caches.tile_bytes,
+                    &selected.regions, time(days), view.fov_degrees, settings(threshold).magnitude_threshold,
+                    &mut crate::time::StepTimes::default(),
+                );
                 let elapsed = started.elapsed();
                 eprintln!("{fov:>5}° {what:<14} {elapsed:>10.3?}  regions={} rendered={} merged={} simulated={} tile bytes={}", selected.regions.len(), report.rendered, report.merged, report.simulated, caches.tile_bytes);
             };

@@ -2,7 +2,7 @@
 //! regions' brightness prefixes, with the constellation table, must contain every star the full scan places inside
 //! the view. Ported from `spatial_selection.rs`; region coverage is qualified only for motion within the fixed
 //! drift margin, exactly as before.
-use astroterm::astro::{COMPUTATIONAL_INTERVAL, J2000, JULIAN_YEAR_DAYS, Matrix3, Observer, Vector3, refract_direction};
+use astroterm::formulas::{COMPUTATIONAL_INTERVAL, J2000, JULIAN_YEAR_DAYS, Matrix3, Observer, Vector3, refract_direction};
 use astroterm::catalog::{CatalogStar, SpaceMotion, StarId, decode_magnitude, load_embedded_catalog};
 use astroterm::constants::{GRID_DEPTH, STELLAR_DRIFT_MARGIN};
 use astroterm::model::{ProjectionKind, Data, View, ViewCenter, hash_direction};
@@ -31,7 +31,7 @@ fn tables() -> Arc<Data> {
         for i in 0..4000 {
             let ra = uniform() * std::f64::consts::TAU;
             let dec = (2.0 * uniform() - 1.0).asin();
-            let position = astroterm::astro::Equatorial { right_ascension: ra, declination: dec }.to_unit_vector();
+            let position = astroterm::formulas::Equatorial { right_ascension: ra, declination: dec }.to_unit_vector();
             let speed = if i % 10 == 0 { 0.001 } else { 1e-8 };
             let velocity = Vector3 { x: (uniform() - 0.5) * speed, y: (uniform() - 0.5) * speed, z: (uniform() - 0.5) * speed };
             catalog.stars.push(CatalogStar {
@@ -45,7 +45,7 @@ fn tables() -> Arc<Data> {
 }
 
 /// Every star of every table: id, motion, catalog magnitude.
-fn all_stars(tables: &Data) -> Vec<(u32, astroterm::astro::models::stars::StellarMotion, f64)> {
+fn all_stars(tables: &Data) -> Vec<(u32, astroterm::formulas::StellarMotion, f64)> {
     let mut stars = Vec::new();
     for (_, _, table) in tables.star_tables() {
         for row in 0..table.len() { stars.push((table.id(row).0, table.motion(row), decode_magnitude(table.columns().magnitude[row]))); }
@@ -57,7 +57,7 @@ fn all_stars(tables: &Data) -> Vec<(u32, astroterm::astro::models::stars::Stella
 
 /// The stars the selection offers: the brightness prefixes of the selected regions plus the constellation table.
 fn candidates(tables: &Data, observation: &Observation, threshold: f64) -> (BTreeSet<u32>, bool) {
-    let selected = select_regions(&tables.star_regions, observation, &mut astroterm::time::StepTimes::default());
+    let selected = select_regions(&tables.star_regions, &observation.patch, observation.time_ms, &mut astroterm::time::StepTimes::default());
     let mut ids = BTreeSet::new();
     for &region in &selected.regions {
         for table in tables.star_regions[region].speed_groups.iter().map(|group| &group.stars) {
@@ -71,11 +71,11 @@ fn candidates(tables: &Data, observation: &Observation, threshold: f64) -> (BTre
 /// The stars a full scan places inside the view at or above the threshold; `drift_limited` drops stars that moved
 /// more than the drift margin, the documented limit of region selection in views under 300°.
 fn visible_by_full_scan(tables: &Data, observation: &Observation, view: &View, threshold: f64, drift_limited: bool) -> BTreeSet<u32> {
-    let years = (astroterm::astro::AstronomicalTime::from_time_ms(observation.time_ms).tt_jd - J2000) / JULIAN_YEAR_DAYS;
+    let years = (astroterm::formulas::AstronomicalTime::from_time_ms(observation.time_ms).tt_jd - J2000) / JULIAN_YEAR_DAYS;
     let camera = prepare_camera(view);
     all_stars(tables).into_iter().filter_map(|(id, motion, magnitude)| {
         let sample = motion.evaluate(years, magnitude);
-        if sample.magnitude_value() > threshold { return None; }
+        if astroterm::catalog::decode_magnitude(astroterm::catalog::magnitude_code(sample.magnitude)) > threshold { return None; }
         let drift = motion.u0.cross(sample.direction).length().atan2(motion.u0.dot(sample.direction));
         if drift_limited && drift > STELLAR_DRIFT_MARGIN { return None; }
         let apparent = observation.apparent_star_direction(sample.direction);
@@ -85,12 +85,12 @@ fn visible_by_full_scan(tables: &Data, observation: &Observation, view: &View, t
 
 fn compare(date: f64, view: View, threshold: f64, refraction: bool, latitude: f64, longitude: f64) {
     let tables = tables();
-    let observation = observe(&Observer { latitude, longitude }, refraction, &view, astroterm::astro::utc_jd_to_time_ms(date).unwrap(), &mut astroterm::time::StepTimes::default());
+    let observation = observe(&Observer { latitude, longitude }, refraction, &view, astroterm::formulas::utc_jd_to_time_ms(date).unwrap(), &mut astroterm::time::StepTimes::default());
     let (offered, whole_sky) = candidates(&tables, &observation, threshold);
     let visible = visible_by_full_scan(&tables, &observation, &view, threshold, !whole_sky && view.fov_degrees < 300.0);
     let missing: Vec<_> = visible.difference(&offered).collect();
     assert!(missing.is_empty(), "{date} fov {} threshold {threshold} refraction {refraction}: not offered {missing:?}", view.fov_degrees);
-    if !COMPUTATIONAL_INTERVAL.contains(astroterm::astro::AstronomicalTime::from_time_ms(observation.time_ms).tt_jd) { assert!(whole_sky); }
+    if !COMPUTATIONAL_INTERVAL.contains(astroterm::formulas::AstronomicalTime::from_time_ms(observation.time_ms).tt_jd) { assert!(whole_sky); }
 }
 
 fn check_boundary_date(date: f64) {
@@ -148,7 +148,7 @@ fn saved_stereographic_selection_regression_matches_full_scan_within_drift_margi
 /// and 0.001° above it: the selection offers them and the threshold keeps exactly ids 0 and 1.
 #[test]
 fn seam_threshold_horizon_and_view_edge_cases_are_not_culled() {
-    use astroterm::astro::Horizontal;
+    use astroterm::formulas::Horizontal;
     for (direction, view, refraction) in [
         (Vector3 { x: 1.0, y: 1.0, z: 1.0 }.normalized(), View::default(), false),
         (Vector3 { x: 0.0, y: 0.0, z: 1.0 }, View::default(), false),
@@ -171,7 +171,7 @@ fn seam_threshold_horizon_and_view_edge_cases_are_not_culled() {
             parsed.stars.push(star);
         }
         let tables = build(parsed);
-        let mut observation = observe(&Observer::default(), refraction, &view, astroterm::astro::utc_jd_to_time_ms(J2000).unwrap(), &mut astroterm::time::StepTimes::default());
+        let mut observation = observe(&Observer::default(), refraction, &view, astroterm::formulas::utc_jd_to_time_ms(J2000).unwrap(), &mut astroterm::time::StepTimes::default());
         observation.to_horizon = Matrix3::IDENTITY;                                        // the catalog axes are the horizon axes in this fixture
         observation.to_catalog = Matrix3::IDENTITY;
         observation.observer.velocity = Vector3::default();
@@ -209,7 +209,7 @@ fn fast_stars_use_ordinary_regions_and_large_drift_has_no_special_selection() {
     assert_eq!(hash_direction(GRID_DEPTH, motion.u0), region);                                   // speed does not change the region
     assert!(motion.motion_bound() > STELLAR_DRIFT_MARGIN);
 
-    let time = astroterm::astro::utc_jd_to_time_ms(J2000 + 1000.0 * JULIAN_YEAR_DAYS).unwrap();
+    let time = astroterm::formulas::utc_jd_to_time_ms(J2000 + 1000.0 * JULIAN_YEAR_DAYS).unwrap();
     let cone = |center: Vector3, threshold: f64| {
         let mut observation = observe(&Observer::default(), false, &View { fov_degrees: 2.0, ..View::default() }, time, &mut astroterm::time::StepTimes::default());
         observation.patch.center = center;

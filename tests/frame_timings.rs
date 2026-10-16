@@ -1,5 +1,5 @@
 //! Real frame sub-steps reach both the timing panel and machine-readable capture without changing pixels.
-use astroterm::astro::{J2000, Observer};
+use astroterm::formulas::{J2000, Observer};
 use astroterm::model::{RenderOptions, Data, View};
 use astroterm::observation::observe;
 use astroterm::points::{draw_points, draw_panel_and_notices};
@@ -13,23 +13,36 @@ use ratatui::layout::Rect;
 use ratatui_image::picker::ProtocolType;
 
 fn render(data: &mut Data, frame: &mut Frame, terminal: &mut Terminal<Vec<u8>>, times: &mut StepTimes) -> Presented {
-    let time = astroterm::astro::utc_jd_to_time_ms(J2000).unwrap();
+    let time = astroterm::formulas::utc_jd_to_time_ms(J2000).unwrap();
     let view = View::default();
     let settings = RenderOptions { unicode: true, braille: false, color: true, constellations: true, grid: false, magnitude_threshold: 6.0, dynamic_names: true };
     times.begin_frame();
     times.measure("Solar system");
-    let solar = simulate_solar_system(data, time, times);
+    let solar = simulate_solar_system(&data.solar_system_sun, &data.solar_system_planets, &data.solar_system_moons, time, times);
     times.measure("Observation");
     let observation = observe(&Observer::default(), true, &view, time, times);
     times.measure("Selection");
-    let selected = select_regions(&data.star_regions, &observation, times);
+    let selected = select_regions(&data.star_regions, &observation.patch, observation.time_ms, times);
     times.measure("Regions");
-    refresh_regions(data, &selected, time, &view, &settings, times);
+    refresh_regions(
+        &mut data.star_regions, &data.constellation_stars,
+        &mut data.constellation_simulation, &mut data.constellation_last_update_ms,
+        &mut data.star_opacities, &mut data.tile_bytes,
+        &selected.regions, time, view.fov_degrees, settings.magnitude_threshold,
+        times,
+    );
     times.measure("Projection");
-    let projected_stars = project_stars_to_screen(frame.drawing_area_width_and_height, data, &selected, &observation, &view, times);
+    let projected_stars = project_stars_to_screen(frame.drawing_area_width_and_height, &data.star_regions, &selected.regions, &observation, &view, times);
     frame.insert_projected_stars(&projected_stars);
     times.measure("Points");
-    let drawn = draw_points(frame, &solar, data, &selected, None, &observation, &view, &settings, times);
+    let drawn = draw_points(
+        frame, &solar,
+        &data.solar_system_sun, &data.solar_system_planets, &data.solar_system_moons,
+        &data.constellation_stars, &data.constellation_simulation, &data.constellation_figures,
+        &data.star_regions, &data.names, &data.star_opacities, &data.clipping,
+        &selected.regions, None,
+        &observation, &view, &settings, times,
+    );
     times.measure("Text overlay");
     draw_panel_and_notices(frame, &[], &drawn.notices);
     times.measure("Present");

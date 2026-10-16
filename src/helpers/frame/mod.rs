@@ -1,10 +1,10 @@
 //! Frame-loop helpers: controls and the clock, plus preparation and drawing of the metadata text overlay.
-use astroterm::time::{SimulationClock, TimeManager};
+use astroterm::time::SimulationClock;
 use astroterm::points::draw_panel_and_notices;
-use astroterm::astro::{Observer, name_moon_phase};
+use astroterm::formulas::{Observer, name_moon_phase};
 use astroterm::controls::{Control, apply_control};
 use astroterm::metadata::{MetadataField, ObserverTimeZone, append_step_time_fields, fill_metadata_fields, format_star_count, resolve_observer_timezone};
-use astroterm::model::{Config, Data, View};
+use astroterm::model::{Config, Data, Region, View};
 use astroterm::present::{Display, DisplayInfo, describe_compression};
 use astroterm::projection::Frame;
 use astroterm::regions::RefreshReport;
@@ -67,21 +67,23 @@ pub(crate) fn draw_text_overlay(
     panel: &mut Panel,
     solar_system: &SolarSystem,
     selected: &Selected,
-    data: &Data,
+    star_regions: &[Region],
+    tile_bytes: usize,
     notices: &[&str],
     refreshed: RefreshReport,
     time_ms: i64,
     view: &View,
     config: &Config,
-    time_manager: &mut TimeManager,
+    clock: &SimulationClock,
+    times: &mut StepTimes,
 ) {
     // Build the panel's text from the simulation results and current terminal information.
-    time_manager.measure("Text overlay.Panel preparation");
+    times.measure("Text overlay.Panel preparation");
     let display_info = display.info();
     let panel_lines = panel.lines(
         &PanelFrame {
             time_ms,
-            clock: &time_manager.clock,
+            clock,
             solar_system,
             selected,
             refreshed,
@@ -89,12 +91,13 @@ pub(crate) fn draw_text_overlay(
         },
         &config.simulation.observer,
         view,
-        data,
-        &time_manager.step_times,
+        star_regions,
+        tile_bytes,
+        times,
     );
 
     // Paint the panel and notices without clearing the graphics already in the frame.
-    time_manager.measure("Text overlay.Text rasterization");
+    times.measure("Text overlay.Text rasterization");
     draw_panel_and_notices(frame, panel_lines, notices);
 }
 
@@ -131,19 +134,20 @@ impl Panel {
 
     /// Rebuild the lines for this frame: local time and view (as before), the catalog and region counts, the
     /// display, and the step timings when requested.
-    pub(crate) fn lines(&mut self, frame: &PanelFrame<'_>, observer: &Observer, view: &View, data: &Data, times: &StepTimes) -> &[MetadataField] {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn lines(&mut self, frame: &PanelFrame<'_>, observer: &Observer, view: &View, star_regions: &[Region], tile_bytes: usize, times: &StepTimes) -> &[MetadataField] {
         self.lines.clear();
         let Some(time_zone) = &self.time_zone else { return &self.lines; };
         let phase = name_moon_phase(frame.solar_system.moon_illumination(0));
         fill_metadata_fields(&mut self.lines, frame.time_ms, frame.clock, phase, observer, view, self.unicode, time_zone);
 
         // stars and regions
-        let in_regions: usize = frame.selected.regions.iter().map(|&region| data.star_regions[region].speed_groups.iter().map(|group| &group.stars).map(|table| table.len()).sum::<usize>()).sum();
+        let in_regions: usize = frame.selected.regions.iter().map(|&region| star_regions[region].speed_groups.iter().map(|group| &group.stars).map(|table| table.len()).sum::<usize>()).sum();
         let field = |label: &str, value: String| MetadataField { label: label.into(), value };
         self.lines.push(field("Stars loaded", format!("{} stars", format_star_count(self.stars_loaded))));
         self.lines.push(field("In selected regions", format!("{} stars", format_star_count(in_regions))));
         self.lines.push(field("Regions selected", format!("{}{}", frame.selected.regions.len(), if frame.selected.whole_sky { " (whole sky)" } else { "" })));
-        self.lines.push(field("Tile memory", format!("{:.1} MiB", data.tile_bytes as f64 / (1024.0 * 1024.0))));
+        self.lines.push(field("Tile memory", format!("{:.1} MiB", tile_bytes as f64 / (1024.0 * 1024.0))));
 
         // the display
         let display = frame.display;

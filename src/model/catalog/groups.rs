@@ -6,7 +6,7 @@
 //! compared with the displacement of each rate threshold over the shorter half of the interval. This is a
 //! grouping policy, not a bound on angular speed at every date: approaching stars can move faster later.
 //! `tests/stellar_hold_accuracy.rs` audits the resulting fixed holds without changing runtime behavior.
-use crate::astro::models::stars::computational_years;
+use crate::formulas::computational_years;
 use crate::constants::{SPEED_GROUP_TTL_MS, SPEED_GROUP_BOUNDS, SPEED_GROUP_COUNT};
 use crate::model::{Region, StarGroup, StarTable};
 

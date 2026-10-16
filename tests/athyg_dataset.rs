@@ -65,7 +65,7 @@ fn athyg_matches_the_embedded_catalog() {
 fn real_catalog_quantization_stays_within_half_an_arcsecond() {
     let source = load_athyg_catalog(Path::new(DATASET), &mut astroterm::progress::Report::quiet()).unwrap();
     let stored = astroterm::sky::prepare_catalog(&source, &mut astroterm::progress::Report::quiet()).unwrap();
-    let (start, end) = astroterm::astro::models::stars::computational_years();
+    let (start, end) = astroterm::formulas::computational_years();
     let mut maximum = 0.0_f64;
     for star in stored.catalog.stars.iter() {
         let i = source.stars.binary_search_by_key(&star.id, |s| s.id).unwrap();

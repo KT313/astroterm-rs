@@ -1,6 +1,6 @@
 //! Immutable prepared catalog data and the catalog records it is made of.
 use crate::model::{StarStorage, SkyGrid};
-use crate::astro::models::stars::StellarMotion;
+use crate::formulas::StellarMotion;
 use crate::catalog::{NameId, StarId, StarNames};
 use crate::rows::row_columns;
 use std::sync::Arc;

@@ -1,15 +1,11 @@
 //! Straight-line J2000 stellar motion, f64. Directions and scaled velocities are dimensionless and per Julian year;
 //! distances are parsecs. Bounds and brightness keys cover the shared TT computational interval, not physical
 //! catalog accuracy. Missing/singular distances use tangential motion and constant brightness.
-use crate::constants::SINGULAR_RATIO;
-use crate::rows::{row_columns, plain_rows};
-use crate::astro::{COMPUTATIONAL_INTERVAL, Equatorial, J2000, JULIAN_YEAR_DAYS, Vector3};
+use crate::formulas::constants::SINGULAR_RATIO;
+use crate::formulas::types::StellarClass;
+use crate::formulas::{StellarMotion, StellarSample};
+use crate::formulas::{COMPUTATIONAL_INTERVAL, Equatorial, J2000, JULIAN_YEAR_DAYS, Vector3};
 
-
-/// Catalog-only motion properties. Epoch-dependent singular handling remains in evaluation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct StellarClass(u8);
-plain_rows!(StellarClass);
 impl StellarClass {
     pub fn is_stationary(self) -> bool {
         self.0 & 1 != 0
@@ -17,25 +13,6 @@ impl StellarClass {
     pub fn has_distance(self) -> bool {
         self.0 & 2 != 0
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct StellarMotion {
-    pub u0: Vector3,
-    pub w: Vector3,
-    pub distance_pc: Option<f64>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct StellarSample {
-    pub direction: Vector3,
-    pub magnitude: u16, // the current magnitude as a catalog code (`crate::catalog::magnitude_code`); the float exists only inside the evaluation
-    pub used_singular_fallback: bool,
-}
-row_columns!(StellarSample { direction, magnitude, used_singular_fallback });
-impl StellarSample {
-    /// The current magnitude as a float, for few-star callers and tests.
-    pub fn magnitude_value(&self) -> f64 { crate::catalog::decode_magnitude(self.magnitude) }
 }
 
 pub fn years_since_j2000(julian_date_tt: f64) -> f64 {
@@ -153,7 +130,7 @@ impl StellarMotion {
         };
         StellarSample {
             direction: q * (1.0 / norm),
-            magnitude: crate::catalog::magnitude_code(current),
+            magnitude: current,
             used_singular_fallback: singular,
         }
     }
@@ -185,17 +162,6 @@ impl StellarMotion {
 
 fn length(v: Vector3) -> f64 {
     v.x.hypot(v.y).hypot(v.z)
-}
-
-/// Historical linear-RA/Dec reference, retained for comparison fixtures. Runtime uses StellarMotion.
-/// Apply proper motion (radians per year) to a J2000 catalog position. The result is still in the J2000 frame.
-/// Time is TT; the legacy 365.2425-day year is kept only in this historical comparison API.
-pub fn compute_star_position(catalog: Equatorial, proper_motion: Equatorial, julian_date_tt: f64) -> Equatorial {
-    let years_since_j2000 = (julian_date_tt - J2000) / 365.2425;
-    Equatorial {
-        right_ascension: catalog.right_ascension + proper_motion.right_ascension * years_since_j2000,
-        declination: catalog.declination + proper_motion.declination * years_since_j2000,
-    }
 }
 
 #[cfg(test)]
@@ -239,7 +205,7 @@ mod tests {
         assert_eq!(star.distance_pc, None);
         let sample = star.evaluate(100.0, 5.0);
         assert_eq!(sample.direction, star.u0);
-        assert_eq!(sample.magnitude_value(), 5.0);
+        assert_eq!(sample.magnitude, 5.0);
         let mut outside = motion(
             Vector3 {
                 x: -1.0 / 20000.0,
@@ -251,7 +217,7 @@ mod tests {
         assert!(!outside.remove_singular_distance());
         let sample = outside.evaluate(20000.0, 5.0);
         assert!(sample.used_singular_fallback);
-        assert_eq!(sample.magnitude_value(), 5.0);
+        assert_eq!(sample.magnitude, 5.0);
         assert_eq!(sample.direction, outside.u0);
     }
     #[test]
@@ -273,7 +239,7 @@ mod tests {
     #[test]
     fn fixed_distance_and_approaching_star_magnitudes() {
         let fixed = motion(Vector3::default(), Some(10000.0));
-        assert_eq!(fixed.evaluate(10000.0, 5.0).magnitude_value(), 5.0);
+        assert_eq!(fixed.evaluate(10000.0, 5.0).magnitude, 5.0);
         let star = motion(
             Vector3 {
                 x: -0.0001,
@@ -282,7 +248,7 @@ mod tests {
             },
             Some(2.0),
         );
-        assert!(star.evaluate(1000.0, 9.5).magnitude_value() < 9.5);
+        assert!(star.evaluate(1000.0, 9.5).magnitude < 9.5);
         assert!(star.motion_bound() > 0.25_f64.to_radians());
     }
     proptest! {
@@ -300,38 +266,9 @@ mod tests {
                 let angle=length(star.u0.cross(sample.direction)).atan2(star.u0.dot(sample.direction));
                 sampled=sampled.max(angle);
                 prop_assert!(angle<=bound+1e-12);
-                prop_assert!(sample.magnitude_value()>=key-0.0005-1e-12);               // the sample code rounds to the nearest thousandth
-                prop_assert!(sample.magnitude>=crate::catalog::encode_brightness_bound(key).0); // the stored bound code never exceeds any sample code
+                prop_assert!(sample.magnitude >= key - 1e-12);                       // the physical brightness bound covers the unencoded sample
             }
             prop_assert!((bound-sampled).abs()<1e-12);
-        }
-    }
-}
-
-crate::rows::debug_preview!(StellarClass, StellarMotion);
-
-#[cfg(test)]
-mod legacy_bound_tests {
-    use super::*;
-    use crate::astro::models::stars::compute_star_position;
-
-    #[test]
-    fn normalized_motion_change_stays_within_a_derived_legacy_bound() {
-        for dec in [-89.99_f64, -45.0, 0.0, 45.0, 89.99] {
-            let direction = Equatorial { right_ascension: 1.0, declination: dec.to_radians() };
-            let rates = Equatorial { right_ascension: 0.00001, declination: -0.00002 };
-            let star = StellarMotion::from_angles(direction, rates);
-            for years in [-10000.0, -1000.0, -25.0, 0.0, 25.0, 1000.0, 10000.0] {
-                let date = J2000 + years * JULIAN_YEAR_DAYS;
-                let old = compute_star_position(direction, rates, date).to_unit_vector();
-                let new = star.evaluate(years, 5.0).direction;
-                let angle = old.cross(new).length().atan2(old.dot(new));
-                let legacy_years = (date - J2000) / 365.2425;
-                let rate = rates.right_ascension.abs() + rates.declination.abs();
-                // Spherical Taylor remainder <= rate²t²/2; normalization doubles chord error, arc <= π/2 chord.
-                let bound = std::f64::consts::FRAC_PI_2 * (rate * legacy_years).powi(2) + rate * (legacy_years - years).abs();
-                assert!(angle <= bound + 1e-12, "dec {dec}, t {years}: {angle} > {bound}");
-            }
         }
     }
 }

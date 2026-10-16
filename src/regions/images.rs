@@ -1,7 +1,7 @@
 //! The image caches of plan section 4: one sky-fixed tile per group (the group's brightness prefix drawn as the
 //! screen would draw it) and one per region (its group images composited). Per-star zoom brightness is applied before blending; tone mapping
 //! happens in the frame output.
-use crate::astro::Vector3;
+use crate::formulas::Vector3;
 use crate::constants::TILE_EDGE_TEXELS;
 use crate::model::{StarOpacities, Texel, StarTable, GroupTileKey, GroupTileCache, RegionTileCache, StarGroup};
 use crate::regions::{TileGeometry, blend_star, order_star_rows, premultiplied_color};
@@ -98,7 +98,7 @@ fn merge_group_texel(base: &mut Texel, next: Texel) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::astro::J2000;
+    use crate::formulas::J2000;
     use crate::constants::{GRID_DEPTH, STAR_OPACITY_MAGNITUDE_SCALE, STAR_OPACITY_REFERENCE_MAGNITUDE};
     use crate::catalog::magnitude_code;
     use crate::model::{StarColor, StarRow, hash_direction};
@@ -114,7 +114,7 @@ mod tests {
         let stars = fixtures::layout(&rows.iter().map(|row| (region(), 0, *row)).collect::<Vec<_>>());
         stars.star_table(region(), 0).clone()
     }
-    fn key(rows: usize, threshold: f64) -> GroupTileKey { GroupTileKey { simulated_at_ms: crate::astro::utc_jd_to_time_ms(J2000).unwrap(), star_count: rows, magnitude_threshold: magnitude_code(threshold), zoom_boost: 1.0 } }
+    fn key(rows: usize, threshold: f64) -> GroupTileKey { GroupTileKey { simulated_at_ms: crate::formulas::utc_jd_to_time_ms(J2000).unwrap(), star_count: rows, magnitude_threshold: magnitude_code(threshold), zoom_boost: 1.0 } }
     fn opacities() -> StarOpacities { let mut table = StarOpacities::default(); table.prepare(1.0); table }
     fn lit(texels: &[Texel]) -> Vec<(usize, Texel)> { texels.iter().copied().enumerate().filter(|(_, texel)| !texel.is_empty()).collect() }
 

@@ -1,10 +1,11 @@
 //! Validated settings, converted to the units used internally (radians, integer simulation milliseconds).
 
+use crate::metadata::compass_point_to_azimuth;
 use crate::catalog::datasets::Dataset;
 use std::fmt;
 
-use crate::astro::{
-    Observer, compass_point_to_azimuth,
+use crate::formulas::{
+    Observer,
 };
 use crate::catalog::{City, find_city, suggest_cities};
 use crate::model::{ProjectionKind, View, ViewCenter, RenderOptions, TerminalSettings};

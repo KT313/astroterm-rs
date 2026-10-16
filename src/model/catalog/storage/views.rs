@@ -20,7 +20,7 @@ impl StarStorage {
 #[cfg(test)]
 mod tests {
     use super::super::expand;
-    use crate::astro::Vector3;
+    use crate::formulas::Vector3;
     use crate::sky::{catalog_fingerprint, load_cached_catalog, write_cached_catalog};
 
     #[test]

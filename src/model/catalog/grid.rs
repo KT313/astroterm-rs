@@ -1,7 +1,7 @@
 //! Cube-map storage, representation construction and shared selection records.
 use crate::constants::GRID_DEPTH;
 use crate::rows::row_columns;
-use crate::astro::Vector3;
+use crate::formulas::Vector3;
 use std::f64::consts::PI;
 use std::sync::OnceLock;
 

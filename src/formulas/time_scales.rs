@@ -3,7 +3,7 @@
 //! References: IERS Technical Note No. 32, and Capitaine, Wallace & Chapront, "Expressions for IAU 2000 precession
 //! quantities".
 //!
-//! Input, display and [`crate::time::SimulationClock`] use UTC, interpreted as UT1 without Earth-orientation data. Dates before
+//! Input, display and the application simulation clock use UTC, interpreted as UT1 without Earth-orientation data. Dates before
 //! UTC existed (1960) use UT. This is an application approximation, not a prediction of future UTC or DUT1.
 //! Ephemerides, proper motion and orientation take TT = UT1 + Espenak–Meeus ΔT. ERA takes UT1.
 //! GMST uses the long-term mean equator/equinox; production adds nutation to form the apparent equation of origins. The equation of the origins is
@@ -16,10 +16,8 @@ use std::f64::consts::TAU;
 
 use chrono::{DateTime, Datelike, NaiveDateTime, Timelike, Utc};
 
-use super::normalize_radians;
-
-/// The J2000.0 epoch as a Julian date.
-pub const J2000: f64 = 2451545.0;
+use super::{AstronomicalTime, J2000, normalize_radians};
+use super::constants::{MILLISECONDS_PER_DAY, UNIX_EPOCH_JULIAN_DATE, SECONDS_PER_DAY};
 
 /// Espenak–Meeus ΔT = TT − UT1, seconds, for a decimal Gregorian year.
 /// Published polynomials: <https://eclipse.gsfc.nasa.gov/SEcat5/deltatpoly.html>.
@@ -86,13 +84,6 @@ pub fn estimate_delta_t(year: f64) -> f64 {
     }
 }
 
-/// Temporary time scales derived at an astronomy boundary, never a stored application timestamp.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct AstronomicalTime {
-    pub utc_jd: f64,
-    pub ut1_jd: f64,
-    pub tt_jd: f64,
-}
 impl AstronomicalTime {
     pub fn from_time_ms(time_ms: i64) -> Self {
         let utc_jd = time_ms_to_utc_jd(time_ms);
@@ -102,15 +93,15 @@ impl AstronomicalTime {
 
 /// Convert the canonical calendar timestamp only where a Julian-date formula is needed.
 pub fn time_ms_to_utc_jd(time_ms: i64) -> f64 {
-    let days = time_ms.div_euclid(crate::time::MILLISECONDS_PER_DAY);
-    let remainder_ms = time_ms.rem_euclid(crate::time::MILLISECONDS_PER_DAY);
-    1_721_059.5 + days as f64 + remainder_ms as f64 / crate::time::MILLISECONDS_PER_DAY as f64
+    let days = time_ms.div_euclid(MILLISECONDS_PER_DAY);
+    let remainder_ms = time_ms.rem_euclid(MILLISECONDS_PER_DAY);
+    1_721_059.5 + days as f64 + remainder_ms as f64 / MILLISECONDS_PER_DAY as f64
 }
 
 /// Import an external UTC/UT Julian date at the application's nearest-millisecond boundary.
 /// Reference formulas that need sub-millisecond precision should keep their original floating-point date.
 pub fn utc_jd_to_time_ms(utc_jd: f64) -> std::io::Result<i64> {
-    let milliseconds = ((utc_jd - 1_721_059.5) * crate::time::MILLISECONDS_PER_DAY as f64).round();
+    let milliseconds = ((utc_jd - 1_721_059.5) * MILLISECONDS_PER_DAY as f64).round();
     let limit = 2.0_f64.powi(63);
     if !milliseconds.is_finite() || milliseconds < -limit || milliseconds >= limit {
         return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Julian date exceeds the simulation timestamp range"));
@@ -131,11 +122,6 @@ pub fn ut1_to_tt(julian_date_ut1: f64) -> f64 {
     });
     julian_date_ut1 + estimate_delta_t(year) / SECONDS_PER_DAY
 }
-
-/// Julian date of the Unix epoch (1970-01-01T00:00:00 UTC).
-const UNIX_EPOCH_JULIAN_DATE: f64 = 2440587.5;
-
-const SECONDS_PER_DAY: f64 = 86400.0;
 
 /// Julian date of a proleptic Gregorian UTC/UT calendar datetime, at whole-second precision.
 pub fn datetime_to_julian_date(datetime: &NaiveDateTime) -> f64 {
@@ -175,21 +161,20 @@ pub fn earth_rotation_angle(julian_date_ut1: f64) -> f64 {
 pub fn greenwich_mean_sidereal_time(julian_date_ut1: f64, julian_date_tt: f64) -> f64 {
     normalize_radians(
         earth_rotation_angle(julian_date_ut1)
-            - super::models::orientation::compute_mean_equation_of_origins(julian_date_tt),
+            - super::compute_mean_equation_of_origins(julian_date_tt),
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    const EPSILON: f64 = 0.0001;
+    use crate::formulas::constants::TIME_TEST_EPSILON as EPSILON;
 
     #[test]
     fn integer_boundary_preserves_calendar_epochs_and_fractional_time_scales() {
         for text in ["-7974-01-01T00:00:00", "-0001-12-31T23:59:59", "0000-01-01T00:00:00", "2000-01-01T12:00:00", "+12026-01-01T00:00:00"] {
             let calendar = parse_utc_datetime(text).unwrap();
-            let timestamp = crate::time::datetime_to_time_ms(&calendar).unwrap();
+            let timestamp = calendar.and_utc().timestamp_millis() + 62_167_219_200_000;
             let original = datetime_to_julian_date(&calendar);
             let dates = AstronomicalTime::from_time_ms(timestamp);
             assert_eq!(dates.utc_jd, original);
@@ -300,9 +285,6 @@ mod tests {
         assert!((changed_ut - 0.00630038748675).abs() < 1e-8);
     }
 
-
-
-
 }
 
 #[cfg(test)]
@@ -335,7 +317,7 @@ mod delta_t_tests {
         }
         assert!(((ut1_to_tt(J2000) - J2000) * 86400.0 - 63.86).abs() < 0.002);
         assert!(
-            ut1_to_tt(crate::astro::COMPUTATIONAL_INTERVAL.end_tt) > crate::astro::COMPUTATIONAL_INTERVAL.end_tt + 3.0
+            ut1_to_tt(crate::formulas::COMPUTATIONAL_INTERVAL.end_tt) > crate::formulas::COMPUTATIONAL_INTERVAL.end_tt + 3.0
         );
     }
 }

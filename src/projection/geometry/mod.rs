@@ -13,7 +13,7 @@ pub use types::{ArcPart, CartesianCamera, Polar, ProjectedArc, ScreenPoint};
 
 use crate::model::{ProjectionKind, View, ViewCenter};
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
-use crate::astro::{Horizontal, horizontal_to_spherical};
+use crate::formulas::{Horizontal, horizontal_to_spherical};
 
 /// Find visible intervals along the shorter great-circle arc between two horizontal positions.
 pub fn find_visible_arc_parts(view: &View, from: Horizontal, to: Horizontal) -> Vec<ArcPart> {
@@ -21,7 +21,7 @@ pub fn find_visible_arc_parts(view: &View, from: Horizontal, to: Horizontal) -> 
 }
 
 /// Intersect exact great-circle windows with the arc; a wide view may produce two visible intervals.
-pub fn find_visible_arc_parts_vectors(view: &View, a: crate::astro::Vector3, b: crate::astro::Vector3) -> Vec<ArcPart> {
+pub fn find_visible_arc_parts_vectors(view: &View, a: crate::formulas::Vector3, b: crate::formulas::Vector3) -> Vec<ArcPart> {
     // the arc as p(t) = a·cos(t) + u·sin(t), t in [0, length]
     let length = a.dot(b).clamp(-1.0, 1.0).acos();
     let tangent = b - a * a.dot(b);

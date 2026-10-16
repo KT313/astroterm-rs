@@ -9,7 +9,8 @@ reading Rust.
    in EXEMPT_DEEP still exceed it; they are listed in the output as pending the owner's decision, not failures.
 3. No function has a `_with_progress` or `_with_times` twin: no function name carries either suffix.
 4. No `super::super::super` paths.
-5. time/ has no imports from other application modules, including in its tests.
+5. time/ and formulas/ have no imports from other application modules, including in their tests.
+6. Formula structs/enums live in types.rs; named constants live in constants.rs.
 
 Test code is not checked for rule 1: files declared with `#[cfg(test)] mod name;`, files named `tests.rs` or
 `*_tests.rs`, and everything after the first line that is exactly `#[cfg(test)]`.
@@ -27,7 +28,7 @@ STEPS = ["simulate_solar_system", "observe", "select_regions", "refresh_regions"
 STEP_HOMES = {"solar_system", "observation", "selection", "regions", "projection", "points", "present"}
 LOOP = SRC / "pipeline.rs"
 # Keep-list loader folders deeper than two levels (plan section 3: "may be moved, not rewritten"); owner decides.
-EXEMPT_DEEP = ["astro/models", "catalog/mast", "catalog/cache", "sky/catalog", "model/catalog/storage", "terminal/transport/graphics"]
+EXEMPT_DEEP = ["catalog/mast", "catalog/cache", "sky/catalog", "model/catalog/storage", "terminal/transport/graphics"]
 
 
 def test_files():
@@ -84,9 +85,16 @@ def main():
                 exemptions.append(f"{relative}: module level {depth}")
             else:
                 failures.append(f"{relative}: module level {depth} exceeds two below src/")
-    for path in (SRC / "time").rglob("*.rs"):
-        if re.search(r"\b(?:crate|astroterm)::(?!time\b)", path.read_text()):
-            failures.append(f"{path.relative_to(ROOT)}: time/ depends on another application module")
+    for module in ("time", "formulas"):
+        for path in (SRC / module).rglob("*.rs"):
+            if re.search(r"\b(?:crate|astroterm)::(?!" + module + r"\b)", path.read_text()):
+                failures.append(f"{path.relative_to(ROOT)}: {module}/ depends on another application module")
+    for path in (SRC / "formulas").rglob("*.rs"):
+        text = path.read_text()
+        if path.name != "types.rs" and re.search(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:struct|enum)\s+", text, re.M):
+            failures.append(f"{path.relative_to(ROOT)}: formula types belong in types.rs")
+        if path.name != "constants.rs" and re.search(r"^\s*(?:pub(?:\([^)]*\))?\s+)?const\s+\w+\s*:", text, re.M):
+            failures.append(f"{path.relative_to(ROOT)}: formula constants belong in constants.rs")
     for item in failures: print(item)
     print(f"{len(files)} files checked, {len(failures)} violations, {len(exemptions)} deep loader files exempt (owner decision): "
           + ", ".join(sorted({str(pathlib.Path(e.split(':')[0]).parent) for e in exemptions})))

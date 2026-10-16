@@ -2,7 +2,7 @@
 //! Definitions live in model/data.rs. Constellation endpoints live in Data.constellation_stars instead.
 use std::io;
 
-use crate::astro::{Vector3, models::stars::StellarMotion};
+use crate::formulas::{Vector3, StellarMotion};
 use crate::catalog::{Catalog, StarId, cache::invalid, passes_brightness_bound};
 use crate::constants::{CELL_COUNT, GRID_DEPTH, QUANTIZATION_MARGIN};
 use crate::model::{Data, StarTable, StarLabels, speed_group};

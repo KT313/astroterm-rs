@@ -39,10 +39,10 @@ pub fn catalog_fingerprint() -> [u8; 32] {
     let mut hash = Sha256::new();
     hash.update(b"astroterm catalog v9; derived-gaia-labels=1; zstd-chunks=1; label-offsets=u64; vector columns; little-endian u64 indices; validation=1; HR=1; override=1; motion=1; quantization=1; cube-Morton=3; exclusive-constellation-region=1");
     for value in [
-        crate::astro::COMPUTATIONAL_INTERVAL.start_tt,
-        crate::astro::COMPUTATIONAL_INTERVAL.end_tt,
-        crate::astro::JULIAN_YEAR_DAYS,
-        crate::constants::SINGULAR_RATIO,
+        crate::formulas::COMPUTATIONAL_INTERVAL.start_tt,
+        crate::formulas::COMPUTATIONAL_INTERVAL.end_tt,
+        crate::formulas::JULIAN_YEAR_DAYS,
+        crate::formulas::SINGULAR_RATIO,
         crate::constants::STELLAR_DRIFT_MARGIN,
         crate::constants::QUANTIZATION_MARGIN,
         crate::constants::MAX_DIRECTION_ERROR,
@@ -58,8 +58,11 @@ pub fn catalog_fingerprint() -> [u8; 32] {
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/catalog/bsc5.rs")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/catalog/tables.rs")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/catalog/cache/array.rs")).as_slice(),
-        include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/astro/mod.rs")).as_slice(),
-        include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/astro/coords.rs")).as_slice(),
+        include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/formulas/types.rs")).as_slice(),
+        include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/formulas/math.rs")).as_slice(),
+        include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/formulas/constants.rs")).as_slice(),
+        include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/formulas/time_scales.rs")).as_slice(),
+        include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/formulas/observation/apparent_position.rs")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/catalog/mod.rs")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/catalog/names.rs")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/catalog/designation.rs")).as_slice(),
@@ -85,7 +88,7 @@ pub fn catalog_fingerprint() -> [u8; 32] {
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/sky/catalog/stars/mod.rs")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/sky/catalog/stars/color.rs")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/model/catalog/star_color.rs")).as_slice(),
-        include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/astro/models/stars.rs")).as_slice(),
+        include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/formulas/regions/stars.rs")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/data/bsc5")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/data/bsc5_names.txt")).as_slice(),
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/data/bsc5_constellations.txt")).as_slice(),
@@ -592,7 +595,7 @@ mod tests {
 
     #[test]
     fn precision_exceptions_are_rejected_while_supported_labels_survive_cached_loading() {
-        use crate::astro::{Equatorial, Vector3};
+        use crate::formulas::{Equatorial, Vector3};
         use crate::catalog::{CatalogStar, Designation, SpaceMotion, StarId};
         let mut input = load_embedded_catalog(&mut crate::progress::Report::quiet()).unwrap();
         input.stars.clear();

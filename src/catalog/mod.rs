@@ -1,4 +1,4 @@
-//! Star, constellation, city and orbit data embedded into the binary at compile time, and star datasets loaded from
+//! Star, constellation and city data embedded into the binary at compile time, and star datasets loaded from
 //! files (AT-HYG or Gaia DR3) instead of the embedded star catalog.
 
 mod athyg;
@@ -13,7 +13,6 @@ pub mod datasets;
 mod designation;
 mod names;
 mod magnitude;
-mod orbits;
 mod space_motion;
 mod tables;
 
@@ -27,10 +26,6 @@ pub use designation::Designation;
 pub use names::{NameId, StarNames};
 pub use magnitude::{decode_magnitude, encode_magnitude, magnitude_code, validate_magnitude, encode_brightness_bound, passes_brightness_bound, MagnitudeClipping, MIN_MAGNITUDE, MAX_MAGNITUDE, MAGNITUDE_CLIPPING_WARNING};
 pub(crate) use names::LabelBuilder;
-pub use orbits::{
-    EARTH_ORBIT, JUPITER_ORBIT, MARS_ORBIT, MERCURY_ORBIT, MOON_ORBIT, NEPTUNE_ORBIT, SATURN_ORBIT, URANUS_ORBIT,
-    VENUS_ORBIT,
-};
 pub use space_motion::SpaceMotion;
 pub use tables::{ConstellationFigure, parse_constellation_figures, parse_star_names};
 

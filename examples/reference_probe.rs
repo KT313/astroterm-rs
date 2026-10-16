@@ -1,11 +1,11 @@
 //! Machine-readable current-model output for scripts/reference/generate.py; not an independent reference. Data
 //! and stars go through the frame loop's steps 1 and 2 and the stellar motion model, airless.
 
-use astroterm::astro::{
-    Horizontal, Observer, Vector3, compute_moon_age, compute_moon_geocentric, compute_planet_heliocentric,
-    compute_precession_matrix, models::{BodyId, stars::years_since_j2000},
+use astroterm::formulas::{
+    Horizontal, Observer, Vector3,
+    compute_precession_matrix, BodyId, years_since_j2000,
 };
-use astroterm::catalog::{EARTH_ORBIT, MOON_ORBIT, load_embedded_catalog};
+use astroterm::catalog::load_embedded_catalog;
 use astroterm::model::{Data, View};
 use astroterm::observation::observe;
 use astroterm::solar_system::simulate_solar_system;
@@ -22,12 +22,12 @@ fn main() {
         println!("position,{date:.12},{name},{:.16},{:.16}", position.azimuth, position.altitude);
     };
     for date in [2451545.0, 2459146.0, 2460736.9583333335] {
-        let time = astroterm::astro::utc_jd_to_time_ms(date).unwrap();
-        let system = simulate_solar_system(&bodies, time, &mut astroterm::time::StepTimes::default());
+        let time = astroterm::formulas::utc_jd_to_time_ms(date).unwrap();
+        let system = simulate_solar_system(&bodies.solar_system_sun, &bodies.solar_system_planets, &bodies.solar_system_moons, time, &mut astroterm::time::StepTimes::default());
         let observation = observe(&observer, false, &View::default(), time, &mut astroterm::time::StepTimes::default());
         for name in ["Vega", "Arcturus"] {
             let star = catalog.stars.iter().find(|star| catalog.star_name(star) == Some(name)).unwrap();
-            let sample = star.motion.evaluate(years_since_j2000(astroterm::astro::AstronomicalTime::from_time_ms(time).tt_jd), star.magnitude);
+            let sample = star.motion.evaluate(years_since_j2000(astroterm::formulas::AstronomicalTime::from_time_ms(time).tt_jd), star.magnitude);
             print(date, name, observation.apparent_star_direction(sample.direction));
         }
         for (planet, &position) in bodies.solar_system_planets.planets.iter().zip(&system.planets) {
@@ -35,11 +35,8 @@ fn main() {
             print(date, planet.name, observation.apparent_direction(position));
         }
         print(date, "Moon", observation.apparent_direction(system.moon_position(0, observation.observer.position)));
-        let moon = compute_moon_geocentric(&MOON_ORBIT, date);
-        let sun = -compute_planet_heliocentric(&EARTH_ORBIT, date);
-        let old_age = compute_moon_age(moon, sun);
-        let same_frame_age = compute_moon_age(moon, compute_precession_matrix(date).apply(sun));
-        println!("phase,{date:.12},{old_age:.16},{same_frame_age:.16}");
+        let illumination = system.moon_illumination(0);
+        println!("illumination,{date:.12},{:.16},{:.16},{}", illumination.illuminated_fraction, illumination.phase_angle, illumination.waxing);
     }
     for year in [5026.0, 7026.0, 9026.0, 12026.0, 15026.0] {
         let matrix = compute_precession_matrix(2451545.0 + (year - 2000.0) * 365.25);

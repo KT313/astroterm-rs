@@ -22,7 +22,7 @@ use super::{
     Catalog, CatalogError, CatalogStar, Designation, StarId, StarNames, load_constellation_figures,
     load_embedded_catalog,
 };
-use crate::astro::{Equatorial, Vector3};
+use crate::formulas::{Equatorial, Vector3};
 
 /// First bytes of a gzip file.
 const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
@@ -248,7 +248,7 @@ fn parse_star(
         return Err(CatalogError::MalformedDatasetRow { line, column: "pmra" });
     }
     if let Some(space) = space_motion {
-        let (start, end) = crate::astro::models::stars::computational_years();
+        let (start, end) = crate::formulas::computational_years();
         let span = start.abs().max(end.abs());
         if ![space.velocity.x, space.velocity.y, space.velocity.z]
             .into_iter()
@@ -553,10 +553,10 @@ mod tests {
         .to_unit_vector();
         assert_eq!(prepared.motion.u0, expected);
         assert_eq!(prepared.motion.distance_pc, Some(1.8282));
-        let (start, end) = crate::astro::models::stars::computational_years();
+        let (start, end) = crate::formulas::computational_years();
         let (closest, ratio) = prepared.motion.closest_approach(start, end);
         assert!(closest > 0.0 && closest < end && ratio < 1.0);
-        assert!(prepared.motion.evaluate(closest, prepared.magnitude).magnitude_value() < prepared.magnitude - 0.5);
+        assert!(prepared.motion.evaluate(closest, prepared.magnitude).magnitude < prepared.magnitude - 0.5);
     }
 
     /// A few rows in the AT-HYG v4 layout (shortened to the columns used plus a few others).

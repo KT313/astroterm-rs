@@ -34,7 +34,7 @@ impl Data {
 mod tests {
     use super::*;
     use super::super::stars::fixtures::{layout, region_center, row};
-    use crate::astro::Vector3;
+    use crate::formulas::Vector3;
     use crate::constants::GRID_DEPTH;
     use crate::model::{Constellation, StarRowVec, StarTable, StarLabels, hash_direction};
 

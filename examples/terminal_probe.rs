@@ -20,13 +20,26 @@ fn main() {
             let mut display = Display::open(Some(ratatui_image::picker::ProtocolType::Kitty), config.terminal, config.text_scale).unwrap();
             let mut frame = display.new_frame();
             let time = config.simulation.start_time_ms;
-            let solar_system = simulate_solar_system(&tables, time, &mut astroterm::time::StepTimes::default());
+            let solar_system = simulate_solar_system(&tables.solar_system_sun, &tables.solar_system_planets, &tables.solar_system_moons, time, &mut astroterm::time::StepTimes::default());
             let observation = observe(&config.simulation.observer, config.simulation.refraction, &config.view, time, &mut astroterm::time::StepTimes::default());
-            let selected = select_regions(&tables.star_regions, &observation, &mut astroterm::time::StepTimes::default());
-            refresh_regions(&mut tables, &selected, time, &config.view, &config.render, &mut astroterm::time::StepTimes::default());
-            let projected_stars = project_stars_to_screen(frame.drawing_area_width_and_height, &tables, &selected, &observation, &config.view, &mut astroterm::time::StepTimes::default());
+            let selected = select_regions(&tables.star_regions, &observation.patch, observation.time_ms, &mut astroterm::time::StepTimes::default());
+            refresh_regions(
+                &mut tables.star_regions, &tables.constellation_stars,
+                &mut tables.constellation_simulation, &mut tables.constellation_last_update_ms,
+                &mut tables.star_opacities, &mut tables.tile_bytes,
+                &selected.regions, time, config.view.fov_degrees, config.render.magnitude_threshold,
+                &mut astroterm::time::StepTimes::default(),
+            );
+            let projected_stars = project_stars_to_screen(frame.drawing_area_width_and_height, &tables.star_regions, &selected.regions, &observation, &config.view, &mut astroterm::time::StepTimes::default());
             frame.insert_projected_stars(&projected_stars);
-            let drawn = draw_points(&mut frame, &solar_system, &tables, &selected, None, &observation, &config.view, &config.render, &mut astroterm::time::StepTimes::default());
+            let drawn = draw_points(
+                &mut frame, &solar_system,
+                &tables.solar_system_sun, &tables.solar_system_planets, &tables.solar_system_moons,
+                &tables.constellation_stars, &tables.constellation_simulation, &tables.constellation_figures,
+                &tables.star_regions, &tables.names, &tables.star_opacities, &tables.clipping,
+                &selected.regions, None,
+                &observation, &config.view, &config.render, &mut astroterm::time::StepTimes::default(),
+            );
             draw_panel_and_notices(&mut frame, &[], &drawn.notices);
             present(&frame, display.terminal(), &mut astroterm::time::StepTimes::default()).unwrap();
             crossterm::execute!(std::io::stdout(), crossterm::terminal::BeginSynchronizedUpdate).unwrap();

@@ -6,7 +6,7 @@ Bottom-up. Every module exposes its symbols from its root `mod.rs`; callers use 
 |---|---|
 | `constants.rs` | tunable defaults, hold times, resource limits |
 | `pixel_debug.rs` | optional channel checks and accumulated-light report (`pixel-debug` feature only) |
-| `astro/` | time scales, coordinates, Earth orientation, VSOP87 planets, Moon, stellar motion, refraction, accuracy intervals |
+| `formulas/` | self-contained physical calculations: Sun/planets, moons, stars, light time, observer state, orientation, apparent directions, time scales; shared types in `types.rs`, no dependencies on other `src/` modules |
 | `catalog/` | BSC5, AT-HYG and Gaia parsers, MAST downloads and blob store, names and designations, magnitude coding, the prepared-catalog codec |
 | `rows/` | the column-table macros the catalog and timing records use |
 | `progress/` | the startup progress trait and `Report`, the one value that carries progress and timings through the loaders |
@@ -36,3 +36,26 @@ Star projection takes only the square drawing area's side length and returns row
 pixels. The frame loop inserts that square using `Frame.drawing_area_x_offset` and `drawing_area_y_offset`;
 `drawing_area_width_and_height` stores its side length. Points and text overlays still use the full frame,
 so sky labels can extend into the margins. Projection backends never receive the full frame or its offsets.
+
+Physical formulas accept numeric values and the types defined in `formulas/types.rs`; they do not know about
+catalogs, cached samples, timers or drawing buffers. Time conversion functions are exported from `formulas`
+and called at the astronomy boundary. Stellar formulas return an unencoded `f64` magnitude; the caller encodes
+it as `u16` when storing a simulation sample. Row-formatting implementations live in `rows/formula_types.rs`,
+and calendar/compass display notation lives in `metadata/notation.rs`. Projection and pixel blending remain
+outside `formulas`. `scripts/checks/foundation_imports.py` enforces the independent-module import rule.
+
+Within `formulas/`, all structs and enums are declared in `types.rs`, and all named constants (including
+coefficient tables and associated constants) are declared in `constants.rs`. Implementations and tests stay
+with their calculation family. The generated inverse-refraction lookup remains beside its calculation;
+it is a lazily computed table, not a constant coefficient array. The structural checker enforces declaration ownership.
+
+Formula families are grouped by the frame step that owns their processing:
+
+- `formulas/solar_system/`: planets, moons and light-time corrections.
+- `formulas/observation/`: observer state, precession/nutation/orientation, and apparent-position corrections.
+- `formulas/regions/`: stellar motion and magnitude calculations.
+
+Shared `types.rs`, `constants.rs`, `math.rs`, `time_scales.rs` and `accuracy.rs` remain at the formula root.
+All callers still import symbols through `crate::formulas`; shared calculations have one implementation even
+when multiple steps use them. Selection, projection, drawing and presentation do not own separate physical
+simulation models, so they have no empty formula directories.

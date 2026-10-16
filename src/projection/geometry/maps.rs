@@ -4,7 +4,7 @@
 
 use std::f64::consts::{FRAC_PI_2, PI};
 
-use crate::astro::Horizontal;
+use crate::formulas::Horizontal;
 use super::types::Polar;
 
 
@@ -60,7 +60,7 @@ fn compute_azimuthal_terms(position: Horizontal, center: Horizontal) -> (f64, f6
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::astro::{Equatorial, Observer, equatorial_to_horizontal, horizontal_to_spherical};
+    use crate::formulas::{Equatorial, Observer, equatorial_to_horizontal, horizontal_to_spherical};
 
     const TO_RAD: f64 = PI / 180.0;
 

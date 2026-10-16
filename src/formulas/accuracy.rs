@@ -16,21 +16,12 @@
 //! | Precession | Rotation vs. ERFA long-term model | 0.01″ | 0.01″ | 0.01″ |
 //! | Refraction | Lift vs. the chosen Saemundsson formula | Formula agreement | Formula agreement | Formula agreement |
 //!
-//! Ranges below are conservative empirical coverage from the phase-6 DE441/ERFA/Horizons audit, not rigorous
+//! Ranges in constants.rs are conservative empirical coverage from the phase-6 DE441/ERFA/Horizons audit, not rigorous
 //! guarantees between reference samples. See scripts/reference/README.md and the checked-in accuracy fixtures.
 //! Near-band Neptune failures and far-band planetary failures intentionally prevent a full planetary range.
 
-use super::J2000;
-
-/// Catalog proper motions use Julian years, regardless of the input calendar.
-pub const JULIAN_YEAR_DAYS: f64 = 365.25;
-
-/// A half-open interval of TT Julian dates.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct JulianDateInterval {
-    pub start_tt: f64,
-    pub end_tt: f64,
-}
+use super::{J2000, JULIAN_YEAR_DAYS, JulianDateInterval, ObjectClass, COMPUTATIONAL_INTERVAL,
+    STAR_VALIDATED_INTERVAL, PLANET_VALIDATED_INTERVAL, MOON_VALIDATED_INTERVAL};
 
 impl JulianDateInterval {
     /// Whether a finite TT date is inside this interval.
@@ -38,37 +29,6 @@ impl JulianDateInterval {
         julian_date_tt >= self.start_tt && julian_date_tt < self.end_tt
     }
 }
-
-/// Shared future indexing domain: -7974-01-01 inclusive to +12027-01-01 exclusive, Gregorian TT.
-/// Consumers: stellar brightness/motion bounds, grid queries, persistent-cache fingerprints and coverage tests.
-pub const COMPUTATIONAL_INTERVAL: JulianDateInterval = JulianDateInterval {
-    start_tt: -1191383.5,
-    end_tt: 6113831.5,
-};
-
-/// Accuracy categories, independent of the theory used to compute them.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ObjectClass {
-    Stars,
-    SunAndPlanets,
-    Moon,
-}
-
-/// Empirical phase-6 DE441/ERFA coverage; see scripts/reference/README.md. Consumed by the global warning.
-pub const STAR_VALIDATED_INTERVAL: Option<JulianDateInterval> = Some(COMPUTATIONAL_INTERVAL);
-/// See [`STAR_VALIDATED_INTERVAL`].
-pub const PLANET_VALIDATED_INTERVAL: Option<JulianDateInterval> = Some(JulianDateInterval {
-    start_tt: 2396758.5, // 1850-01-01 Gregorian TT
-    end_tt: 2462502.5,   // 2030-01-01 Gregorian TT
-});
-/// See [`STAR_VALIDATED_INTERVAL`].
-pub const MOON_VALIDATED_INTERVAL: Option<JulianDateInterval> = Some(JulianDateInterval {
-    start_tt: 1721059.5, // 0000-01-01 Gregorian TT
-    end_tt: 3182029.5,   // 4000-01-01 Gregorian TT
-});
-
-/// Rotation target against the independently implemented ERFA long-term precession model, arcseconds.
-pub const PRECESSION_TARGET_ARCSECONDS: f64 = 0.01;
 
 /// Desired angular error in arcseconds, or `None` where no accuracy target has been assigned.
 pub fn accuracy_target_arcseconds(class: ObjectClass, julian_date_tt: f64) -> Option<f64> {
@@ -109,13 +69,10 @@ pub fn needs_accuracy_warning(tt: f64) -> bool {
         .any(|range| range.is_none_or(|range| !range.contains(tt)))
 }
 
-/// Displayed by all renderers when any drawn class lacks measured coverage.
-pub const ACCURACY_WARNING: &str = "Some positions are outside their validated accuracy range.";
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::astro::{datetime_to_julian_date, parse_utc_datetime};
+    use crate::formulas::{datetime_to_julian_date, parse_utc_datetime};
 
     #[test]
     fn indexing_endpoints_match_the_declared_calendar() {

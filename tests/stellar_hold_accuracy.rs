@@ -1,6 +1,6 @@
 //! Opt-in, offline comparison of held directions with fresh evaluations of the same stellar motion model.
 //! These audits may fail under the current fixed holds. They never change TTLs, download data or write caches.
-use astroterm::astro::{COMPUTATIONAL_INTERVAL, J2000, JULIAN_YEAR_DAYS, Vector3, models::stars::{StellarMotion, years_since_j2000}};
+use astroterm::formulas::{COMPUTATIONAL_INTERVAL, J2000, JULIAN_YEAR_DAYS, Vector3, StellarMotion, years_since_j2000};
 use astroterm::catalog::{decode_magnitude, encode_brightness_bound, magnitude_code};
 use astroterm::constants::{HELD_DIRECTION_ERROR, SPEED_GROUP_COUNT};
 use astroterm::model::{StarTable, StarLabels, Data, StarRow, StarRowVec, speed_group, get_ttl_of_speed_group_ms};
@@ -88,10 +88,10 @@ fn sample_epochs(motion: StellarMotion, hold_days: f64) -> Vec<f64> {
 /// Exercise forward and backward reuse, the exact floating-point hold edge, and its immediate neighbours.
 fn canonical_epoch(tt_jd: f64) -> i64 {
     let mut utc_jd = tt_jd;
-    for _ in 0..5 { utc_jd -= astroterm::astro::ut1_to_tt(utc_jd) - tt_jd; }
-    astroterm::astro::utc_jd_to_time_ms(utc_jd).unwrap()
+    for _ in 0..5 { utc_jd -= astroterm::formulas::ut1_to_tt(utc_jd) - tt_jd; }
+    astroterm::formulas::utc_jd_to_time_ms(utc_jd).unwrap()
 }
-fn derived_tt(time_ms: i64) -> f64 { astroterm::astro::AstronomicalTime::from_time_ms(time_ms).tt_jd }
+fn derived_tt(time_ms: i64) -> f64 { astroterm::formulas::AstronomicalTime::from_time_ms(time_ms).tt_jd }
 
 fn audit_star(table: &StarTable, row: usize, region: Option<usize>, hold_ms: i64, report: &mut GroupReport) {
     let table = copy_row(table, row);

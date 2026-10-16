@@ -1,6 +1,6 @@
 //! The seven steps of the frame loop run headlessly, end to end, on the embedded catalog: the smoke checks the test
 //! inventory assigned to chunk 13 (every view and size renders, dynamic names in a zoomed view, Polaris lit).
-use astroterm::astro::Observer;
+use astroterm::formulas::Observer;
 use astroterm::catalog::load_embedded_catalog;
 use astroterm::model::{ProjectionKind, RenderOptions, Data, View, ViewCenter};
 use astroterm::observation::{Observation, observe};
@@ -30,14 +30,27 @@ fn settings() -> RenderOptions {
 
 /// One frame through steps 1 to 6 into `frame`; returns the observation and what step 6 drew.
 fn run_frame(data: &mut Data, frame: &mut Frame, view: &View, settings: &RenderOptions) -> (Observation, Drawn) {
-    let time = astroterm::astro::utc_jd_to_time_ms(UTC_2025_03_01_11H).unwrap();
-    let solar_system = simulate_solar_system(data, time, &mut astroterm::time::StepTimes::default());                                  // 1
+    let time = astroterm::formulas::utc_jd_to_time_ms(UTC_2025_03_01_11H).unwrap();
+    let solar_system = simulate_solar_system(&data.solar_system_sun, &data.solar_system_planets, &data.solar_system_moons, time, &mut astroterm::time::StepTimes::default());                                  // 1
     let observation = observe(&TOKYO, true, view, time, &mut astroterm::time::StepTimes::default());                                              // 2
-    let selected = select_regions(&data.star_regions, &observation, &mut astroterm::time::StepTimes::default());                                       // 3
-    refresh_regions(data, &selected, time, view, settings, &mut astroterm::time::StepTimes::default());                                       // 4
-    let projected_stars = project_stars_to_screen(frame.drawing_area_width_and_height, data, &selected, &observation, view, &mut astroterm::time::StepTimes::default());                            // 5
+    let selected = select_regions(&data.star_regions, &observation.patch, observation.time_ms, &mut astroterm::time::StepTimes::default());                                       // 3
+    refresh_regions(
+        &mut data.star_regions, &data.constellation_stars,
+        &mut data.constellation_simulation, &mut data.constellation_last_update_ms,
+        &mut data.star_opacities, &mut data.tile_bytes,
+        &selected.regions, time, view.fov_degrees, settings.magnitude_threshold,
+        &mut astroterm::time::StepTimes::default(),
+    );                                       // 4
+    let projected_stars = project_stars_to_screen(frame.drawing_area_width_and_height, &data.star_regions, &selected.regions, &observation, view, &mut astroterm::time::StepTimes::default());                            // 5
     frame.insert_projected_stars(&projected_stars);
-    let drawn = draw_points(frame, &solar_system, data, &selected, None, &observation, view, settings, &mut astroterm::time::StepTimes::default());                            // 6
+    let drawn = draw_points(
+        frame, &solar_system,
+        &data.solar_system_sun, &data.solar_system_planets, &data.solar_system_moons,
+        &data.constellation_stars, &data.constellation_simulation, &data.constellation_figures,
+        &data.star_regions, &data.names, &data.star_opacities, &data.clipping,
+        &selected.regions, None,
+        &observation, view, settings, &mut astroterm::time::StepTimes::default(),
+    );                            // 6
     draw_panel_and_notices(frame, &[], &drawn.notices);
     (observation, drawn)
 }

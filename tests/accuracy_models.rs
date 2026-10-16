@@ -2,9 +2,9 @@
 //! empirical coverage is deliberately narrower than the computational/indexing interval. The body and star
 //! positions come from the frame loop's steps 1 and 2 (`simulate_solar_system`, `observe`); the reference
 //! values and tolerances are unchanged since the old spine.
-use astroterm::astro::{
+use astroterm::formulas::{
     self, Horizontal, Observer, Vector3,
-    models::{BodyId, orientation::*, stars::years_since_j2000},
+    BodyId, *, years_since_j2000,
 };
 use astroterm::catalog::load_embedded_catalog;
 use astroterm::model::{Data, PreparedCatalog, View};
@@ -27,14 +27,14 @@ fn angle(a: Vector3, b: Vector3) -> f64 {
 struct Sky { bodies: Data, system: SolarSystem, observation: Observation, catalog: PreparedCatalog, tt_jd: f64 }
 
 fn observe(tt: f64, ut1: f64) -> Sky {
-    let dates = astro::AstronomicalTime { utc_jd: ut1, ut1_jd: ut1, tt_jd: tt };
-    let time_ms = astro::utc_jd_to_time_ms(ut1).unwrap();
+    let dates = formulas::AstronomicalTime { utc_jd: ut1, ut1_jd: ut1, tt_jd: tt };
+    let time_ms = formulas::utc_jd_to_time_ms(ut1).unwrap();
     let site = Observer {
         latitude: 42.3601_f64.to_radians(),
         longitude: -71.0589_f64.to_radians(),
     };
     let bodies = Data::default();
-    let system = astroterm::solar_system::calculate_solar_system_at_tt(&bodies, time_ms, tt, &mut astroterm::time::StepTimes::default());
+    let system = astroterm::solar_system::calculate_solar_system_at_tt(&bodies.solar_system_sun, &bodies.solar_system_planets, &bodies.solar_system_moons, time_ms, tt, &mut astroterm::time::StepTimes::default());
     let observation = astroterm::observation::calculate_observation_at_dates(&site, false, &View::default(), time_ms, &dates, &mut astroterm::time::StepTimes::default());
     let catalog = astroterm::sky::prepare_owned_catalog(load_embedded_catalog(&mut astroterm::progress::Report::quiet()).unwrap(), &mut astroterm::progress::Report::quiet()).unwrap();
     Sky { bodies, system, observation, catalog, tt_jd: tt }
@@ -70,7 +70,7 @@ fn precession_and_nutation_match_erfa_across_past_and_future() {
                 y: p.0[i][1],
                 z: p.0[i][2],
             };
-            assert!(angle(actual, vector(&row["precession"][i])) < astro::PRECESSION_TARGET_ARCSECONDS);
+            assert!(angle(actual, vector(&row["precession"][i])) < formulas::PRECESSION_TARGET_ARCSECONDS);
         }
         let (psi, eps) = compute_nutation(tt);
         assert!((psi - row["nutation"][0].as_f64().unwrap()).abs() < 1e-12);
@@ -79,7 +79,7 @@ fn precession_and_nutation_match_erfa_across_past_and_future() {
     // Original long-term audit also includes the explicitly unsupported year 15026.
     let original: Value = serde_json::from_str(include_str!("fixtures/reference/references.json")).unwrap();
     for row in original["precession"].as_array().unwrap() {
-        let tt = astro::J2000 + (row["julian_epoch_tt"].as_f64().unwrap() - 2000.0) * 365.25;
+        let tt = formulas::J2000 + (row["julian_epoch_tt"].as_f64().unwrap() - 2000.0) * 365.25;
         let p = compute_precession_matrix(tt).matrix();
         for i in 0..3 {
             assert!(
@@ -138,7 +138,7 @@ fn horizons_body_centers_match_with_explicit_ut1_and_tt() {
 fn observed_frames_match_de441_in_the_claimed_intervals_and_record_far_failures() {
     let fixtures: Value = serde_json::from_str(include_str!("fixtures/reference/accuracy.json")).unwrap();
     for year in [-7974.0, -2000.0, 0.0, 1900.0, 2026.0, 4026.0, 8026.0, 12026.0] {
-        let epoch = astro::J2000 + (year - 2000.0) * 365.25;
+        let epoch = formulas::J2000 + (year - 2000.0) * 365.25;
         let row = fixtures["rows"]
             .as_array()
             .unwrap()
@@ -151,12 +151,12 @@ fn observed_frames_match_de441_in_the_claimed_intervals_and_record_far_failures(
             let name = object[0].as_str().unwrap();
             let error = angle(body(&sky, name), vector(&object[1]));
             let (range, class) = if name == "Moon" {
-                (astro::MOON_VALIDATED_INTERVAL, astro::ObjectClass::Moon)
+                (formulas::MOON_VALIDATED_INTERVAL, formulas::ObjectClass::Moon)
             } else {
-                (astro::PLANET_VALIDATED_INTERVAL, astro::ObjectClass::SunAndPlanets)
+                (formulas::PLANET_VALIDATED_INTERVAL, formulas::ObjectClass::SunAndPlanets)
             };
             if range.unwrap().contains(tt) {
-                let target = astro::accuracy_target_arcseconds(class, tt).unwrap();
+                let target = formulas::accuracy_target_arcseconds(class, tt).unwrap();
                 assert!(error < target, "{year} {name}: {error} >= {target}");
             } else {
                 assert!(error.is_finite());
@@ -171,14 +171,14 @@ fn observed_frames_match_de441_in_the_claimed_intervals_and_record_far_failures(
 #[test]
 fn barycentric_sun_moves_and_earth_is_not_the_earth_moon_barycenter() {
     let fixtures: Value = serde_json::from_str(include_str!("fixtures/reference/accuracy.json")).unwrap();
-    let tt = astro::J2000 + (2026.0 - 2000.0) * 365.25;
+    let tt = formulas::J2000 + (2026.0 - 2000.0) * 365.25;
     let row = fixtures["rows"]
         .as_array()
         .unwrap()
         .iter()
         .find(|r| r["tt"].as_f64() == Some(tt))
         .unwrap();
-    let states = astro::models::planets::evaluate_planets(tt);
+    let states = formulas::evaluate_planets(tt);
     assert!(states[BodyId::Sun as usize].position.length() > 0.001);
     let error = ((states[BodyId::Earth as usize].position - states[BodyId::Sun as usize].position)
         - (vector(&row["states"][3]) - vector(&row["states"][0])))
@@ -193,7 +193,7 @@ fn apparent_sidereal_rotation_matches_erfa_near_today() {
         let tt = row["tt"].as_f64().unwrap();
         let ut1 = row["ut1"].as_f64().unwrap();
         let eo = compute_mean_equation_of_origins(tt) - compute_nutation(tt).0 * compute_obliquity(tt).cos();
-        let gast = astro::earth_rotation_angle(ut1) - eo;
+        let gast = formulas::earth_rotation_angle(ut1) - eo;
         let difference = (gast - row["gast"].as_f64().unwrap()).sin().asin().abs().to_degrees() * 3600.0;
         assert!(difference < 0.01, "GAST error {difference}");
         let actual = compute_slow_orientation(tt);
@@ -214,21 +214,21 @@ fn apparent_sidereal_rotation_matches_erfa_near_today() {
 
 #[test]
 fn measured_range_endpoints_use_the_documented_gregorian_tt_dates() {
-    let jd = |s: &str| astro::datetime_to_julian_date(&astro::parse_utc_datetime(s).unwrap());
+    let jd = |s: &str| formulas::datetime_to_julian_date(&formulas::parse_utc_datetime(s).unwrap());
     assert_eq!(
-        astro::PLANET_VALIDATED_INTERVAL.unwrap().start_tt,
+        formulas::PLANET_VALIDATED_INTERVAL.unwrap().start_tt,
         jd("1850-01-01T00:00:00")
     );
     assert_eq!(
-        astro::PLANET_VALIDATED_INTERVAL.unwrap().end_tt,
+        formulas::PLANET_VALIDATED_INTERVAL.unwrap().end_tt,
         jd("2030-01-01T00:00:00")
     );
     assert_eq!(
-        astro::MOON_VALIDATED_INTERVAL.unwrap().start_tt,
+        formulas::MOON_VALIDATED_INTERVAL.unwrap().start_tt,
         jd("0000-01-01T00:00:00")
     );
     assert_eq!(
-        astro::MOON_VALIDATED_INTERVAL.unwrap().end_tt,
+        formulas::MOON_VALIDATED_INTERVAL.unwrap().end_tt,
         jd("4000-01-01T00:00:00")
     );
 }

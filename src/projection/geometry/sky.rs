@@ -2,7 +2,7 @@
 //! simulation evaluation or astronomical corrections occur here; step 6 consumes these primitives.
 use super::types::{CartesianCamera, Polar, ProjectedArc, ScreenPoint};
 use crate::model::{Cell, ProjectionViewport as Viewport, ProjectionViewport, View, ViewCenter};
-use crate::astro::{Horizontal, Vector3, offset_vector_towards};
+use crate::formulas::{Horizontal, Vector3, offset_vector_towards};
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 const EDGE_TOLERANCE: f64 = 1e-6;

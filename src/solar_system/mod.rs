@@ -7,9 +7,12 @@
 //! (`dev/pipeline-restructuring-results/7/steps-1-2.md`). Light time is iterated against the geocentre; `moon_position` moves a
 //! moon by the few milliseconds the observer's site changes its light time, which matters only for the Moon.
 use crate::time::StepTimes;
-use crate::astro::models::orientation::j2000_ecliptic_north;
-use crate::astro::models::{BodyId, BodyState, moons::evaluate_moon, planets::{compute_barycentric_position, evaluate_planet}};
-use crate::astro::{AstronomicalTime, LIGHT_SPEED_AU_DAY, MoonIllumination, Vector3, compute_moon_illumination};
+use crate::formulas::{BodyId, BodyState, evaluate_planet, compute_emission_position, compute_emission_velocity, correct_moon_light_time};
+#[cfg(test)]
+use crate::formulas::compute_barycentric_position;
+use crate::formulas::{AstronomicalTime, MoonIllumination, Vector3, compute_geocentric_moon_illumination};
+use crate::model::{SunTable, PlanetsTable, MoonsTable};
+#[cfg(test)]
 use crate::model::Data;
 
 /// The solar system as its light arrives at the Earth at one simulated time.
@@ -23,31 +26,31 @@ pub struct SolarSystem {
 }
 
 /// Evaluate every body of the tables for light arriving at the geocentre at `time`.
-pub fn simulate_solar_system(data: &Data, time_ms: i64, times: &mut StepTimes) -> SolarSystem {
+pub fn simulate_solar_system(sun_table: &SunTable, planets_table: &PlanetsTable, moons_table: &MoonsTable, time_ms: i64, times: &mut StepTimes) -> SolarSystem {
     let astronomical_time = AstronomicalTime::from_time_ms(time_ms);
-    calculate_solar_system_at_tt(data, time_ms, astronomical_time.tt_jd, times)
+    calculate_solar_system_at_tt(sun_table, planets_table, moons_table, time_ms, astronomical_time.tt_jd, times)
 }
 
 /// Numerical ephemeris boundary: retain fractional TT for light-time calculations and independent references.
 /// The result's application timestamp remains the supplied integer millisecond stamp.
-pub fn calculate_solar_system_at_tt(data: &Data, time_ms: i64, tt_jd: f64, times: &mut StepTimes) -> SolarSystem {
+pub fn calculate_solar_system_at_tt(sun_table: &SunTable, planets_table: &PlanetsTable, moons_table: &MoonsTable, time_ms: i64, tt_jd: f64, times: &mut StepTimes) -> SolarSystem {
     // Evaluate Earth's state at reception before calculating when each body's light was emitted.
     times.measure("Solar system.Earth state");
     let earth = evaluate_planet(BodyId::Earth, tt_jd);
-    let emitted = |id: BodyId| emission_position(id, tt_jd, earth.position);
+    let emitted = |id: BodyId| compute_emission_position(id, tt_jd, earth.position);
 
     // Calculate the Sun, moons and planets in separate measured intervals.
     times.measure("Solar system.Sun light time");
-    let sun = emitted(data.solar_system_sun.sun.id);
+    let sun = emitted(sun_table.sun.id);
 
     times.measure("Solar system.Moon light time");
-    let moons = data.solar_system_moons.moons.iter().map(|moon| {
+    let moons = moons_table.moons.iter().map(|moon| {
         let position = emitted(moon.id);
-        BodyState { position, velocity: velocity_at(moon.id, tt_jd, position, earth.position) }
+        BodyState { position, velocity: compute_emission_velocity(moon.id, tt_jd, position, earth.position) }
     }).collect();
 
     times.measure("Solar system.Planet light time");
-    let planets = data.solar_system_planets.planets.iter().map(|planet| {
+    let planets = planets_table.planets.iter().map(|planet| {
         if planet.id == BodyId::Earth { earth.position } else { emitted(planet.id) }
     }).collect();
 
@@ -58,58 +61,29 @@ impl SolarSystem {
     /// Where moon `index` was when its light reached an observer at barycentric `observer`: the geocentric emission
     /// position moved back by the light-time difference between the observer and the geocentre (under 0.02 s).
     pub fn moon_position(&self, index: usize, observer: Vector3) -> Vector3 {
-        let moon = self.moons[index];
-        let difference = ((moon.position - observer).length() - (moon.position - self.earth.position).length()) / LIGHT_SPEED_AU_DAY;
-        moon.position - moon.velocity * difference
+        correct_moon_light_time(self.moons[index], self.earth.position, observer)
     }
 
     /// Illumination of moon `index` as seen from the geocentre (the site changes it by far less than its accuracy).
     pub fn moon_illumination(&self, index: usize) -> MoonIllumination {
-        compute_moon_illumination(self.moons[index].position - self.earth.position, self.sun - self.earth.position, j2000_ecliptic_north())
-    }
-}
-
-/// Where a body was when light now arriving at `receiver` left it: the reception position, then two light-time
-/// iterations, as the old pipeline did.
-fn emission_position(body: BodyId, tt: f64, receiver: Vector3) -> Vector3 {
-    let mut position = barycentric_position(body, tt);
-    for _ in 0..2 {
-        let emission_tt = tt - (position - receiver).length() / LIGHT_SPEED_AU_DAY;
-        position = barycentric_position(body, emission_tt);
-    }
-    position
-}
-
-/// The velocity at the emission time that `emission_position` settled on.
-fn velocity_at(body: BodyId, tt: f64, emission_position: Vector3, receiver: Vector3) -> Vector3 {
-    barycentric_state(body, tt - (emission_position - receiver).length() / LIGHT_SPEED_AU_DAY).velocity
-}
-
-fn barycentric_position(body: BodyId, tt: f64) -> Vector3 {
-    match body {
-        BodyId::Moon => evaluate_moon(tt).position + compute_barycentric_position(BodyId::Earth, tt),
-        planet => compute_barycentric_position(planet, tt),
-    }
-}
-
-fn barycentric_state(body: BodyId, tt: f64) -> BodyState {
-    match body {
-        BodyId::Moon => evaluate_moon(tt).add_parent(evaluate_planet(BodyId::Earth, tt)),
-        planet => evaluate_planet(planet, tt),
+        compute_geocentric_moon_illumination(self.moons[index].position, self.sun, self.earth.position)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::astro::J2000;
+    use crate::formulas::{J2000, LIGHT_SPEED_AU_DAY};
 
-    fn at_j2000() -> SolarSystem { simulate_solar_system(&Data::default(), crate::astro::utc_jd_to_time_ms(J2000).unwrap(), &mut crate::time::StepTimes::default()) }
+    fn at_j2000() -> SolarSystem {
+        let bodies = Data::default();
+        simulate_solar_system(&bodies.solar_system_sun, &bodies.solar_system_planets, &bodies.solar_system_moons, crate::formulas::utc_jd_to_time_ms(J2000).unwrap(), &mut crate::time::StepTimes::default())
+    }
 
     #[test]
     fn bodies_are_taken_at_their_emission_times() {
         let system = at_j2000();
-        let tt = crate::astro::AstronomicalTime::from_time_ms(system.time_ms).tt_jd;
+        let tt = crate::formulas::AstronomicalTime::from_time_ms(system.time_ms).tt_jd;
         assert_eq!(system.planets.len(), 8);
         assert_eq!(system.moons.len(), 1);
         assert_eq!(system.planets[2], system.earth.position);                            // the Earth entry is the receiver itself

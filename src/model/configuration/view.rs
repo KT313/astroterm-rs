@@ -1,6 +1,6 @@
 //! View and rendering settings: what is looked at and how stars are drawn. Algorithms live in `projection` and `scene`.
 use crate::constants::DEFAULT_FOV_DEGREES;
-use crate::astro::Horizontal;
+use crate::formulas::Horizontal;
 use std::f64::consts::{PI, FRAC_PI_2};
 
 /// Where the center of the view points.

@@ -1,7 +1,7 @@
 //! Reproducible velocity/c bound audit; culling also expands from each frame's actual observer velocity.
-use astroterm::astro::{
+use astroterm::formulas::{
     COMPUTATIONAL_INTERVAL,
-    models::{BodyId, planets::compute_barycentric_position},
+    BodyId, compute_barycentric_position,
 };
 fn main() {
     let span = COMPUTATIONAL_INTERVAL.end_tt - COMPUTATIONAL_INTERVAL.start_tt;

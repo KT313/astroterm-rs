@@ -2,7 +2,7 @@
 mod color;
 use crate::model::Star;
 use crate::catalog::CatalogStar;
-use crate::astro::{Equatorial, models::stars::StellarMotion};
+use crate::formulas::{Equatorial, StellarMotion};
 
 /// Convert one catalog row into unquantized motion and metadata; storage applies precision and singular policies.
 pub fn prepare_star(entry: &CatalogStar) -> Star {

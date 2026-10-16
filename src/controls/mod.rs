@@ -50,13 +50,13 @@ pub fn apply_control(control: Control, view: &mut View, clock: &mut SimulationCl
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::astro::J2000;
+    use crate::formulas::J2000;
     use crate::model::ViewCenter;
 
     #[test]
     fn controls_change_view_and_clock() {
         let initial_view = View::default();
-        let (mut view, mut clock) = (initial_view, SimulationClock::start(crate::astro::utc_jd_to_time_ms(J2000).unwrap(), 1.0));
+        let (mut view, mut clock) = (initial_view, SimulationClock::start(crate::formulas::utc_jd_to_time_ms(J2000).unwrap(), 1.0));
 
         apply_control(Control::ZoomIn, &mut view, &mut clock, &initial_view).unwrap();
         assert_eq!(view.fov_degrees, 144.0);
@@ -81,7 +81,7 @@ mod tests {
         for speed in [1.0, -1.0, f64::MAX, -f64::MAX, 0.0] {
             let initial_view = View::default();
             let mut view = initial_view;
-            let mut clock = SimulationClock::start(crate::astro::utc_jd_to_time_ms(J2000).unwrap(), 0.0);
+            let mut clock = SimulationClock::start(crate::formulas::utc_jd_to_time_ms(J2000).unwrap(), 0.0);
             clock.toggle_pause().unwrap();
             clock.set_speed(speed).unwrap();
             for _ in 0..400 {
@@ -99,7 +99,7 @@ mod tests {
             apply_control(Control::SlowDown, &mut view, &mut clock, &initial_view).unwrap();
             assert!(clock.speed().abs() <= MAX_INTERACTIVE_SPEED / SPEED_FACTOR);
             assert!(clock.is_paused());
-            assert_eq!(clock.get_current_time_ms().unwrap(), crate::astro::utc_jd_to_time_ms(J2000).unwrap());
+            assert_eq!(clock.get_current_time_ms().unwrap(), crate::formulas::utc_jd_to_time_ms(J2000).unwrap());
         }
     }
 }

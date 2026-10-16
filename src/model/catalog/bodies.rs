@@ -1,8 +1,8 @@
 //! The solar-system tables of the pipeline rebuild (plan section 4): the Sun, the moons and the planets. Each row
-//! names the body the astronomy models in `astro::models` evaluate; the frame's first step simulates every row.
+//! names the body the astronomy models in `formulas` evaluate; the frame's first step simulates every row.
 //! Built once; the moon table has one row today and allows more. The planets include the Earth, whose state the
 //! observer needs; the frame does not draw the observer's own planet.
-use crate::astro::models::BodyId;
+use crate::formulas::BodyId;
 use crate::model::{Body, Satellite, SunTable, PlanetsTable, MoonsTable};
 
 impl Default for SunTable {

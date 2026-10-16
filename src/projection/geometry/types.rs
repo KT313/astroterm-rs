@@ -1,6 +1,6 @@
 //! The records the projection geometry produces: points on the unit view disc, polar view coordinates, the
 //! camera basis, visible parts of a great-circle arc and a sampled arc in viewport cells.
-use crate::astro::Vector3;
+use crate::formulas::Vector3;
 use crate::model::{Cell, ProjectionKind};
 
 /// A visible interval of a great-circle arc, as fractions of the arc from its start.

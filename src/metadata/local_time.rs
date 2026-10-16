@@ -1,7 +1,7 @@
 //! Observer-local civil time. Geographic boundaries are bundled; Unix zone rules come from the system IANA
 //! database. Missing boundaries or rules fall back to labelled UTC, never the machine's local zone.
 
-use crate::astro::Observer;
+use crate::formulas::Observer;
 use chrono::{DateTime, FixedOffset, Utc};
 
 /// A local date and time, and the name of its timezone.

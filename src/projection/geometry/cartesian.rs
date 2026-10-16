@@ -1,7 +1,7 @@
 //! Direct Cartesian camera projection of unit horizontal vectors (East, North, Up). The camera basis and scale
 //! are prepared once per view, with no per-object azimuth/altitude or polar intermediate.
 use crate::model::{ProjectionKind, View, ViewCenter};
-use crate::astro::{Matrix3, Vector3};
+use crate::formulas::{Matrix3, Vector3};
 use std::f64::consts::FRAC_PI_2;
 
 use super::types::{CartesianCamera, ScreenPoint};
@@ -98,7 +98,7 @@ pub fn project_camera(camera: CartesianCamera, direction: Vector3) -> Option<Scr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::astro::Horizontal;
+    use crate::formulas::Horizontal;
     use proptest::prelude::*;
     use std::f64::consts::PI;
     proptest! {

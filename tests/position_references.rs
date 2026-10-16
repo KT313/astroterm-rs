@@ -5,7 +5,7 @@
 #[path = "fixtures/phase6_positions.rs"]
 mod baseline;
 
-use astroterm::astro::{Horizontal, ObjectClass, Observer, Vector3, accuracy_target_arcseconds, models::stars::years_since_j2000};
+use astroterm::formulas::{Horizontal, ObjectClass, Observer, Vector3, accuracy_target_arcseconds, years_since_j2000};
 use astroterm::catalog::load_embedded_catalog;
 use astroterm::model::{Data, PreparedCatalog, View};
 use astroterm::observation::{Observation, observe};
@@ -16,9 +16,9 @@ struct BostonSky { catalog: PreparedCatalog, bodies: Data, system: SolarSystem, 
 fn boston_sky(julian_date_ut1: f64) -> BostonSky {
     let catalog = astroterm::sky::prepare_owned_catalog(load_embedded_catalog(&mut astroterm::progress::Report::quiet()).unwrap(), &mut astroterm::progress::Report::quiet()).unwrap();
     let site = Observer { latitude: 42.3601_f64.to_radians(), longitude: -71.0589_f64.to_radians() };
-    let time = astroterm::astro::utc_jd_to_time_ms(julian_date_ut1).unwrap();
+    let time = astroterm::formulas::utc_jd_to_time_ms(julian_date_ut1).unwrap();
     let bodies = Data::default();
-    let system = simulate_solar_system(&bodies, time, &mut astroterm::time::StepTimes::default());
+    let system = simulate_solar_system(&bodies.solar_system_sun, &bodies.solar_system_planets, &bodies.solar_system_moons, time, &mut astroterm::time::StepTimes::default());
     let observation = observe(&site, false, &View::default(), time, &mut astroterm::time::StepTimes::default());
     BostonSky { catalog, bodies, system, observation }
 }
@@ -34,7 +34,7 @@ fn find_position(sky: &BostonSky, name: &str) -> Horizontal {
     } else {
         let catalog = &sky.catalog.catalog;
         let star = catalog.stars.iter().find(|star| catalog.star_name(star) == Some(name)).unwrap_or_else(|| panic!("{name}"));
-        let sample = star.motion.evaluate(years_since_j2000(astroterm::astro::AstronomicalTime::from_time_ms(sky.observation.time_ms).tt_jd), star.magnitude);
+        let sample = star.motion.evaluate(years_since_j2000(astroterm::formulas::AstronomicalTime::from_time_ms(sky.observation.time_ms).tt_jd), star.magnitude);
         sky.observation.apparent_star_direction(sample.direction)
     };
     Horizontal::from_vector(direction)

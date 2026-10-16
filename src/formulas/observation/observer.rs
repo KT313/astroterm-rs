@@ -1,6 +1,6 @@
 //! WGS84 sea-level geodetic site and rotational velocity in Earth-fixed axes.
-use crate::astro::models::BodyState;
-use crate::astro::{Observer, Vector3};
+use crate::formulas::BodyState;
+use crate::formulas::{Observer, ObserverState, Vector3, compute_body_fixed_rotation, compute_slow_orientation, compute_horizon_rotation};
 
 /// WGS84 a = 6378137 m, 1/f = 298.257223563. No elevation or polar motion model.
 /// Velocity is the inertial spin velocity expressed in fixed axes, AU/day (not the fixed-coordinate derivative).
@@ -24,6 +24,19 @@ pub fn compute_site_state(site: Observer) -> BodyState {
             z: 0.0,
         },
     }
+}
+
+/// Place a sea-level observer on Earth and calculate both rotations between catalog and horizon axes.
+/// Earth is evaluated at reception; UT1 controls Earth's spin and TT its axis orientation.
+pub fn compute_observer_state(earth: BodyState, site: &Observer, ut1_jd: f64, tt_jd: f64) -> ObserverState {
+    let to_fixed = compute_body_fixed_rotation(compute_slow_orientation(tt_jd), ut1_jd);
+    let from_fixed = to_fixed.transpose();
+    let site_state = compute_site_state(*site);
+    let offset = BodyState { position: from_fixed.apply(site_state.position), velocity: from_fixed.apply(site_state.velocity) };
+    let observer = offset.add_parent(earth);
+    let to_horizon = compute_horizon_rotation(site).compose(to_fixed);
+    let to_catalog = to_horizon.transpose();
+    ObserverState { observer, to_horizon, to_catalog }
 }
 
 #[cfg(test)]

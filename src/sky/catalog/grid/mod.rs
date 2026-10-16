@@ -45,9 +45,9 @@ pub(super) fn build_grid_from_counts(stars: usize, mut counts: Vec<usize>, endpo
 #[cfg(test)]
 mod tests {
     use crate::model::{build_caps, hash_direction};
-    use crate::astro::Vector3;
+    use crate::formulas::Vector3;
     use crate::model::{interleave, direction};
-    use crate::astro::{Equatorial, Horizontal, apply_refraction};
+    use crate::formulas::{Equatorial, Horizontal, apply_refraction};
     use crate::constants::REFRACTION_MARGIN;
     use proptest::prelude::*;
     use std::f64::consts::PI;

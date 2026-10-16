@@ -4,10 +4,10 @@
 //! fixed patch of sky. Group indices run from slowest to fastest; shared thresholds and hold-time settings stay
 //! in `constants.rs`. Catalog columns remain immutable after loading; calculated samples and tiles are mutable.
 
-use crate::astro::Vector3;
+use crate::formulas::Vector3;
 use crate::catalog::{MagnitudeClipping, StarNames};
 use crate::constants::SPEED_GROUP_COUNT;
-use crate::astro::models::BodyId;
+use crate::formulas::BodyId;
 use crate::model::Constellation;
 use soa_derive::StructOfArray;
 
