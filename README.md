@@ -165,7 +165,8 @@ reports them without changing the runtime policy.
 Final image composition uses four-pixel SSE2 batches on x86-64, preserving the scalar brightness,
 blending and byte-rounding formulas. Other architectures and `pixel-debug` builds use the portable scalar
 compositor; checked builds retain their per-pixel validation and accumulated-light reporting. Composition
-uses one thread independently of `--n-jobs`.
+uses one thread independently of `--n-jobs`. Kitty RGB conversion uses sixteen-pixel SSSE3 byte shuffles
+when supported on x86-64, with a portable fallback and the same input checks in `pixel-debug` builds.
 
 Projection can use a dedicated thread pool with `--n-jobs`: `0` creates no projection pool, `1` creates one
 worker, and positive values request that many workers. `-1` uses the logical CPUs available to the process.

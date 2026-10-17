@@ -10,6 +10,8 @@
 //! sizes the frame.
 mod display;
 mod composition;
+mod rgb_conversion;
+use rgb_conversion::strip_alpha;
 #[cfg(all(target_arch = "x86_64", any(not(feature = "pixel-debug"), test)))]
 mod composition_sse2;
 pub use composition::compose;
@@ -148,17 +150,6 @@ fn upload_shared<W: Write>(terminal: &mut Terminal<W>, dimensions: (u32, u32), t
     let consumed = kitty::wait_for_shared_consumption(&object);
     if !matches!(consumed, Ok(true)) { terminal.shared_memory = false; }                                  // timed out or unreadable: the streamed copy follows
     Ok(terminal.upload.len())
-}
-
-fn strip_alpha(rgba: &[u8], rgb: &mut Vec<u8>) {
-    #[cfg(feature = "pixel-debug")]
-    {
-        crate::pixel_debug::check_overlay("strip_alpha input", rgba);
-        assert!(rgba.chunks_exact(4).all(|pixel| pixel[3] == 255), "pixel-debug: strip_alpha requires opaque pixels");
-    }
-    rgb.clear();
-    rgb.reserve(rgba.len() / 4 * 3);
-    for pixel in rgba.chunks_exact(4) { rgb.extend_from_slice(&pixel[..3]); }
 }
 
 #[cfg(test)]
