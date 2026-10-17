@@ -80,7 +80,9 @@ impl Frame {
         (row + self.drawing_area_y_offset as i32, column + self.drawing_area_x_offset as i32)
     }
 
-    /// Replace the star layer with a projected square, leaving the overlay untouched and margins empty.
+    /// Replace the star layer with a projected square, leaving the overlay untouched and margins empty. Every pixel
+    /// is written exactly once: square rows are copied and only the margins between them are cleared, so stars and
+    /// constellation glyphs from the previous frame disappear without clearing the square first.
     pub fn insert_projected_stars(&mut self, projected_stars: &[Texel]) {
         // Validate the square and its placement before changing any pixels.
         let size = self.drawing_area_width_and_height;
@@ -88,16 +90,17 @@ impl Frame {
         assert!(self.drawing_area_x_offset.checked_add(size).is_some_and(|right| right <= self.width)
             && self.drawing_area_y_offset.checked_add(size).is_some_and(|bottom| bottom <= self.height),
             "drawing area must fit inside the frame");
+        if size == 0 { self.stars.fill(Texel::default()); return; }            // no square: the whole frame is margin
 
-        // Clear stars from the previous frame, including any constellation glyphs and old margins.
-        self.stars.fill(Texel::default());
-        if size == 0 { return; }
-
-        // Copy each square row into the corresponding row of the full-size frame.
+        // Walk the frame once in memory order: clear the margin up to each square row, then copy the row.
+        let mut next_unwritten = 0;                                             // first frame pixel not yet written by this call
         for (row, source) in projected_stars.chunks_exact(size).enumerate() {
             let start = (self.drawing_area_y_offset + row) * self.width + self.drawing_area_x_offset;
+            self.stars[next_unwritten..start].fill(Texel::default());           // top margin, or the right and left margins between two rows
             self.stars[start..start + size].copy_from_slice(source);
+            next_unwritten = start + size;
         }
+        self.stars[next_unwritten..].fill(Texel::default());                    // right margin of the last row and the bottom margin
     }
 
     pub fn text_cell(&self) -> (u16, u16) { self.text_cell }
@@ -173,5 +176,62 @@ mod tests {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| frame.insert_projected_stars(&[pixel; 8])));
         assert!(result.is_err());
         assert!(frame.stars().iter().all(|texel| *texel == pixel));
+    }
+
+    #[test]
+    fn margin_clearing_matches_a_full_clear_for_every_layout() {
+        // Landscape, portrait, all-sky, one-pixel, odd-margin and empty squares, each inserted over a dirty frame.
+        let dirty = Texel { rgb: [9.0; 3], opacity: 1.0 };
+        for (width, height, size) in [(8, 5, 3), (5, 8, 3), (3, 3, 3), (7, 7, 1), (9, 4, 4), (4, 9, 4), (6, 6, 0), (6, 6, 5)] {
+            let square: Vec<_> = (0..size * size).map(|index| Texel { rgb: [index as f32 + 1.0, 0.25, 0.5], opacity: 0.75 }).collect();
+            let mut frame = Frame::new(width, height, size, (10, 20));
+            frame.stars_mut().fill(dirty);
+            frame.insert_projected_stars(&square);
+
+            // The previous behaviour as the oracle: clear everything, then copy the rows into place.
+            let mut expected = vec![Texel::default(); width * height];
+            for (row, source) in square.chunks_exact(size.max(1)).enumerate() {
+                let start = (frame.drawing_area_y_offset + row) * width + frame.drawing_area_x_offset;
+                expected[start..start + size].copy_from_slice(source);
+            }
+            assert_eq!(frame.stars(), expected, "{width}x{height} with a {size} square");
+        }
+    }
+
+    #[test]
+    fn insertion_after_resizes_leaves_no_old_pixels_in_the_margins() {
+        let dirty = Texel { rgb: [9.0; 3], opacity: 1.0 };
+        let mut frame = Frame::new(8, 5, 3, (10, 20));
+        for (width, height, size) in [(8, 5, 3), (6, 6, 2), (8, 5, 3), (8, 5, 1)] {
+            frame.resize(width, height, size);
+            frame.stars_mut().fill(dirty);                                      // stars and glyphs left by the previous frame
+            let square = vec![Texel { rgb: [0.25; 3], opacity: 0.5 }; size * size];
+            frame.insert_projected_stars(&square);
+
+            // Only the square holds light; every margin pixel is empty again.
+            let (left, top) = (frame.drawing_area_x_offset, frame.drawing_area_y_offset);
+            for row in 0..height {
+                for column in 0..width {
+                    let inside = (top..top + size).contains(&row) && (left..left + size).contains(&column);
+                    assert_eq!(frame.star(row, column), if inside { square[0] } else { Texel::default() }, "{width}x{height}, pixel ({row}, {column})");
+                }
+            }
+        }
+    }
+
+    /// Release-mode cost of inserting a full-HD frame's sky square; run with `--ignored --nocapture`.
+    #[test]
+    #[ignore = "timing only"]
+    fn time_frame_insertion_at_full_hd() {
+        let mut frame = Frame::new(1920, 1100, 1100, (10, 20));
+        let square = vec![Texel::default(); 1100 * 1100];
+        frame.insert_projected_stars(&square);                                  // warm up: touch every page once
+        let mut milliseconds: Vec<f64> = (0..100).map(|_| {
+            let started = std::time::Instant::now();
+            frame.insert_projected_stars(std::hint::black_box(&square));
+            started.elapsed().as_secs_f64() * 1000.0
+        }).collect();
+        milliseconds.sort_by(f64::total_cmp);
+        println!("frame insertion at 1920x1100: median {:.3} ms, minimum {:.3} ms", milliseconds[50], milliseconds[0]);
     }
 }
