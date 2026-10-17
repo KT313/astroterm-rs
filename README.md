@@ -200,8 +200,8 @@ labels are independent. Use `--disable-dynamic-names` to hide star labels; the f
 been removed. Independent accuracy checks are documented in
 [scripts/reference/README.md](scripts/reference/README.md).
 
-Stars use four-texel dots in their sky tiles, enlarged when zoomed in. Within each group, stars blend from dim
-to bright current magnitude (ascending ID for ties); group images merge from slowest to fastest, weighting stored RGB by opacity while opacity accumulates source-over. Zoom brightening is currently disabled (`STAR_BRIGHTNESS_ZOOM_POWER = 0`), so zoom alone does not redraw existing tiles.
+Stars use four-texel dots in their sky tiles, enlarged when zoomed in. Within each group, overlapping stars
+are screen-blended, so neither covers the other and the drawing order does not matter; group images merge from slowest to fastest, weighting stored RGB by opacity while opacity accumulates source-over. Zoom brightening is currently disabled (`STAR_BRIGHTNESS_ZOOM_POWER = 0`), so zoom alone does not redraw existing tiles.
 Stars whose complete dot would cross the image boundary are omitted. The Sun, planets and Moon retain their sizes.
 Tiles are stereographic images of their region, and the screen is a stereographic or equidistant (`-e`) image
 of the sky, so every pixel's place in a tile follows from a closed formula. The warp uses it backwards: for every

@@ -22,7 +22,7 @@ use crate::catalog::{StarNames, MagnitudeClipping};
 use crate::model::Data;
 use crate::observation::Observation;
 use crate::projection::{Frame, ProjectedArc, ScreenPoint, prepare_camera, project_camera, project_constellation_segment, project_horizon_labels, project_horizon_line, project_light_direction, project_to_cell};
-use crate::regions::{UNPLACED, blend_star, order_star_rows, premultiplied_color, rows_wanted};
+use crate::regions::{blend_star, is_star_drawn, premultiplied_color, rows_wanted};
 use crate::text::draw_text_over;
 use crate::solar_system::SolarSystem;
 use std::cmp::Ordering;
@@ -103,9 +103,9 @@ pub fn draw_points(
         for row in 0..rows {
             endpoint_pixels.push(pixel_of(observation.apparent_star_direction(simulation.directions()[row])));
         }
-        for row in order_star_rows(&simulation.magnitudes()[..rows], &constellations.columns().id[..rows], threshold) {
-            let code = simulation.magnitudes()[row];
-            let Some(pixel) = endpoint_pixels[row] else { continue };
+        for (row, (&code, &pixel)) in simulation.magnitudes()[..rows].iter().zip(&endpoint_pixels).enumerate() {
+            if !is_star_drawn(code, threshold) { continue; }
+            let Some(pixel) = pixel else { continue };
             if !glyph_fits(size, (pixel.0 - y_offset as i32, pixel.1 - x_offset as i32)) { continue; }
             let opacity = star_opacities.of(code);
             let premultiplied = premultiplied_color(constellations.columns().display_color[row], opacity);
@@ -256,7 +256,7 @@ fn stroke_constellations(
     let mut arcs = 0;
     for figure in constellation_figures {
         let rows = figure.segments.iter().flatten().copied();
-        let bright_enough = rows.clone().all(|row| simulation.magnitudes().get(row).is_some_and(|&code| code <= threshold && code != UNPLACED));
+        let bright_enough = rows.clone().all(|row| simulation.magnitudes().get(row).is_some_and(|&code| is_star_drawn(code, threshold)));
         if !bright_enough { continue; }
         for &[from, to] in &figure.segments {
             let (a, b) = (observation.apparent_star_direction(simulation.directions()[from]), observation.apparent_star_direction(simulation.directions()[to])); // as the endpoint stars themselves are placed
@@ -309,7 +309,7 @@ fn select_star_labels(
             for row in 0..rows.min(simulation.len()) {
                 if best.full_above(columns.brightness_key[row]) { break; }                 // the key bounds the current magnitude, and keys ascend
                 let code = simulation.magnitudes()[row];
-                if code > threshold || code == UNPLACED { continue; }
+                if !is_star_drawn(code, threshold) { continue; }
                 let Some(pixel) = pixel_of(observation.apparent_star_direction(simulation.directions()[row])) else { continue };
                 if !glyph_fits(size, (pixel.0 - y_offset as i32, pixel.1 - x_offset as i32)) { continue; }
                 let id = columns.id[row];
@@ -321,7 +321,7 @@ fn select_star_labels(
     let simulation = constellation_simulation;
     for (row, &pixel) in endpoint_pixels.iter().enumerate().take(simulation.len().min(constellations.len())) {
         let code = simulation.magnitudes()[row];
-        if code > threshold || code == UNPLACED { continue; }
+        if !is_star_drawn(code, threshold) { continue; }
         let Some(pixel) = pixel else { continue };
         if !glyph_fits(size, (pixel.0 - y_offset as i32, pixel.1 - x_offset as i32)) { continue; }
         let id = constellations.columns().id[row];
@@ -560,10 +560,10 @@ mod tests {
     }
 
     #[test]
-    fn overlapping_endpoint_stars_paint_dimmest_first_and_break_ties_by_ascending_id() {
+    fn overlapping_endpoint_stars_blend_alike_in_every_order() {
         let direction = catalog_direction(90.0, 80.0);
         let colors = [StarColor::RedOrange, StarColor::BlueWhite, StarColor::Orange];
-        for (magnitudes, expected_order) in [([0.0, 3.0, 6.0], [2, 1, 0]), ([3.0; 3], [1, 2, 0])] {
+        for magnitudes in [[0.0, 3.0, 6.0], [3.0; 3], [5.0, 4.0, 6.0]] {
             let mut columns = crate::model::StarRowVec::new();
             for (i, id) in [30, 10, 20].into_iter().enumerate() {
                 let code = magnitude_code(magnitudes[i]);
@@ -574,15 +574,18 @@ mod tests {
             let tables = Data { constellation_stars: crate::model::StarTable::new(columns, StarLabels::Names(vec![0; 3])), ..Data::default() };
             let mut frame = Frame::square(201);
             let (drawn, _) = draw(&tables, &View::default(), 0.0, &settings(), &mut frame);
-            let mut expected = crate::model::Texel::default();
-            for row in expected_order {
-                let opacity = crate::regions::star_opacity(magnitudes[row], 1.0);
-                blend_star(&mut expected, premultiplied_color(colors[row].index(), opacity), opacity);
-            }
             assert_eq!(drawn.endpoint_stars, 3);
             let lit: Vec<_> = frame.stars().iter().filter(|texel| !texel.is_empty()).collect();
             assert_eq!(lit.len(), 4);
-            assert!(lit.iter().all(|&&texel| texel == expected));
+            for order in [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]] {
+                let mut expected = crate::model::Texel::default();
+                for row in order {
+                    let opacity = crate::regions::star_opacity(magnitudes[row], 1.0);
+                    blend_star(&mut expected, premultiplied_color(colors[row].index(), opacity), opacity);
+                }
+                let close = |texel: &crate::model::Texel| texel.rgb.into_iter().chain([texel.opacity]).zip(expected.rgb.into_iter().chain([expected.opacity])).all(|(a, b)| (a - b).abs() < 1e-6);
+                assert!(lit.iter().all(|&texel| close(texel)), "magnitudes {magnitudes:?}, order {order:?}");
+            }
         }
     }
 

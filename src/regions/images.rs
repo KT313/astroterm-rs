@@ -2,25 +2,14 @@
 //! screen would draw it) and one per region (its group images composited). Per-star zoom brightness is applied before blending; tone mapping
 //! happens in the frame output.
 use crate::formulas::Vector3;
-use crate::constants::TILE_EDGE_TEXELS;
 use crate::model::{StarOpacities, Texel, StarTable, GroupTileKey, GroupTileCache, RegionTileCache, StarGroup};
-use crate::regions::{TileGeometry, UNPLACED, blend_star, draw_order_key, premultiplied_color};
+use crate::regions::{TileGeometry, blend_star, is_star_drawn, premultiplied_color};
 use super::content_bounds::calculate_content_radius;
 use super::filter_summary::build_filter_summary;
 
 impl GroupTileKey {
     /// The key of an image whose prefix is empty: nothing to draw, whatever the threshold.
     pub const EMPTY: GroupTileKey = GroupTileKey { simulated_at_ms: 0, star_count: 0, magnitude_threshold: 0, zoom_boost: 1.0 };
-}
-
-/// A star placed on a group tile, waiting for its turn. Sorting these compact records instead of row indices
-/// keeps the drawing loop from reading the star table out of order.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-struct PlacedGlyph {
-    order: u64,                             // `draw_order_key`: compared first, and unique within the table
-    bottom_right: u16,                      // texel index of the glyph's lower right texel
-    magnitude_code: u16,
-    color: u8,
 }
 
 impl GroupTileCache {
@@ -36,35 +25,26 @@ impl GroupTileCache {
     }
 
     /// Draw rows `0..key.star_count` of the simulation (`directions` and `magnitudes` at `key.simulated_at_ms`) into the tile: each
-    /// row brighter than the threshold becomes the four-texel glyph of its colour, blended source-over from dim
-    /// to bright current magnitude, then ascending ID. Catalog brightness-bound order is unchanged. Rows the model
-    /// could not place and rows outside the tile are skipped.
+    /// row brighter than the threshold becomes the four-texel glyph of its colour, screen-blended in table order
+    /// (the blend does not depend on the order). Rows the model could not place and rows outside the tile are
+    /// skipped.
     pub fn render(&mut self, key: GroupTileKey, tile: &TileGeometry, table: &StarTable, directions: &[Vector3], magnitudes: &[u16], opacities: &StarOpacities) {
         self.key = Some(key);
         if key.star_count == 0 { self.tile.texels = Vec::new(); return; }
         let size = TileGeometry::size();
-        const { assert!(TILE_EDGE_TEXELS * TILE_EDGE_TEXELS <= 1 << 16) };                  // a texel index fits a glyph's u16
         self.tile.texels.clear();
         self.tile.texels.resize(TileGeometry::texel_count(), Texel::default());
 
-        // Place every drawable row of the prefix in table order, then sort only the placed glyphs into drawing order.
+        // Screen-blend every drawn row of the prefix as its glyph, in table order.
         let columns = table.columns();
-        let mut glyphs = Vec::with_capacity(key.star_count);
         for (row, &code) in magnitudes[..key.star_count].iter().enumerate() {
-            if code > key.magnitude_threshold || code == UNPLACED { continue; }
+            if !is_star_drawn(code, key.magnitude_threshold) { continue; }
             let Some((column, line)) = tile.project(directions[row]) else { continue };
             let (x, y) = (round_half_away(column), round_half_away(line));
             if x < 1 || y < 1 || x >= size as i64 || y >= size as i64 { continue; }            // the four-texel footprint must fit, as on the screen
-            let bottom_right = (y as usize * size + x as usize) as u16;
-            glyphs.push(PlacedGlyph { order: draw_order_key(code, columns.id[row]), bottom_right, magnitude_code: code, color: columns.display_color[row] });
-        }
-        glyphs.sort_unstable();
-
-        // Blend the glyphs source-over, dimmest first.
-        for glyph in glyphs {
-            let opacity = opacities.of(glyph.magnitude_code);
-            let premultiplied = premultiplied_color(glyph.color, opacity);
-            let bottom_right = usize::from(glyph.bottom_right);
+            let opacity = opacities.of(code);
+            let premultiplied = premultiplied_color(columns.display_color[row], opacity);
+            let bottom_right = y as usize * size + x as usize;
             for offset in [bottom_right - size - 1, bottom_right - size, bottom_right - 1, bottom_right] {
                 blend_star(&mut self.tile.texels[offset], premultiplied, opacity);
             }
@@ -227,49 +207,6 @@ mod tests {
         assert_eq!(image.bytes(), SIZE * SIZE * 16);
     }
 
-    /// The group image as drawn before glyphs were placed first: rows sorted into drawing order, then projected.
-    fn render_reference(key: GroupTileKey, tile: &TileGeometry, table: &StarTable, directions: &[Vector3], magnitudes: &[u16], opacities: &StarOpacities) -> Vec<Texel> {
-        let size = TileGeometry::size();
-        let mut texels = vec![Texel::default(); TileGeometry::texel_count()];
-        let columns = table.columns();
-        for row in crate::regions::order_star_rows(&magnitudes[..key.star_count], &columns.id[..key.star_count], key.magnitude_threshold) {
-            let Some((column, line)) = tile.project(directions[row]) else { continue };
-            let (x, y) = (round_half_away(column), round_half_away(line));
-            if x < 1 || y < 1 || x >= size as i64 || y >= size as i64 { continue; }
-            let opacity = opacities.of(magnitudes[row]);
-            let premultiplied = premultiplied_color(columns.display_color[row], opacity);
-            let bottom_right = y as usize * size + x as usize;
-            for offset in [bottom_right - size - 1, bottom_right - size, bottom_right - 1, bottom_right] { blend_star(&mut texels[offset], premultiplied, opacity); }
-        }
-        texels
-    }
-
-    #[test]
-    fn placed_glyphs_draw_the_bits_of_sorted_rows() {
-        // Hundreds of overlapping stars with tied magnitudes, shuffled IDs and colours, some unplaced, some outside.
-        let tile = TileGeometry::new(region());
-        let middle = TileGeometry::middle();
-        let mut seed = 7_u32;
-        let mut next = || { seed = seed.wrapping_mul(1664525).wrapping_add(1013904223); seed };
-        let count = 700;
-        let directions: Vec<Vector3> = (0..count).map(|_| tile.direction_of(middle + (next() % 90) as f64 - 45.0 + 0.3, middle + (next() % 90) as f64 - 45.0 - 0.2)).collect();
-        let rows: Vec<StarRow> = (0..count).map(|index| {
-            let mut row = fixtures::row(directions[index], 0.0, 1.0 + (index % 5) as f64, (index as u32).wrapping_mul(2654435761) % 1_000_000);
-            row.display_color = (next() % 7) as u8;
-            row
-        }).collect();
-        let table = table(&rows);
-        let magnitudes: Vec<u16> = (0..count).map(|_| match next() % 9 { 0 => UNPLACED, 1 => magnitude_code(9.0), code => magnitude_code(code as f64 * 0.5) }).collect();
-        for (star_count, threshold) in [(count, 6.0), (count / 3, 3.0), (1, 6.0)] {
-            let mut image = GroupTileCache::default();
-            image.render(key(star_count, threshold), &tile, &table, &directions, &magnitudes, &opacities());
-            let expected = render_reference(key(star_count, threshold), &tile, &table, &directions, &magnitudes, &opacities());
-            let bits = |texels: &[Texel]| texels.iter().map(|texel| [texel.rgb[0].to_bits(), texel.rgb[1].to_bits(), texel.rgb[2].to_bits(), texel.opacity.to_bits()]).collect::<Vec<_>>();
-            assert!(bits(image.texels()) == bits(&expected), "{star_count} rows, threshold {threshold}");
-            if star_count == count { assert!(lit(image.texels()).len() > 500); }                 // many glyphs, overlapping
-        }
-    }
-
     #[test]
     fn rows_beyond_the_prefix_the_threshold_the_tile_or_the_model_are_not_drawn() {
         let tile = TileGeometry::new(region());
@@ -303,7 +240,7 @@ mod tests {
     }
 
     #[test]
-    fn overlapping_stars_follow_current_brightness_and_id_without_reordering_the_catalog() {
+    fn overlapping_stars_blend_alike_in_every_order_without_reordering_the_catalog() {
         let tile = TileGeometry::new(region());
         let colors = [StarColor::RedOrange, StarColor::BlueWhite, StarColor::Orange];
         let rows: Vec<_> = [30, 10, 20].into_iter().enumerate().map(|(i, id)| {
@@ -314,19 +251,22 @@ mod tests {
         let table = table(&rows);
         let before = table.clone();
         let opacities = opacities();
-        for (magnitudes, expected_order) in [([3.0, 0.0, 6.0], [2, 0, 1]), ([3.0; 3], [1, 2, 0])] {
+        for magnitudes in [[3.0, 0.0, 6.0], [3.0; 3], [5.0, 4.0, 6.0]] {
             let codes = magnitudes.map(magnitude_code);
             let mut image = GroupTileCache::default();
             image.render(key(3, 9.0), &tile, &table, &[tile.center(); 3], &codes, &opacities);
-            let mut expected = Texel::default();
-            for row in expected_order {
-                let opacity = opacities.of(codes[row]);
-                blend_star(&mut expected, premultiplied_color(colors[row].index(), opacity), opacity);
-            }
             let lit = lit(image.texels());
             assert_eq!(lit.len(), 4);
-            assert!(lit.iter().all(|(_, texel)| *texel == expected), "current magnitudes {magnitudes:?}");
-            assert_eq!(table, before);                                                       // sorting changes only temporary row indices
+            for order in [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]] {
+                let mut expected = Texel::default();
+                for row in order {
+                    let opacity = opacities.of(codes[row]);
+                    blend_star(&mut expected, premultiplied_color(colors[row].index(), opacity), opacity);
+                }
+                let close = |texel: &Texel| texel.rgb.into_iter().chain([texel.opacity]).zip(expected.rgb.into_iter().chain([expected.opacity])).all(|(a, b)| (a - b).abs() < 1e-6);
+                assert!(lit.iter().all(|(_, texel)| close(texel)), "current magnitudes {magnitudes:?}, order {order:?}: {lit:?} vs {expected:?}");
+            }
+            assert_eq!(table, before);                                                       // drawing never reorders the table
         }
     }
 

@@ -1,26 +1,15 @@
 //! How a star looks in a tile: the fixed four-texel glyph, the opacity curve with its zoom boost, and the
-//! premultiplied source-over blend. These are the pixel renderer's rules (`scene/raster/pixels/stars.rs` reads
+//! premultiplied screen blend. These are the pixel renderer's rules (`scene/raster/pixels/stars.rs` reads
 //! the curve from here until chunk 14 removes it), so a tile shows a star exactly as the screen did.
 use crate::catalog::decode_magnitude;
 use crate::constants::{MIN_FOV_DEGREES, STAR_BRIGHTNESS_REFERENCE_FOV_DEGREES, STAR_BRIGHTNESS_ZOOM_POWER,
     STAR_OPACITY_MAGNITUDE_SCALE, STAR_OPACITY_REFERENCE_MAGNITUDE};
 use crate::model::{StarColor, Texel, StarOpacities};
 
-/// The drawing order of a star as one number: ascending keys run from the dimmest current magnitude to the
-/// brightest, then by ascending ID, so the brighter/higher-ID star covers the other. IDs are unique within a
-/// table, so no two of its stars share a key and the order is fully determined.
-pub fn draw_order_key(magnitude_code: u16, id: u32) -> u64 { u64::from(u16::MAX - magnitude_code) << 32 | u64::from(id) }
-
-/// Rows to paint, in drawing order (see `draw_order_key`). The input slices borrow one table's simulated prefix;
-/// rows are sorted by their packed keys, so comparisons never read the slices again.
-pub fn order_star_rows(magnitudes: &[u16], ids: &[u32], threshold: u16) -> Vec<usize> {
-    assert_eq!(magnitudes.len(), ids.len(), "draw order needs one magnitude per star ID");
-    let mut keys: Vec<(u64, usize)> = magnitudes.iter().zip(ids).enumerate()
-        .filter(|&(_, (&code, _))| code <= threshold && code != crate::regions::UNPLACED)
-        .map(|(row, (&code, &id))| (draw_order_key(code, id), row)).collect();
-    keys.sort_unstable();
-    keys.into_iter().map(|(_, row)| row).collect()
-}
+/// Whether a star of current magnitude `magnitude_code` is drawn at `threshold`: bright enough, and placed by the
+/// simulation. Drawn stars need no particular order: the screen blend gives the same result for any order, up to
+/// f32 rounding, so callers draw them in table order.
+pub fn is_star_drawn(magnitude_code: u16, threshold: u16) -> bool { magnitude_code <= threshold && magnitude_code != crate::regions::UNPLACED }
 
 /// How far the glyph reaches from the star's rounded position, in texels: the four texels around the rounded
 /// position (the cell and the three above and to the left), plus the half texel of rounding.
@@ -103,19 +92,21 @@ pub fn premultiplied_color(color: u8, opacity: f32) -> [f32; 3] {
     rgb
 }
 
-/// Source-over in premultiplied form: the new star covers `opacity` of what was there. Zero opacity changes nothing.
+/// Screen blending in premultiplied form, the rule regions are composed with on the screen: every channel
+/// becomes `old + new · (1 − old)`, so overlapping stars brighten each other, neither covers the other, and the
+/// result does not depend on their order (up to f32 rounding). Opacity combines as `1 − (1 − old)(1 − opacity)`.
+/// Channels stay within [0, 1]; the cap only absorbs last-bit rounding. Zero opacity changes nothing.
 #[inline]
 pub fn blend_star(texel: &mut Texel, premultiplied: [f32; 3], opacity: f32) {
     #[cfg(feature = "pixel-debug")]
     {
-        texel.check("blend_star destination", f64::INFINITY);                            // constellation stars can cover an accumulated HDR frame
+        texel.check("blend_star destination", 1.0);
         (Texel { rgb: premultiplied, opacity }).check("blend_star source", 1.0);
     }
-    let keep = 1.0 - opacity;
-    for (old, new) in texel.rgb.iter_mut().zip(premultiplied) { *old = *old * keep + new; }
-    texel.opacity = texel.opacity * keep + opacity;
+    for (old, new) in texel.rgb.iter_mut().zip(premultiplied) { *old = (*old + new * (1.0 - *old)).min(1.0); }
+    texel.opacity = (texel.opacity + opacity * (1.0 - texel.opacity)).min(1.0);
     #[cfg(feature = "pixel-debug")]
-    texel.check("blend_star output", f64::INFINITY);
+    texel.check("blend_star output", 1.0);
 }
 
 #[cfg(test)]
@@ -124,31 +115,6 @@ mod tests {
     use crate::catalog::magnitude_code;
 
     fn close(actual: f32, expected: f32) { assert!((actual - expected).abs() < 1e-5, "{actual} != {expected}"); }
-
-    /// The draw order as it was before the packed keys: rows sorted by a comparator over both slices.
-    fn order_star_rows_reference(magnitudes: &[u16], ids: &[u32], threshold: u16) -> Vec<usize> {
-        let mut rows: Vec<_> = magnitudes.iter().enumerate()
-            .filter(|&(_, &code)| code <= threshold && code != crate::regions::UNPLACED)
-            .map(|(row, _)| row).collect();
-        rows.sort_unstable_by(|&a, &b| magnitudes[b].cmp(&magnitudes[a]).then_with(|| ids[a].cmp(&ids[b])));
-        rows
-    }
-
-    #[test]
-    fn packed_order_matches_comparator_order() {
-        // Few distinct codes (many ties), unique shuffled IDs up to u32::MAX, some unplaced rows, extreme codes.
-        let mut seed = 41_u32;
-        let mut next = || { seed = seed.wrapping_mul(1664525).wrapping_add(1013904223); seed };
-        let codes = [0, 1, 1200, 1201, 6000, u16::MAX - 1, crate::regions::UNPLACED];
-        for length in [0, 1, 2, 350, 5000] {
-            let magnitudes: Vec<u16> = (0..length).map(|_| codes[next() as usize % codes.len()]).collect();
-            let mut ids: Vec<u32> = (0..length as u32).map(|index| index.wrapping_mul(2654435761) ^ u32::MAX).collect();
-            for index in (1..ids.len()).rev() { ids.swap(index, next() as usize % (index + 1)); }
-            for threshold in [0, 1200, 6000, u16::MAX - 1, u16::MAX] {
-                assert_eq!(order_star_rows(&magnitudes, &ids, threshold), order_star_rows_reference(&magnitudes, &ids, threshold), "length {length}, threshold {threshold}");
-            }
-        }
-    }
 
     #[test]
     fn the_curve_is_full_at_the_reference_magnitude_and_falls_by_the_configured_factor() {
@@ -187,7 +153,7 @@ mod tests {
     }
 
     #[test]
-    fn blending_is_source_over_and_adding_is_commutative() {
+    fn blending_is_screen_blending_and_adding_is_commutative() {
         let mut texel = Texel::default();
         blend_star(&mut texel, premultiplied_color(StarColor::RedOrange.index(), 1.0), 1.0);
         assert_eq!(texel, Texel { rgb: StarColor::RedOrange.rgb().map(|level| level as f32 / 255.0), opacity: 1.0 });
@@ -197,6 +163,16 @@ mod tests {
         close(faint.opacity, 0.19);                                                          // 0.1 + 0.9 × 0.1
         blend_star(&mut faint, [0.0; 3], 0.0);
         close(faint.opacity, 0.19);
+
+        // Half-opaque red and blue: each keeps its full colour whichever is drawn first.
+        let (red, blue) = ([0.5, 0.0, 0.0], [0.0, 0.0, 0.5]);
+        let (mut red_first, mut blue_first) = (Texel::default(), Texel::default());
+        blend_star(&mut red_first, red, 0.5);
+        blend_star(&mut red_first, blue, 0.5);
+        blend_star(&mut blue_first, blue, 0.5);
+        blend_star(&mut blue_first, red, 0.5);
+        assert_eq!(red_first, blue_first);
+        assert_eq!(red_first, Texel { rgb: [0.5, 0.0, 0.5], opacity: 0.75 });
         assert_eq!(texel.plus(faint), faint.plus(texel));
         assert_eq!(Texel::SIZE, 16);
         assert!(Texel::default().is_empty() && !texel.is_empty());
