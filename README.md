@@ -162,6 +162,11 @@ every pixel of a region's screen image back to its tile and filtering the texels
 The fixed holds have known direction-error exceptions; the opt-in [offline hold audit](docs/stellar-hold-audit.md)
 reports them without changing the runtime policy.
 
+Final image composition uses four-pixel SSE2 batches on x86-64, preserving the scalar brightness,
+blending and byte-rounding formulas. Other architectures and `pixel-debug` builds use the portable scalar
+compositor; checked builds retain their per-pixel validation and accumulated-light reporting. Composition
+uses one thread independently of `--n-jobs`.
+
 Projection can use a dedicated thread pool with `--n-jobs`: `0` creates no projection pool, `1` creates one
 worker, and positive values request that many workers. `-1` uses the logical CPUs available to the process.
 This setting does not change catalog loading, downloading, sorting or other frame steps. Both direct and

@@ -20,7 +20,7 @@ Bottom-up. Every module exposes its symbols from its root `mod.rs`; callers use 
 | `regions/` | step 4, `refresh_regions`: simulation caches, star appearance, tile geometry, group and region images, merged-image bounds and filtering summaries |
 | `projection/` | step 5, `project_stars_to_screen`: optional dedicated worker pool, retained screen lookup, worker timers and scheduling scratch (`executor.rs`), reusable pixels and touched-screen-block tracking (`worker_image.rs`), image handoff and completion-order collection (`worker_images.rs`), screen composition (`screen_blend.rs`), restricted read-only tile inputs, rough stereographic work estimates and the independent region loop (`region_drawing.rs`), inverse warp and transformed rows (`pixel_warp.rs`), texel sampling with an independently switchable unit-footprint shortcut (`tile_sampling.rs`, `bilinear_sampling.rs`, `options.rs`), frame buffers (`frame.rs`), shared projection geometry (`geometry/`) |
 | `points/` | step 6, `draw_points` |
-| `present/` | step 7, `present`, and `Display` (terminal session, protocol detection, frame layout) |
+| `present/` | step 7, `present`, portable/checked RGBA composition (`composition.rs`), x86-64 four-pixel SSE2 composition (`composition_sse2.rs`), and `Display` (terminal session, protocol detection, frame layout) |
 | `terminal/` | startup progress display, raw-mode session, key and resize input, graphics encoders and protocol detection |
 | `controls/` | what a key does to the view and the clock |
 | `metadata/` | the panel's text: local time, zodiac, Moon phase, location, speed, view, timings |

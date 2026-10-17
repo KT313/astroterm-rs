@@ -9,6 +9,10 @@
 //! session falls back to streaming for good. Nothing here reads catalog data. `display` opens the terminal and
 //! sizes the frame.
 mod display;
+mod composition;
+#[cfg(all(target_arch = "x86_64", any(not(feature = "pixel-debug"), test)))]
+mod composition_sse2;
+pub use composition::compose;
 pub use display::{Display, DisplayInfo};
 pub use crate::terminal::transport::graphics::detection::{CompressionSupport, describe_compression}; // the detection result the panel and the benchmark report describe
 
@@ -21,6 +25,7 @@ pub fn transport_notice(info: &DisplayInfo) -> Option<&'static str> {
 }
 
 use crate::time::StepTimes;
+#[cfg(test)]
 use crate::constants::{MIN_STAR_PIXEL_OPACITY, PIXEL_BACKGROUND_RGBA};
 use crate::projection::Frame;
 use crate::terminal::transport::graphics::{compose_image, encode_image, kitty, present_frame, serialize_frame_into};
@@ -143,42 +148,6 @@ fn upload_shared<W: Write>(terminal: &mut Terminal<W>, dimensions: (u32, u32), t
     let consumed = kitty::wait_for_shared_consumption(&object);
     if !matches!(consumed, Ok(true)) { terminal.shared_memory = false; }                                  // timed out or unreadable: the streamed copy follows
     Ok(terminal.upload.len())
-}
-
-/// Tone map the star layer over the background and composite the overlay, into opaque 8-bit RGBA. A star pixel
-/// darkens the background by its opacity and adds its colour share; a non-empty pixel fainter than the floor is
-/// raised to it without changing its colour; summed light above full opacity saturates to the star's colour.
-pub fn compose(frame: &Frame, out: &mut Vec<u8>) {
-    let background = PIXEL_BACKGROUND_RGBA.map(f32::from);
-    out.clear();
-    out.reserve(frame.width() * frame.height() * 4);
-    for (texel, overlay) in frame.stars().iter().zip(frame.overlay().chunks_exact(4)) {
-        #[cfg(feature = "pixel-debug")]
-        {
-            texel.check("compose star input", f64::INFINITY);
-            crate::pixel_debug::record_accumulated([texel.rgb[0] as f64, texel.rgb[1] as f64, texel.rgb[2] as f64, texel.opacity as f64]);
-            crate::pixel_debug::check_overlay("compose overlay input", overlay);
-        }
-        let mut pixel = [background[0], background[1], background[2]];
-        if texel.opacity > 0.0 {
-            let (scale, floor) = if texel.opacity > 1.0 { (255.0 / texel.opacity, 1.0) }                // saturated: the straight colour
-                else if texel.opacity < MIN_STAR_PIXEL_OPACITY { (255.0 * MIN_STAR_PIXEL_OPACITY / texel.opacity, MIN_STAR_PIXEL_OPACITY) } // raised to the floor, colour intact
-                else { (255.0, texel.opacity) };
-            for (index, (channel, color)) in pixel.iter_mut().zip(texel.rgb).enumerate() {
-                let value = color * scale + *channel * (1.0 - floor);
-                #[cfg(feature = "pixel-debug")]
-                crate::pixel_debug::check_channel("compose tone mapping before clamp", index, value as f64, 255.0);
-                let _ = index;
-                *channel = value.min(255.0);
-            }
-        }
-        let alpha = f32::from(overlay[3]) / 255.0;
-        for (channel, &drawn) in pixel.iter_mut().zip(&overlay[..3]) { *channel = f32::from(drawn) + *channel * (1.0 - alpha); } // the overlay is premultiplied
-        #[cfg(feature = "pixel-debug")]
-        crate::pixel_debug::check_pixel("compose before u8 conversion", [pixel[0] as f64, pixel[1] as f64, pixel[2] as f64, 255.0], 255.0);
-        out.extend(pixel.map(|channel| (channel + 0.5) as u8));
-        out.push(255);
-    }
 }
 
 fn strip_alpha(rgba: &[u8], rgb: &mut Vec<u8>) {
