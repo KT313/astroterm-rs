@@ -1,6 +1,6 @@
 //! Optional projection-only worker pool. Every task runs the same independent region loop into its own
 //! image. The caller screen-blends results as they arrive and retains all image allocations for reuse.
-use std::io;
+use std::{io, ops::Range};
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use crate::model::{ProjectionKind, Region, Texel, View};
 use crate::observation::Observation;
@@ -17,11 +17,25 @@ use super::worker_images::{draw_worker_images, prepare_image};
 pub struct ProjectionExecutor {
     options: ProjectionOptions,
     pool: Option<ThreadPool>,
+    screen: Option<Screen>,
+    worker_times: Vec<StepTimes>,           // borrowed by scoped tasks; never moved with completed images
+    work_weights: Vec<f64>,
+    region_chunks: Vec<Range<usize>>,
     buffers: Vec<WorkerImage>,                  // one reusable image slot per worker, or one for direct execution
 }
 
 impl Default for ProjectionExecutor {
-    fn default() -> Self { Self { options: ProjectionOptions::default(), pool: None, buffers: vec![WorkerImage::default()] } }
+    fn default() -> Self {
+        Self {
+            options: ProjectionOptions::default(),
+            pool: None,
+            screen: None,
+            worker_times: Vec::new(),
+            work_weights: Vec::new(),
+            region_chunks: Vec::new(),
+            buffers: vec![WorkerImage::default()],
+        }
+    }
 }
 
 impl ProjectionExecutor {
@@ -39,7 +53,15 @@ impl ProjectionExecutor {
             .thread_name(|index| format!("projection-{index}"))
             .build()
             .map_err(|error| io::Error::other(format!("Cannot start {workers} projection workers: {error}")))?;
-        Ok(Self { options: ProjectionOptions::default(), pool: Some(pool), buffers: (0..workers).map(|_| WorkerImage::default()).collect() })
+        Ok(Self {
+            options: ProjectionOptions::default(),
+            pool: Some(pool),
+            screen: None,
+            worker_times: (0..workers).map(|_| StepTimes::default()).collect(),
+            work_weights: Vec::new(),
+            region_chunks: Vec::new(),
+            buffers: (0..workers).map(|_| WorkerImage::default()).collect(),
+        })
     }
 
     pub(super) fn project(&mut self, size: usize, regions: &[Region], selected: &[usize], observation: &Observation, view: &View, times: &mut StepTimes) -> &[Texel] {
@@ -52,7 +74,8 @@ impl ProjectionExecutor {
         }
         times.measure("Projection.Camera preparation");
         let camera = prepare_camera(view);
-        let screen = Screen::new(camera, size);
+        let screen = self.screen.get_or_insert_with(|| Screen::new(camera, size));
+        screen.update(camera, size);
         times.measure("Projection.Tile selection");
         let tiles = select_region_tiles(regions, selected);
 
@@ -62,62 +85,62 @@ impl ProjectionExecutor {
             prepare_image(&mut self.buffers[0].pixels, pixel_count);
             self.buffers[0].invalidate();
             let image = &mut self.buffers[0];
-            draw_regions::<false>(&mut image.pixels, &mut image.touched, &tiles, &screen, observation, &self.options, times);
+            draw_regions::<false>(&mut image.pixels, &mut image.touched, &tiles, screen, observation, &self.options, times);
             times.measure("Projection");
             return &self.buffers[0].pixels;
         };
 
         // Estimate only when stereographic rendering has multiple tasks. Other paths keep equal counts.
         let workers = pool.current_num_threads();
-        let chunks = if tiles.is_empty() {
-            vec![tiles.as_slice()] // One worker clears the result when the selection becomes empty.
+        if tiles.is_empty() {
+            self.region_chunks.clear();
+            self.region_chunks.push(0..0); // One worker clears the result for an empty selection.
         } else if workers > 1 && tiles.len() > 1 && view.projection == ProjectionKind::Stereographic {
             times.measure("Projection.Work estimation");
-            let work = estimate_stereographic_work(&tiles, &observation.patch.center, camera.scale, size, view.fov_degrees);
-            split_regions_by_work(&tiles, &work, workers)
+            estimate_stereographic_work(&mut self.work_weights, &tiles, &observation.patch.center, camera.scale, size, view.fov_degrees);
+            split_regions_by_work(&mut self.region_chunks, &self.work_weights, workers);
         } else {
-            split_region_chunks(&tiles, workers)
-        };
+            split_region_chunks(&mut self.region_chunks, tiles.len(), workers);
+        }
 
         // Workers resize and clear their own images. The caller merges completions while others draw.
         times.measure("Projection.Worker dispatch");
-        let result_slot = draw_worker_images(pool, &chunks, &mut self.buffers, size, &screen, observation, &self.options, times);
+        let result_slot = draw_worker_images(pool, &tiles, &self.region_chunks, &mut self.buffers, &mut self.worker_times, size, screen, observation, &self.options, times);
         times.measure("Projection");
         &self.buffers[result_slot].pixels
     }
 }
 
-/// Return contiguous borrowed slices without exposing the rest of the selected regions to a task.
-fn split_region_chunks<T>(regions: &[T], workers: usize) -> Vec<&[T]> {
+/// Fill reusable index ranges; jobs borrow only the tile slice named by their range.
+fn split_region_chunks(chunks: &mut Vec<Range<usize>>, region_count: usize, workers: usize) {
     assert!(workers > 0);
-    let count = workers.min(regions.len());
-    if count == 0 { return Vec::new(); }
+    chunks.clear();
+    let count = workers.min(region_count);
+    if count == 0 { return; }
 
     // Give the first few tasks one extra region when the division has a remainder.
-    let base = regions.len() / count;
-    let extra = regions.len() % count;
-    let mut chunks = Vec::with_capacity(count);
-    let mut remaining = regions;
+    let base = region_count / count;
+    let extra = region_count % count;
+    let mut first = 0;
     for index in 0..count {
         let length = base + usize::from(index < extra);
-        let (chunk, rest) = remaining.split_at(length);
-        chunks.push(chunk);
-        remaining = rest;
+        chunks.push(first..first + length);
+        first += length;
     }
-    chunks
 }
 
-/// Balance approximate work using consecutive slices without splitting individual regions. Boundaries follow
-/// cumulative work targets; reserving one region per remaining task prevents empty chunks.
-fn split_regions_by_work<'a, T>(regions: &'a [T], work: &[f64], workers: usize) -> Vec<&'a [T]> {
+/// Balance approximate work using consecutive ranges, retaining the original scheduling decisions.
+fn split_regions_by_work(chunks: &mut Vec<Range<usize>>, work: &[f64], workers: usize) {
     assert!(workers > 0);
-    assert_eq!(regions.len(), work.len());
-    let count = workers.min(regions.len());
+    chunks.clear();
+    let count = workers.min(work.len());
     let total_work: f64 = work.iter().sum();
-    if count <= 1 || total_work == 0.0 { return split_region_chunks(regions, workers); }
+    if count <= 1 || total_work == 0.0 {
+        split_region_chunks(chunks, work.len(), workers);
+        return;
+    }
 
-    // Walk the selected list once, cutting when the next share of total estimated work has been reached.
-    let mut chunks = Vec::with_capacity(count);
+    // Cut at cumulative work targets while reserving one region per remaining task.
     let mut first = 0;
     let mut completed_work = 0.0;
     for (index, &cost) in work.iter().enumerate() {
@@ -125,16 +148,15 @@ fn split_regions_by_work<'a, T>(regions: &'a [T], work: &[f64], workers: usize) 
         if remaining_chunks == 0 { break; }
         completed_work += cost;
         let target = total_work * ((chunks.len() + 1) as f64 / count as f64);
-        let remaining_regions = regions.len() - index - 1;
+        let remaining_regions = work.len() - index - 1;
         if completed_work >= target || remaining_regions == remaining_chunks {
-            chunks.push(&regions[first..=index]);
+            chunks.push(first..index + 1);
             first = index + 1;
         }
     }
 
-    // Always retain the final suffix, including cheap regions after the last expensive one.
-    chunks.push(&regions[first..]);
-    chunks
+    // Include the final suffix, even when it contains only cheap regions.
+    chunks.push(first..work.len());
 }
 
 /// Own the direct result in headless fixtures without adding a pixel copy to their benchmarks.

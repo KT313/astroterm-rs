@@ -98,10 +98,11 @@ fn chunks_preserve_order_are_balanced_and_never_empty() {
     for length in 0..32 {
         let regions: Vec<_> = (0..length).rev().collect();
         for workers in [1, 2, 3, 8, 40] {
-            let chunks = split_region_chunks(&regions, workers);
+            let mut chunks = Vec::new();
+            split_region_chunks(&mut chunks, regions.len(), workers);
             assert_eq!(chunks.len(), workers.min(length));
             assert!(chunks.iter().all(|chunk| !chunk.is_empty()));
-            let joined: Vec<_> = chunks.iter().flat_map(|chunk| chunk.iter().copied()).collect();
+            let joined: Vec<_> = chunks.iter().flat_map(|chunk| regions[chunk.clone()].iter().copied()).collect();
             assert_eq!(joined, regions);
             if let (Some(first), Some(last)) = (chunks.first(), chunks.last()) {
                 assert!(first.len() - last.len() <= 1);
@@ -115,11 +116,13 @@ fn weighted_chunks_keep_every_region_in_order_and_spread_expensive_suffixes() {
     let regions: Vec<_> = (0..16).collect();
     let mut work = vec![1.0; 16];
     work[12..].fill(100.0);
-    let chunks = split_regions_by_work(&regions, &work, 4);
-    let costs: Vec<f64> = chunks.iter().map(|chunk| chunk.iter().map(|&index| work[index]).sum()).collect();
+    let mut chunks = Vec::new();
+    split_regions_by_work(&mut chunks, &work, 4);
+    let costs: Vec<f64> = chunks.iter().map(|chunk| work[chunk.clone()].iter().sum()).collect();
     assert_eq!(costs, [112.0, 100.0, 100.0, 100.0]);
-    let old_costs: Vec<f64> = split_region_chunks(&regions, 4).iter()
-        .map(|chunk| chunk.iter().map(|&index| work[index]).sum()).collect();
+    let mut equal_chunks = Vec::new();
+    split_region_chunks(&mut equal_chunks, regions.len(), 4);
+    let old_costs: Vec<f64> = equal_chunks.iter().map(|chunk| work[chunk.clone()].iter().sum()).collect();
     assert_eq!(old_costs, [4.0, 4.0, 4.0, 400.0]);
 
     // Include empty inputs, zero/uniform costs, and a dominant region at either end of the list.
@@ -134,10 +137,11 @@ fn weighted_chunks_keep_every_region_in_order_and_spread_expensive_suffixes() {
                 _ => (index * 137 % 19 + 1) as f64,
             }).collect();
             for workers in [1, 2, 3, 8, 40] {
-                let chunks = split_regions_by_work(&regions, &work, workers);
+                let mut chunks = Vec::new();
+                split_regions_by_work(&mut chunks, &work, workers);
                 assert_eq!(chunks.len(), workers.min(length));
                 assert!(chunks.iter().all(|chunk| !chunk.is_empty()));
-                let joined: Vec<_> = chunks.iter().flat_map(|chunk| chunk.iter().copied()).collect();
+                let joined: Vec<_> = chunks.iter().flat_map(|chunk| regions[chunk.clone()].iter().copied()).collect();
                 assert_eq!(joined, regions);
             }
         }
@@ -155,9 +159,11 @@ fn rough_estimates_are_bounded_and_detect_stereographic_enlargement() {
     let scale = prepare_camera(&view).scale;
 
     observation.patch.center = centre;
-    let forward = estimate_stereographic_work(&tiles, &observation.patch.center, scale, 1116, view.fov_degrees);
+    let mut forward = Vec::new();
+    estimate_stereographic_work(&mut forward, &tiles, &observation.patch.center, scale, 1116, view.fov_degrees);
     observation.patch.center = -centre;
-    let rear = estimate_stereographic_work(&tiles, &observation.patch.center, scale, 1116, view.fov_degrees);
+    let mut rear = Vec::new();
+    estimate_stereographic_work(&mut rear, &tiles, &observation.patch.center, scale, 1116, view.fov_degrees);
     assert_eq!(forward[1], 1.0); // An empty image keeps only the baseline visit cost.
     assert_eq!(rear[1], 1.0);
     assert!(rear[0] > forward[0] * 1000.0);
@@ -262,7 +268,10 @@ fn arbitrary_chunk_composition_matches_serial_including_saturated_pixels() {
     for source in &sources { blend_screen_pixel(&mut reference, *source); }
     for workers in [1, 2, 3, 8, 1000] {
         let mut buffers = Vec::new();
-        for chunk in split_region_chunks(&sources, workers) {
+        let mut chunks = Vec::new();
+        split_region_chunks(&mut chunks, sources.len(), workers);
+        for range in chunks {
+            let chunk = &sources[range];
             let mut pixel = Texel::default();
             for source in chunk { blend_screen_pixel(&mut pixel, *source); }
             buffers.push(vec![pixel]);
@@ -324,6 +333,29 @@ fn drawing_failure_returns_every_buffer_before_propagating_and_pool_can_be_reuse
     let addresses: Vec<_> = executor.buffers.iter().map(|buffer| buffer.pixels.as_ptr()).collect();
     executor.project(67, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default());
     assert_eq!(addresses, executor.buffers.iter().map(|buffer| buffer.pixels.as_ptr()).collect::<Vec<_>>());
+}
+
+#[test]
+fn scheduling_and_worker_timer_storage_survive_empty_frames() {
+    let view = create_view(180.0, Stereographic);
+    let observation = observe_view(&view, false);
+    let mut data = Data::default();
+    let selected = fill_overlapping_regions(&mut data, &observation);
+    let mut executor = ProjectionExecutor::new(4).unwrap();
+    let mut times = StepTimes::default();
+    executor.project(67, &data.star_regions, &selected, &observation, &view, &mut times);
+    let weights = (executor.work_weights.as_ptr(), executor.work_weights.capacity());
+    let chunks = (executor.region_chunks.as_ptr(), executor.region_chunks.capacity());
+    let timer_addresses: Vec<_> = executor.worker_times.iter().map(|timer| timer.steps().as_ptr()).collect();
+    assert!(executor.worker_times.iter().all(|timer| timer.steps().len() == 1));
+
+    // An empty frame uses just one task; returning to the full selection reuses every task's scratch.
+    executor.project(67, &data.star_regions, &[], &observation, &view, &mut times);
+    executor.project(67, &data.star_regions, &selected, &observation, &view, &mut times);
+    assert_eq!(weights, (executor.work_weights.as_ptr(), executor.work_weights.capacity()));
+    assert_eq!(chunks, (executor.region_chunks.as_ptr(), executor.region_chunks.capacity()));
+    assert_eq!(timer_addresses, executor.worker_times.iter().map(|timer| timer.steps().as_ptr()).collect::<Vec<_>>());
+    assert!(executor.worker_times.iter().all(|timer| timer.steps().len() == 1));
 }
 
 #[test]
@@ -404,9 +436,10 @@ fn project_equal_count_reference<'a>(executor: &'a mut ProjectionExecutor, size:
     let screen = Screen::new(prepare_camera(view), size);
     let tiles = select_region_tiles(regions, selected);
     let pool = executor.pool.as_ref().unwrap();
-    let chunks = split_region_chunks(&tiles, pool.current_num_threads());
+    let mut chunks = Vec::new();
+    split_region_chunks(&mut chunks, tiles.len(), pool.current_num_threads());
     times.measure("Projection.Worker dispatch");
-    let result_slot = draw_worker_images(pool, &chunks, &mut executor.buffers, size, &screen, observation, &executor.options, &mut times);
+    let result_slot = draw_worker_images(pool, &tiles, &chunks, &mut executor.buffers, &mut executor.worker_times, size, &screen, observation, &executor.options, &mut times);
     &executor.buffers[result_slot].pixels
 }
 
@@ -448,20 +481,23 @@ fn time_stereographic_distribution() {
                 mode != 0, (samples[5] + samples[6]) * 0.5, samples[0], samples[11], maximum_error[mode]);
         }
 
-        // Measure the entire estimate and split, including their small temporary allocations.
+        // Measure the entire estimate and split, reusing the same owned scratch as the executor.
         let tiles = select_region_tiles(&data.star_regions, &selected);
         let camera = prepare_camera(&view);
+        let mut work = Vec::new();
+        let mut chunks = Vec::new();
         for round in 0..4 {
             let start = Instant::now();
             for _ in 0..1000 {
-                let work = estimate_stereographic_work(black_box(&tiles), black_box(&observation.patch.center), camera.scale, 1116, fov);
-                black_box(split_regions_by_work(&tiles, black_box(&work), 4));
+                estimate_stereographic_work(&mut work, black_box(&tiles), black_box(&observation.patch.center), camera.scale, 1116, fov);
+                split_regions_by_work(&mut chunks, black_box(&work), 4);
+                black_box(&chunks);
             }
             eprintln!("Estimate and split fov={fov} round={round}: {:.3} us for {} regions",
                 start.elapsed().as_secs_f64() * 1e6 / 1000.0, tiles.len());
         }
-        let work = estimate_stereographic_work(&tiles, &observation.patch.center, camera.scale, 1116, fov);
-        let chunks = split_regions_by_work(&tiles, &work, 4);
+        estimate_stereographic_work(&mut work, &tiles, &observation.patch.center, camera.scale, 1116, fov);
+        split_regions_by_work(&mut chunks, &work, 4);
         eprintln!("Weighted region counts fov={fov}: {:?}", chunks.iter().map(|chunk| chunk.len()).collect::<Vec<_>>());
     }
 }

@@ -1,7 +1,7 @@
 //! Step 5: every screen pixel inside a region's image is pulled back to the region's tile and sampled there.
 //! Tile and screen are both azimuthal images of the sky, the tile stereographic around its region centre and
 //! the screen stereographic or equidistant around the view centre, so a pixel's direction follows from a closed
-//! formula: undo the screen projection (one division for the stereographic view, a per-frame table for the
+//! formula: undo the screen projection (one division for the stereographic view, a scale-keyed table for the
 //! equidistant one), undo refraction (a table) and aberration (a constant), rotate into the tile's frame (a
 //! 3 × 3 matrix prepared per region) and apply the tile projection (one division). No mesh or triangles;
 //! region mappings are rebuilt each frame. Pixel positions follow the inverse formulas, with table interpolation and
@@ -44,31 +44,59 @@ fn select_content_radius(content_radius: Option<f64>, atmosphere: bool) -> f64 {
 
 /// The camera over the drawing square: the sky disc's radius and, for the equidistant view, cos θ and
 /// sin θ / |p| over |p|² (|p| the pixel's distance from the centre in disc radii, θ its angle from the view
-/// centre), 4097 entries built per frame so that no pixel needs trigonometry. Both are smooth in |p|², and the
-/// linear interpolation stays within 0.02″ of the formula at 360°.
+/// centre), 4097 cached entries so that no pixel needs trigonometry.
+/// Both are smooth in |p|², and linear interpolation stays within 0.02″ of the formula at 360°.
+/// The table is keyed by camera.scale and rebuilt only when that input changes; camera/size update every frame.
 pub(super) struct Screen {
     camera: CartesianCamera,
     size: usize,
     radius: f64,                            // the sky disc: (size − 1) / 2 pixels around its centre
     inverse_pixel_scale: f64,               // 1 / (radius × camera scale), reused by every pixel footprint
-    equidistant: Vec<[f64; 2]>,             // empty for the stereographic view
+    equidistant: Vec<[f64; 2]>,              // retained across view switches; read only in equidistant mode
+    equidistant_scale: Option<f64>,          // scale used to calculate the cached radial lookup table
+    #[cfg(test)]
+    equidistant_rebuilds: usize,
 }
 
 const EQUIDISTANT_STEPS: usize = 4096;
 
 impl Screen {
     pub(super) fn new(camera: CartesianCamera, size: usize) -> Self {
-        let radius = (size as f64 - 1.0) * 0.5;
-        let equidistant = match camera.kind {
-            ProjectionKind::Stereographic => Vec::new(),
-            ProjectionKind::Equidistant => (0..=EQUIDISTANT_STEPS).map(|index| {
-                let distance = (index as f64 / EQUIDISTANT_STEPS as f64).sqrt();
-                let angle = distance * FRAC_PI_2 / camera.scale;                        // the camera's radius is θ / (π / 2) · scale
-                let (sine, cosine) = angle.sin_cos();
-                [cosine, if distance > 0.0 { sine / distance } else { FRAC_PI_2 / camera.scale }]
-            }).collect(),
+        let mut screen = Self {
+            camera, size, radius: 0.0, inverse_pixel_scale: 0.0,
+            equidistant: Vec::new(), equidistant_scale: None,
+            #[cfg(test)]
+            equidistant_rebuilds: 0,
         };
-        Self { camera, size, radius, inverse_pixel_scale: 1.0 / (radius * camera.scale), equidistant }
+        screen.update(camera, size);
+        screen
+    }
+
+    pub(super) fn update(&mut self, camera: CartesianCamera, size: usize) {
+        // Orientation and image dimensions can change independently of the radial lookup table.
+        self.camera = camera;
+        self.size = size;
+        self.radius = (size as f64 - 1.0) * 0.5;
+        self.inverse_pixel_scale = 1.0 / (self.radius * camera.scale);
+
+        // Only equidistant zoom changes require recalculation. Retain capacity across zoom/view changes.
+        if camera.kind == ProjectionKind::Equidistant && self.equidistant_scale != Some(camera.scale) {
+            self.rebuild_equidistant_table(camera.scale);
+        }
+    }
+
+    fn rebuild_equidistant_table(&mut self, scale: f64) {
+        // Preserve the original sampling and arithmetic; only the storage lifetime changes.
+        self.equidistant.clear();
+        self.equidistant.extend((0..=EQUIDISTANT_STEPS).map(|index| {
+            let distance = (index as f64 / EQUIDISTANT_STEPS as f64).sqrt();
+            let angle = distance * FRAC_PI_2 / scale;
+            let (sine, cosine) = angle.sin_cos();
+            [cosine, if distance > 0.0 { sine / distance } else { FRAC_PI_2 / scale }]
+        }));
+        self.equidistant_scale = Some(scale);
+        #[cfg(test)]
+        { self.equidistant_rebuilds += 1; }
     }
 
     /// The apparent direction of the pixel centre (`column`, `row`) in horizon axes as `numerator / spread`,
@@ -197,16 +225,24 @@ impl<'a> RegionMapping<'a> {
                     let spread = (reach.sin() / angle.sin()).min(1.0).asin();
                     let around = camera.up.dot(apparent).atan2(camera.right.dot(apparent));
                     let within = |direction: f64| { let turn = (direction - around).rem_euclid(TAU); turn <= spread || turn >= TAU - spread };
-                    let mut points = Vec::with_capacity(8);
+                    // Four sector corners plus at most four axis extrema fit in fixed stack storage.
+                    let mut points = [[0.0; 2]; 8];
+                    let mut point_count = 0;
                     for distance in [inner, outer] {
-                        for direction in [around - spread, around + spread] { points.push([distance * direction.cos(), distance * direction.sin()]); }
+                        for direction in [around - spread, around + spread] {
+                            points[point_count] = [distance * direction.cos(), distance * direction.sin()];
+                            point_count += 1;
+                        }
                     }
                     for axis in 0..4 {
                         let direction = axis as f64 * FRAC_PI_2;
-                        if within(direction) { points.push([outer * direction.cos(), outer * direction.sin()]); }
+                        if within(direction) {
+                            points[point_count] = [outer * direction.cos(), outer * direction.sin()];
+                            point_count += 1;
+                        }
                     }
                     let (mut left, mut right, mut top, mut bottom) = (f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY);
-                    for [x, y] in points {
+                    for &[x, y] in &points[..point_count] {
                         left = left.min(radius + x); right = right.max(radius + x);
                         top = top.min(radius - y); bottom = bottom.max(radius - y);
                     }
@@ -645,6 +681,46 @@ mod tests {
     }
     fn settings() -> RenderOptions { RenderOptions { magnitude_threshold: 6.0, unicode: true, braille: false, color: true, constellations: false, grid: false, dynamic_names: false } }
     pub(super) fn facing(azimuth: f64, tilt: f64) -> ViewCenter { ViewCenter::Facing { azimuth, tilt } }
+
+    #[test]
+    fn equidistant_lookup_rebuilds_only_when_its_scale_changes() {
+        let (mut view, _) = observation_at(180.0, false, facing(0.0, 0.0), ProjectionKind::Equidistant);
+        let mut screen = Screen::new(prepare_camera(&view), 1116);
+        let address = screen.equidistant.as_ptr();
+        let original = screen.equidistant.clone();
+        assert_eq!(screen.equidistant_rebuilds, 1);
+
+        // Neither changing orientation nor resizing changes the radial formula's input.
+        view.center = facing(2.0, 0.3);
+        screen.update(prepare_camera(&view), 503);
+        assert_eq!(screen.size, 503);
+        assert_eq!(screen.radius, 251.0);
+        assert_eq!(screen.equidistant_rebuilds, 1);
+        assert_eq!(screen.equidistant, original);
+
+        // Visiting the other projection does not discard a still-valid equidistant lookup.
+        view.projection = ProjectionKind::Stereographic;
+        screen.update(prepare_camera(&view), 503);
+        view.projection = ProjectionKind::Equidistant;
+        screen.update(prepare_camera(&view), 1116);
+        assert_eq!(screen.equidistant_rebuilds, 1);
+
+        // A new scale refills the same allocation using exactly the original formula.
+        view.fov_degrees = 60.0;
+        let camera = prepare_camera(&view);
+        screen.update(camera, 1116);
+        assert_eq!(screen.equidistant_rebuilds, 2);
+        assert_ne!(screen.equidistant, original);
+        for (index, actual) in screen.equidistant.iter().enumerate() {
+            let distance = (index as f64 / EQUIDISTANT_STEPS as f64).sqrt();
+            let angle = distance * FRAC_PI_2 / camera.scale;
+            let (sine, cosine) = angle.sin_cos();
+            assert_eq!(*actual, [cosine, if distance > 0.0 { sine / distance } else { FRAC_PI_2 / camera.scale }]);
+        }
+        screen.update(camera, 1116);
+        assert_eq!(screen.equidistant_rebuilds, 2);
+        assert_eq!(screen.equidistant.as_ptr(), address);
+    }
 
     #[test]
     fn every_pixel_maps_back_to_the_direction_the_forward_chain_projects() {
@@ -1109,7 +1185,8 @@ mod tests {
         for (fov, projection) in [(180.0, Stereographic), (351.6, Stereographic), (360.0, Equidistant)] {
             let (view, observation) = observation_at(fov, false, facing(334_f64.to_radians(), 0.0), projection);
             let mut data = original.clone();
-            let selected = crate::selection::select_regions(&data.star_regions, &observation.patch, observation.time_ms, &mut StepTimes::default());
+            let mut selected = crate::selection::Selected::default();
+            crate::selection::select_regions(&mut selected, &data.star_regions, &observation.patch, observation.time_ms, &mut StepTimes::default());
             let settings = RenderOptions { magnitude_threshold: 9.0, ..settings() };
             refresh_regions(
                 &mut data.star_regions, &data.constellation_stars,

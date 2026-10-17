@@ -177,6 +177,8 @@ frame insertion. Each active image costs about 19 MiB at 1116 × 1116 pixels; ca
 
 Stereographic views with multiple workers balance chunks using a cheap projected-area estimate. Direct execution,
 one worker and equidistant views do not calculate estimates; equidistant keeps roughly equal region counts.
+Selection indices, scheduling weights/chunk ranges and worker timers retain their storage across frames.
+The equidistant radial lookup is rebuilt only when its camera scale changes; panning and resizing reuse it.
 Screen blending between regions and worker images is mathematically independent of order and grouping, though
 completion order can cause tiny floating-point differences. A single large region can still limit speedup.
 Screen corrections are calculated independently for each region, including equidistant and refraction views.
@@ -195,7 +197,7 @@ Stars whose complete dot would cross the image boundary are omitted. The Sun, pl
 Tiles are stereographic images of their region, and the screen is a stereographic or equidistant (`-e`) image
 of the sky, so every pixel's place in a tile follows from a closed formula. The warp uses it backwards: for every
 pixel inside a region's screen image it undoes the screen projection (a division for the stereographic view, a
-small per-frame table for the equidistant one), refraction (through a fixed table) and aberration, rotates into
+small scale-keyed lookup table for the equidistant one), refraction (through a fixed table) and aberration, rotates into
 the tile and applies the tile projection, then averages the texels under the pixel's footprint and blends the
 result with screen blending (`a + b * (1 - a)` for each stored RGB channel and opacity). This keeps stored
 channels bounded and never darkens them during merging. The existing final faint-pixel brightness floor still

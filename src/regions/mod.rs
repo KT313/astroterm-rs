@@ -266,7 +266,8 @@ mod tests {
     /// One refresh: observe, select and refresh for the given inputs.
     fn frame(caches: &mut Data, tables: &Data, days: f64, view: &View, threshold: f64) -> (Selected, RefreshReport) {
         let observation = observe(&boston(), true, view, time(days), crate::formulas::evaluate_earth_state(time(days)), &mut crate::time::StepTimes::default());
-        let selected = select_regions(&tables.star_regions, &observation.patch, observation.time_ms, &mut crate::time::StepTimes::default());
+        let mut selected = crate::selection::Selected::default();
+        select_regions(&mut selected, &tables.star_regions, &observation.patch, observation.time_ms, &mut crate::time::StepTimes::default());
         let report = refresh_regions(
             &mut caches.star_regions, &caches.constellation_stars,
             &mut caches.constellation_simulation, &mut caches.constellation_last_update_ms,
@@ -552,7 +553,8 @@ mod tests {
             let view = view(fov, 1.0);
             let timed = |caches: &mut Data, days: f64, threshold: f64, what: &str| {
                 let observation = observe(&boston(), true, &view, time(days), crate::formulas::evaluate_earth_state(time(days)), &mut crate::time::StepTimes::default());
-                let selected = select_regions(&tables.star_regions, &observation.patch, observation.time_ms, &mut crate::time::StepTimes::default());
+                let mut selected = crate::selection::Selected::default();
+                select_regions(&mut selected, &tables.star_regions, &observation.patch, observation.time_ms, &mut crate::time::StepTimes::default());
                 let started = std::time::Instant::now();
                 let report = refresh_regions(
                     &mut caches.star_regions, &caches.constellation_stars,

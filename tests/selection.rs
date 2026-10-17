@@ -57,7 +57,8 @@ fn all_stars(tables: &Data) -> Vec<(u32, astroterm::formulas::StellarMotion, f64
 
 /// The stars the selection offers: the brightness prefixes of the selected regions plus the constellation table.
 fn candidates(tables: &Data, observation: &Observation, threshold: f64) -> (BTreeSet<u32>, bool) {
-    let selected = select_regions(&tables.star_regions, &observation.patch, observation.time_ms, &mut astroterm::time::StepTimes::default());
+    let mut selected = astroterm::selection::Selected::default();
+    select_regions(&mut selected, &tables.star_regions, &observation.patch, observation.time_ms, &mut astroterm::time::StepTimes::default());
     let mut ids = BTreeSet::new();
     for &region in &selected.regions {
         for table in tables.star_regions[region].speed_groups.iter().map(|group| &group.stars) {

@@ -22,7 +22,8 @@ fn main() {
             let time = config.simulation.start_time_ms;
             let solar_system = simulate_solar_system(&tables.solar_system_sun, &tables.solar_system_planets, &tables.solar_system_moons, time, &mut astroterm::time::StepTimes::default());
             let observation = observe(&config.simulation.observer, config.simulation.refraction, &config.view, time, solar_system.earth, &mut astroterm::time::StepTimes::default());
-            let selected = select_regions(&tables.star_regions, &observation.patch, observation.time_ms, &mut astroterm::time::StepTimes::default());
+            let mut selected = astroterm::selection::Selected::default();
+            select_regions(&mut selected,&tables.star_regions, &observation.patch, observation.time_ms, &mut astroterm::time::StepTimes::default());
             refresh_regions(
                 &mut tables.star_regions, &tables.constellation_stars,
                 &mut tables.constellation_simulation, &mut tables.constellation_last_update_ms,

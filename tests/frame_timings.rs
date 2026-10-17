@@ -22,7 +22,8 @@ fn render(data: &mut Data, frame: &mut Frame, terminal: &mut Terminal<Vec<u8>>, 
     times.measure("Observation");
     let observation = observe(&Observer::default(), true, &view, time, astroterm::formulas::evaluate_earth_state(time), times);
     times.measure("Selection");
-    let selected = select_regions(&data.star_regions, &observation.patch, observation.time_ms, times);
+    let mut selected = astroterm::selection::Selected::default();
+    select_regions(&mut selected, &data.star_regions, &observation.patch, observation.time_ms, times);
     times.measure("Regions");
     refresh_regions(
         &mut data.star_regions, &data.constellation_stars,

@@ -25,23 +25,30 @@ pub(super) fn prepare_image(pixels: &mut Vec<Texel>, pixel_count: usize) {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn draw_worker_images(pool: &ThreadPool, chunks: &[&[SelectedTile<'_>]], buffers: &mut [WorkerImage], size: usize, screen: &Screen, observation: &Observation, options: &ProjectionOptions, times: &mut StepTimes) -> usize {
+pub(super) fn draw_worker_images(pool: &ThreadPool, tiles: &[SelectedTile<'_>], chunks: &[std::ops::Range<usize>], buffers: &mut [WorkerImage], worker_times: &mut [StepTimes], size: usize, screen: &Screen, observation: &Observation, options: &ProjectionOptions, times: &mut StepTimes) -> usize {
     assert!(!chunks.is_empty(), "projection needs at least one drawing job");
     assert!(buffers.len() >= chunks.len(), "each projection job needs its own image slot");
+    assert!(worker_times.len() >= chunks.len(), "each projection job needs its own timer");
 
     // A bounded channel can hold every result even if composition or unwinding delays the receiver.
     let (sender, receiver) = mpsc::sync_channel(chunks.len());
     let result = pool.in_place_scope(|scope| {
-        for (slot, (&tiles, buffer)) in chunks.iter().zip(buffers.iter_mut()).enumerate() {
+        for (slot, ((range, buffer), timer)) in chunks.iter().zip(buffers.iter_mut()).zip(worker_times).enumerate() {
+            let tiles = &tiles[range.clone()];
             let sender = sender.clone();
             let mut image = std::mem::take(buffer);
             scope.spawn(move |_| {
                 // Return the allocation even after a drawing panic; the caller drains all results first.
                 let drawing_result = catch_unwind(AssertUnwindSafe(|| {
                     image.prepare(size);
-                    draw_regions::<true>(&mut image.pixels, &mut image.touched, tiles, screen, observation, options, &mut StepTimes::default());
+                    timer.begin_frame();
+                    draw_regions::<true>(&mut image.pixels, &mut image.touched, tiles, screen, observation, options, timer);
+                    timer.measure("END");
                 }));
-                if drawing_result.is_err() { image.invalidate(); }
+                if drawing_result.is_err() {
+                    image.invalidate();
+                    timer.reset_frame_timings(); // Discard an unfinished interval before reusing the worker.
+                }
                 let completed = CompletedImage { slot, image, drawing_result };
                 let _ = sender.send(completed); // A disconnected receiver means the caller is already unwinding.
             });

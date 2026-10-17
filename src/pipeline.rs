@@ -34,6 +34,7 @@ pub(super) fn run_frame_loop(
 )-> io::Result<()> {
 
     let mut current_view = config.view;
+    let mut selected = Selected::default();
     time_manager.step_times.reset_frame_timings();
 
     loop {
@@ -51,7 +52,7 @@ pub(super) fn run_frame_loop(
         let observation = observe(&config.simulation.observer, config.simulation.refraction, &current_view, time_ms, solar_system.earth, &mut time_manager.step_times);
 
         time_manager.measure("Selection");
-        let selected = select_regions(&data.star_regions, &observation.patch, observation.time_ms, &mut time_manager.step_times);
+        select_regions(&mut selected, &data.star_regions, &observation.patch, observation.time_ms, &mut time_manager.step_times);
 
         time_manager.measure("Regions");
         let refreshed = refresh_regions(
