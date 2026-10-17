@@ -9,6 +9,7 @@ use crate::time::StepTimes;
 use super::pixel_warp::{RegionMapping, Screen, draw_region};
 use super::tile_sampling::TileSampler;
 use super::options::ProjectionOptions;
+use super::worker_image::TouchedBlocks;
 
 /// One selected region's identity and read-only image. Nothing is copied from its cached tile.
 pub(super) struct SelectedTile<'a> {
@@ -65,7 +66,9 @@ pub(super) fn estimate_stereographic_work(tiles: &[SelectedTile<'_>], view_direc
 
 /// Draw each assigned region completely before moving to the next. The caller supplies a clear output
 /// image; this loop never clears it or reads another task's inputs. Every task reuses one sampler.
-pub(super) fn draw_regions(stars: &mut [Texel], tiles: &[SelectedTile<'_>], screen: &Screen, observation: &Observation, options: &ProjectionOptions, times: &mut StepTimes) {
+/// Workers record written screen blocks; direct execution compiles out that bookkeeping.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn draw_regions<const TRACK_BLOCKS: bool>(stars: &mut [Texel], touched: &mut TouchedBlocks, tiles: &[SelectedTile<'_>], screen: &Screen, observation: &Observation, options: &ProjectionOptions, times: &mut StepTimes) {
     // Reuse filter scratch across this task's regions instead of storing a sampler for each region.
     let mut sampler = TileSampler::new(TILE_EDGE_TEXELS, options);
     for tile in tiles {
@@ -83,6 +86,6 @@ pub(super) fn draw_regions(stars: &mut [Texel], tiles: &[SelectedTile<'_>], scre
         times.measure("Projection.Tile filter preparation");
         sampler.prepare(image.lit_rows(), image.filter_summary.as_ref());
         times.measure("Projection.Tile rasterization");
-        draw_region(stars, &mapping, &sampler, image.texels());
+        draw_region::<TRACK_BLOCKS>(stars, touched, &mapping, &sampler, image.texels());
     }
 }

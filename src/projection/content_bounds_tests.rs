@@ -65,7 +65,7 @@ fn compare_with_full_disc(region: usize, image: &RegionTileCache, observation: &
     sampler.prepare(image.lit_rows(), image.filter_summary.as_ref());
     let mut actual = vec![Texel::default(); size * size];
     if let Some(mapping) = RegionMapping::new(&geometry, observation, &screen, image.content_radius) {
-        draw_region(&mut actual, &mapping, &sampler, image.texels());
+        draw_region::<false>(&mut actual, &mut super::TouchedBlocks::default(), &mapping, &sampler, image.texels());
     }
 
     // Scan the whole disc directly, bypassing bounds, stepped rays, row skips and early footprint rejection.
@@ -168,8 +168,8 @@ fn content_bounds_reduce_work_without_changing_the_refracted_image() {
     assert!(count_candidates(&tight, &sampler) < count_candidates(&original, &sampler));
     let mut original_pixels = vec![Texel::default(); screen.size * screen.size];
     let mut tight_pixels = original_pixels.clone();
-    draw_region(&mut original_pixels, &original, &sampler, image.texels());
-    draw_region(&mut tight_pixels, &tight, &sampler, image.texels());
+    draw_region::<false>(&mut original_pixels, &mut super::TouchedBlocks::default(), &original, &sampler, image.texels());
+    draw_region::<false>(&mut tight_pixels, &mut super::TouchedBlocks::default(), &tight, &sampler, image.texels());
     let original_samples = original_pixels.iter().filter(|pixel| !pixel.is_empty()).count();
     let tight_samples = tight_pixels.iter().filter(|pixel| !pixel.is_empty()).count();
     assert_eq!(tight_samples, original_samples);

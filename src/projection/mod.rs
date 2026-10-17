@@ -6,6 +6,7 @@ mod pixel_warp;
 mod region_drawing;
 mod executor;
 mod worker_images;
+mod worker_image;
 mod screen_blend;
 mod tile_sampling;
 mod bilinear_sampling;

@@ -74,13 +74,13 @@ fn direct_mode_has_no_pool_and_explicit_counts_are_not_capped_to_cpus() {
     let direct = ProjectionExecutor::new(0).unwrap();
     assert!(direct.pool.is_none());
     assert_eq!(direct.buffers.len(), 1);
-    assert!(direct.buffers[0].is_empty());
+    assert!(direct.buffers[0].pixels.is_empty());
     for workers in [1, 2, 4] {
         let executor = ProjectionExecutor::new(workers).unwrap();
         let pool = executor.pool.as_ref().unwrap();
         assert_eq!(pool.current_num_threads(), workers);
         assert_eq!(executor.buffers.len(), workers);
-        assert!(executor.buffers.iter().all(Vec::is_empty));
+        assert!(executor.buffers.iter().all(|image| image.pixels.is_empty()));
         let caller = std::thread::current().id();
         pool.in_place_scope(|scope| {
             assert_eq!(std::thread::current().id(), caller);
@@ -245,7 +245,7 @@ fn one_worker_writes_the_final_image_without_temporary_images_or_composition() {
         assert_eq!(actual, expected);
         let output_address = actual.as_ptr();
         assert_eq!(executor.buffers.len(), 1);
-        assert_eq!(executor.buffers[0].as_ptr(), output_address);
+        assert_eq!(executor.buffers[0].pixels.as_ptr(), output_address);
         assert!(times.steps().iter().any(|step| step.name == "Worker wait"));
         assert!(!times.steps().iter().any(|step| step.name == "Worker composition"));
     }
@@ -315,15 +315,15 @@ fn drawing_failure_returns_every_buffer_before_propagating_and_pool_can_be_reuse
         executor.project(67, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default());
     }));
     assert!(failure.is_err());
-    assert!(executor.buffers.iter().take(selected.len()).all(|buffer| buffer.len() == 67 * 67));
+    assert!(executor.buffers.iter().take(selected.len()).all(|buffer| buffer.pixels.len() == 67 * 67));
 
     data.star_regions[centre].merged_tile = valid_image;
     let expected = project_test_image(67, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default());
     let actual = executor.project(67, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default());
     compare_images(actual, &expected);
-    let addresses: Vec<_> = executor.buffers.iter().map(|buffer| buffer.as_ptr()).collect();
+    let addresses: Vec<_> = executor.buffers.iter().map(|buffer| buffer.pixels.as_ptr()).collect();
     executor.project(67, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default());
-    assert_eq!(addresses, executor.buffers.iter().map(|buffer| buffer.as_ptr()).collect::<Vec<_>>());
+    assert_eq!(addresses, executor.buffers.iter().map(|buffer| buffer.pixels.as_ptr()).collect::<Vec<_>>());
 }
 
 #[test]
@@ -406,8 +406,8 @@ fn project_equal_count_reference<'a>(executor: &'a mut ProjectionExecutor, size:
     let pool = executor.pool.as_ref().unwrap();
     let chunks = split_region_chunks(&tiles, pool.current_num_threads());
     times.measure("Projection.Worker dispatch");
-    let result_slot = draw_worker_images(pool, &chunks, &mut executor.buffers, size * size, &screen, observation, &executor.options, &mut times);
-    &executor.buffers[result_slot]
+    let result_slot = draw_worker_images(pool, &chunks, &mut executor.buffers, size, &screen, observation, &executor.options, &mut times);
+    &executor.buffers[result_slot].pixels
 }
 
 #[test]

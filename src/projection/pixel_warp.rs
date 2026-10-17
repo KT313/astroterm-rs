@@ -20,6 +20,7 @@ use crate::projection::prepare_camera;
 use super::executor::project_test_image;
 use crate::regions::TileGeometry;
 use super::screen_blend::blend_screen_pixel;
+use super::worker_image::TouchedBlocks;
 #[cfg(test)]
 use crate::selection::Selected;
 #[cfg(test)]
@@ -408,7 +409,7 @@ impl<'a> RegionMapping<'a> {
 
 /// Pull candidate pixel footprints back to the tile, retaining partial overlaps, and screen-blend. Rows
 /// whose tile rows hold no light are skipped before any pixel is mapped, which is what makes sparse tiles cheap.
-pub(super) fn draw_region(stars: &mut [Texel], mapping: &RegionMapping<'_>, sampler: &TileSampler<'_>, texels: &[Texel]) {
+pub(super) fn draw_region<const TRACK_BLOCKS: bool>(stars: &mut [Texel], touched: &mut TouchedBlocks, mapping: &RegionMapping<'_>, sampler: &TileSampler<'_>, texels: &[Texel]) {
     // Select the row calculation once; refraction and equidistant views keep their general mapping.
     let screen = mapping.screen;
     let use_transformed_rows = screen.camera.kind == ProjectionKind::Stereographic && !mapping.atmosphere;
@@ -422,56 +423,80 @@ pub(super) fn draw_region(stars: &mut [Texel], mapping: &RegionMapping<'_>, samp
             let pixels = &mut stars[row * screen.size..][first..=last];
 
             // Keep the choice outside the pixel loop so each loop has only the state it needs.
-            if use_transformed_rows {
-                draw_transformed_span(pixels, mapping, sampler, texels, first, row);
+            let (first_written, last_written) = if use_transformed_rows {
+                draw_transformed_span::<TRACK_BLOCKS>(pixels, mapping, sampler, texels, first, row)
             } else {
-                draw_screen_span(pixels, mapping, sampler, texels, first, row);
+                draw_screen_span::<TRACK_BLOCKS>(pixels, mapping, sampler, texels, first, row)
+            };
+
+            // Record a row range once, without a bitmap update for every pixel. Empty spans mark nothing.
+            if TRACK_BLOCKS && first_written <= last_written {
+                touched.mark_span(row, first_written, last_written);
             }
         }
     }
 }
 
 /// Draw a span whose tile-space direction and length can be advanced by additions alone.
-fn draw_transformed_span(pixels: &mut [Texel], mapping: &RegionMapping<'_>, sampler: &TileSampler<'_>, texels: &[Texel], first_column: usize, row: usize) {
+fn draw_transformed_span<const TRACK_BLOCKS: bool>(pixels: &mut [Texel], mapping: &RegionMapping<'_>, sampler: &TileSampler<'_>, texels: &[Texel], first_column: usize, row: usize) -> (usize, usize) {
+    // The reversed range represents no writes. Tracking compiles out for the no-pool renderer.
+    let mut first_written = usize::MAX;
+    let mut last_written = 0;
+
     // Rebase long spans from the formula periodically, keeping accumulated roundoff below the tested limit.
     for (chunk, pixels) in pixels.chunks_mut(STEREOGRAPHIC_ROW_REBASE_PIXELS).enumerate() {
         let column = first_column + chunk * STEREOGRAPHIC_ROW_REBASE_PIXELS;
         let mut rays = TransformedRow::new(mapping, column as f64, row as f64);
 
         // No matrix multiplication or rebase decision is needed inside this pixel loop.
-        for pixel in pixels {
+        for (offset, pixel) in pixels.iter_mut().enumerate() {
             let sample = rays.project_footprint(mapping);
             rays.advance();
             if let Some((position, footprint)) = sample {
-                sample_and_blend_pixel(pixel, sampler, texels, position, footprint);
+                let painted = sample_and_blend_pixel(pixel, sampler, texels, position, footprint);
+                if TRACK_BLOCKS && painted {
+                    first_written = first_written.min(column + offset);
+                    last_written = column + offset;
+                }
             }
         }
     }
+    (first_written, last_written)
 }
 
 /// Draw a span using the general screen-ray path, including nonlinear refraction or equidistant mapping.
-fn draw_screen_span(pixels: &mut [Texel], mapping: &RegionMapping<'_>, sampler: &TileSampler<'_>, texels: &[Texel], first_column: usize, row: usize) {
+fn draw_screen_span<const TRACK_BLOCKS: bool>(pixels: &mut [Texel], mapping: &RegionMapping<'_>, sampler: &TileSampler<'_>, texels: &[Texel], first_column: usize, row: usize) -> (usize, usize) {
+    // The reversed range represents no writes. Tracking compiles out for the no-pool renderer.
+    let mut first_written = usize::MAX;
+    let mut last_written = 0;
+
     // Preserve the existing per-pixel transform and its numerical evaluation order.
     let mut rays = RowRays::new(mapping.screen, first_column as f64, row as f64);
-    for pixel in pixels {
+    for (offset, pixel) in pixels.iter_mut().enumerate() {
         let (numerator, spread, factor) = rays.current(mapping.screen);
         rays.advance();
         if let Some((position, footprint)) = mapping.tile_of_overlapping_footprint(numerator, spread, factor) {
-            sample_and_blend_pixel(pixel, sampler, texels, position, footprint);
+            let painted = sample_and_blend_pixel(pixel, sampler, texels, position, footprint);
+            if TRACK_BLOCKS && painted {
+                first_written = first_written.min(first_column + offset);
+                last_written = first_column + offset;
+            }
         }
     }
+    (first_written, last_written)
 }
 
 /// Apply the common light rejection, coordinate convention, box filter and screen composition.
 #[inline]
-fn sample_and_blend_pixel(pixel: &mut Texel, sampler: &TileSampler<'_>, texels: &[Texel], position: Point, footprint: f64) {
+fn sample_and_blend_pixel(pixel: &mut Texel, sampler: &TileSampler<'_>, texels: &[Texel], position: Point, footprint: f64) -> bool {
     // Convert integer-centred tile coordinates to the sampler's edge coordinates exactly once.
-    if footprint <= 3.0 && !sampler.may_hold_light_near(position) { return; }
+    if footprint <= 3.0 && !sampler.may_hold_light_near(position) { return false; }
     let sample_position = position.map(|value| value + 0.5);
-    let Some(rgba) = sampler.sample(texels, sample_position, [footprint, footprint]) else { return; };
+    let Some(rgba) = sampler.sample(texels, sample_position, [footprint, footprint]) else { return false; };
 
     // Every region uses the same commutative blend as completed worker images.
     blend_screen_pixel(pixel, Texel { rgb: [rgba[0], rgba[1], rgba[2]], opacity: rgba[3] });
+    true
 }
 
 /// A stereographic row already rotated into a tile's axes, with first-order aberration included.
@@ -880,7 +905,7 @@ mod tests {
                 let screen = Screen::new(prepare_camera(&view), size);
                 let mapping = RegionMapping::new(&tile, &observation, &screen, None).unwrap();
                 let mut actual = vec![Texel::default(); size * size];
-                draw_region(&mut actual, &mapping, &sampler, &texels);
+                draw_region::<false>(&mut actual, &mut TouchedBlocks::default(), &mapping, &sampler, &texels);
 
                 // This reference bypasses candidate bounds, row masks and the pre-division overlap check.
                 for row in 0..size {
@@ -1032,7 +1057,7 @@ mod tests {
         let mut sampler = TileSampler::new(TILE_EDGE_TEXELS, &Default::default());
         sampler.prepare(&[u64::MAX; TILE_EDGE_TEXELS], None);
         let mut stars = vec![Texel::default(); 201 * 201];
-        draw_region(&mut stars, &mapping, &sampler, &texels);
+        draw_region::<false>(&mut stars, &mut TouchedBlocks::default(), &mapping, &sampler, &texels);
         assert!(stars[100 * 201 + 100].is_empty());
         assert!(stars.iter().any(|texel| texel.opacity > 0.0));
     }

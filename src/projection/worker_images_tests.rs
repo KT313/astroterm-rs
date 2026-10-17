@@ -1,8 +1,13 @@
 use super::*;
+use super::super::screen_blend::blend_screen_images;
 use std::time::Duration;
 
-fn completed(slot: usize, pixel: Texel, count: usize) -> CompletedImage {
-    CompletedImage { slot, pixels: vec![pixel; count], drawing_result: Ok(()) }
+fn completed(slot: usize, pixel: Texel, size: usize) -> CompletedImage {
+    let mut image = WorkerImage::default();
+    image.prepare(size);
+    image.pixels.fill(pixel);
+    for row in 0..size { image.touched.mark_span(row, 0, size - 1); }
+    CompletedImage { slot, image, drawing_result: Ok(()) }
 }
 
 #[test]
@@ -35,15 +40,15 @@ fn first_completion_becomes_the_accumulator_without_copying_any_allocation() {
         let mut addresses = [std::ptr::null(); 3];
         for slot in order {
             let result = completed(slot, [red, blue, green][slot], 1);
-            addresses[slot] = result.pixels.as_ptr();
+            addresses[slot] = result.image.pixels.as_ptr();
             sender.send(result).unwrap();
         }
         drop(sender);
-        let mut buffers = vec![Vec::new(); 3];
+        let mut buffers = (0..3).map(|_| WorkerImage::default()).collect::<Vec<_>>();
         let result_slot = collect_images(receiver, &mut buffers, &mut StepTimes::default()).unwrap();
         assert_eq!(result_slot, order[0]);
-        for (buffer, address) in buffers.iter().zip(addresses) { assert_eq!(buffer.as_ptr(), address); }
-        for (actual, expected) in buffers[result_slot][0].rgb.into_iter().chain([buffers[result_slot][0].opacity])
+        for (buffer, address) in buffers.iter().zip(addresses) { assert_eq!(buffer.pixels.as_ptr(), address); }
+        for (actual, expected) in buffers[result_slot].pixels[0].rgb.into_iter().chain([buffers[result_slot].pixels[0].opacity])
             .zip(expected[0].rgb.into_iter().chain([expected[0].opacity]))
         {
             assert!((actual - expected).abs() < 1e-6);
@@ -59,7 +64,7 @@ fn receiver_merges_before_all_workers_have_finished() {
     let (finished, result) = mpsc::channel();
     let collector = std::thread::spawn(move || {
         let outcome = catch_unwind(AssertUnwindSafe(|| {
-            collect_images(receiver, &mut vec![Vec::new(); 3], &mut StepTimes::default()).unwrap();
+            collect_images(receiver, &mut (0..3).map(|_| WorkerImage::default()).collect::<Vec<_>>(), &mut StepTimes::default()).unwrap();
         }));
         finished.send(outcome.is_err()).unwrap();
     });
@@ -80,8 +85,8 @@ fn failure_drains_remaining_images_and_preserves_the_original_panic() {
     sender.send(failed).unwrap();
     sender.send(completed(1, Texel::default(), 7)).unwrap();
     drop(sender);
-    let mut buffers = vec![Vec::new(); 3];
+    let mut buffers = (0..3).map(|_| WorkerImage::default()).collect::<Vec<_>>();
     let failure = collect_images(receiver, &mut buffers, &mut StepTimes::default()).unwrap_err();
     assert_eq!(failure.downcast_ref::<&str>(), Some(&"original worker failure"));
-    assert!(buffers.iter().all(|buffer| buffer.len() == 7));
+    assert!(buffers.iter().all(|buffer| buffer.pixels.len() == 49));
 }

@@ -9,6 +9,7 @@ use super::prepare_camera;
 use super::options::ProjectionOptions;
 use super::pixel_warp::Screen;
 use super::region_drawing::{draw_regions, estimate_stereographic_work, select_region_tiles};
+use super::worker_image::WorkerImage;
 use super::worker_images::{draw_worker_images, prepare_image};
 
 /// Lives outside the frame loop. Zero workers runs the region loop locally; positive counts use a
@@ -16,11 +17,11 @@ use super::worker_images::{draw_worker_images, prepare_image};
 pub struct ProjectionExecutor {
     options: ProjectionOptions,
     pool: Option<ThreadPool>,
-    buffers: Vec<Vec<Texel>>,                  // one reusable image slot per worker, or one for direct execution
+    buffers: Vec<WorkerImage>,                  // one reusable image slot per worker, or one for direct execution
 }
 
 impl Default for ProjectionExecutor {
-    fn default() -> Self { Self { options: ProjectionOptions::default(), pool: None, buffers: vec![Vec::new()] } }
+    fn default() -> Self { Self { options: ProjectionOptions::default(), pool: None, buffers: vec![WorkerImage::default()] } }
 }
 
 impl ProjectionExecutor {
@@ -38,15 +39,16 @@ impl ProjectionExecutor {
             .thread_name(|index| format!("projection-{index}"))
             .build()
             .map_err(|error| io::Error::other(format!("Cannot start {workers} projection workers: {error}")))?;
-        Ok(Self { options: ProjectionOptions::default(), pool: Some(pool), buffers: (0..workers).map(|_| Vec::new()).collect() })
+        Ok(Self { options: ProjectionOptions::default(), pool: Some(pool), buffers: (0..workers).map(|_| WorkerImage::default()).collect() })
     }
 
     pub(super) fn project(&mut self, size: usize, regions: &[Region], selected: &[usize], observation: &Observation, view: &View, times: &mut StepTimes) -> &[Texel] {
         // Degenerate drawing areas need a correctly sized transparent image, but no worker jobs.
         let pixel_count = size.checked_mul(size).expect("drawing area pixel count overflow");
         if size < 2 {
-            prepare_image(&mut self.buffers[0], pixel_count);
-            return &self.buffers[0];
+            prepare_image(&mut self.buffers[0].pixels, pixel_count);
+            self.buffers[0].invalidate();
+            return &self.buffers[0].pixels;
         }
         times.measure("Projection.Camera preparation");
         let camera = prepare_camera(view);
@@ -57,10 +59,12 @@ impl ProjectionExecutor {
         // Direct execution uses exactly the same loop as each worker, with the normal frame timer.
         let Some(pool) = &self.pool else {
             times.measure("Projection.Star buffer preparation");
-            prepare_image(&mut self.buffers[0], pixel_count);
-            draw_regions(&mut self.buffers[0], &tiles, &screen, observation, &self.options, times);
+            prepare_image(&mut self.buffers[0].pixels, pixel_count);
+            self.buffers[0].invalidate();
+            let image = &mut self.buffers[0];
+            draw_regions::<false>(&mut image.pixels, &mut image.touched, &tiles, &screen, observation, &self.options, times);
             times.measure("Projection");
-            return &self.buffers[0];
+            return &self.buffers[0].pixels;
         };
 
         // Estimate only when stereographic rendering has multiple tasks. Other paths keep equal counts.
@@ -77,9 +81,9 @@ impl ProjectionExecutor {
 
         // Workers resize and clear their own images. The caller merges completions while others draw.
         times.measure("Projection.Worker dispatch");
-        let result_slot = draw_worker_images(pool, &chunks, &mut self.buffers, pixel_count, &screen, observation, &self.options, times);
+        let result_slot = draw_worker_images(pool, &chunks, &mut self.buffers, size, &screen, observation, &self.options, times);
         times.measure("Projection");
-        &self.buffers[result_slot]
+        &self.buffers[result_slot].pixels
     }
 }
 
@@ -138,7 +142,7 @@ fn split_regions_by_work<'a, T>(regions: &'a [T], work: &[f64], workers: usize) 
 pub(super) fn project_test_image(size: usize, regions: &[Region], selected: &[usize], observation: &Observation, view: &View, times: &mut StepTimes) -> Vec<Texel> {
     let mut executor = ProjectionExecutor::default();
     executor.project(size, regions, selected, observation, view, times);
-    std::mem::take(&mut executor.buffers[0])
+    std::mem::take(&mut executor.buffers[0].pixels)
 }
 
 #[cfg(test)]

@@ -1,4 +1,4 @@
-//! Worker-owned image preparation and completion-order handoff. Vec ownership moves through the channel;
+//! Worker-owned image preparation and completion-order handoff. Pixels and block tracking move together;
 //! no pixels are copied, and no worker can write an image after handing it back to the caller.
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::sync::mpsc;
@@ -9,11 +9,11 @@ use crate::time::StepTimes;
 use super::pixel_warp::Screen;
 use super::options::ProjectionOptions;
 use super::region_drawing::{SelectedTile, draw_regions};
-use super::screen_blend::blend_screen_images;
+use super::worker_image::WorkerImage;
 
 struct CompletedImage {
     slot: usize,
-    pixels: Vec<Texel>,
+    image: WorkerImage,
     drawing_result: std::thread::Result<()>,
 }
 
@@ -25,7 +25,7 @@ pub(super) fn prepare_image(pixels: &mut Vec<Texel>, pixel_count: usize) {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn draw_worker_images(pool: &ThreadPool, chunks: &[&[SelectedTile<'_>]], buffers: &mut [Vec<Texel>], pixel_count: usize, screen: &Screen, observation: &Observation, options: &ProjectionOptions, times: &mut StepTimes) -> usize {
+pub(super) fn draw_worker_images(pool: &ThreadPool, chunks: &[&[SelectedTile<'_>]], buffers: &mut [WorkerImage], size: usize, screen: &Screen, observation: &Observation, options: &ProjectionOptions, times: &mut StepTimes) -> usize {
     assert!(!chunks.is_empty(), "projection needs at least one drawing job");
     assert!(buffers.len() >= chunks.len(), "each projection job needs its own image slot");
 
@@ -34,14 +34,15 @@ pub(super) fn draw_worker_images(pool: &ThreadPool, chunks: &[&[SelectedTile<'_>
     let result = pool.in_place_scope(|scope| {
         for (slot, (&tiles, buffer)) in chunks.iter().zip(buffers.iter_mut()).enumerate() {
             let sender = sender.clone();
-            let mut pixels = std::mem::take(buffer);
+            let mut image = std::mem::take(buffer);
             scope.spawn(move |_| {
                 // Return the allocation even after a drawing panic; the caller drains all results first.
                 let drawing_result = catch_unwind(AssertUnwindSafe(|| {
-                    prepare_image(&mut pixels, pixel_count);
-                    draw_regions(&mut pixels, tiles, screen, observation, options, &mut StepTimes::default());
+                    image.prepare(size);
+                    draw_regions::<true>(&mut image.pixels, &mut image.touched, tiles, screen, observation, options, &mut StepTimes::default());
                 }));
-                let completed = CompletedImage { slot, pixels, drawing_result };
+                if drawing_result.is_err() { image.invalidate(); }
+                let completed = CompletedImage { slot, image, drawing_result };
                 let _ = sender.send(completed); // A disconnected receiver means the caller is already unwinding.
             });
         }
@@ -58,37 +59,37 @@ pub(super) fn draw_worker_images(pool: &ThreadPool, chunks: &[&[SelectedTile<'_>
     }
 }
 
-fn collect_images(receiver: mpsc::Receiver<CompletedImage>, buffers: &mut [Vec<Texel>], times: &mut StepTimes) -> std::thread::Result<usize> {
+fn collect_images(receiver: mpsc::Receiver<CompletedImage>, buffers: &mut [WorkerImage], times: &mut StepTimes) -> std::thread::Result<usize> {
     let mut accumulated: Option<CompletedImage> = None;
     let mut failure = None;
     loop {
         // Wait only for the next completed job, not for all jobs or a particular region order.
         times.measure("Projection.Worker wait");
         let Ok(completed) = receiver.recv() else { break; };
-        let CompletedImage { slot, pixels, drawing_result } = completed;
+        let CompletedImage { slot, image, drawing_result } = completed;
         if let Err(panic) = drawing_result {
             if failure.is_none() { failure = Some(panic); }
-            buffers[slot] = pixels;
+            buffers[slot] = image;
             continue;
         }
 
         // After an error, keep collecting allocations without presenting a partial image.
         if failure.is_some() {
-            buffers[slot] = pixels;
+            buffers[slot] = image;
             continue;
         }
         if let Some(first) = &mut accumulated {
             times.measure("Projection.Worker composition");
-            blend_screen_images(&mut first.pixels, &pixels);
-            buffers[slot] = pixels;
+            first.image.merge(&image);
+            buffers[slot] = image;
         } else {
-            accumulated = Some(CompletedImage { slot, pixels, drawing_result: Ok(()) });
+            accumulated = Some(CompletedImage { slot, image, drawing_result: Ok(()) });
         }
     }
 
     // The first completed image remains the accumulator and goes back into its original reusable slot.
     let result_slot = accumulated.map(|image| {
-        buffers[image.slot] = image.pixels;
+        buffers[image.slot] = image.image;
         image.slot
     });
     if let Some(panic) = failure { return Err(panic); }

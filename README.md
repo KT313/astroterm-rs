@@ -166,9 +166,13 @@ Projection can use a dedicated thread pool with `--n-jobs`: `0` creates no proje
 worker, and positive values request that many workers. `-1` uses the logical CPUs available to the process.
 This setting does not change catalog loading, downloading, sorting or other frame steps. Both direct and
 worker execution use the same independent region loop; workers borrow only their assigned tiles. The executor
-creates one reusable image vector per worker. Each job resizes and clears its own image, then returns it through
-a completion channel. The main thread uses the first completed image as the accumulator and screen-blends later
-results while other jobs continue drawing. Image allocations are retained; the completed square is borrowed for
+creates one reusable image vector and touched-screen-block list per worker. Each job clears only previously
+written blocks, then records its new written ranges while drawing. Screen blocks are 16 × 16 pixels by default
+(`PROJECTION_SCREEN_BLOCK_SIZE` in `constants.rs`), independent of the sky regions. Completed images and their
+block lists return together through a completion channel. The main thread keeps the first image, copies blocks
+not yet touched, and screen-blends overlapping blocks while other jobs continue drawing. Resizing resets block
+tracking; the accumulator retains the union of merged blocks for its next clear. Image allocations are retained;
+the completed square is borrowed for
 frame insertion. Each active image costs about 19 MiB at 1116 × 1116 pixels; capacity can retain a larger prior size.
 
 Stereographic views with multiple workers balance chunks using a cheap projected-area estimate. Direct execution,
