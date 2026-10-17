@@ -50,6 +50,7 @@ impl Default for Region {
         Self {
             speed_groups: std::array::from_fn(|group| StarGroup::new(StarTable::default(), group)),
             merged_tile: Default::default(),
+            child_tiles: Vec::new(),
         }
     }
 }

@@ -11,13 +11,13 @@ Bottom-up. Every module exposes its symbols from its root `mod.rs`; callers use 
 | `rows/` | the column-table macros the catalog and timing records use |
 | `progress/` | the startup progress trait and `Report`, the one value that carries progress and timings through the loaders |
 | `text/` | the fontdue text rasterizer used for labels and the panel |
-| `model/catalog` | the data model: `Data` (definitions in `model/data.rs`: regions own groups; groups own star tables, simulation caches and tiles; constellation stars, bodies and names share this owner), the cube-map grid, speed-group rules, packed storage |
+| `model/catalog` | the data model: `Data` (definitions in `model/data.rs`: regions own groups and child tiles; groups own star tables, simulation caches and tiles; constellation stars, bodies and names share this owner), the cube-map grid and its cells at any depth (`SkyCell`), speed-group rules, packed storage |
 | `model/configuration` | `Config`, `View`, `RenderOptions`, `TerminalSettings` |
 | `sky/catalog` | loading: resolve or download a dataset, prepare and cache it, build the sky tables |
 | `solar_system/` | step 1, `simulate_solar_system` |
 | `observation/` | step 2, `observe` |
-| `selection/` | step 3, `select_regions`: refills the caller-owned `Selected` vector, retaining its capacity |
-| `regions/` | step 4, `refresh_regions`: simulation caches, star appearance, tile geometry, group and region images (region merging and its lit-row scan in four-texel SSE2 batches on x86-64), merged-image bounds and filtering summaries |
+| `selection/` | step 3, `select_regions`: refills the caller-owned `Selected` vector, retaining its capacity; splits regions whose tiles would be too coarse on screen into finer in-view grid cells (`leaves.rs`), from a texels-per-pixel estimate (`tile_scale.rs`) |
+| `regions/` | step 4, `refresh_regions`: simulation caches, star appearance, tile geometry of regions and finer cells, the uncached child tiles of split regions (`children.rs`), group and region images (region merging and its lit-row scan in four-texel SSE2 batches on x86-64), merged-image bounds and filtering summaries |
 | `projection/` | step 5, `project_stars_to_screen`: optional dedicated worker pool, retained screen lookup, worker timers and scheduling scratch (`executor.rs`), reusable pixels and touched-screen-block tracking (`worker_image.rs`), image handoff and completion-order collection (`worker_images.rs`), screen composition (`screen_blend.rs`), restricted read-only tile inputs, rough stereographic work estimates and the independent region loop (`region_drawing.rs`), inverse warp, the general mapping in batches of pixels and transformed rows (`pixel_warp.rs`), texel sampling with an independently switchable unit-footprint shortcut and x86-64 f64 SIMD accumulation (`tile_sampling.rs`, `bilinear_sampling.rs`, `options.rs`), frame buffers (`frame.rs`), shared projection geometry (`geometry/`) |
 | `points/` | step 6, `draw_points` |
 | `present/` | step 7, `present`, portable/checked RGBA composition (`composition.rs`), x86-64 four-pixel SSE2 composition (`composition_sse2.rs`), runtime-selected SSSE3/portable RGB conversion (`rgb_conversion.rs`), and `Display` (terminal session, protocol detection, frame layout) |

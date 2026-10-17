@@ -34,16 +34,16 @@ fn run_frame(data: &mut Data, frame: &mut Frame, view: &View, settings: &RenderO
     let solar_system = simulate_solar_system(&data.solar_system_sun, &data.solar_system_planets, &data.solar_system_moons, time, &mut astroterm::time::StepTimes::default());                                  // 1
     let observation = observe(&TOKYO, true, view, time, astroterm::formulas::evaluate_earth_state(time), &mut astroterm::time::StepTimes::default());                                              // 2
     let mut selected = astroterm::selection::Selected::default();
-    select_regions(&mut selected, &data.star_regions, &observation.patch, observation.time_ms, &mut astroterm::time::StepTimes::default());                                       // 3
+    select_regions(&mut selected, &data.star_regions, &observation, view, frame.drawing_area_width_and_height, &mut astroterm::time::StepTimes::default());                                       // 3
     refresh_regions(
         &mut data.star_regions, &data.constellation_stars,
         &mut data.constellation_simulation, &mut data.constellation_last_update_ms,
         &mut data.star_opacities, &mut data.tile_bytes,
-        &selected.regions, time, view.fov_degrees, settings.magnitude_threshold,
+        &selected, time, view.fov_degrees, settings.magnitude_threshold,
         &mut astroterm::time::StepTimes::default(),
     );                                       // 4
     let mut projection = astroterm::projection::ProjectionExecutor::default();
-    let projected_stars = project_stars_to_screen(frame.drawing_area_width_and_height, &data.star_regions, &selected.regions, &observation, view, &mut projection, &mut astroterm::time::StepTimes::default());                            // 5
+    let projected_stars = project_stars_to_screen(frame.drawing_area_width_and_height, &data.star_regions, &selected, &observation, view, &mut projection, &mut astroterm::time::StepTimes::default());                            // 5
     frame.insert_projected_stars(projected_stars);
     let drawn = draw_points(
         frame, &solar_system,

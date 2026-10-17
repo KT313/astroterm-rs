@@ -499,13 +499,13 @@ mod tests {
         let observation = observe(&boston(), false, view, time, crate::formulas::evaluate_earth_state(time), &mut crate::time::StepTimes::default());
         let solar_system = simulate_solar_system(&tables.solar_system_sun, &tables.solar_system_planets, &tables.solar_system_moons, time, &mut crate::time::StepTimes::default());
         let mut selected = crate::selection::Selected::default();
-        select_regions(&mut selected, &tables.star_regions, &observation.patch, observation.time_ms, &mut crate::time::StepTimes::default());
+        select_regions(&mut selected, &tables.star_regions, &observation, view, frame.drawing_area_width_and_height, &mut crate::time::StepTimes::default());
         let mut caches = tables.clone();
         refresh_regions(
             &mut caches.star_regions, &caches.constellation_stars,
             &mut caches.constellation_simulation, &mut caches.constellation_last_update_ms,
             &mut caches.star_opacities, &mut caches.tile_bytes,
-            &selected.regions, time, view.fov_degrees, settings.magnitude_threshold,
+            &selected, time, view.fov_degrees, settings.magnitude_threshold,
             &mut crate::time::StepTimes::default(),
         );
         let drawn = draw_points(
@@ -775,13 +775,13 @@ mod tests {
         let observation = observe(&boston(), false, &View::default(), time, crate::formulas::evaluate_earth_state(time), &mut crate::time::StepTimes::default());
         let solar_system = simulate_solar_system(&clipped.solar_system_sun, &clipped.solar_system_planets, &clipped.solar_system_moons, time, &mut crate::time::StepTimes::default());
         let mut selected = crate::selection::Selected::default();
-        select_regions(&mut selected, &clipped.star_regions, &observation.patch, observation.time_ms, &mut crate::time::StepTimes::default());
+        select_regions(&mut selected, &clipped.star_regions, &observation, &View::default(), frame.drawing_area_width_and_height, &mut crate::time::StepTimes::default());
         let mut caches = clipped.clone();
         refresh_regions(
             &mut caches.star_regions, &caches.constellation_stars,
             &mut caches.constellation_simulation, &mut caches.constellation_last_update_ms,
             &mut caches.star_opacities, &mut caches.tile_bytes,
-            &selected.regions, time, View::default().fov_degrees, settings().magnitude_threshold,
+            &selected, time, View::default().fov_degrees, settings().magnitude_threshold,
             &mut crate::time::StepTimes::default(),
         );
         let streaming = draw_points(
@@ -805,14 +805,14 @@ mod tests {
         let observation = observe(&boston(), true, &view, time, crate::formulas::evaluate_earth_state(time), &mut crate::time::StepTimes::default());
         let solar_system = simulate_solar_system(&tables.solar_system_sun, &tables.solar_system_planets, &tables.solar_system_moons, time, &mut crate::time::StepTimes::default());
         let mut selected = crate::selection::Selected::default();
-        select_regions(&mut selected, &tables.star_regions, &observation.patch, observation.time_ms, &mut crate::time::StepTimes::default());
+        select_regions(&mut selected, &tables.star_regions, &observation, &view, 1100, &mut crate::time::StepTimes::default());
         let mut caches = tables.clone();
         let settings = RenderOptions { magnitude_threshold: 9.0, ..settings() };
         refresh_regions(
             &mut caches.star_regions, &caches.constellation_stars,
             &mut caches.constellation_simulation, &mut caches.constellation_last_update_ms,
             &mut caches.star_opacities, &mut caches.tile_bytes,
-            &selected.regions, time, view.fov_degrees, settings.magnitude_threshold,
+            &selected, time, view.fov_degrees, settings.magnitude_threshold,
             &mut crate::time::StepTimes::default(),
         );
         let mut frame = Frame::new(1920, 1100, 1100, (9, 17));
@@ -860,7 +860,7 @@ mod tests {
         let observation = observe(&boston(), true, &View::default(), time, crate::formulas::evaluate_earth_state(time), &mut crate::time::StepTimes::default());
         let solar_system = simulate_solar_system(&tables.solar_system_sun, &tables.solar_system_planets, &tables.solar_system_moons, time, &mut crate::time::StepTimes::default());
         let mut selected = crate::selection::Selected::default();
-        select_regions(&mut selected, &tables.star_regions, &observation.patch, observation.time_ms, &mut crate::time::StepTimes::default());
+        select_regions(&mut selected, &tables.star_regions, &observation, &View::default(), 201, &mut crate::time::StepTimes::default());
         let caches = tables.clone();
         let fields = [MetadataField { label: "Date".into(), value: "2000-01-01".into() }, MetadataField { label: "Site".into(), value: "Boston".into() }];
         let mut frame = Frame::new(301, 201, 201, (10, 20));

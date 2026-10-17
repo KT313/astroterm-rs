@@ -52,19 +52,19 @@ pub(super) fn run_frame_loop(
         let observation = observe(&config.simulation.observer, config.simulation.refraction, &current_view, time_ms, solar_system.earth, &mut time_manager.step_times);
 
         time_manager.measure("Selection");
-        select_regions(&mut selected, &data.star_regions, &observation.patch, observation.time_ms, &mut time_manager.step_times);
+        select_regions(&mut selected, &data.star_regions, &observation, &current_view, frame.drawing_area_width_and_height, &mut time_manager.step_times);
 
         time_manager.measure("Regions");
         let refreshed = refresh_regions(
             &mut data.star_regions, &data.constellation_stars,
             &mut data.constellation_simulation, &mut data.constellation_last_update_ms,
             &mut data.star_opacities, &mut data.tile_bytes,
-            &selected.regions, time_ms, current_view.fov_degrees, config.render.magnitude_threshold,
+            &selected, time_ms, current_view.fov_degrees, config.render.magnitude_threshold,
             &mut time_manager.step_times,
         );
 
         time_manager.measure("Projection");
-        let projected_stars = project_stars_to_screen(frame.drawing_area_width_and_height, &data.star_regions, &selected.regions, &observation, &current_view, projection, &mut time_manager.step_times);
+        let projected_stars = project_stars_to_screen(frame.drawing_area_width_and_height, &data.star_regions, &selected, &observation, &current_view, projection, &mut time_manager.step_times);
         time_manager.measure("Projection.Frame insertion");
         frame.insert_projected_stars(projected_stars);
 

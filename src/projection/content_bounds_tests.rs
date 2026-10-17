@@ -194,11 +194,11 @@ fn time_cached_content_bounds() {
     use std::time::Instant;
 
     let mut data = Data::default();
-    let selected: Vec<_> = (0..data.star_regions.len()).collect();
+    let selected = Selected::of_regions((0..data.star_regions.len()).collect());
     for full in [false, true] {
         // Build image summaries once, just as an infrequent group-image change would do.
         let preparation = Instant::now();
-        for &region in &selected {
+        for &region in &selected.regions {
             data.star_regions[region].merged_tile = build_dense_image(region, full);
         }
         let radii: Vec<_> = data.star_regions.iter().map(|region| region.merged_tile.content_radius).collect();

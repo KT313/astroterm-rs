@@ -2,26 +2,34 @@
 //! borrowed merged tiles; star tables, simulation caches and other regions are not accessible to a task.
 use crate::constants::TILE_EDGE_TEXELS;
 use crate::formulas::Vector3;
-use crate::model::{Region, RegionTileCache, Texel, region_caps};
+use crate::model::{Region, RegionTileCache, SkyCell, Texel};
 use crate::observation::Observation;
 use crate::regions::TileGeometry;
+use crate::selection::Selected;
 use crate::time::StepTimes;
 use super::pixel_warp::{RegionMapping, Screen, draw_region};
 use super::tile_sampling::TileSampler;
 use super::options::ProjectionOptions;
 use super::worker_image::TouchedBlocks;
 
-/// One selected region's identity and read-only image. Nothing is copied from its cached tile.
+/// One tile to draw, a region's or a cell's it was split into, with its read-only image. Nothing is copied from it.
 pub(super) struct SelectedTile<'a> {
-    region_index: usize,
+    cell: SkyCell,
     image: &'a RegionTileCache,
 }
 
-pub(super) fn select_region_tiles<'a>(regions: &'a [Region], selected: &[usize]) -> Vec<SelectedTile<'a>> {
+/// The tiles of the selection: each selected region's merged tile, or the child tiles step 4 drew for the cells
+/// the selection split it into.
+pub(super) fn select_region_tiles<'a>(regions: &'a [Region], selected: &Selected) -> Vec<SelectedTile<'a>> {
     // Preserve selection order while restricting access to the images needed for projection.
-    let mut tiles = Vec::with_capacity(selected.len());
-    for &region_index in selected {
-        tiles.push(SelectedTile { region_index, image: &regions[region_index].merged_tile });
+    let mut tiles = Vec::with_capacity(selected.regions.len() + selected.leaves.len());
+    for (region_index, leaves) in selected.regions_with_leaves() {
+        let region = &regions[region_index];
+        if leaves.is_empty() {
+            tiles.push(SelectedTile { cell: SkyCell::region(region_index), image: &region.merged_tile });
+        } else {
+            tiles.extend(region.child_tiles.iter().map(|child| SelectedTile { cell: child.cell, image: &child.image }));
+        }
     }
     tiles
 }
@@ -31,7 +39,6 @@ pub(super) fn select_region_tiles<'a>(regions: &'a [Region], selected: &[usize])
 /// Refraction, aberration, tile padding and sparse contents are deliberately not modelled precisely.
 pub(super) fn estimate_stereographic_work(work: &mut Vec<f64>, tiles: &[SelectedTile<'_>], view_direction: &Vector3, camera_scale: f64, size: usize, fov_degrees: f64) {
     // Camera scale and view-edge alignment are common to all regions and calculated only once.
-    let caps = region_caps();
     let diameter_scale = (size as f64 - 1.0) * camera_scale;
     let view_edge_depth = (fov_degrees.to_radians() * 0.5).cos();
     let image_area = (size as f64) * (size as f64);
@@ -45,7 +52,7 @@ pub(super) fn estimate_stereographic_work(work: &mut Vec<f64>, tiles: &[Selected
         }
 
         // Give likely off-screen centres only the baseline cost, allowing for radius at the view edge.
-        let cap = caps[tile.region_index];
+        let cap = tile.cell.cap();
         let depth = cap.center.dot(*view_direction).clamp(-1.0, 1.0);
         if depth < view_edge_depth - cap.radius {
             work.push(1.0);
@@ -76,9 +83,9 @@ pub(super) fn draw_regions<const TRACK_BLOCKS: bool>(stars: &mut [Texel], touche
         let image = tile.image;
         if image.is_empty() || image.lit_rows().iter().all(|&row| row == 0) { continue; }
 
-        // Calculate this region's mapping using only its identity and the common camera/observer inputs.
+        // Calculate this tile's mapping using only its cell and the common camera/observer inputs.
         times.measure("Projection.Tile geometry");
-        let geometry = TileGeometry::new(tile.region_index);
+        let geometry = TileGeometry::of_cell(tile.cell);
         times.measure("Projection.Region mapping");
         let Some(mapping) = RegionMapping::new(&geometry, observation, screen, image.content_radius) else { continue; };
 

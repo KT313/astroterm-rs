@@ -3,6 +3,7 @@ use super::*;
 use super::content_bounds_tests::build_dense_image;
 use super::tests::{facing, observation_at};
 use crate::model::{ViewCenter, region_caps};
+use crate::selection::Selected;
 use ProjectionKind::{Equidistant, Stereographic};
 
 // Preserve the phase-1 mapping loop as an oracle, using the current screen compositor.
@@ -133,8 +134,8 @@ fn transformed_values_and_footprints_match_direct_evaluation_along_long_rows() {
 #[test]
 fn transformed_rows_preserve_composition_and_general_modes_are_identical() {
     let mut data = Data::default();
-    let selected: Vec<_> = (0..data.star_regions.len()).step_by(13).collect();
-    for &region in &selected { data.star_regions[region].merged_tile = build_dense_image(region, true); }
+    let selected = Selected::of_regions((0..data.star_regions.len()).step_by(13).collect());
+    for &region in &selected.regions { data.star_regions[region].merged_tile = build_dense_image(region, true); }
 
     // Interleave mode changes and views, including refraction, the equidistant rim and near-singular stereo.
     for (fov, projection, atmosphere, centre) in [
@@ -148,7 +149,7 @@ fn transformed_rows_preserve_composition_and_general_modes_are_identical() {
     ] {
         let (view, observation) = observation_at(fov, atmosphere, centre, projection);
         for size in [0, 1, 301] {
-            let expected = project_reference_tiles(size, &data.star_regions, &selected, &observation, &view);
+            let expected = project_reference_tiles(size, &data.star_regions, &selected.regions, &observation, &view);
             let actual = project_test_image(size, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default());
             let error = compare_images(&actual, &expected);
             if atmosphere || projection == Equidistant { assert_eq!(error, 0.0); }
@@ -163,9 +164,9 @@ fn time_transformed_rows_with_content_bounds() {
     use std::time::Instant;
 
     let mut data = Data::default();
-    let selected: Vec<_> = (0..data.star_regions.len()).collect();
+    let selected = Selected::of_regions((0..data.star_regions.len()).collect());
     for full in [false, true] {
-        for &region in &selected { data.star_regions[region].merged_tile = build_dense_image(region, full); }
+        for &region in &selected.regions { data.star_regions[region].merged_tile = build_dense_image(region, full); }
         for (fov, projection, atmosphere) in [(60.0, Stereographic, false), (180.0, Stereographic, false),
             (180.0, Stereographic, true), (351.6, Stereographic, false), (360.0, Equidistant, false)]
         {
@@ -180,7 +181,7 @@ fn time_transformed_rows_with_content_bounds() {
                     let stars = if transformed {
                         project_test_image(1116, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default())
                     } else {
-                        project_reference_tiles(1116, &data.star_regions, &selected, &observation, &view)
+                        project_reference_tiles(1116, &data.star_regions, &selected.regions, &observation, &view)
                     };
                     black_box(&stars);
                     let elapsed = start.elapsed().as_secs_f64() * 1000.0;
@@ -192,7 +193,7 @@ fn time_transformed_rows_with_content_bounds() {
             transformed_times.sort_by(f64::total_cmp);
 
             // Compare full-frame output outside timing, with both paths using the same cached content bounds.
-            let expected = project_reference_tiles(1116, &data.star_regions, &selected, &observation, &view);
+            let expected = project_reference_tiles(1116, &data.star_regions, &selected.regions, &observation, &view);
             let actual = project_test_image(1116, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default());
             let error = compare_images(&actual, &expected);
             if atmosphere || projection == Equidistant { assert_eq!(error, 0.0); }

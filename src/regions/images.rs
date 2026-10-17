@@ -2,6 +2,7 @@
 //! screen would draw it) and one per region (its group images composited). Per-star zoom brightness is applied before blending; tone mapping
 //! happens in the frame output.
 use crate::formulas::Vector3;
+use crate::constants::SPEED_GROUP_COUNT;
 use crate::model::{StarOpacities, Texel, StarTable, GroupTileKey, GroupTileCache, RegionTileCache, StarGroup};
 use crate::regions::{TileGeometry, blend_star, is_star_drawn, premultiplied_color};
 use super::content_bounds::calculate_content_radius;
@@ -29,15 +30,23 @@ impl GroupTileCache {
     /// (the blend does not depend on the order). Rows the model could not place and rows outside the tile are
     /// skipped.
     pub fn render(&mut self, key: GroupTileKey, tile: &TileGeometry, table: &StarTable, directions: &[Vector3], magnitudes: &[u16], opacities: &StarOpacities) {
+        self.render_rows(key, tile, table, directions, magnitudes, 0..key.star_count, opacities);
+    }
+
+    /// `render` for the listed rows of the simulation only, in their order: a child tile's share of the group. No
+    /// rows leave the image empty.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_rows(&mut self, key: GroupTileKey, tile: &TileGeometry, table: &StarTable, directions: &[Vector3], magnitudes: &[u16], rows: impl ExactSizeIterator<Item = usize>, opacities: &StarOpacities) {
         self.key = Some(key);
-        if key.star_count == 0 { self.tile.texels = Vec::new(); return; }
+        if rows.len() == 0 { self.tile.texels = Vec::new(); return; }
         let size = TileGeometry::size();
         self.tile.texels.clear();
         self.tile.texels.resize(TileGeometry::texel_count(), Texel::default());
 
-        // Screen-blend every drawn row of the prefix as its glyph, in table order.
+        // Screen-blend every drawn row as its glyph, in the order given.
         let columns = table.columns();
-        for (row, &code) in magnitudes[..key.star_count].iter().enumerate() {
+        for row in rows {
+            let code = magnitudes[row];
             if !is_star_drawn(code, key.magnitude_threshold) { continue; }
             let Some((column, line)) = tile.project(directions[row]) else { continue };
             let (x, y) = (round_half_away(column), round_half_away(line));
@@ -83,9 +92,14 @@ impl RegionTileCache {
 
     /// Merge `groups` in ascending speed order, weighting their already-premultiplied RGB by opacity again.
     pub fn merge(&mut self, groups: &[StarGroup]) {
+        self.merge_images(std::array::from_fn(|group| &groups[group].tile));
+    }
+
+    /// `merge` of group images held elsewhere than in their groups, such as a child tile's share of each group.
+    pub fn merge_images(&mut self, images: [&GroupTileCache; SPEED_GROUP_COUNT]) {
         // Replace the image and all its derived data under the same group keys.
-        self.group_keys = Some(std::array::from_fn(|group| groups[group].tile.key()));
-        let mut parts = groups.iter().map(|group| &group.tile).filter(|image| !image.is_empty());
+        self.group_keys = Some(images.map(|image| image.key()));
+        let mut parts = images.into_iter().filter(|image| !image.is_empty());
         let Some(first) = parts.next() else {
             self.tile.texels = Vec::new();
             self.lit_rows = Vec::new();

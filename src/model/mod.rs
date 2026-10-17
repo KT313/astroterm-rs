@@ -2,12 +2,12 @@
 //! Each submodule exposes its public symbols here; callers use `crate::model::X`.
 mod data;
 mod catalog;
-pub use data::{Data, Region, StarGroup, StarTable, StarColumns, StarColumn, StarRowVec, StarRowSlice, StarLabels,
+pub use data::{Data, Region, ChildTile, StarGroup, StarTable, StarColumns, StarColumn, StarRowVec, StarRowSlice, StarLabels,
     Body, Satellite, SunTable, PlanetsTable, MoonsTable, SimulationCache, GroupTileKey, GroupTileCache, RegionTileCache, TileFilterSummary, Tile, Texel, StarOpacities};
 mod configuration;
 
 pub use catalog::{
-    SkyCatalog, CatalogPreparation, PreparedCatalog, ConstellationSet, StarException, SkyGrid,
+    SkyCatalog, CatalogPreparation, PreparedCatalog, ConstellationSet, StarException, SkyCell, SkyGrid,
     hash_direction, speed_group, get_ttl_of_speed_group_ms, drift_bound_for_rate, STAR_SECTIONS, StarRow, StarStorage, Star, Constellation, StarColor,
 };
 pub(crate) use catalog::{unsupported_star_data, CellCap, build_caps, region_caps};

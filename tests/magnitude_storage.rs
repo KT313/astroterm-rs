@@ -126,13 +126,13 @@ fn clipping_notice_coexists_with_date_notice_and_the_tables_carry_it() {
         let solar_system = simulate_solar_system(&tables.solar_system_sun, &tables.solar_system_planets, &tables.solar_system_moons, time, &mut astroterm::time::StepTimes::default());
         let observation = observe(&Observer::default(), false, &view, time, astroterm::formulas::evaluate_earth_state(time), &mut astroterm::time::StepTimes::default());
         let mut selected = astroterm::selection::Selected::default();
-        select_regions(&mut selected, &tables.star_regions, &observation.patch, observation.time_ms, &mut astroterm::time::StepTimes::default());
+        select_regions(&mut selected, &tables.star_regions, &observation, &view, 60, &mut astroterm::time::StepTimes::default());
         let mut caches = tables.clone();
         refresh_regions(
             &mut caches.star_regions, &caches.constellation_stars,
             &mut caches.constellation_simulation, &mut caches.constellation_last_update_ms,
             &mut caches.star_opacities, &mut caches.tile_bytes,
-            &selected.regions, time, view.fov_degrees, settings.magnitude_threshold,
+            &selected, time, view.fov_degrees, settings.magnitude_threshold,
             &mut astroterm::time::StepTimes::default(),
         );
         let mut frame = Frame::new(140, 60, 60, (10, 20));

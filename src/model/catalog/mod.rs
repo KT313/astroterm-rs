@@ -12,7 +12,7 @@ use crate::model::{StarRowVec, StarRowSlice};
 
 pub use records::{SkyCatalog, CatalogPreparation, PreparedCatalog, ConstellationSet, StarException, Star, Constellation};
 pub use star_color::StarColor;
-pub use grid::{SkyGrid, hash_direction};
+pub use grid::{SkyCell, SkyGrid, hash_direction};
 pub use groups::{speed_group, get_ttl_of_speed_group_ms, drift_bound_for_rate};
 pub(crate) use grid::region_caps;
 #[cfg(test)]

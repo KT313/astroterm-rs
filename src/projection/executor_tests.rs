@@ -20,7 +20,7 @@ fn bilinear_switch_preserves_images_in_both_views_and_worker_modes() {
             let view = create_view(1.0, kind);
             let observation = observe_view(&view, atmosphere);
             let mut data = Data::default();
-            let selected = fill_overlapping_regions(&mut data, &observation);
+            let selected = Selected::of_regions(fill_overlapping_regions(&mut data, &observation));
 
             // Keep a separate baseline executor so its borrowed image survives every candidate run.
             let mut baseline = ProjectionExecutor::default();
@@ -154,7 +154,7 @@ fn rough_estimates_are_bounded_and_detect_stereographic_enlargement() {
     let mut observation = observe_view(&view, false);
     let mut data = Data::default();
     data.star_regions[0].merged_tile = build_dense_image(0, true);
-    let tiles = select_region_tiles(&data.star_regions, &[0, 1]);
+    let tiles = select_region_tiles(&data.star_regions, &Selected::of_regions(vec![0, 1]));
     let centre = crate::model::region_caps()[0].center;
     let scale = prepare_camera(&view).scale;
 
@@ -179,13 +179,13 @@ fn only_multi_worker_stereographic_views_estimate_work() {
         let view = create_view(180.0, projection);
         let observation = observe_view(&view, false);
         for workers in [0, 1, 4] {
-            for selected in [&[0_usize][..], &[0, 1][..]] {
+            for selected in [Selected::of_regions(vec![0]), Selected::of_regions(vec![0, 1])] {
                 let mut executor = ProjectionExecutor::new(workers).unwrap();
                 let mut times = StepTimes::with_trace(true);
-                executor.project(33, &data.star_regions, selected, &observation, &view, &mut times);
+                executor.project(33, &data.star_regions, &selected, &observation, &view, &mut times);
                 times.measure("END");
                 let estimated = times.steps().iter().any(|step| step.name == "Work estimation");
-                assert_eq!(estimated, workers > 1 && projection == Stereographic && selected.len() > 1);
+                assert_eq!(estimated, workers > 1 && projection == Stereographic && selected.regions.len() > 1);
             }
         }
     }
@@ -201,7 +201,7 @@ fn pool_matches_direct_for_overlapping_tiles_and_reused_images() {
     {
         let view = create_view(fov, projection);
         let observation = observe_view(&view, atmosphere);
-        let mut selected = fill_overlapping_regions(&mut data, &observation);
+        let mut selected = Selected::of_regions(fill_overlapping_regions(&mut data, &observation));
         for size in [0, 1, 67, 129, 35] {
             let expected = project_test_image(size, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default());
             for executor in &mut executors {
@@ -215,7 +215,7 @@ fn pool_matches_direct_for_overlapping_tiles_and_reused_images() {
 
         // Screen blending also preserves the image when the selected regions themselves are reversed.
         let forward = project_test_image(129, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default());
-        selected.reverse();
+        selected.regions.reverse();
         let expected = project_test_image(129, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default());
         compare_images(&expected, &forward);
         for executor in &mut executors {
@@ -224,9 +224,9 @@ fn pool_matches_direct_for_overlapping_tiles_and_reused_images() {
         }
 
         // Replacing tiles and rendering empty selections must not retain a previous frame's light.
-        for &region in &selected { data.star_regions[region].merged_tile = Default::default(); }
+        for &region in &selected.regions { data.star_regions[region].merged_tile = Default::default(); }
         for executor in &mut executors {
-            for selection in [&selected[..], &[][..]] {
+            for selection in [&selected, &Selected::default()] {
                 let actual = executor.project(67, &data.star_regions, selection, &observation, &view, &mut StepTimes::default());
                 assert!(actual.iter().all(|pixel| *pixel == Texel::default()));
             }
@@ -239,7 +239,7 @@ fn one_worker_writes_the_final_image_without_temporary_images_or_composition() {
     let view = create_view(180.0, Stereographic);
     let observation = observe_view(&view, false);
     let mut data = Data::default();
-    let selected = fill_overlapping_regions(&mut data, &observation);
+    let selected = Selected::of_regions(fill_overlapping_regions(&mut data, &observation));
     let mut executor = ProjectionExecutor::new(1).unwrap();
 
     // A real worker performs the same region loop; its image is returned directly, even after resizing.
@@ -315,7 +315,7 @@ fn drawing_failure_returns_every_buffer_before_propagating_and_pool_can_be_reuse
     let view = create_view(1.0, Stereographic);
     let observation = observe_view(&view, false);
     let mut data = Data::default();
-    let selected = fill_overlapping_regions(&mut data, &observation);
+    let selected = Selected::of_regions(fill_overlapping_regions(&mut data, &observation));
     let centre = hash_direction(GRID_DEPTH, observation.patch.center);
     let valid_image = data.star_regions[centre].merged_tile.clone();
     data.star_regions[centre].merged_tile.tile.texels.truncate(1); // Real sampling must reject this malformed tile.
@@ -324,7 +324,7 @@ fn drawing_failure_returns_every_buffer_before_propagating_and_pool_can_be_reuse
         executor.project(67, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default());
     }));
     assert!(failure.is_err());
-    assert!(executor.buffers.iter().take(selected.len()).all(|buffer| buffer.pixels.len() == 67 * 67));
+    assert!(executor.buffers.iter().take(selected.regions.len()).all(|buffer| buffer.pixels.len() == 67 * 67));
 
     data.star_regions[centre].merged_tile = valid_image;
     let expected = project_test_image(67, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default());
@@ -340,7 +340,7 @@ fn scheduling_and_worker_timer_storage_survive_empty_frames() {
     let view = create_view(180.0, Stereographic);
     let observation = observe_view(&view, false);
     let mut data = Data::default();
-    let selected = fill_overlapping_regions(&mut data, &observation);
+    let selected = Selected::of_regions(fill_overlapping_regions(&mut data, &observation));
     let mut executor = ProjectionExecutor::new(4).unwrap();
     let mut times = StepTimes::default();
     executor.project(67, &data.star_regions, &selected, &observation, &view, &mut times);
@@ -350,7 +350,7 @@ fn scheduling_and_worker_timer_storage_survive_empty_frames() {
     assert!(executor.worker_times.iter().all(|timer| timer.steps().len() == 1));
 
     // An empty frame uses just one task; returning to the full selection reuses every task's scratch.
-    executor.project(67, &data.star_regions, &[], &observation, &view, &mut times);
+    executor.project(67, &data.star_regions, &Selected::default(), &observation, &view, &mut times);
     executor.project(67, &data.star_regions, &selected, &observation, &view, &mut times);
     assert_eq!(weights, (executor.work_weights.as_ptr(), executor.work_weights.capacity()));
     assert_eq!(chunks, (executor.region_chunks.as_ptr(), executor.region_chunks.capacity()));
@@ -363,7 +363,7 @@ fn worker_timings_report_wall_stages_without_changing_output() {
     let view = create_view(1.0, Stereographic);
     let observation = observe_view(&view, true);
     let mut data = Data::default();
-    let selected = fill_overlapping_regions(&mut data, &observation);
+    let selected = Selected::of_regions(fill_overlapping_regions(&mut data, &observation));
     let mut executor = ProjectionExecutor::new(2).unwrap();
     let mut times = StepTimes::with_trace(true);
     times.begin_frame();
@@ -384,8 +384,8 @@ fn time_projection_workers() {
 
     // Keep source tiles and thread pools alive across frames, with no dataset or terminal work in timing.
     let mut data = Data::default();
-    let selected: Vec<_> = (0..data.star_regions.len()).collect();
-    for &region in &selected { data.star_regions[region].merged_tile = build_dense_image(region, true); }
+    let selected = Selected::of_regions((0..data.star_regions.len()).collect());
+    for &region in &selected.regions { data.star_regions[region].merged_tile = build_dense_image(region, true); }
     let views = [create_view(180.0, Stereographic), create_view(359.0, Stereographic)];
     let observations = views.each_ref().map(|view| observe_view(view, false));
     let jobs = [0, 1, 4, 24];
@@ -430,7 +430,7 @@ fn time_projection_workers() {
 }
 
 /// The previous equal-count scheduler, retained only as a benchmark reference using the live draw kernel.
-fn project_equal_count_reference<'a>(executor: &'a mut ProjectionExecutor, size: usize, regions: &[Region], selected: &[usize], observation: &Observation, view: &View) -> &'a [Texel] {
+fn project_equal_count_reference<'a>(executor: &'a mut ProjectionExecutor, size: usize, regions: &[Region], selected: &Selected, observation: &Observation, view: &View) -> &'a [Texel] {
     let mut times = StepTimes::default();
     times.measure("Projection.Camera preparation");
     let screen = Screen::new(prepare_camera(view), size);
@@ -450,8 +450,8 @@ fn time_stereographic_distribution() {
     use std::time::Instant;
 
     let mut data = Data::default();
-    let selected: Vec<_> = (0..data.star_regions.len()).collect();
-    for &region in &selected { data.star_regions[region].merged_tile = build_dense_image(region, true); }
+    let selected = Selected::of_regions((0..data.star_regions.len()).collect());
+    for &region in &selected.regions { data.star_regions[region].merged_tile = build_dense_image(region, true); }
     let mut executor = ProjectionExecutor::new(4).unwrap();
     for fov in [180.0, 359.0] {
         let view = create_view(fov, Stereographic);

@@ -2,7 +2,7 @@
 //! premultiplied screen blend. These are the pixel renderer's rules (`scene/raster/pixels/stars.rs` reads
 //! the curve from here until chunk 14 removes it), so a tile shows a star exactly as the screen did.
 use crate::catalog::decode_magnitude;
-use crate::constants::{MIN_FOV_DEGREES, STAR_BRIGHTNESS_REFERENCE_FOV_DEGREES, STAR_BRIGHTNESS_ZOOM_POWER,
+use crate::constants::{STAR_BRIGHTNESS_NARROWEST_FOV_DEGREES, STAR_BRIGHTNESS_REFERENCE_FOV_DEGREES, STAR_BRIGHTNESS_ZOOM_POWER,
     STAR_OPACITY_MAGNITUDE_SCALE, STAR_OPACITY_REFERENCE_MAGNITUDE};
 use crate::model::{StarColor, Texel, StarOpacities};
 
@@ -45,9 +45,9 @@ impl Texel {
 }
 
 /// A visual compensation for fewer overlapping stars when zoomed in, independent of catalog brightness: 1 at the
-/// reference field of view or wider, growing as the field narrows.
+/// reference field of view or wider, growing as the field narrows down to `STAR_BRIGHTNESS_NARROWEST_FOV_DEGREES`.
 pub fn zoom_opacity_boost(fov_degrees: f64) -> f64 {
-    let zoom = (STAR_BRIGHTNESS_REFERENCE_FOV_DEGREES / fov_degrees.max(MIN_FOV_DEGREES)).max(1.0);
+    let zoom = (STAR_BRIGHTNESS_REFERENCE_FOV_DEGREES / fov_degrees.max(STAR_BRIGHTNESS_NARROWEST_FOV_DEGREES)).max(1.0);
     zoom.powf(STAR_BRIGHTNESS_ZOOM_POWER)
 }
 
@@ -132,7 +132,8 @@ mod tests {
         let half = zoom_opacity_boost(reference / 2.0);
         assert!((half - 2_f64.powf(STAR_BRIGHTNESS_ZOOM_POWER)).abs() < 1e-12);
         assert!((zoom_opacity_boost(reference / 4.0) - half * half).abs() < 1e-12);
-        assert!(zoom_opacity_boost(MIN_FOV_DEGREES).is_finite());
+        assert!(zoom_opacity_boost(STAR_BRIGHTNESS_NARROWEST_FOV_DEGREES).is_finite());
+        assert_eq!(zoom_opacity_boost(1e-6), zoom_opacity_boost(STAR_BRIGHTNESS_NARROWEST_FOV_DEGREES));
         let magnitude = STAR_OPACITY_REFERENCE_MAGNITUDE + 1.0 / STAR_OPACITY_MAGNITUDE_SCALE;
         close(star_opacity(magnitude, 1.0), 0.1);
         close(star_opacity(magnitude, half), (0.1 * half).min(1.0) as f32);

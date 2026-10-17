@@ -8,7 +8,7 @@ use crate::formulas::Vector3;
 use crate::catalog::{MagnitudeClipping, StarNames};
 use crate::constants::SPEED_GROUP_COUNT;
 use crate::formulas::BodyId;
-use crate::model::Constellation;
+use crate::model::{Constellation, SkyCell};
 use soa_derive::StructOfArray;
 
 /// Catalog tables and their associated stellar caches, owned together.
@@ -66,6 +66,15 @@ pub struct Satellite {
 pub struct Region {
     pub speed_groups: [StarGroup; SPEED_GROUP_COUNT], // SPEED_GROUP_COUNT = SPEED_GROUP_BOUNDS.len() + 1
     pub merged_tile: RegionTileCache,
+    pub child_tiles: Vec<ChildTile>,              // drawn instead of the merged tile when the selection splits the region; empty otherwise
+}
+
+/// The tile of a cell that a zoomed-in region splits into, drawn from the region's stars. Not a cache: step 4
+/// draws it again every frame the region is split.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ChildTile {
+    pub cell: SkyCell,
+    pub image: RegionTileCache,
 }
 
 /// One group's original stars, calculated samples and rendered image, with no separate flat cache arrays.

@@ -23,18 +23,18 @@ fn render(data: &mut Data, frame: &mut Frame, terminal: &mut Terminal<Vec<u8>>, 
     let observation = observe(&Observer::default(), true, &view, time, astroterm::formulas::evaluate_earth_state(time), times);
     times.measure("Selection");
     let mut selected = astroterm::selection::Selected::default();
-    select_regions(&mut selected, &data.star_regions, &observation.patch, observation.time_ms, times);
+    select_regions(&mut selected, &data.star_regions, &observation, &view, frame.drawing_area_width_and_height, times);
     times.measure("Regions");
     refresh_regions(
         &mut data.star_regions, &data.constellation_stars,
         &mut data.constellation_simulation, &mut data.constellation_last_update_ms,
         &mut data.star_opacities, &mut data.tile_bytes,
-        &selected.regions, time, view.fov_degrees, settings.magnitude_threshold,
+        &selected, time, view.fov_degrees, settings.magnitude_threshold,
         times,
     );
     times.measure("Projection");
     let mut projection = astroterm::projection::ProjectionExecutor::default();
-    let projected_stars = project_stars_to_screen(frame.drawing_area_width_and_height, &data.star_regions, &selected.regions, &observation, &view, &mut projection, times);
+    let projected_stars = project_stars_to_screen(frame.drawing_area_width_and_height, &data.star_regions, &selected, &observation, &view, &mut projection, times);
     frame.insert_projected_stars(projected_stars);
     times.measure("Points");
     let drawn = draw_points(

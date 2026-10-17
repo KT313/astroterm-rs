@@ -85,7 +85,7 @@ fn split_groups(catalog: &SkyCatalog, bounds: &[f32], progress: &mut dyn Dataset
             }
             StarGroup::new(StarTable::new(rows, labels), group)
         });
-        tables.push(Region { speed_groups, merged_tile: Default::default() });
+        tables.push(Region { speed_groups, merged_tile: Default::default(), child_tiles: Vec::new() });
         if region % 1024 == 1023 { progress.set_position(range.end as u64); }
     }
     progress.set_position(offsets[CELL_COUNT] as u64);

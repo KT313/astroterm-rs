@@ -23,16 +23,16 @@ fn main() {
             let solar_system = simulate_solar_system(&tables.solar_system_sun, &tables.solar_system_planets, &tables.solar_system_moons, time, &mut astroterm::time::StepTimes::default());
             let observation = observe(&config.simulation.observer, config.simulation.refraction, &config.view, time, solar_system.earth, &mut astroterm::time::StepTimes::default());
             let mut selected = astroterm::selection::Selected::default();
-            select_regions(&mut selected,&tables.star_regions, &observation.patch, observation.time_ms, &mut astroterm::time::StepTimes::default());
+            select_regions(&mut selected, &tables.star_regions, &observation, &config.view, frame.drawing_area_width_and_height, &mut astroterm::time::StepTimes::default());
             refresh_regions(
                 &mut tables.star_regions, &tables.constellation_stars,
                 &mut tables.constellation_simulation, &mut tables.constellation_last_update_ms,
                 &mut tables.star_opacities, &mut tables.tile_bytes,
-                &selected.regions, time, config.view.fov_degrees, config.render.magnitude_threshold,
+                &selected, time, config.view.fov_degrees, config.render.magnitude_threshold,
                 &mut astroterm::time::StepTimes::default(),
             );
             let mut projection = astroterm::projection::ProjectionExecutor::default();
-            let projected_stars = project_stars_to_screen(frame.drawing_area_width_and_height, &tables.star_regions, &selected.regions, &observation, &config.view, &mut projection, &mut astroterm::time::StepTimes::default());
+            let projected_stars = project_stars_to_screen(frame.drawing_area_width_and_height, &tables.star_regions, &selected, &observation, &config.view, &mut projection, &mut astroterm::time::StepTimes::default());
             frame.insert_projected_stars(projected_stars);
             let drawn = draw_points(
                 &mut frame, &solar_system,

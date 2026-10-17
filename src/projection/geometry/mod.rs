@@ -1,5 +1,5 @@
 //! Camera transforms, field-of-view controls, and clipped sky geometry.
-use crate::constants::{DEFAULT_FOV_DEGREES, MIN_FOV_DEGREES};
+use crate::constants::DEFAULT_FOV_DEGREES;
 mod cartesian;
 mod maps;
 mod sky;
@@ -86,10 +86,10 @@ pub fn pan_view(view: &mut View, azimuth_delta: f64, tilt_delta: f64) {
     };
 }
 
-/// Change the field of view within the projection's existing limits.
+/// Change the field of view, at most to the projection's widest; zooming in has no limit.
 pub fn zoom_view(view: &mut View, factor: f64) {
     let max_fov = view.projection.max_fov_degrees();
-    view.fov_degrees = (view.fov_degrees / factor).clamp(MIN_FOV_DEGREES, max_fov);
+    view.fov_degrees = (view.fov_degrees / factor).min(max_fov);
 }
 
 /// Map horizontal coordinates to the view plane, with half the field of view at unit radius.
@@ -269,7 +269,7 @@ mod tests {
     }
 
     #[test]
-    fn zoom_stays_within_the_projection_limits() {
+    fn zoom_stays_within_the_projection_limits_and_zooms_in_without_one() {
         let mut view = View::default();
         zoom_view(&mut view, 2.0);
         assert_eq!(view.fov_degrees, 90.0);
@@ -279,7 +279,7 @@ mod tests {
         zoom_view(&mut view, 1e-6);
         assert_eq!(view.fov_degrees, 360.0);
         zoom_view(&mut view, 1e6);
-        assert_eq!(view.fov_degrees, 1.0);
+        assert_eq!(view.fov_degrees, 360.0 / 1e6);
     }
 
     #[test]

@@ -67,14 +67,14 @@ fn time_filtering_summaries() {
     eprintln!("Filter summary header bytes={}, block bytes per image={}",
         std::mem::size_of::<Option<crate::model::TileFilterSummary>>(),
         (crate::constants::TILE_EDGE_TEXELS / crate::constants::TILE_FILTER_BLOCK_EDGE).pow(2) * 32);
-    let selected: Vec<_> = (0..data.star_regions.len()).collect();
+    let selected = crate::selection::Selected::of_regions((0..data.star_regions.len()).collect());
 
     for full in [false, true] {
         // Construction/replacement is outside steady-frame timing, with no copying of cached arrays per run.
         let preparation = Instant::now();
-        for &region in &selected { data.star_regions[region].merged_tile = build_dense_image(region, full); }
+        for &region in &selected.regions { data.star_regions[region].merged_tile = build_dense_image(region, full); }
         eprintln!("Filtering fixture full={full}: build and merge {:?}", preparation.elapsed());
-        let mut saved = vec![None; selected.len()];
+        let mut saved = vec![None; selected.regions.len()];
         for (fov, projection, atmosphere) in [(180.0, Stereographic, false), (180.0, Stereographic, true),
             (351.6, Stereographic, false), (359.0, Stereographic, false), (360.0, Equidistant, false)]
         {

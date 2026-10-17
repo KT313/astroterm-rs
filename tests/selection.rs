@@ -56,9 +56,9 @@ fn all_stars(tables: &Data) -> Vec<(u32, astroterm::formulas::StellarMotion, f64
 }
 
 /// The stars the selection offers: the brightness prefixes of the selected regions plus the constellation table.
-fn candidates(tables: &Data, observation: &Observation, threshold: f64) -> (BTreeSet<u32>, bool) {
+fn candidates(tables: &Data, observation: &Observation, view: &View, threshold: f64) -> (BTreeSet<u32>, bool) {
     let mut selected = astroterm::selection::Selected::default();
-    select_regions(&mut selected, &tables.star_regions, &observation.patch, observation.time_ms, &mut astroterm::time::StepTimes::default());
+    select_regions(&mut selected, &tables.star_regions, observation, view, 1400, &mut astroterm::time::StepTimes::default());
     let mut ids = BTreeSet::new();
     for &region in &selected.regions {
         for table in tables.star_regions[region].speed_groups.iter().map(|group| &group.stars) {
@@ -87,7 +87,7 @@ fn visible_by_full_scan(tables: &Data, observation: &Observation, view: &View, t
 fn compare(date: f64, view: View, threshold: f64, refraction: bool, latitude: f64, longitude: f64) {
     let tables = tables();
     let observation = observe(&Observer { latitude, longitude }, refraction, &view, astroterm::formulas::utc_jd_to_time_ms(date).unwrap(), astroterm::formulas::evaluate_earth_state(astroterm::formulas::utc_jd_to_time_ms(date).unwrap()), &mut astroterm::time::StepTimes::default());
-    let (offered, whole_sky) = candidates(&tables, &observation, threshold);
+    let (offered, whole_sky) = candidates(&tables, &observation, &view, threshold);
     let visible = visible_by_full_scan(&tables, &observation, &view, threshold, !whole_sky && view.fov_degrees < 300.0);
     let missing: Vec<_> = visible.difference(&offered).collect();
     assert!(missing.is_empty(), "{date} fov {} threshold {threshold} refraction {refraction}: not offered {missing:?}", view.fov_degrees);
@@ -177,7 +177,7 @@ fn seam_threshold_horizon_and_view_edge_cases_are_not_culled() {
         observation.to_catalog = Matrix3::IDENTITY;
         observation.observer.velocity = Vector3::default();
         observation.patch.center = view.center_direction().to_unit_vector();
-        let (offered, _) = candidates(&tables, &observation, 5.0);
+        let (offered, _) = candidates(&tables, &observation, &view, 5.0);
         assert_eq!(offered, BTreeSet::from([0, 1]));
         let visible = visible_by_full_scan(&tables, &observation, &view, 5.0, false);
         assert_eq!(visible, BTreeSet::from([0, 1]));
@@ -214,12 +214,12 @@ fn fast_stars_use_ordinary_regions_and_large_drift_has_no_special_selection() {
     let cone = |center: Vector3, threshold: f64| {
         let mut observation = observe(&Observer::default(), false, &View { fov_degrees: 2.0, ..View::default() }, time, astroterm::formulas::evaluate_earth_state(time), &mut astroterm::time::StepTimes::default());
         observation.patch.center = center;
-        candidates(&tables, &observation, threshold).0
+        candidates(&tables, &observation, &View { fov_degrees: 2.0, ..View::default() }, threshold).0
     };
     assert_eq!(cone(motion.u0, 5.0), BTreeSet::from([1, 2]));
     assert!(cone(motion.u0, 3.0).is_empty());                                                    // the brightness prefix still applies
     let moved = motion.evaluate(1000.0, 4.0).direction;
     assert!(cone(moved, 5.0).is_empty());                                                        // documented limitation
     let wide = observe(&Observer::default(), false, &View { fov_degrees: 360.0, ..View::default() }, time, astroterm::formulas::evaluate_earth_state(time), &mut astroterm::time::StepTimes::default());
-    assert_eq!(candidates(&tables, &wide, 5.0).0, BTreeSet::from([1, 2]));
+    assert_eq!(candidates(&tables, &wide, &View { fov_degrees: 360.0, ..View::default() }, 5.0).0, BTreeSet::from([1, 2]));
 }

@@ -42,12 +42,12 @@ fn the_panel_is_empty_when_off_and_lists_time_counts_display_and_timings_when_on
     let observation = observe(&config(&[]).simulation.observer, false, &view, time, astroterm::formulas::evaluate_earth_state(time), &mut astroterm::time::StepTimes::default());
     let solar_system = simulate_solar_system(&tables.solar_system_sun, &tables.solar_system_planets, &tables.solar_system_moons, time, &mut astroterm::time::StepTimes::default());
     let mut selected = astroterm::selection::Selected::default();
-    select_regions(&mut selected, &tables.star_regions, &observation.patch, observation.time_ms, &mut astroterm::time::StepTimes::default());
+    select_regions(&mut selected, &tables.star_regions, &observation, &view, 1100, &mut astroterm::time::StepTimes::default());
     let refreshed = refresh_regions(
         &mut tables.star_regions, &tables.constellation_stars,
         &mut tables.constellation_simulation, &mut tables.constellation_last_update_ms,
         &mut tables.star_opacities, &mut tables.tile_bytes,
-        &selected.regions, time, view.fov_degrees, (config(&[]).render).magnitude_threshold,
+        &selected, time, view.fov_degrees, (config(&[]).render).magnitude_threshold,
         &mut astroterm::time::StepTimes::default(),
     );
     let display = DisplayInfo { protocol: ProtocolType::Kitty, tmux: false, compression: CompressionSupport::Unknown, shared_memory: false, screen: Rect::new(0, 0, 100, 40), font: (10, 20), image: (1000, 800), text_cell: (9, 17) };

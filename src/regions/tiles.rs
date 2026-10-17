@@ -7,7 +7,9 @@
 //! convention: texel `i` is centred at pixel coordinate `i`, columns grow the way screen columns grow to the
 //! right, rows grow downwards from celestial north.
 use crate::formulas::Vector3;
-use crate::constants::{STELLAR_DRIFT_MARGIN, TILE_EDGE_TEXELS};
+use crate::constants::{GRID_DEPTH, STELLAR_DRIFT_MARGIN, TILE_EDGE_TEXELS};
+use crate::model::SkyCell;
+#[cfg(test)]
 use crate::model::region_caps;
 use crate::regions::appearance::STAR_GLYPH_RADIUS;
 
@@ -23,15 +25,23 @@ pub struct TileGeometry {
 impl TileGeometry {
     /// The tile of `region`: `TILE_EDGE_TEXELS` texels wide, scaled so that the region's bounding cap, widened by
     /// the star drift margin (stars are filed by their catalog-epoch direction), fits inside the glyph radius.
-    pub fn new(region: usize) -> Self {
-        let cap = region_caps()[region];
-        let center = cap.center;
+    pub fn new(region: usize) -> Self { Self::of_cell(SkyCell::region(region)) }
+
+    /// The tile of any grid cell: as `new` for a region; a deeper cell, which a zoomed-in region splits into, has no
+    /// drift margin, because its stars are given to it by their current direction.
+    pub fn of_cell(cell: SkyCell) -> Self {
+        let center = cell.cap().center;
         let pole = if center.z.abs() < 0.9 { Vector3 { x: 0.0, y: 0.0, z: 1.0 } } else { Vector3 { x: 1.0, y: 0.0, z: 0.0 } }; // the x axis stands in near the celestial poles
         let north = (pole - center * pole.dot(center)).normalized();
         let east = center.cross(north);                                                    // right = forward × up, as the camera does it
+        Self { center, east, north, density: Self::density_of(cell) }
+    }
+
+    /// The texels per radian at the centre of `cell`'s tile, without building its axes: `density()` of `of_cell`.
+    pub fn density_of(cell: SkyCell) -> f64 {
+        let margin = if cell.depth == GRID_DEPTH { STELLAR_DRIFT_MARGIN } else { 0.0 };
         let reach = Self::middle() - STAR_GLYPH_RADIUS as f64;                             // texels from the middle to where a glyph may still fit
-        let density = reach / (2.0 * ((cap.radius + STELLAR_DRIFT_MARGIN) / 2.0).tan());
-        Self { center, east, north, density }
+        reach / (2.0 * ((cell.cap().radius + margin) / 2.0).tan())
     }
 
     pub fn center(&self) -> Vector3 { self.center }
@@ -66,7 +76,6 @@ impl TileGeometry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::GRID_DEPTH;
     use crate::model::hash_direction;
 
     #[test]
@@ -124,6 +133,26 @@ mod tests {
         let corner = TileGeometry::new(hash_direction(GRID_DEPTH, Vector3 { x: 1.0, y: 0.99, z: 0.99 }));
         let face = TileGeometry::new(hash_direction(GRID_DEPTH, Vector3 { x: 1.0, y: 0.0, z: 0.0 }));
         assert!(corner.density() > face.density());                                          // cube corners hold smaller regions: finer texels there
+    }
+
+    #[test]
+    fn a_child_tile_covers_its_cell_and_the_glyph_without_the_drift_margin() {
+        let region = SkyCell::region(hash_direction(GRID_DEPTH, Vector3 { x: 0.6, y: 0.5, z: 0.4 }));
+        assert_eq!(TileGeometry::of_cell(region), TileGeometry::new(region.index));
+        for depth in [GRID_DEPTH + 1, GRID_DEPTH + 4] {
+            let cell = region.locate_within(region.cap().center, depth);
+            let tile = TileGeometry::of_cell(cell);
+            let cap = cell.cap();
+            let (sine, cosine) = cap.radius.sin_cos();
+            let reach = STAR_GLYPH_RADIUS as f64;
+            for axis in [tile.east, tile.north, tile.east * -1.0, tile.north * -1.0] {
+                let (column, row) = tile.project(cap.center * cosine + axis * sine).unwrap();
+                assert!((column - reach).abs() < 1e-6 || (column - 63.0 + reach).abs() < 1e-6 || (row - reach).abs() < 1e-6 || (row - 63.0 + reach).abs() < 1e-6, "{column}, {row}");
+            }
+            assert_eq!(tile.density(), TileGeometry::density_of(cell));
+        }
+        let child = TileGeometry::of_cell(region.children()[0]);
+        assert!(child.density() > 2.0 * TileGeometry::new(region.index).density());       // half the cell, and no margin
     }
 
 }

@@ -4,6 +4,7 @@ use std::{io, ops::Range};
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use crate::model::{ProjectionKind, Region, Texel, View};
 use crate::observation::Observation;
+use crate::selection::Selected;
 use crate::time::StepTimes;
 use super::prepare_camera;
 use super::options::ProjectionOptions;
@@ -64,7 +65,7 @@ impl ProjectionExecutor {
         })
     }
 
-    pub(super) fn project(&mut self, size: usize, regions: &[Region], selected: &[usize], observation: &Observation, view: &View, times: &mut StepTimes) -> &[Texel] {
+    pub(super) fn project(&mut self, size: usize, regions: &[Region], selected: &Selected, observation: &Observation, view: &View, times: &mut StepTimes) -> &[Texel] {
         // Degenerate drawing areas need a correctly sized transparent image, but no worker jobs.
         let pixel_count = size.checked_mul(size).expect("drawing area pixel count overflow");
         if size < 2 {
@@ -161,7 +162,7 @@ fn split_regions_by_work(chunks: &mut Vec<Range<usize>>, work: &[f64], workers: 
 
 /// Own the direct result in headless fixtures without adding a pixel copy to their benchmarks.
 #[cfg(test)]
-pub(super) fn project_test_image(size: usize, regions: &[Region], selected: &[usize], observation: &Observation, view: &View, times: &mut StepTimes) -> Vec<Texel> {
+pub(super) fn project_test_image(size: usize, regions: &[Region], selected: &Selected, observation: &Observation, view: &View, times: &mut StepTimes) -> Vec<Texel> {
     let mut executor = ProjectionExecutor::default();
     executor.project(size, regions, selected, observation, view, times);
     std::mem::take(&mut executor.buffers[0].pixels)

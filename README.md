@@ -208,7 +208,9 @@ labels are independent. Use `--disable-dynamic-names` to hide star labels; the f
 been removed. Independent accuracy checks are documented in
 [scripts/reference/README.md](scripts/reference/README.md).
 
-Stars use four-texel dots in their sky tiles, enlarged when zoomed in. Within each group, overlapping stars
+Stars use four-texel dots in their sky tiles. When zoomed in far enough that a region's tile would have 0.2 texels
+per screen pixel or fewer, the region is drawn as finer tiles of the in-view parts of its cell instead, so dots
+stay a few pixels wide; there is no narrowest field of view. Within each group, overlapping stars
 are screen-blended, so neither covers the other and the drawing order does not matter; group images merge from slowest to fastest, weighting stored RGB by opacity while opacity accumulates source-over. Zoom brightening is currently disabled (`STAR_BRIGHTNESS_ZOOM_POWER = 0`), so zoom alone does not redraw existing tiles.
 Stars whose complete dot would cross the image boundary are omitted. The Sun, planets and Moon retain their sizes.
 Tiles are stereographic images of their region, and the screen is a stereographic or equidistant (`-e`) image

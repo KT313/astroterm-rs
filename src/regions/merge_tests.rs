@@ -130,7 +130,7 @@ fn merged_regions_of_the_whole_bsc5_sky_match_the_scalar_reference() {
         &mut data.star_regions, &data.constellation_stars,
         &mut data.constellation_simulation, &mut data.constellation_last_update_ms,
         &mut data.star_opacities, &mut data.tile_bytes,
-        &every_region, crate::formulas::utc_jd_to_time_ms(crate::formulas::J2000).unwrap(), 180.0, 8.0,
+        &crate::selection::Selected::of_regions(every_region), crate::formulas::utc_jd_to_time_ms(crate::formulas::J2000).unwrap(), 180.0, 8.0,
         &mut crate::time::StepTimes::default(),
     );
 
