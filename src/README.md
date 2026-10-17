@@ -17,7 +17,7 @@ Bottom-up. Every module exposes its symbols from its root `mod.rs`; callers use 
 | `solar_system/` | step 1, `simulate_solar_system` |
 | `observation/` | step 2, `observe` |
 | `selection/` | step 3, `select_regions`: refills the caller-owned `Selected` vector, retaining its capacity |
-| `regions/` | step 4, `refresh_regions`: simulation caches, star appearance, tile geometry, group and region images, merged-image bounds and filtering summaries |
+| `regions/` | step 4, `refresh_regions`: simulation caches, star appearance, tile geometry, group and region images (region merging and its lit-row scan in four-texel SSE2 batches on x86-64), merged-image bounds and filtering summaries |
 | `projection/` | step 5, `project_stars_to_screen`: optional dedicated worker pool, retained screen lookup, worker timers and scheduling scratch (`executor.rs`), reusable pixels and touched-screen-block tracking (`worker_image.rs`), image handoff and completion-order collection (`worker_images.rs`), screen composition (`screen_blend.rs`), restricted read-only tile inputs, rough stereographic work estimates and the independent region loop (`region_drawing.rs`), inverse warp and transformed rows (`pixel_warp.rs`), texel sampling with an independently switchable unit-footprint shortcut and x86-64 f64 SIMD accumulation (`tile_sampling.rs`, `bilinear_sampling.rs`, `options.rs`), frame buffers (`frame.rs`), shared projection geometry (`geometry/`) |
 | `points/` | step 6, `draw_points` |
 | `present/` | step 7, `present`, portable/checked RGBA composition (`composition.rs`), x86-64 four-pixel SSE2 composition (`composition_sse2.rs`), runtime-selected SSSE3/portable RGB conversion (`rgb_conversion.rs`), and `Display` (terminal session, protocol detection, frame layout) |

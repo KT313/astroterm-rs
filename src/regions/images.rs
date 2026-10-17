@@ -2,7 +2,6 @@
 //! screen would draw it) and one per region (its group images composited). Per-star zoom brightness is applied before blending; tone mapping
 //! happens in the frame output.
 use crate::formulas::Vector3;
-use crate::constants::TILE_EDGE_TEXELS;
 use crate::model::{StarOpacities, Texel, StarTable, GroupTileKey, GroupTileCache, RegionTileCache, StarGroup};
 use crate::regions::{TileGeometry, blend_star, order_star_rows, premultiplied_color};
 use super::content_bounds::calculate_content_radius;
@@ -99,27 +98,56 @@ impl RegionTileCache {
         for texel in first.texels() { texel.check("RegionTileCache::merge base", 1.0); }
         self.tile.texels.clear();
         self.tile.texels.extend_from_slice(first.texels());
-        for part in parts {
-            for (merged, texel) in self.tile.texels.iter_mut().zip(part.texels()) { merge_group_texel(merged, *texel); }
-        }
+        for part in parts { merge_group_texels(&mut self.tile.texels, part.texels()); }
 
         // Record which texels contain light and how far their filter support reaches from the centre.
-        self.lit_rows.clear();
-        for row in self.tile.texels.chunks_exact(TILE_EDGE_TEXELS) {
-            let mut lit_columns = 0_u64;
-            for (column, texel) in row.iter().enumerate() {
-                if !texel.is_empty() { lit_columns |= 1 << column; }
-            }
-            self.lit_rows.push(lit_columns);
-        }
+        scan_lit_rows(&self.tile.texels, &mut self.lit_rows);
         self.content_radius = Some(calculate_content_radius(&self.lit_rows));
-        self.filter_summary = Some(build_filter_summary(&self.tile.texels));
+        self.filter_summary = Some(build_filter_summary(&self.tile.texels, &self.lit_rows));
+    }
+}
+
+/// Merge one group image onto the merged texels. Normal x86-64 builds skip transparent inputs four at a time
+/// with SSE2; pixel-debug builds keep the scalar path, which checks every texel, including transparent ones.
+fn merge_group_texels(merged: &mut [Texel], next: &[Texel]) {
+    #[cfg(all(target_arch = "x86_64", not(feature = "pixel-debug")))]
+    super::merge_sse2::merge_group_texels(merged, next);
+    #[cfg(any(not(target_arch = "x86_64"), feature = "pixel-debug"))]
+    merge_group_texels_scalar(merged, next);
+}
+
+/// Record one bit per lit texel, one word per tile row; four texels per SSE2 test where available.
+fn scan_lit_rows(texels: &[Texel], lit_rows: &mut Vec<u64>) {
+    #[cfg(all(target_arch = "x86_64", not(feature = "pixel-debug")))]
+    super::merge_sse2::scan_lit_rows(texels, lit_rows);
+    #[cfg(any(not(target_arch = "x86_64"), feature = "pixel-debug"))]
+    scan_lit_rows_scalar(texels, lit_rows);
+}
+
+/// Merge one group image onto the merged texels, texel by texel. Portable path and test oracle.
+#[cfg(any(not(target_arch = "x86_64"), feature = "pixel-debug", test))]
+fn merge_group_texels_scalar(merged: &mut [Texel], next: &[Texel]) {
+    assert_eq!(merged.len(), next.len(), "a group image must match the merged image");
+    for (base, texel) in merged.iter_mut().zip(next) { merge_group_texel(base, *texel); }
+}
+
+/// One bit per lit texel (opacity not equal to zero, so NaN counts as lit), one word per tile row. Portable path
+/// and test oracle.
+#[cfg(any(not(target_arch = "x86_64"), feature = "pixel-debug", test))]
+fn scan_lit_rows_scalar(texels: &[Texel], lit_rows: &mut Vec<u64>) {
+    lit_rows.clear();
+    for row in texels.chunks_exact(crate::constants::TILE_EDGE_TEXELS) {
+        let mut lit_columns = 0_u64;
+        for (column, texel) in row.iter().enumerate() {
+            if !texel.is_empty() { lit_columns |= 1 << column; }
+        }
+        lit_rows.push(lit_columns);
     }
 }
 
 /// Experimental owner-requested weighting of stored RGB, without unpremultiplying it first. Opacity still
 /// accumulates with source-over. A transparent input contributes nothing; two empty texels stay empty.
-fn merge_group_texel(base: &mut Texel, next: Texel) {
+pub(super) fn merge_group_texel(base: &mut Texel, next: Texel) {
     #[cfg(feature = "pixel-debug")]
     { base.check("merge_group_texel base", 1.0); next.check("merge_group_texel next", 1.0); }
     if next.opacity == 0.0 { return; }
@@ -131,6 +159,10 @@ fn merge_group_texel(base: &mut Texel, next: Texel) {
     #[cfg(feature = "pixel-debug")]
     base.check("merge_group_texel output", 1.0);
 }
+
+#[cfg(test)]
+#[path = "merge_tests.rs"]
+mod merge_tests;
 
 #[cfg(test)]
 mod tests {

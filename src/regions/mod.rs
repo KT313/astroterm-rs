@@ -9,11 +9,14 @@
 //! (owner's decision of 2026-10-12; the memory is bounded by the fixed tile size times the region count).
 //!
 //! The module holds the simulation caches (`simulation`), the star appearance
-//! (`appearance`), the tile geometry (`tiles`) and the image caches (`images`).
+//! (`appearance`), the tile geometry (`tiles`) and the image caches (`images`, merged four texels at a time by
+//! `merge_sse2` on x86-64).
 mod appearance;
 mod content_bounds;
 mod filter_summary;
 mod images;
+#[cfg(all(target_arch = "x86_64", any(not(feature = "pixel-debug"), test)))]
+mod merge_sse2;
 mod simulation;
 mod tiles;
 pub use appearance::{STAR_GLYPH_RADIUS, blend_star, order_star_rows, premultiplied_color, star_opacity, zoom_opacity_boost};

@@ -167,6 +167,9 @@ blending and byte-rounding formulas. Other architectures and `pixel-debug` build
 compositor; checked builds retain their per-pixel validation and accumulated-light reporting. Composition
 uses one thread independently of `--n-jobs`. Kitty RGB conversion uses sixteen-pixel SSSE3 byte shuffles
 when supported on x86-64, with a portable fallback and the same input checks in `pixel-debug` builds.
+Region images are merged from their group images with an SSE2 test that skips four transparent texels at a
+time and records the lit texels four at a time; the filtering summary then visits only lit texels. The result
+is bit-identical to the scalar merge, which other architectures and `pixel-debug` builds keep.
 
 Projection can use a dedicated thread pool with `--n-jobs`: `0` creates no projection pool, `1` creates one
 worker, and positive values request that many workers. `-1` uses the logical CPUs available to the process.
