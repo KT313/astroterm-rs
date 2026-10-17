@@ -221,7 +221,10 @@ Filter footprints may overlap the tile even when their centres are outside it; t
 part stays transparent instead of being renormalized to full brightness. Candidate bounds include this filter
 support. At the 360° rim, the point behind the observer spreads along the whole edge. Rows are stepped by forward differences, and in the stereographic view rows whose tile rows
 hold no light are skipped. In the equidistant view, rings that follow each region's cap narrow its candidate
-rows; the stepping still starts where the looser annulus bound starts, so the image is unchanged. Texture footprints are square area averages of the screen's radial scale (the
+rows; the stepping still starts where the looser annulus bound starts, so the image is unchanged. With refraction or
+in the equidistant view, where every pixel needs the whole chain of steps, pixels are mapped in batches of
+`PROJECTION_MAPPING_BATCH_PIXELS` without a branch per pixel, so the compiler computes them side by side; each
+pixel's result is the same bit for bit. Texture footprints are square area averages of the screen's radial scale (the
 equidistant view blurs a little more along the rim than across it); the cached tile resolution is unchanged, so
 extreme magnification can still look blurry.
 Minimum-size filter footprints wholly inside a tile use a direct four-texel bilinear calculation, equivalent

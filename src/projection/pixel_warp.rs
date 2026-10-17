@@ -8,7 +8,7 @@
 //! first-order aberration approximations. Sampling uses box footprints; portions outside a tile are transparent.
 use std::f64::consts::{FRAC_PI_2, PI, SQRT_2, TAU};
 use crate::formulas::{LIGHT_SPEED_AU_DAY, Matrix3, Vector3, apply_refraction, Horizontal, Unrefraction};
-use crate::constants::{EQUIDISTANT_CAP_RINGS, STEREOGRAPHIC_ROW_REBASE_PIXELS, TILE_EDGE_TEXELS};
+use crate::constants::{EQUIDISTANT_CAP_RINGS, PROJECTION_MAPPING_BATCH_PIXELS, STEREOGRAPHIC_ROW_REBASE_PIXELS, TILE_EDGE_TEXELS};
 use crate::model::{ProjectionKind, Texel};
 #[cfg(test)]
 use crate::model::{Data, Region, View};
@@ -302,18 +302,32 @@ impl<'a> RegionMapping<'a> {
     /// projection is singular.
     #[inline]
     fn tile_frame(&self, numerator: Vector3, spread: f64) -> Option<(Vector3, f64, f64)> {
-        // Undo refraction on the unit direction when there is an atmosphere, then aberration, and rotate into
-        // the tile's axes. Without an atmosphere the scale by `spread` is left in: the projection is
-        // homogeneous, so only the aberration shift has to be scaled to match, and the length follows from
-        // the identity |numerator| = spread to first order in the aberration.
-        let (w, length) = if self.atmosphere {
-            let w = self.to_tile.apply(self.unrefraction.unrefract(numerator * (1.0 / spread))) - self.aberration;
-            (w, w.length())
-        } else {
-            (self.to_tile.apply(numerator) - self.aberration * spread, spread - numerator.dot(self.aberration_horizon))
-        };
-        let denominator = length + w.z;
-        (denominator > 1e-9 * length).then_some((w, length, denominator))
+        let (w, length, denominator) = self.transform_to_tile_frame(numerator, spread);
+        is_projectable(length, denominator).then_some((w, length, denominator))
+    }
+
+    /// `tile_frame` without the check for the singular point, for callers that apply it themselves.
+    #[inline(always)]
+    fn transform_to_tile_frame(&self, numerator: Vector3, spread: f64) -> (Vector3, f64, f64) {
+        if self.atmosphere { self.transform_refracted_to_tile_frame(numerator, spread) } else { self.transform_unrefracted_to_tile_frame(numerator, spread) }
+    }
+
+    /// Undo refraction on the unit direction, then aberration, and rotate into the tile's axes.
+    #[inline(always)]
+    fn transform_refracted_to_tile_frame(&self, numerator: Vector3, spread: f64) -> (Vector3, f64, f64) {
+        let w = self.to_tile.apply(self.unrefraction.unrefract(numerator * (1.0 / spread))) - self.aberration;
+        let length = w.length();
+        (w, length, length + w.z)
+    }
+
+    /// Undo aberration and rotate into the tile's axes, leaving the scale by `spread` in: the projection is
+    /// homogeneous, so only the aberration shift has to be scaled to match, and the length follows from the
+    /// identity |numerator| = spread to first order in the aberration.
+    #[inline(always)]
+    fn transform_unrefracted_to_tile_frame(&self, numerator: Vector3, spread: f64) -> (Vector3, f64, f64) {
+        let w = self.to_tile.apply(numerator) - self.aberration * spread;
+        let length = spread - numerator.dot(self.aberration_horizon);
+        (w, length, length + w.z)
     }
 
     /// The tile coordinates and footprint of the apparent direction `numerator / spread`, or `None` opposite the
@@ -331,20 +345,41 @@ impl<'a> RegionMapping<'a> {
         self.project_overlapping_footprint(w, length, denominator, factor)
     }
 
+    /// `tile_of_overlapping_footprint` for a batch of rays, equal to it bit for bit in every lane. Every lane runs
+    /// every stage without branches, so the compiler computes neighbouring pixels side by side and their divisions
+    /// and square roots overlap; a lane that the single-pixel path rejects is computed in full and then dropped.
+    #[inline(always)]                                                                   // inside the span loop, or each batch becomes a call
+    fn tile_of_overlapping_footprints(&self, rays: &[(Vector3, f64, f64); PROJECTION_MAPPING_BATCH_PIXELS]) -> [Option<(Point, f64)>; PROJECTION_MAPPING_BATCH_PIXELS] {
+        // Choose the transform once for the batch: a branch inside each lane would keep the lanes apart.
+        let frames: [(Vector3, f64, f64); PROJECTION_MAPPING_BATCH_PIXELS] = if self.atmosphere {
+            std::array::from_fn(|lane| self.transform_refracted_to_tile_frame(rays[lane].0, rays[lane].1))
+        } else {
+            std::array::from_fn(|lane| self.transform_unrefracted_to_tile_frame(rays[lane].0, rays[lane].1))
+        };
+        let reaches: [FootprintReach; PROJECTION_MAPPING_BATCH_PIXELS] = std::array::from_fn(|lane| {
+            let (w, length, denominator) = frames[lane];
+            self.measure_footprint_reach(w, length, denominator, rays[lane].2)
+        });
+        let projected: [(Point, f64); PROJECTION_MAPPING_BATCH_PIXELS] = std::array::from_fn(|lane| reaches[lane].project(frames[lane].2));
+        let kept: [bool; PROJECTION_MAPPING_BATCH_PIXELS] = std::array::from_fn(|lane| is_projectable(frames[lane].1, frames[lane].2) & reaches[lane].overlaps_tile());
+        std::array::from_fn(|lane| kept[lane].then_some(projected[lane]))
+    }
+
     /// Project an already transformed direction, keeping the same filter and early rejection in both paths.
     #[inline]
     fn project_overlapping_footprint(&self, direction: Vector3, length: f64, denominator: f64, factor: f64) -> Option<(Point, f64)> {
         // Reject a pixel whose entire filter lies outside the tile, before taking a reciprocal.
+        let reach = self.measure_footprint_reach(direction, length, denominator, factor);
+        reach.overlaps_tile().then(|| reach.project(denominator))
+    }
+
+    /// The pixel's tile-plane position before the projection's division and the reach of its filter.
+    #[inline(always)]
+    fn measure_footprint_reach(&self, direction: Vector3, length: f64, denominator: f64, factor: f64) -> FootprintReach {
         let half_footprint = self.density * length * factor * self.screen.inverse_pixel_scale;
         let reach = (TileGeometry::middle() + 0.5) * denominator + half_footprint.max(0.5 * denominator);
         let scale_numerator = 2.0 * self.density;
-        let (x, y) = (scale_numerator * direction.x, scale_numerator * direction.y);
-        if x.abs() >= reach || y.abs() >= reach { return None; }
-
-        // One reciprocal supplies both texture coordinates and the full filter width.
-        let inverse = 1.0 / denominator;
-        let middle = TileGeometry::middle();
-        Some(([middle + x * inverse, middle - y * inverse], 2.0 * half_footprint * inverse))
+        FootprintReach { x: scale_numerator * direction.x, y: scale_numerator * direction.y, reach, half_footprint }
     }
 
     /// The tile's stereographic projection, and texels per pixel: the tile's local scale over the screen's
@@ -570,6 +605,35 @@ impl CapRing {
     }
 }
 
+/// Whether the tile's stereographic projection is regular for a direction of this length and denominator: false
+/// opposite the tile centre.
+#[inline(always)]
+fn is_projectable(length: f64, denominator: f64) -> bool { denominator > 1e-9 * length }
+
+/// A pixel's tile-plane position scaled by the projection's denominator, before the division, and how far its
+/// filter reaches on that scale.
+#[derive(Clone, Copy)]
+struct FootprintReach {
+    x: f64,
+    y: f64,
+    reach: f64,                             // the tile's half width plus the filter's, both scaled by the denominator
+    half_footprint: f64,                    // half the filter width in texels, scaled by the denominator
+}
+
+impl FootprintReach {
+    /// False when the whole filter lies outside the tile. Comparisons with NaN are false, so NaN is kept.
+    #[inline(always)]
+    fn overlaps_tile(self) -> bool { !((self.x.abs() >= self.reach) | (self.y.abs() >= self.reach)) }
+
+    /// The tile coordinates and the full filter width: one reciprocal supplies all three.
+    #[inline(always)]
+    fn project(self, denominator: f64) -> (Point, f64) {
+        let inverse = 1.0 / denominator;
+        let middle = TileGeometry::middle();
+        ([middle + self.x * inverse, middle - self.y * inverse], 2.0 * self.half_footprint * inverse)
+    }
+}
+
 /// Pull candidate pixel footprints back to the tile, retaining partial overlaps, and screen-blend. Rows
 /// whose tile rows hold no light are skipped before any pixel is mapped, which is what makes sparse tiles cheap.
 pub(super) fn draw_region<const TRACK_BLOCKS: bool>(stars: &mut [Texel], touched: &mut TouchedBlocks, mapping: &RegionMapping<'_>, sampler: &TileSampler<'_>, texels: &[Texel]) {
@@ -632,26 +696,47 @@ fn draw_transformed_span<const TRACK_BLOCKS: bool>(pixels: &mut [Texel], mapping
 /// Draw a span using the general screen-ray path, including nonlinear refraction or equidistant mapping.
 fn draw_screen_span<const TRACK_BLOCKS: bool>(pixels: &mut [Texel], mapping: &RegionMapping<'_>, sampler: &TileSampler<'_>, texels: &[Texel], span: Span, row: usize) -> (usize, usize) {
     // The reversed range represents no writes. Tracking compiles out for the no-pool renderer.
-    let mut first_written = usize::MAX;
-    let mut last_written = 0;
+    let mut written = (usize::MAX, 0);
 
     // Preserve the existing per-pixel transform and its numerical evaluation order: step from the span's origin
     // over the pixels a tighter bound leaves out, without mapping them.
-    let first_column = span.first;
     let mut rays = RowRays::new(mapping.screen, span.origin as f64, row as f64);
     for _ in span.origin..span.first { rays.advance(); }
-    for (offset, pixel) in pixels.iter_mut().enumerate() {
-        let (numerator, spread, factor) = rays.current(mapping.screen);
-        rays.advance();
-        if let Some((position, footprint)) = mapping.tile_of_overlapping_footprint(numerator, spread, factor) {
-            let painted = sample_and_blend_pixel(pixel, sampler, texels, position, footprint);
-            if TRACK_BLOCKS && painted {
-                first_written = first_written.min(first_column + offset);
-                last_written = first_column + offset;
-            }
+
+    // Map full batches of pixels together, their rays still stepped one by one in order. Their fixed length keeps
+    // every lane's arithmetic free of branches.
+    let mut column = span.first;
+    let mut batches = pixels.chunks_exact_mut(PROJECTION_MAPPING_BATCH_PIXELS);
+    for pixels in &mut batches {
+        let mut batch = [(Vector3::default(), 0.0, 0.0); PROJECTION_MAPPING_BATCH_PIXELS];
+        for ray in &mut batch {
+            *ray = rays.current(mapping.screen);
+            rays.advance();
+        }
+        for (pixel, sample) in pixels.iter_mut().zip(mapping.tile_of_overlapping_footprints(&batch)) {
+            draw_mapped_pixel::<TRACK_BLOCKS>(pixel, sampler, texels, sample, column, &mut written);
+            column += 1;
         }
     }
-    (first_written, last_written)
+
+    // The last pixels, fewer than a batch, one at a time.
+    for pixel in batches.into_remainder() {
+        let (numerator, spread, factor) = rays.current(mapping.screen);
+        rays.advance();
+        draw_mapped_pixel::<TRACK_BLOCKS>(pixel, sampler, texels, mapping.tile_of_overlapping_footprint(numerator, spread, factor), column, &mut written);
+        column += 1;
+    }
+    written
+}
+
+/// Sample and blend a mapped pixel at `column`, widening the `written` columns when it paints.
+#[inline(always)]
+fn draw_mapped_pixel<const TRACK_BLOCKS: bool>(pixel: &mut Texel, sampler: &TileSampler<'_>, texels: &[Texel], sample: Option<(Point, f64)>, column: usize, written: &mut (usize, usize)) {
+    let Some((position, footprint)) = sample else { return };
+    let painted = sample_and_blend_pixel(pixel, sampler, texels, position, footprint);
+    if TRACK_BLOCKS && painted {
+        *written = (written.0.min(column), column);
+    }
 }
 
 /// Apply the common light rejection, coordinate convention, box filter and screen composition.
@@ -710,7 +795,7 @@ impl TransformedRow {
     fn project_footprint(&self, mapping: &RegionMapping<'_>) -> Option<(Point, f64)> {
         // Match the general mapper's singularity guard before computing tile coordinates or filter size.
         let denominator = self.length + self.direction.z;
-        if denominator > 1e-9 * self.length {
+        if is_projectable(self.length, denominator) {
             mapping.project_overlapping_footprint(self.direction, self.length, denominator, 2.0 / self.spread)
         } else {
             None
@@ -1370,3 +1455,7 @@ pub(super) mod row_stepping_tests;
 #[cfg(test)]
 #[path = "equidistant_bound_tests.rs"]
 mod equidistant_bound_tests;
+
+#[cfg(test)]
+#[path = "mapping_batch_tests.rs"]
+mod mapping_batch_tests;
