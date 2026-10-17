@@ -535,7 +535,7 @@ mod tests {
     fn constellation_zoom_is_applied_once_and_clamped_before_blending() {
         let direction = catalog_direction(90.0, 90.0);
         let view = View { fov_degrees: 60.0, ..View::default() };
-        for base_opacity in [0.1_f64, 0.8] {
+        for base_opacity in [0.1_f64, 0.8, 2.0] {
             let magnitude = crate::constants::STAR_OPACITY_REFERENCE_MAGNITUDE - base_opacity.log10() / crate::constants::STAR_OPACITY_MAGNITUDE_SCALE;
             let mut row = crate::model::fixtures::row(direction, 0.0, magnitude, 1);
             row.display_color = StarColor::RedOrange.index();
@@ -549,7 +549,7 @@ mod tests {
             let (drawn, _) = draw(&tables, &view, 0.0, &RenderOptions { magnitude_threshold: magnitude + 1.0, ..settings() }, &mut frame);
             assert_eq!(drawn.endpoint_stars, 1);
             let opacity = crate::regions::star_opacity(crate::catalog::decode_magnitude(code), crate::regions::zoom_opacity_boost(60.0));
-            if base_opacity == 0.8 { assert_eq!(opacity, 1.0); }
+            if base_opacity == 2.0 { assert_eq!(opacity, 1.0); } // Clamping also applies when zoom brightening is disabled.
             let mut expected = background;
             blend_star(&mut expected, premultiplied_color(row.display_color, opacity), opacity);
             let changed: Vec<_> = frame.stars().iter().filter(|texel| **texel != background).collect();

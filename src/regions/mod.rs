@@ -276,6 +276,7 @@ mod tests {
         let both = Selected { regions: vec![0, 1], whole_sky: false };
         let wide = view(180.0, 1.0);
         let narrow = view(60.0, 1.0);
+        let brightness_changes = zoom_opacity_boost(wide.fov_degrees) != zoom_opacity_boost(narrow.fov_degrees);
         refresh_regions(
             &mut caches.star_regions, &caches.constellation_stars,
             &mut caches.constellation_simulation, &mut caches.constellation_last_update_ms,
@@ -293,9 +294,10 @@ mod tests {
                 &selected.regions, time(0.0), narrow.fov_degrees, settings(9.0).magnitude_threshold,
                 &mut crate::time::StepTimes::default(),
             );
-            assert_eq!(changed, RefreshReport { simulated: 0, rendered: 1, merged: 1 });
+            let redraw_count = usize::from(brightness_changes);
+            assert_eq!(changed, RefreshReport { simulated: 0, rendered: redraw_count, merged: redraw_count });
             assert_eq!(caches.star_regions[region].speed_groups[0].tile.key().unwrap().zoom_boost, zoom_opacity_boost(60.0));
-            assert_ne!((&caches.star_regions[region].merged_tile), &original[region]);
+            assert_eq!(caches.star_regions[region].merged_tile != original[region], brightness_changes);
             if region == 0 { assert_eq!((&caches.star_regions[1].merged_tile), &original[1]); }            // hidden tile retains its old key until selected again
             assert_eq!(refresh_regions(
                 &mut caches.star_regions, &caches.constellation_stars,
@@ -312,7 +314,8 @@ mod tests {
             &both.regions, time(0.0), wide.fov_degrees, settings(9.0).magnitude_threshold,
             &mut crate::time::StepTimes::default(),
         );
-        assert_eq!(restored, RefreshReport { simulated: 0, rendered: 2, merged: 2 });
+        let redraw_count = 2 * usize::from(brightness_changes);
+        assert_eq!(restored, RefreshReport { simulated: 0, rendered: redraw_count, merged: redraw_count });
         for (region, image) in original.iter().enumerate() { assert_eq!((&caches.star_regions[region].merged_tile), image); }
         assert_eq!(refresh_regions(
             &mut caches.star_regions, &caches.constellation_stars,
@@ -342,10 +345,14 @@ mod tests {
             &selected.regions, time(0.0), view(60.0, 1.0).fov_degrees, settings(magnitude + 1.0).magnitude_threshold,
             &mut crate::time::StepTimes::default(),
         );
-        let expected = Texel { rgb: premultiplied_color(top.display_color, 1.0), opacity: 1.0 };
+        // Calculate each star's opacity from the configured zoom power before combining their colours.
+        let opacity = star_opacity(crate::catalog::decode_magnitude(top.magnitude), zoom_opacity_boost(60.0));
+        let mut expected = Texel::default();
+        blend_star(&mut expected, premultiplied_color(slow.display_color, opacity), opacity);
+        blend_star(&mut expected, premultiplied_color(top.display_color, opacity), opacity);
         let lit: Vec<_> = caches.star_regions[region].merged_tile.texels().iter().filter(|texel| !texel.is_empty()).collect();
         assert_eq!(lit.len(), 4);
-        assert!(lit.into_iter().all(|texel| *texel == expected));                           // the last opaque star replaces the earlier colour, before any merging or warp
+        assert!(lit.into_iter().all(|texel| *texel == expected));                           // per-star opacity is applied before any region merging or warp
     }
 
     #[test]
