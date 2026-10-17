@@ -26,7 +26,7 @@ Bottom-up. Every module exposes its symbols from its root `mod.rs`; callers use 
 | `metadata/` | the panel's text: local time, zodiac, Moon phase, location, speed, view, timings |
 | `cli/` | argument parsing and validation, Bash completions |
 | `time/` | self-contained startup/frame timing, simulation clock, pacing, checkpoints, averages and trace serialization; canonical timestamps are i64 milliseconds since Gregorian year zero; callers supply plain settings, with no imports from other application modules |
-| `main.rs`, `pipeline.rs`, `helpers/` | the binary: startup, the frame loop, controls, separate metadata text overlay, diagnostics and the frame benchmark |
+| `main.rs`, `pipeline.rs`, `helpers/` | the binary: the restart with huge-page memory, startup, the frame loop, controls, separate metadata text overlay, diagnostics and the frame benchmark |
 
 Owned data at runtime: `Data` (immutable catalog columns beside mutable group/region caches), the `Frame`
 (star layer, overlay, text rasterizer), the `Display` with its `Terminal`, the `TimeManager` (which owns `StepTimes`), and the `ProjectionExecutor` (optional pool and reusable images). All are created in

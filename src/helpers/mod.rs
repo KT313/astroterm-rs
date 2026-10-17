@@ -1,8 +1,12 @@
 //! Supporting application operations. Import helpers through this module; implementation folders are private.
 //! Startup opens resources, frame helpers handle controls and the panel, and diagnostics report their results.
+//! Before all of them, the program may restart itself once with huge-page memory (`huge_pages`).
+mod huge_pages;
 mod startup;
 mod frame;
 mod diagnostics;
+
+pub(super) use huge_pages::restart_with_huge_pages_if_allowed;
 
 pub(super) use startup::{load_cities, print_bash_completions, validate_arguments, load_catalog, open_display};
 pub(super) use frame::{Panel, draw_text_overlay, handle_input};

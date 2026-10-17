@@ -171,6 +171,12 @@ Region images are merged from their group images with an SSE2 test that skips fo
 time and records the lit texels four at a time; the filtering summary then visits only lit texels. The result
 is bit-identical to the scalar merge, which other architectures and `pixel-debug` builds keep.
 
+On Linux with glibc, the program restarts itself once at launch with `GLIBC_TUNABLES=glibc.malloc.hugetlb=1`
+when the kernel allows transparent huge pages (mode `always` or `madvise`), so that its hundreds of megabytes of
+star tiles are backed by huge pages instead of being zero-filled 4 KB page by page; on the dense AT-HYG catalog
+this nearly halves the first frame's region step. Setting `GLIBC_TUNABLES=glibc.malloc.hugetlb=0` (or any
+`glibc.malloc.hugetlb` value) skips the restart.
+
 Projection can use a dedicated thread pool with `--n-jobs`: `0` creates no projection pool, `1` creates one
 worker, and positive values request that many workers. `-1` uses the logical CPUs available to the process.
 This setting does not change catalog loading, downloading, sorting or other frame steps. Both direct and

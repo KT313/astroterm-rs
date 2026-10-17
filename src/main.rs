@@ -17,12 +17,13 @@ use astroterm::time::{StartupTiming, StepTimes};
 
 use helpers::{
     BenchmarkSession, Panel, begin_benchmark_capture, capture_display, finish_benchmark_report, finish_rendering, load_catalog, load_cities, open_display, open_frame_benchmark,
-    print_bash_completions, validate_arguments,
+    print_bash_completions, restart_with_huge_pages_if_allowed, validate_arguments,
 };
 use pipeline::run_frame_loop;
 
 /// Parse options, build the sky data, and render until the user quits.
 fn main() -> ExitCode {
+    restart_with_huge_pages_if_allowed();                                                               // once, with huge-page memory where the system allows it
 
     assert_stuff();
 
