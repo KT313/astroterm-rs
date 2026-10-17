@@ -107,10 +107,12 @@ impl StellarMotion {
         StellarClass(u8::from(self.w == Vector3::default()) | (u8::from(self.distance_pc.is_some()) << 1))
     }
 
+    #[inline(always)]                                                                   // runs for every simulated star; as a call it took longer than its arithmetic
     pub fn evaluate(self, years: f64, magnitude: f64) -> StellarSample {
         self.evaluate_classified(years, magnitude, self.classify())
     }
 
+    #[inline(always)]
     pub(crate) fn evaluate_classified(self, years: f64, magnitude: f64, class: StellarClass) -> StellarSample {
         let mut q = self.u0 + self.w * years;
         let mut ratio = q.length();                                                     // sqrt of the dot product: |q| stays near 1, no overflow risk
