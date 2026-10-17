@@ -175,8 +175,7 @@ pub(super) struct RegionMapping<'a> {
     aberration: Vector3,                    // the observer's velocity over c in tile axes: subtracted before projecting
     aberration_horizon: Vector3,            // the same in horizon axes, for the length shortcut
     density: f64,                           // texels per radian at the tile centre
-    atmosphere: bool,
-    unrefraction: Unrefraction,             // the inverse-refraction table, resolved once per region
+    unrefraction: Option<Unrefraction>,     // resolved once per region only when atmospheric correction is enabled
     screen: &'a Screen,
     image: Image,
 }
@@ -190,8 +189,10 @@ impl<'a> RegionMapping<'a> {
         let to_tile = tile_axes.compose(observation.to_catalog);
         let aberration_horizon = observation.to_horizon.apply(observation.observer.velocity * (1.0 / LIGHT_SPEED_AU_DAY));
         let aberration = to_tile.apply(aberration_horizon);
-        let unrefraction = Unrefraction::resolve();
-        let mapping = |image| Self { to_tile, aberration, aberration_horizon, density: tile.density(), atmosphere: observation.atmosphere, unrefraction, screen, image };
+
+        // Resolve the inverse-refraction table only when this view needs atmospheric correction.
+        let unrefraction = if observation.atmosphere { Some(Unrefraction::resolve()) } else { None };
+        let mapping = |image| Self { to_tile, aberration, aberration_horizon, density: tile.density(), unrefraction, screen, image };
 
         // Bound the light's cached support, keeping the whole tile for refraction or missing metadata.
         let support_radius = select_content_radius(content_radius, observation.atmosphere);
@@ -309,13 +310,17 @@ impl<'a> RegionMapping<'a> {
     /// `tile_frame` without the check for the singular point, for callers that apply it themselves.
     #[inline(always)]
     fn transform_to_tile_frame(&self, numerator: Vector3, spread: f64) -> (Vector3, f64, f64) {
-        if self.atmosphere { self.transform_refracted_to_tile_frame(numerator, spread) } else { self.transform_unrefracted_to_tile_frame(numerator, spread) }
+        // The optional handle selects the correction path without a separate flag that could disagree with it.
+        match &self.unrefraction {
+            Some(unrefraction) => self.transform_refracted_to_tile_frame(numerator, spread, unrefraction),
+            None => self.transform_unrefracted_to_tile_frame(numerator, spread),
+        }
     }
 
     /// Undo refraction on the unit direction, then aberration, and rotate into the tile's axes.
     #[inline(always)]
-    fn transform_refracted_to_tile_frame(&self, numerator: Vector3, spread: f64) -> (Vector3, f64, f64) {
-        let w = self.to_tile.apply(self.unrefraction.unrefract(numerator * (1.0 / spread))) - self.aberration;
+    fn transform_refracted_to_tile_frame(&self, numerator: Vector3, spread: f64, unrefraction: &Unrefraction) -> (Vector3, f64, f64) {
+        let w = self.to_tile.apply(unrefraction.unrefract(numerator * (1.0 / spread))) - self.aberration;
         let length = w.length();
         (w, length, length + w.z)
     }
@@ -351,8 +356,8 @@ impl<'a> RegionMapping<'a> {
     #[inline(always)]                                                                   // inside the span loop, or each batch becomes a call
     fn tile_of_overlapping_footprints(&self, rays: &[(Vector3, f64, f64); PROJECTION_MAPPING_BATCH_PIXELS]) -> [Option<(Point, f64)>; PROJECTION_MAPPING_BATCH_PIXELS] {
         // Choose the transform once for the batch: a branch inside each lane would keep the lanes apart.
-        let frames: [(Vector3, f64, f64); PROJECTION_MAPPING_BATCH_PIXELS] = if self.atmosphere {
-            std::array::from_fn(|lane| self.transform_refracted_to_tile_frame(rays[lane].0, rays[lane].1))
+        let frames: [(Vector3, f64, f64); PROJECTION_MAPPING_BATCH_PIXELS] = if let Some(unrefraction) = &self.unrefraction {
+            std::array::from_fn(|lane| self.transform_refracted_to_tile_frame(rays[lane].0, rays[lane].1, unrefraction))
         } else {
             std::array::from_fn(|lane| self.transform_unrefracted_to_tile_frame(rays[lane].0, rays[lane].1))
         };
@@ -639,7 +644,7 @@ impl FootprintReach {
 pub(super) fn draw_region<const TRACK_BLOCKS: bool>(stars: &mut [Texel], touched: &mut TouchedBlocks, mapping: &RegionMapping<'_>, sampler: &TileSampler<'_>, texels: &[Texel]) {
     // Select the row calculation once; refraction and equidistant views keep their general mapping.
     let screen = mapping.screen;
-    let use_transformed_rows = screen.camera.kind == ProjectionKind::Stereographic && !mapping.atmosphere;
+    let use_transformed_rows = screen.camera.kind == ProjectionKind::Stereographic && mapping.unrefraction.is_none();
     let (top, bottom) = mapping.rows();
 
     // Retain the same candidate spans and empty-row rejection before drawing any pixels.
@@ -770,7 +775,7 @@ struct TransformedRow {
 impl TransformedRow {
     fn new(mapping: &RegionMapping<'_>, first_column: f64, row: f64) -> Self {
         // Use the existing screen-row differences, transforming their coefficients only once per span.
-        debug_assert!(!mapping.atmosphere);
+        debug_assert!(mapping.unrefraction.is_none());
         let RowRays::Stereographic { numerator, numerator_step, numerator_curve, spread, spread_step, spread_curve } =
             RowRays::new(mapping.screen, first_column, row)
         else {
@@ -937,6 +942,20 @@ mod tests {
         screen.update(camera, 1116);
         assert_eq!(screen.equidistant_rebuilds, 2);
         assert_eq!(screen.equidistant.as_ptr(), address);
+    }
+
+    #[test]
+    fn mappings_hold_a_refraction_table_only_when_atmospheric_correction_is_enabled() {
+        // Build the same visible region in both projection modes, with correction off and on.
+        for projection in [Stereographic, Equidistant] {
+            for atmosphere in [false, true] {
+                let (view, observation) = observation_at(180.0, atmosphere, ViewCenter::Zenith, projection);
+                let screen = Screen::new(prepare_camera(&view), 201);
+                let region = hash_direction(GRID_DEPTH, observation.patch.center);
+                let mapping = RegionMapping::new(&TileGeometry::new(region), &observation, &screen, None).unwrap();
+                assert_eq!(mapping.unrefraction.is_some(), atmosphere);
+            }
+        }
     }
 
     #[test]

@@ -57,8 +57,7 @@ fn compare_with_full_disc(region: usize, image: &RegionTileCache, observation: &
         aberration: to_tile.apply(aberration_horizon),
         aberration_horizon,
         density: geometry.density(),
-        atmosphere: observation.atmosphere,
-        unrefraction: Unrefraction::resolve(),
+        unrefraction: if observation.atmosphere { Some(Unrefraction::resolve()) } else { None },
         screen: &screen,
         image: Image::WholeDisc,
     };
