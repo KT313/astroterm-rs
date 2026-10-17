@@ -113,11 +113,11 @@ impl StellarMotion {
 
     pub(crate) fn evaluate_classified(self, years: f64, magnitude: f64, class: StellarClass) -> StellarSample {
         let mut q = self.u0 + self.w * years;
-        let mut ratio = length(q);
+        let mut ratio = q.length();                                                     // sqrt of the dot product: |q| stays near 1, no overflow risk
         let singular = class.has_distance() && ratio < SINGULAR_RATIO;
         if singular {
             q = self.u0 + self.tangential_velocity() * years;
-            ratio = length(q);
+            ratio = q.length();
         }
         let norm = ratio;
         if years == 0.0 || class.is_stationary() {
@@ -159,6 +159,8 @@ impl StellarMotion {
     }
 }
 
+/// The overflow-safe length, for the load-time bounds and keys stored in the prepared catalog cache; changing it
+/// would change cached group membership. The per-frame evaluation uses `Vector3::length`.
 fn length(v: Vector3) -> f64 {
     v.x.hypot(v.y).hypot(v.z)
 }
@@ -251,6 +253,38 @@ mod tests {
         assert!(star.motion_bound() > 0.25_f64.to_radians());
     }
     proptest! {
+        #[test]
+        fn sqrt_length_evaluates_brightness_within_the_key_tolerance(
+            ra in 0.0_f64..std::f64::consts::TAU, dec in -1.5_f64..1.5,
+            wx in -1e-4_f64..1e-4, wy in -1e-4_f64..1e-4, wz in -1e-4_f64..1e-4,
+            distance in proptest::option::of(1.0_f64..1e4), magnitude in -1.5_f64..20.0, fraction in 0.0_f64..=1.0,
+        ) {
+            // The key is computed with the overflow-safe length and the evaluation with sqrt, so a sample can be a
+            // few ulps brighter than the key itself (about 1e-15 magnitudes); the stored codes keep their order (see
+            // the simulation tests). Velocities up to 1e-4 distances per year reach the singular policy for the
+            // nearest stars.
+            let direction = Equatorial { right_ascension: ra, declination: dec }.to_unit_vector();
+            let mut star = StellarMotion { u0: direction, w: Vector3 { x: wx, y: wy, z: wz }, distance_pc: distance };
+            star.remove_singular_distance();
+            let key = star.brightest_magnitude(magnitude);
+            let (start, end) = computational_years();
+            for years in [start, start + (end - start) * fraction, end, 0.0] {
+                let sample = star.evaluate(years, magnitude);
+                prop_assert!(sample.magnitude >= key - 1e-12, "{} brighter than the key {key} at {years}", sample.magnitude);
+            }
+        }
+
+        #[test]
+        fn sqrt_and_hypot_lengths_differ_by_at_most_two_ulps(
+            x in -1.0_f64..1.0, y in -1.0_f64..1.0, z in -1.0_f64..1.0, scale in 1e-3_f64..2.0,
+        ) {
+            // Directions moved along a straight line keep lengths between the singular ratio and about two.
+            let v = Vector3 { x, y, z };
+            let Some(unit) = (v.length() > 1e-6).then(|| v * (scale / v.length())) else { return Ok(()) };
+            let (root, safe) = (unit.length(), length(unit));
+            prop_assert!(root >= safe.next_down().next_down() && root <= safe.next_up().next_up(), "{root} against {safe}");
+        }
+
         #[test]
         fn endpoint_bound_and_brightness_key_cover_sampled_trajectories(
             wx in -0.001_f64..0.001, wy in -0.001_f64..0.001,wz in -0.001_f64..0.001

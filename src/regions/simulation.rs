@@ -89,7 +89,9 @@ mod tests {
     use crate::model::get_ttl_of_speed_group_ms;
     use super::*;
     use crate::formulas::{J2000, JULIAN_YEAR_DAYS};
-    use crate::catalog::{SpaceMotion, StarId, load_embedded_catalog, magnitude_code};
+    use crate::catalog::{SpaceMotion, StarId, encode_brightness_bound, load_embedded_catalog, magnitude_code};
+    use crate::formulas::{Equatorial, StellarMotion, computational_years};
+    use proptest::prelude::*;
     use crate::constants::{GRID_DEPTH, SPEED_GROUP_COUNT};
     use crate::model::{Data, hash_direction};
 
@@ -123,6 +125,48 @@ mod tests {
 
     fn date_ms(days_from_j2000: f64) -> i64 { crate::formulas::utc_jd_to_time_ms(J2000 + days_from_j2000).unwrap() }
     fn tt(time_ms: i64) -> f64 { crate::formulas::AstronomicalTime::from_time_ms(time_ms).tt_jd }
+
+    proptest! {
+        #[test]
+        fn evaluated_magnitude_codes_never_pass_the_stored_brightness_key(
+            ra in 0.0_f64..std::f64::consts::TAU, dec in -1.5_f64..1.5,
+            wx in -1e-4_f64..1e-4, wy in -1e-4_f64..1e-4, wz in -1e-4_f64..1e-4,
+            distance in proptest::option::of(1.0_f64..1e4), magnitude in -1.5_f64..20.0, fraction in 0.0_f64..=1.0,
+        ) {
+            // The prefix cut compares the key's code, rounded towards brighter, and drawing the sample's code, so a
+            // sample may never round to a brighter code than its key. Velocities up to 1e-4 distances per year
+            // reach the singular policy for the nearest stars.
+            let direction = Equatorial { right_ascension: ra, declination: dec }.to_unit_vector();
+            let mut star = StellarMotion { u0: direction, w: Vector3 { x: wx, y: wy, z: wz }, distance_pc: distance };
+            star.remove_singular_distance();
+            let (key, _) = encode_brightness_bound(star.brightest_magnitude(magnitude));
+            let (start, end) = computational_years();
+            for years in [start, start + (end - start) * fraction, end, 0.0] {
+                let sample = star.evaluate(years, magnitude);
+                prop_assert!(magnitude_code(sample.magnitude) >= key, "{} brighter than the key code {key} at {years}", sample.magnitude);
+            }
+        }
+    }
+
+    #[test]
+    fn loaded_stars_take_the_singular_fallback_exactly_where_the_overflow_safe_length_did() {
+        // The evaluation measures |q| with sqrt of the dot product, the load-time singular policy with nested hypot;
+        // no catalog star may sit so close to the singular ratio that the two disagree.
+        let hypot_length = |v: Vector3| v.x.hypot(v.y).hypot(v.z);
+        let (start, end) = crate::formulas::computational_years();
+        let mut evaluated = 0;
+        for (_, _, table) in bsc5().star_tables() {
+            for row in 0..table.len() {
+                let motion = table.motion(row);
+                for years in [start, -2000.0, 0.0, 26.0, 1000.0, end] {
+                    let singular_before = motion.distance_pc.is_some() && hypot_length(motion.u0 + motion.w * years) < crate::formulas::SINGULAR_RATIO;
+                    assert_eq!(motion.evaluate(years, 5.0).used_singular_fallback, singular_before, "row {row} at {years} years");
+                    evaluated += 1;
+                }
+            }
+        }
+        assert!(evaluated > 50_000, "{evaluated}");
+    }
 
     #[test]
     fn the_hold_boundary_is_absolute_in_both_directions_for_every_group() {
