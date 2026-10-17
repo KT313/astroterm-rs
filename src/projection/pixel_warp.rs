@@ -8,7 +8,7 @@
 //! first-order aberration approximations. Sampling uses box footprints; portions outside a tile are transparent.
 use std::f64::consts::{FRAC_PI_2, PI, SQRT_2, TAU};
 use crate::formulas::{LIGHT_SPEED_AU_DAY, Matrix3, Vector3, apply_refraction, Horizontal, Unrefraction};
-use crate::constants::{STEREOGRAPHIC_ROW_REBASE_PIXELS, TILE_EDGE_TEXELS};
+use crate::constants::{EQUIDISTANT_CAP_RINGS, STEREOGRAPHIC_ROW_REBASE_PIXELS, TILE_EDGE_TEXELS};
 use crate::model::{ProjectionKind, Texel};
 #[cfg(test)]
 use crate::model::{Data, Region, View};
@@ -131,14 +131,41 @@ impl Screen {
 /// Candidate pixel centres whose filter footprints can overlap a region's tile. Stereographic caps map to
 /// circles, circle exteriors, or a half-plane when an edge passes through the antipode. Equidistant:
 /// the cap lies between two angles from the view centre, an annulus on the screen, within the box of its sector
-/// of directions around the centre.
+/// of directions around the centre; unless the cap holds the view centre or the point behind it, rings of
+/// that annulus then outline the cap itself.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[allow(clippy::large_enum_variant)]                                                    // one per region on the stack; boxing the rings would allocate per region and frame
 enum Image {
     Circle { centre: Point, radius: f64 },
     OutsideCircle { centre: Point, radius: f64 }, // a cap containing the stereographic antipode covers the circle's exterior
     HalfPlane { normal: Point, minimum: f64 },   // normal · pixel >= minimum when the cap edge passes through the antipode
-    Annulus { inner: f64, outer: f64, left: f64, right: f64, top: f64, bottom: f64 },
+    Annulus(Annulus),
+    CapRings { annulus: Annulus, rings: [CapRing; EQUIDISTANT_CAP_RINGS] }, // the annulus still starts each row's ray stepping
     WholeDisc,
+}
+
+/// An equidistant cap's radii on the screen, in pixels from the centre, and the box of its sector of directions.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Annulus { inner: f64, outer: f64, left: f64, right: f64, top: f64, bottom: f64 }
+
+/// One ring of an equidistant cap's image: the cap's pixels between radii `inner` and `outer` lie on the inner
+/// side of both `edges`, the lines through the screen centre at the widest position angles the cap reaches in
+/// the ring, moved out by half a pixel. Screen axes: x to the right of the centre, y up.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct CapRing {
+    inner: f64,
+    outer: f64,
+    edges: [Point; 2],                      // unit normals pointing into the ring's wedge
+}
+
+/// One row's run of candidate pixels `first..=last`. Its rays are stepped from column `origin` (at most `first`),
+/// where the coarse bound starts the run, so a tighter bound changes which pixels are drawn but not the bits of
+/// their directions.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Span {
+    origin: usize,
+    first: usize,
+    last: usize,
 }
 
 /// Screen pixel to tile texel for one region and frame.
@@ -223,34 +250,41 @@ impl<'a> RegionMapping<'a> {
                 let outer = (angle + reach).min(PI) * pixels_per_radian + 0.5;
                 if inner > radius + 0.5 { return None; }
                 let limit = screen.size as f64 - 1.0;
-                let (left, right, top, bottom) = if angle - reach <= 0.0 || angle + reach >= PI { (0.0, limit, 0.0, limit) } else {
-                    let spread = (reach.sin() / angle.sin()).min(1.0).asin();
-                    let around = camera.up.dot(apparent).atan2(camera.right.dot(apparent));
-                    let within = |direction: f64| { let turn = (direction - around).rem_euclid(TAU); turn <= spread || turn >= TAU - spread };
-                    // Four sector corners plus at most four axis extrema fit in fixed stack storage.
-                    let mut points = [[0.0; 2]; 8];
-                    let mut point_count = 0;
-                    for distance in [inner, outer] {
-                        for direction in [around - spread, around + spread] {
-                            points[point_count] = [distance * direction.cos(), distance * direction.sin()];
-                            point_count += 1;
-                        }
+                if angle - reach <= 0.0 || angle + reach >= PI {
+                    // A cap holding the view centre or the point behind it is bounded by its radii alone.
+                    return Some(mapping(Image::Annulus(Annulus { inner, outer, left: 0.0, right: limit, top: 0.0, bottom: limit })));
+                }
+
+                // The box of the cap's sector of directions around the centre.
+                let spread = (reach.sin() / angle.sin()).min(1.0).asin();
+                let around = camera.up.dot(apparent).atan2(camera.right.dot(apparent));
+                let within = |direction: f64| { let turn = (direction - around).rem_euclid(TAU); turn <= spread || turn >= TAU - spread };
+                // Four sector corners plus at most four axis extrema fit in fixed stack storage.
+                let mut points = [[0.0; 2]; 8];
+                let mut point_count = 0;
+                for distance in [inner, outer] {
+                    for direction in [around - spread, around + spread] {
+                        points[point_count] = [distance * direction.cos(), distance * direction.sin()];
+                        point_count += 1;
                     }
-                    for axis in 0..4 {
-                        let direction = axis as f64 * FRAC_PI_2;
-                        if within(direction) {
-                            points[point_count] = [outer * direction.cos(), outer * direction.sin()];
-                            point_count += 1;
-                        }
+                }
+                for axis in 0..4 {
+                    let direction = axis as f64 * FRAC_PI_2;
+                    if within(direction) {
+                        points[point_count] = [outer * direction.cos(), outer * direction.sin()];
+                        point_count += 1;
                     }
-                    let (mut left, mut right, mut top, mut bottom) = (f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY);
-                    for &[x, y] in &points[..point_count] {
-                        left = left.min(radius + x); right = right.max(radius + x);
-                        top = top.min(radius - y); bottom = bottom.max(radius - y);
-                    }
-                    ((left - 0.5).max(0.0), (right + 0.5).min(limit), (top - 0.5).max(0.0), (bottom + 0.5).min(limit))
-                };
-                Some(mapping(Image::Annulus { inner, outer, left, right, top, bottom }))
+                }
+                let (mut left, mut right, mut top, mut bottom) = (f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY);
+                for &[x, y] in &points[..point_count] {
+                    left = left.min(radius + x); right = right.max(radius + x);
+                    top = top.min(radius - y); bottom = bottom.max(radius - y);
+                }
+                let annulus = Annulus { inner, outer, left: (left - 0.5).max(0.0), right: (right + 0.5).min(limit), top: (top - 0.5).max(0.0), bottom: (bottom + 0.5).min(limit) };
+
+                // Outline the cap inside that box with rings of the annulus.
+                let rings = find_equidistant_cap_rings(angle, reach, around, spread, pixels_per_radian, annulus);
+                Some(mapping(Image::CapRings { annulus, rings }))
             }
         }
     }
@@ -377,9 +411,32 @@ impl<'a> RegionMapping<'a> {
         Some((low.max(0.0) as usize, (high.max(0.0) as usize).min(TILE_EDGE_TEXELS - 1)))
     }
 
-    /// The pixel columns of `row` inside the region's image and the sky disc: up to two runs, because an
-    /// annulus leaves a hole in the middle of a row.
+    /// The candidate runs of `row`: up to two, because an annulus leaves a hole in the middle of a row. Cap rings
+    /// narrow the annulus runs to the cap's outline; each run keeps the annulus start as its stepping origin.
+    fn spans_of(&self, row: usize) -> [Option<Span>; 2] {
+        let runs = self.coarse_columns_of(row);
+        let Image::CapRings { rings, .. } = &self.image else {
+            return runs.map(|run| run.map(|(first, last)| Span { origin: first, first, last }));
+        };
+        let radius = self.screen.radius;
+        let Some((left, right)) = find_cap_ring_columns(rings, radius - row as f64) else { return [None; 2] };
+        let (left, right) = ((radius + left).ceil().max(0.0), (radius + right).floor());
+        if right < left { return [None; 2]; }
+        runs.map(|run| run.and_then(|(origin, last)| {
+            let (first, last) = (origin.max(left as usize), last.min(right as usize));
+            (first <= last).then_some(Span { origin, first, last })
+        }))
+    }
+
+    /// The candidate columns of `row`, as `spans_of` draws them.
+    #[cfg(test)]
     fn columns_of(&self, row: usize) -> [Option<(usize, usize)>; 2] {
+        self.spans_of(row).map(|span| span.map(|span| (span.first, span.last)))
+    }
+
+    /// The pixel columns of `row` inside the region's coarse image and the sky disc: up to two runs, because an
+    /// annulus leaves a hole in the middle of a row.
+    fn coarse_columns_of(&self, row: usize) -> [Option<(usize, usize)>; 2] {
         let y = row as f64;
         let radius = self.screen.radius;
         let disc = radius * radius + 1e-9 - (y - radius).powi(2);
@@ -408,7 +465,7 @@ impl<'a> RegionMapping<'a> {
                     hole = Some((centre[0] - half, centre[0] + half));
                 }
             }
-            Image::Annulus { inner, outer, left, right, top, bottom } => {
+            Image::Annulus(Annulus { inner, outer, left, right, top, bottom }) | Image::CapRings { annulus: Annulus { inner, outer, left, right, top, bottom }, .. } => {
                 if y < top || y > bottom { return [None; 2]; }
                 let reach = outer * outer - (y - radius).powi(2);
                 if reach < 0.0 { return [None; 2]; }
@@ -438,10 +495,78 @@ impl<'a> RegionMapping<'a> {
         let (radius, limit) = (self.screen.radius, self.screen.size as f64 - 1.0);
         let (top, bottom) = match self.image {
             Image::Circle { centre, radius: image_radius } => ((centre[1] - image_radius).ceil().max(0.0), (centre[1] + image_radius).floor().min(limit)),
-            Image::Annulus { outer, top, bottom, .. } => (top.max(radius - outer).ceil().max(0.0), bottom.min(radius + outer).floor().min(limit)),
+            Image::Annulus(Annulus { outer, top, bottom, .. }) | Image::CapRings { annulus: Annulus { outer, top, bottom, .. }, .. } =>
+                (top.max(radius - outer).ceil().max(0.0), bottom.min(radius + outer).floor().min(limit)),
             Image::WholeDisc | Image::OutsideCircle { .. } | Image::HalfPlane { .. } => (0.0, limit),
         };
         if top > bottom { (1, 0) } else { (top as usize, bottom as usize) }
+    }
+}
+
+/// The rings outlining the equidistant image of the cap of angular radius `reach` around a direction `angle`
+/// from the view centre at position angle `around`, whose widest position-angle spread is `spread`. The cap's
+/// angles from the centre are split into equal rings; a point θ from the centre lies in the cap when its position
+/// angle is within Δ(θ) of `around`, cos Δ = (cos reach − cos θ cos angle) / (sin θ sin angle), which rises from
+/// zero at the cap's near edge to `spread` at cos θ = cos angle / cos reach and falls to zero at its far edge.
+/// So each ring's wedge takes Δ at its end nearer that peak, or `spread` when the peak lies inside. Requires a cap
+/// that holds neither the view centre nor the point behind it.
+fn find_equidistant_cap_rings(angle: f64, reach: f64, around: f64, spread: f64, pixels_per_radian: f64, annulus: Annulus) -> [CapRing; EQUIDISTANT_CAP_RINGS] {
+    let widest_at = (angle.cos() / reach.cos()).min(1.0).acos();
+    let half_angle_at = |theta: f64| ((reach.cos() - theta.cos() * angle.cos()) / (theta.sin() * angle.sin())).clamp(-1.0, 1.0).acos();
+    let (near, far) = (angle - reach, angle + reach);
+    std::array::from_fn(|ring| {
+        // The ring's angles from the centre, as radii with the annulus's half-pixel margin, and its widest spread.
+        let low = near + (far - near) * ring as f64 / EQUIDISTANT_CAP_RINGS as f64;
+        let high = near + (far - near) * (ring + 1) as f64 / EQUIDISTANT_CAP_RINGS as f64;
+        let inner = if ring == 0 { annulus.inner } else { (low * pixels_per_radian - 0.5).max(0.0) };
+        let outer = if ring == EQUIDISTANT_CAP_RINGS - 1 { annulus.outer } else { high * pixels_per_radian + 0.5 };
+        let half_angle = if (low..=high).contains(&widest_at) { spread } else { half_angle_at(low).max(half_angle_at(high)) };
+
+        // The wedge's two edges, by their normals pointing into it.
+        let (counterclockwise, clockwise) = (around + half_angle, around - half_angle);
+        CapRing { inner, outer, edges: [[counterclockwise.sin(), -counterclockwise.cos()], [-clockwise.sin(), clockwise.cos()]] }
+    })
+}
+
+/// The columns, in pixels right of the screen centre, between which the cap rings meet the row `y` pixels above
+/// the centre, or `None` when none does.
+fn find_cap_ring_columns(rings: &[CapRing; EQUIDISTANT_CAP_RINGS], y: f64) -> Option<(f64, f64)> {
+    let (mut left, mut right) = (f64::INFINITY, f64::NEG_INFINITY);
+    for ring in rings {
+        let Some((first, last)) = ring.columns_of(y) else { continue };
+        left = left.min(first);
+        right = right.max(last);
+    }
+    (left <= right).then_some((left, right))
+}
+
+impl CapRing {
+    /// The hull of the ring's part of the row `y` pixels above the screen centre, in pixels right of the centre.
+    fn columns_of(&self, y: f64) -> Option<(f64, f64)> {
+        // The outer circle, then each wedge edge moved out by half a pixel: normal · (x, y) ≥ −½.
+        let reach = self.outer * self.outer - y * y;
+        if reach < 0.0 { return None; }
+        let (mut left, mut right) = (-reach.sqrt(), reach.sqrt());
+        for [normal_x, normal_y] in self.edges {
+            let bound = -0.5 - normal_y * y;
+            if normal_x > 0.0 { left = left.max(bound / normal_x); }
+            else if normal_x < 0.0 { right = right.min(bound / normal_x); }
+            else if bound > 0.0 { return None; }
+        }
+        if left > right { return None; }
+
+        // The inner circle's hole: keep the hull of whatever lies on either side of it.
+        let gap = self.inner * self.inner - y * y;
+        if gap <= 0.0 { return Some((left, right)); }
+        let hole = gap.sqrt();
+        let before = (left, right.min(-hole));
+        let after = (left.max(hole), right);
+        match (before.0 <= before.1, after.0 <= after.1) {
+            (true, true) => Some((before.0, after.1)),
+            (true, false) => Some(before),
+            (false, true) => Some(after),
+            (false, false) => None,
+        }
     }
 }
 
@@ -455,16 +580,18 @@ pub(super) fn draw_region<const TRACK_BLOCKS: bool>(stars: &mut [Texel], touched
 
     // Retain the same candidate spans and empty-row rejection before drawing any pixels.
     for row in top..=bottom {
-        for (first, last) in mapping.columns_of(row).into_iter().flatten() {
-            let Some((first_tile_row, last_tile_row)) = mapping.tile_rows_of(row, first, last) else { continue; };
+        for span in mapping.spans_of(row).into_iter().flatten() {
+            let Some((first_tile_row, last_tile_row)) = mapping.tile_rows_of(row, span.first, span.last) else { continue; };
             if !sampler.any_light_in_rows(first_tile_row, last_tile_row) { continue; }
-            let pixels = &mut stars[row * screen.size..][first..=last];
+            let pixels = &mut stars[row * screen.size..][span.first..=span.last];
 
-            // Keep the choice outside the pixel loop so each loop has only the state it needs.
+            // Keep the choice outside the pixel loop so each loop has only the state it needs. Stereographic spans
+            // start stepping at their first pixel.
             let (first_written, last_written) = if use_transformed_rows {
-                draw_transformed_span::<TRACK_BLOCKS>(pixels, mapping, sampler, texels, first, row)
+                debug_assert_eq!(span.origin, span.first);
+                draw_transformed_span::<TRACK_BLOCKS>(pixels, mapping, sampler, texels, span.first, row)
             } else {
-                draw_screen_span::<TRACK_BLOCKS>(pixels, mapping, sampler, texels, first, row)
+                draw_screen_span::<TRACK_BLOCKS>(pixels, mapping, sampler, texels, span, row)
             };
 
             // Record a row range once, without a bitmap update for every pixel. Empty spans mark nothing.
@@ -503,13 +630,16 @@ fn draw_transformed_span<const TRACK_BLOCKS: bool>(pixels: &mut [Texel], mapping
 }
 
 /// Draw a span using the general screen-ray path, including nonlinear refraction or equidistant mapping.
-fn draw_screen_span<const TRACK_BLOCKS: bool>(pixels: &mut [Texel], mapping: &RegionMapping<'_>, sampler: &TileSampler<'_>, texels: &[Texel], first_column: usize, row: usize) -> (usize, usize) {
+fn draw_screen_span<const TRACK_BLOCKS: bool>(pixels: &mut [Texel], mapping: &RegionMapping<'_>, sampler: &TileSampler<'_>, texels: &[Texel], span: Span, row: usize) -> (usize, usize) {
     // The reversed range represents no writes. Tracking compiles out for the no-pool renderer.
     let mut first_written = usize::MAX;
     let mut last_written = 0;
 
-    // Preserve the existing per-pixel transform and its numerical evaluation order.
-    let mut rays = RowRays::new(mapping.screen, first_column as f64, row as f64);
+    // Preserve the existing per-pixel transform and its numerical evaluation order: step from the span's origin
+    // over the pixels a tighter bound leaves out, without mapping them.
+    let first_column = span.first;
+    let mut rays = RowRays::new(mapping.screen, span.origin as f64, row as f64);
+    for _ in span.origin..span.first { rays.advance(); }
     for (offset, pixel) in pixels.iter_mut().enumerate() {
         let (numerator, spread, factor) = rays.current(mapping.screen);
         rays.advance();
@@ -1154,7 +1284,7 @@ mod tests {
         let size = 201;
         let screen = Screen::new(camera, size);
         let mapping = RegionMapping::new(&tile, &observation, &screen, None).unwrap();
-        let Image::Annulus { inner, outer, .. } = mapping.image else { panic!("{:?}", mapping.image) };
+        let Image::Annulus(Annulus { inner, outer, .. }) = mapping.image else { panic!("{:?}", mapping.image) };
         assert!(inner > 85.0 && outer >= 100.0, "{inner} {outer}");
         let mut data = Data::default();
         let image = &mut data.star_regions[region].merged_tile;
@@ -1236,3 +1366,7 @@ pub(super) mod content_bounds_tests;
 #[cfg(test)]
 #[path = "row_stepping_tests.rs"]
 pub(super) mod row_stepping_tests;
+
+#[cfg(test)]
+#[path = "equidistant_bound_tests.rs"]
+mod equidistant_bound_tests;

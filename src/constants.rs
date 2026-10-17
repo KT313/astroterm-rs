@@ -72,6 +72,7 @@ pub const TILE_FILTER_MIN_TEXELS: usize = 256;                                  
 pub const PROJECTION_SCREEN_BLOCK_SIZE: usize = 16;                                     // worker clearing and composition use square screen blocks of this size
 pub const PROJECTION_USE_BILINEAR_FAST_PATH: bool = true;                                 // direct unit-footprint sampling; disable to use the general box filter everywhere
 pub const STEREOGRAPHIC_ROW_REBASE_PIXELS: usize = 512;                                  // restart transformed row coefficients to bound roundoff, tested through 8192-pixel rows
+pub const EQUIDISTANT_CAP_RINGS: usize = 8;                                               // rings outlining an equidistant region's candidate pixels; more follow its cap closer at a per-row cost
 pub const DYNAMIC_NAME_COUNT: usize = 5;                                                  // label at most this many visible stars; planets and Moon are separate
 pub const MAX_CACHED_GLYPHS: usize = 512;                                                 // maximum saved character images before clearing the glyph cache
 pub const METADATA_PANEL_WIDTH: usize = 45;                                               // width of the metadata text panel, in character columns
