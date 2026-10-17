@@ -8,6 +8,8 @@ mod executor;
 mod worker_images;
 mod screen_blend;
 mod tile_sampling;
+mod bilinear_sampling;
+mod options;
 mod frame;
 
 pub use executor::ProjectionExecutor;

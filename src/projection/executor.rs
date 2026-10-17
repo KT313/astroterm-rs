@@ -6,6 +6,7 @@ use crate::model::{ProjectionKind, Region, Texel, View};
 use crate::observation::Observation;
 use crate::time::StepTimes;
 use super::prepare_camera;
+use super::options::ProjectionOptions;
 use super::pixel_warp::Screen;
 use super::region_drawing::{draw_regions, estimate_stereographic_work, select_region_tiles};
 use super::worker_images::{draw_worker_images, prepare_image};
@@ -13,12 +14,13 @@ use super::worker_images::{draw_worker_images, prepare_image};
 /// Lives outside the frame loop. Zero workers runs the region loop locally; positive counts use a
 /// dedicated pool, never Rayon's global pool. Image capacity is retained; each job clears old contents.
 pub struct ProjectionExecutor {
+    options: ProjectionOptions,
     pool: Option<ThreadPool>,
     buffers: Vec<Vec<Texel>>,                  // one reusable image slot per worker, or one for direct execution
 }
 
 impl Default for ProjectionExecutor {
-    fn default() -> Self { Self { pool: None, buffers: vec![Vec::new()] } }
+    fn default() -> Self { Self { options: ProjectionOptions::default(), pool: None, buffers: vec![Vec::new()] } }
 }
 
 impl ProjectionExecutor {
@@ -36,7 +38,7 @@ impl ProjectionExecutor {
             .thread_name(|index| format!("projection-{index}"))
             .build()
             .map_err(|error| io::Error::other(format!("Cannot start {workers} projection workers: {error}")))?;
-        Ok(Self { pool: Some(pool), buffers: (0..workers).map(|_| Vec::new()).collect() })
+        Ok(Self { options: ProjectionOptions::default(), pool: Some(pool), buffers: (0..workers).map(|_| Vec::new()).collect() })
     }
 
     pub(super) fn project(&mut self, size: usize, regions: &[Region], selected: &[usize], observation: &Observation, view: &View, times: &mut StepTimes) -> &[Texel] {
@@ -56,7 +58,7 @@ impl ProjectionExecutor {
         let Some(pool) = &self.pool else {
             times.measure("Projection.Star buffer preparation");
             prepare_image(&mut self.buffers[0], pixel_count);
-            draw_regions(&mut self.buffers[0], &tiles, &screen, observation, times);
+            draw_regions(&mut self.buffers[0], &tiles, &screen, observation, &self.options, times);
             times.measure("Projection");
             return &self.buffers[0];
         };
@@ -75,7 +77,7 @@ impl ProjectionExecutor {
 
         // Workers resize and clear their own images. The caller merges completions while others draw.
         times.measure("Projection.Worker dispatch");
-        let result_slot = draw_worker_images(pool, &chunks, &mut self.buffers, pixel_count, &screen, observation, times);
+        let result_slot = draw_worker_images(pool, &chunks, &mut self.buffers, pixel_count, &screen, observation, &self.options, times);
         times.measure("Projection");
         &self.buffers[result_slot]
     }

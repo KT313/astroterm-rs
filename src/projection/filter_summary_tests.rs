@@ -24,8 +24,8 @@ fn block_summaries_match_direct_integration_at_borders_and_keep_tiny_light() {
             for row in 16..48 { for column in 16..48 { texels[row * edge + column] = Texel::default(); } }
         }
         let image = merge_image(texels.clone());
-        let mut summarized = TileSampler::new(edge);
-        let mut direct = TileSampler::new(edge);
+        let mut summarized = TileSampler::new(edge, &Default::default());
+        let mut direct = TileSampler::new(edge, &Default::default());
         summarized.prepare(image.lit_rows(), image.filter_summary.as_ref());
         direct.prepare(image.lit_rows(), None);
 

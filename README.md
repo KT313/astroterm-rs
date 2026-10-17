@@ -186,7 +186,7 @@ been removed. Independent accuracy checks are documented in
 [scripts/reference/README.md](scripts/reference/README.md).
 
 Stars use four-texel dots in their sky tiles, enlarged when zoomed in. Within each group, stars blend from dim
-to bright current magnitude (ascending ID for ties); group images merge from slowest to fastest, weighting stored RGB by opacity while opacity accumulates source-over. Zooming in boosts each star’s opacity, capped at full opacity before blending; changing the boost redraws the selected tiles.
+to bright current magnitude (ascending ID for ties); group images merge from slowest to fastest, weighting stored RGB by opacity while opacity accumulates source-over. Zoom brightening is currently disabled (`STAR_BRIGHTNESS_ZOOM_POWER = 0`), so zoom alone does not redraw existing tiles.
 Stars whose complete dot would cross the image boundary are omitted. The Sun, planets and Moon retain their sizes.
 Tiles are stereographic images of their region, and the screen is a stereographic or equidistant (`-e`) image
 of the sky, so every pixel's place in a tile follows from a closed formula. The warp uses it backwards: for every
@@ -202,6 +202,9 @@ support. At the 360° rim, the point behind the observer spreads along the whole
 hold no light are skipped. Texture footprints are square area averages of the screen's radial scale (the
 equidistant view blurs a little more along the rim than across it); the cached tile resolution is unchanged, so
 extreme magnification can still look blurry.
+Minimum-size filter footprints wholly inside a tile use a direct four-texel bilinear calculation, equivalent
+to the existing unit box filter. Larger footprints and tile boundaries retain the general box filter.
+Set `PROJECTION_USE_BILINEAR_FAST_PATH` to `false` in `src/constants.rs` and rebuild to disable this shortcut.
 With the azimuthal grid on, its angle labels replace the compass letters.
 
 <details>

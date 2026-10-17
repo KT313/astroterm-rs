@@ -114,7 +114,7 @@ mod tests {
         }).collect();
         let integral = FilterIntegral::build(&texels, edge);
         assert_eq!(integral.bytes(), 65 * 65 * 32);
-        let mut direct = TileSampler::new(edge);
+        let mut direct = TileSampler::new(edge, &Default::default());
         direct.prepare(&lit_rows_of(&texels, edge), None);
         let mut accepted = 0;
 

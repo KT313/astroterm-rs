@@ -38,7 +38,7 @@ fn project_reference_tiles(size: usize, regions: &[Region], selected: &[usize], 
     if size < 2 { return stars; }
     times.measure("Projection.Camera preparation");
     let screen = Screen::new(prepare_camera(view), size);
-    let mut sampler = TileSampler::new(TILE_EDGE_TEXELS);
+    let mut sampler = TileSampler::new(TILE_EDGE_TEXELS, &Default::default());
 
     // Both paths use the same phase-1 content bounds, selected order and source tiles.
     for &region in selected {

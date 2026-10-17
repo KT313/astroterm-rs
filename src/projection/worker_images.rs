@@ -7,6 +7,7 @@ use crate::model::Texel;
 use crate::observation::Observation;
 use crate::time::StepTimes;
 use super::pixel_warp::Screen;
+use super::options::ProjectionOptions;
 use super::region_drawing::{SelectedTile, draw_regions};
 use super::screen_blend::blend_screen_images;
 
@@ -23,7 +24,8 @@ pub(super) fn prepare_image(pixels: &mut Vec<Texel>, pixel_count: usize) {
     pixels[..retained].fill(Texel::default());
 }
 
-pub(super) fn draw_worker_images(pool: &ThreadPool, chunks: &[&[SelectedTile<'_>]], buffers: &mut [Vec<Texel>], pixel_count: usize, screen: &Screen, observation: &Observation, times: &mut StepTimes) -> usize {
+#[allow(clippy::too_many_arguments)]
+pub(super) fn draw_worker_images(pool: &ThreadPool, chunks: &[&[SelectedTile<'_>]], buffers: &mut [Vec<Texel>], pixel_count: usize, screen: &Screen, observation: &Observation, options: &ProjectionOptions, times: &mut StepTimes) -> usize {
     assert!(!chunks.is_empty(), "projection needs at least one drawing job");
     assert!(buffers.len() >= chunks.len(), "each projection job needs its own image slot");
 
@@ -37,7 +39,7 @@ pub(super) fn draw_worker_images(pool: &ThreadPool, chunks: &[&[SelectedTile<'_>
                 // Return the allocation even after a drawing panic; the caller drains all results first.
                 let drawing_result = catch_unwind(AssertUnwindSafe(|| {
                     prepare_image(&mut pixels, pixel_count);
-                    draw_regions(&mut pixels, tiles, screen, observation, &mut StepTimes::default());
+                    draw_regions(&mut pixels, tiles, screen, observation, options, &mut StepTimes::default());
                 }));
                 let completed = CompletedImage { slot, pixels, drawing_result };
                 let _ = sender.send(completed); // A disconnected receiver means the caller is already unwinding.

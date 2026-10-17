@@ -13,6 +13,32 @@ fn create_view(fov: f64, projection: ProjectionKind) -> View {
     View { center: ViewCenter::Facing { azimuth: 334_f64.to_radians(), tilt: 0.0 }, fov_degrees: fov, projection }
 }
 
+#[test]
+fn bilinear_switch_preserves_images_in_both_views_and_worker_modes() {
+    for kind in [Stereographic, Equidistant] {
+        for atmosphere in [false, true] {
+            let view = create_view(1.0, kind);
+            let observation = observe_view(&view, atmosphere);
+            let mut data = Data::default();
+            let selected = fill_overlapping_regions(&mut data, &observation);
+
+            // Keep a separate baseline executor so its borrowed image survives every candidate run.
+            let mut baseline = ProjectionExecutor::default();
+            baseline.options.bilinear_fast_path = false;
+            let expected = baseline.project(101, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default());
+            for workers in [0, 1, 4] {
+                let mut executor = ProjectionExecutor::new(workers).unwrap();
+                for enabled in [true, false, true] {
+                    executor.options.bilinear_fast_path = enabled;
+                    let actual = executor.project(101, &data.star_regions, &selected, &observation, &view, &mut StepTimes::default());
+                    compare_images(actual, expected);
+                    assert!(actual.iter().zip(expected).all(|(a, b)| a.is_empty() == b.is_empty()));
+                }
+            }
+        }
+    }
+}
+
 fn observe_view(view: &View, atmosphere: bool) -> Observation {
     let time = crate::time::parse_simulation_time_ms("2025-03-01T11:00:00").unwrap();
     let observer = Observer { latitude: 35.69_f64.to_radians(), longitude: 139.69_f64.to_radians() };
@@ -380,7 +406,7 @@ fn project_equal_count_reference<'a>(executor: &'a mut ProjectionExecutor, size:
     let pool = executor.pool.as_ref().unwrap();
     let chunks = split_region_chunks(&tiles, pool.current_num_threads());
     times.measure("Projection.Worker dispatch");
-    let result_slot = draw_worker_images(pool, &chunks, &mut executor.buffers, size * size, &screen, observation, &mut times);
+    let result_slot = draw_worker_images(pool, &chunks, &mut executor.buffers, size * size, &screen, observation, &executor.options, &mut times);
     &executor.buffers[result_slot]
 }
 

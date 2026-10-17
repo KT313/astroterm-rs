@@ -69,6 +69,7 @@ pub const MIN_STAR_PIXEL_OPACITY: f32 = 0.05;                                   
 pub const TILE_EDGE_TEXELS: usize = 64;                                                   // every sky tile (one per speed group and per region) is this many texels wide and high, whatever the zoom
 pub const TILE_FILTER_BLOCK_EDGE: usize = 8;                                             // exact channel sums for this many texels per block edge
 pub const TILE_FILTER_MIN_TEXELS: usize = 256;                                            // use block sums only for boxes touching at least this many source texels
+pub const PROJECTION_USE_BILINEAR_FAST_PATH: bool = true;                                 // direct unit-footprint sampling; disable to use the general box filter everywhere
 pub const STEREOGRAPHIC_ROW_REBASE_PIXELS: usize = 512;                                  // restart transformed row coefficients to bound roundoff, tested through 8192-pixel rows
 pub const DYNAMIC_NAME_COUNT: usize = 5;                                                  // label at most this many visible stars; planets and Moon are separate
 pub const MAX_CACHED_GLYPHS: usize = 512;                                                 // maximum saved character images before clearing the glyph cache

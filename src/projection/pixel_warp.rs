@@ -870,7 +870,7 @@ mod tests {
         let region = hash_direction(GRID_DEPTH, Vector3 { x: 0.3, y: 0.8, z: -0.2 });
         let tile = TileGeometry::new(region);
         let texels = vec![Texel { rgb: [0.5, 0.25, 0.125], opacity: 1.0 }; TILE_EDGE_TEXELS.pow(2)];
-        let mut sampler = TileSampler::new(TILE_EDGE_TEXELS);
+        let mut sampler = TileSampler::new(TILE_EDGE_TEXELS, &Default::default());
         sampler.prepare(&[u64::MAX; TILE_EDGE_TEXELS], None);
         for projection in [Stereographic, Equidistant] {
             for (fov, size, atmosphere) in [(60.0, 23, false), (180.0, 101, false), (60.0, 201, true)] {
@@ -1029,7 +1029,7 @@ mod tests {
 
         // An opaque rear tile can light its visible side but must not leak into the centre via a huge filter.
         let texels = vec![Texel { rgb: [1.0; 3], opacity: 1.0 }; TILE_EDGE_TEXELS.pow(2)];
-        let mut sampler = TileSampler::new(TILE_EDGE_TEXELS);
+        let mut sampler = TileSampler::new(TILE_EDGE_TEXELS, &Default::default());
         sampler.prepare(&[u64::MAX; TILE_EDGE_TEXELS], None);
         let mut stars = vec![Texel::default(); 201 * 201];
         draw_region(&mut stars, &mapping, &sampler, &texels);

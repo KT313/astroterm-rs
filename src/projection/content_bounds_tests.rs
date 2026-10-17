@@ -61,7 +61,7 @@ fn compare_with_full_disc(region: usize, image: &RegionTileCache, observation: &
         screen: &screen,
         image: Image::WholeDisc,
     };
-    let mut sampler = TileSampler::new(TILE_EDGE_TEXELS);
+    let mut sampler = TileSampler::new(TILE_EDGE_TEXELS, &Default::default());
     sampler.prepare(image.lit_rows(), image.filter_summary.as_ref());
     let mut actual = vec![Texel::default(); size * size];
     if let Some(mapping) = RegionMapping::new(&geometry, observation, &screen, image.content_radius) {
@@ -161,7 +161,7 @@ fn content_bounds_reduce_work_without_changing_the_refracted_image() {
     let image = build_dense_image(region, false);
     let geometry = TileGeometry::new(region);
     let screen = Screen::new(prepare_camera(&view), 1116);
-    let mut sampler = TileSampler::new(TILE_EDGE_TEXELS);
+    let mut sampler = TileSampler::new(TILE_EDGE_TEXELS, &Default::default());
     sampler.prepare(image.lit_rows(), image.filter_summary.as_ref());
     let original = RegionMapping::new(&geometry, &observation, &screen, None).unwrap();
     let tight = RegionMapping::new(&geometry, &observation, &screen, image.content_radius).unwrap();

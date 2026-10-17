@@ -2,16 +2,19 @@
 //! box of at least one texel; each texel contributes its overlap divided by the full box area. Space outside
 //! the tile is transparent, so partially covered pixels retain only their covered share. Where the
 //! tile shrinks on screen that is a box filter over a few texels, where it grows it is the bilinear mix of the
-//! four texels around the position. Boxes that touch only empty texels are rejected through the tile's lit-row
-//! bits before any arithmetic, which is what makes sparse tiles cheap. Whole-tile and block integrals are
+//! four texels around the position. General boxes use lit-row bits to reject empty areas; the optional
+//! interior unit-box shortcut checks the opacity of its four weighted texels. Whole-tile and block integrals are
 //! borrowed from the merged image; partially covered borders still use its original texels.
 use crate::constants::{TILE_EDGE_TEXELS, TILE_FILTER_BLOCK_EDGE, TILE_FILTER_MIN_TEXELS};
 use crate::model::{Texel, TileFilterSummary};
+use super::bilinear_sampling::sample_bilinear_interior;
+use super::options::ProjectionOptions;
 
 /// Frame-local sampling data for the most recently prepared image. Every prepare replaces the masks and
 /// borrowed summary together, even when only colours changed. Summary validity belongs to the owning
 /// RegionTileCache's image key; this scratch has no independent lifetime beyond the current frame.
 pub(super) struct TileSampler<'a> {
+    bilinear_fast_path: bool,               // immutable for this task; the generic filter remains the fallback
     summary: Option<&'a TileFilterSummary>, // belongs to the same image as the copied light masks
     edge: usize,
     lit: [u64; TILE_EDGE_TEXELS],           // one bit per texel per row: which texels hold light
@@ -21,9 +24,9 @@ pub(super) struct TileSampler<'a> {
 }
 
 impl<'a> TileSampler<'a> {
-    pub(super) fn new(edge: usize) -> Self {
+    pub(super) fn new(edge: usize, options: &ProjectionOptions) -> Self {
         assert!(edge <= TILE_EDGE_TEXELS && edge <= 64, "lit rows are one word per tile row");
-        Self { summary: None, edge, lit: [0; TILE_EDGE_TEXELS], lit_columns: 0, lit_rows: 0, near: [0; TILE_EDGE_TEXELS] }
+        Self { bilinear_fast_path: options.bilinear_fast_path, summary: None, edge, lit: [0; TILE_EDGE_TEXELS], lit_columns: 0, lit_rows: 0, near: [0; TILE_EDGE_TEXELS] }
     }
 
     /// Adopt a tile's lit rows, replacing the preceding tile's masks completely.
@@ -69,6 +72,21 @@ impl<'a> TileSampler<'a> {
     /// clip the integration bounds, but divide by the full footprint area to retain partial coverage.
     #[inline]
     pub(super) fn sample(&self, texels: &[Texel], position: [f64; 2], footprint: [f64; 2]) -> Option<[f32; 4]> {
+        // Unit footprints inside the tile need only four interpolation weights. Keep edges and wider boxes exact.
+        let last_center = self.edge as f64 - 0.5;
+        if self.bilinear_fast_path && footprint[0] <= 1.0 && footprint[1] <= 1.0
+            && position[0] >= 0.5 && position[0] < last_center
+            && position[1] >= 0.5 && position[1] < last_center
+        {
+            return sample_bilinear_interior(texels, self.edge, position);
+        }
+
+        self.sample_box(texels, position, footprint)
+    }
+
+    /// General box integration, also used for tile boundaries and when the fast path is disabled.
+    #[inline]
+    fn sample_box(&self, texels: &[Texel], position: [f64; 2], footprint: [f64; 2]) -> Option<[f32; 4]> {
         let edge = self.edge as f64;
         let (half_width, half_height) = (footprint[0].max(1.0) * 0.5, footprint[1].max(1.0) * 0.5);
         let [cu, cv] = position;
@@ -221,9 +239,70 @@ mod tests {
         (0..16).map(|index| { let value = (index + 1) as f32 / 17.0; Texel { rgb: [value, value * 0.5, 0.0], opacity: value } }).collect()
     }
     fn sampler(texels: &[Texel]) -> TileSampler<'static> {
-        let mut sampler = TileSampler::new(4);
+        let mut sampler = TileSampler::new(4, &Default::default());
         sampler.prepare(&lit_rows_of(texels, 4), None);
         sampler
+    }
+
+    #[test]
+    fn bilinear_preserves_box_support_at_texel_boundaries_and_tiny_weights() {
+        // Probe both sides of texel centres and tile edges, including immediately adjacent f64 values.
+        let mut positions = Vec::new();
+        for coordinate in [-0.5_f64, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5] {
+            positions.extend([coordinate.next_down(), coordinate, coordinate.next_up()]);
+        }
+        let mut fast = TileSampler::new(4, &ProjectionOptions { bilinear_fast_path: true });
+        let mut exact = TileSampler::new(4, &ProjectionOptions { bilinear_fast_path: false });
+
+        // Isolate each possible contributing texel, including opacity small enough to underflow after weighting.
+        for opacity in [0.75, f32::from_bits(1)] {
+            for lit_index in 0..16 {
+                let mut texels = vec![Texel::default(); 16];
+                texels[lit_index] = Texel { rgb: [opacity, opacity * 0.5, 0.0], opacity };
+                let lit = lit_rows_of(&texels, 4);
+                fast.prepare(&lit, None);
+                exact.prepare(&lit, None);
+                for &x in &positions {
+                    for &y in &positions {
+                        for footprint in [[1.0; 2], [0.1, 0.9]] {
+                            let expected = exact.sample(&texels, [x, y], footprint);
+                            let actual = fast.sample(&texels, [x, y], footprint);
+                            assert_eq!(actual, expected, "lit={lit_index} pos={x},{y} opacity={opacity}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn bilinear_matches_dense_box_integration_and_falls_back_for_larger_footprints() {
+        // Exercise the fast interior path and exact boundary path with a changing colour field.
+        let texels = gradient();
+        let lit = lit_rows_of(&texels, 4);
+        let mut fast = TileSampler::new(4, &ProjectionOptions { bilinear_fast_path: true });
+        let mut exact = TileSampler::new(4, &ProjectionOptions { bilinear_fast_path: false });
+        fast.prepare(&lit, None);
+        exact.prepare(&lit, None);
+        for index in 0..1000 {
+            let position = [(index * 71 % 600) as f64 / 100.0 - 1.0, (index * 37 % 600) as f64 / 100.0 - 1.0];
+            for footprint in [[0.3, 1.0], [1.0, 1.0], [1.0_f64.next_up(), 1.0], [1.0, 1.01], [4.0, 7.0]] {
+                let expected = exact.sample(&texels, position, footprint);
+                let actual = fast.sample(&texels, position, footprint);
+                assert_eq!(actual.is_some(), expected.is_some());
+                for (value, reference) in actual.unwrap_or([0.0; 4]).into_iter().zip(direct(&texels, 4, position, footprint)) {
+                    assert!((f64::from(value) - reference).abs() < 1e-6);
+                }
+                if footprint[0] > 1.0 || footprint[1] > 1.0 { assert_eq!(actual, expected); }
+            }
+        }
+
+        // A one-texel image cannot provide four interior neighbours and must use the boundary fallback.
+        let mut single = TileSampler::new(1, &ProjectionOptions { bilinear_fast_path: true });
+        single.prepare(&[1], None);
+        assert_eq!(single.sample(&texels[..1], [0.5; 2], [1.0; 2]), Some([texels[0].rgb[0], texels[0].rgb[1], 0.0, texels[0].opacity]));
+        fast.prepare(&[0; 4], None);
+        assert_eq!(fast.sample(&vec![Texel::default(); 16], [2.0; 2], [1.0; 2]), None);
     }
 
     #[test]
@@ -252,7 +331,7 @@ mod tests {
     #[test]
     fn dense_reductions_stay_within_the_opacity_range() {
         let texels = vec![Texel { rgb: [1.0; 3], opacity: 1.0 }; 64 * 64];
-        let mut sampler = TileSampler::new(64);
+        let mut sampler = TileSampler::new(64, &Default::default());
         sampler.prepare(&[u64::MAX; 64], None);
         assert_eq!(sampler.sample(&texels, [32.0, 32.0], [40.0, 40.0]), Some([1.0; 4]));
     }
@@ -307,7 +386,7 @@ mod tests {
             let alpha = if index % 7 == 0 { 0.0 } else { (index % 19 + 1) as f32 / 21.0 };
             Texel { rgb: [alpha * 0.2, alpha * 0.7, alpha], opacity: alpha }
         }).collect();
-        let mut sampler = TileSampler::new(edge);
+        let mut sampler = TileSampler::new(edge, &Default::default());
         sampler.prepare(&lit_rows_of(&texels, edge), None);
         for position in [[32.0, 32.0], [0.0, 0.0], [62.99, 0.25], [31.3, 24.7]] {
             for footprint in [[64.0, 64.0], [7.5, 13.2], [1.0, 0.1], [12.0, 5.0]] {
@@ -346,7 +425,7 @@ mod tests {
             for (sum, value) in sum.iter_mut().zip(texel.rgb.into_iter().chain([texel.opacity])) { *sum += f64::from(value); }
         }
         let summary = TileFilterSummary { rgba_sum: sum, ..Default::default() };
-        let mut sampler = TileSampler::new(4);
+        let mut sampler = TileSampler::new(4, &Default::default());
         sampler.prepare(&lit_rows_of(&texels, 4), Some(&summary));
 
         // A wide footprint can still cover only part of a tile when its centre is displaced.
