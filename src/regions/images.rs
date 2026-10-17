@@ -19,6 +19,12 @@ impl GroupTileCache {
     pub fn is_empty(&self) -> bool { self.tile.texels.is_empty() }
     pub fn bytes(&self) -> usize { self.tile.texels.len() * Texel::SIZE }
 
+    /// Record an empty brightness prefix and release its old image without preparing drawing geometry.
+    pub fn clear(&mut self) {
+        self.key = Some(GroupTileKey::EMPTY);
+        self.tile.texels = Vec::new();
+    }
+
     /// Draw rows `0..key.star_count` of the simulation (`directions` and `magnitudes` at `key.simulated_at_ms`) into the tile: each
     /// row brighter than the threshold becomes the four-texel glyph of its colour, blended source-over from dim
     /// to bright current magnitude, then ascending ID. Catalog brightness-bound order is unchanged. Rows the model

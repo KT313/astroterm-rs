@@ -86,9 +86,8 @@ pub fn refresh_regions(
 
     // Refresh each selected region, accumulating repeated timing paths within the frame.
     for &region_index in selected_regions {
-        // Prepare the sky-to-tile mapping shared by this region's groups.
-        times.measure("Regions.Tile geometry");
-        let tile = TileGeometry::new(region_index);
+        // Prepare geometry only if a group needs drawing, then share it across that region's redraws.
+        let mut tile_geometry = None;
         let region = &mut star_regions[region_index];
 
         for group in &mut region.speed_groups {
@@ -99,15 +98,17 @@ pub fn refresh_regions(
 
             // Clear the old image if this group has no stars to draw.
             if star_count == 0 {
-                *tile_bytes -= group.tile.bytes();
-                times.measure("Regions.Group image rendering");
-                group.tile.render(GroupTileKey::EMPTY, &tile, table, &[], &[], star_opacities);
+                if group.tile.key() != Some(GroupTileKey::EMPTY) {
+                    *tile_bytes -= group.tile.bytes();
+                    times.measure("Regions.Group image rendering");
+                    group.tile.clear();
+                }
                 continue;
             }
 
             // Reuse star samples, or calculate them when missing or expired.
             times.measure("Regions.Simulation caches");
-            let refresh = group.update_simulation(time_ms, tt, rows_wanted(&group.stars, tt, threshold));
+            let refresh = group.update_simulation(time_ms, tt, star_count);
             if refresh != Refresh::Unchanged {
                 report.simulated += 1;
             }
@@ -131,12 +132,18 @@ pub fn refresh_regions(
                 continue;
             }
 
+            // Build the star-to-tile mapping once, at the first group that actually needs a redraw.
+            let tile = tile_geometry.get_or_insert_with(|| {
+                times.measure("Regions.Tile geometry");
+                TileGeometry::new(region_index)
+            });
+
             // Redraw the image and account for any change in its memory use.
             *tile_bytes -= image.bytes();
             times.measure("Regions.Group image rendering");
             image.render(
                 image_key,
-                &tile,
+                tile,
                 table,
                 simulation.directions(),
                 simulation.magnitudes(),
@@ -182,6 +189,73 @@ mod tests {
     fn bsc5() -> Data {
         let prepared = crate::sky::prepare_owned_catalog(crate::catalog::load_embedded_catalog(&mut crate::progress::Report::quiet()).unwrap(), &mut crate::progress::Report::quiet()).unwrap();
         crate::sky::build_sky_tables(&prepared, &mut crate::progress::Report::quiet()).unwrap()
+    }
+
+    fn refresh_single_region(data: &mut Data, threshold: f64) -> (RefreshReport, StepTimes) {
+        // Capture the real refresh stages for one region at a fixed simulation time.
+        let mut times = StepTimes::with_trace(true);
+        let report = refresh_regions(
+            &mut data.star_regions, &data.constellation_stars,
+            &mut data.constellation_simulation, &mut data.constellation_last_update_ms,
+            &mut data.star_opacities, &mut data.tile_bytes,
+            &[0], time(0.0), 60.0, threshold, &mut times,
+        );
+        times.measure("END");
+        (report, times)
+    }
+
+    #[test]
+    fn unchanged_and_cleared_groups_need_no_drawing_geometry() {
+        // Two groups share one region; each has one star at magnitude 6.
+        let direction = TileGeometry::new(0).center();
+        let mut data = crate::model::fixtures::layout(&[
+            (0, 0, crate::model::fixtures::row(direction, 0.0, 6.0, 1)),
+            (0, 1, crate::model::fixtures::row(direction, 0.0, 6.0, 2)),
+        ]);
+        let (first, times) = refresh_single_region(&mut data, 9.0);
+        assert_eq!(first, RefreshReport { simulated: 2, rendered: 2, merged: 1 });
+        assert!(times.trace().unwrap().steps.iter().any(|step| step.name == "Tile geometry"));
+        let original = data.star_regions[0].clone();
+        let original_bytes = data.tile_bytes;
+
+        // A cache hit keeps every sample and image, with no geometry stage.
+        let (unchanged, times) = refresh_single_region(&mut data, 9.0);
+        assert_eq!(unchanged, RefreshReport::default());
+        assert_eq!(data.star_regions[0], original);
+        assert_eq!(data.tile_bytes, original_bytes);
+        assert!(!times.trace().unwrap().steps.iter().any(|step| step.name == "Tile geometry"));
+
+        // A brighter limit clears the images without geometry and still invalidates the merged tile.
+        let (cleared, times) = refresh_single_region(&mut data, 2.0);
+        assert_eq!(cleared, RefreshReport { simulated: 0, rendered: 0, merged: 1 });
+        assert_eq!(data.tile_bytes, 0);
+        assert!(data.star_regions[0].merged_tile.is_empty());
+        for group in &data.star_regions[0].speed_groups {
+            assert_eq!(group.tile.key(), Some(GroupTileKey::EMPTY));
+            assert_eq!(group.tile.tile.texels.capacity(), 0);
+        }
+        assert!(!times.trace().unwrap().steps.iter().any(|step| step.name == "Tile geometry"));
+        let (still_empty, times) = refresh_single_region(&mut data, 2.0);
+        assert_eq!(still_empty, RefreshReport::default());
+        assert!(!times.trace().unwrap().steps.iter().any(|step| step.name == "Group image rendering"));
+
+        // Restoring the limit redraws from retained simulation samples and restores the original images.
+        let (restored, times) = refresh_single_region(&mut data, 9.0);
+        assert_eq!(restored, RefreshReport { simulated: 0, rendered: 2, merged: 1 });
+        assert_eq!(data.star_regions[0], original);
+        assert_eq!(data.tile_bytes, original_bytes);
+        assert!(times.trace().unwrap().steps.iter().any(|step| step.name == "Tile geometry"));
+    }
+
+    #[test]
+    fn initially_empty_region_records_keys_without_drawing_geometry() {
+        let mut data = Data::default();
+        let (first, times) = refresh_single_region(&mut data, 9.0);
+        assert_eq!(first, RefreshReport { simulated: 0, rendered: 0, merged: 1 });
+        assert!(data.star_regions[0].merged_tile.is_current(&data.star_regions[0].speed_groups));
+        assert_eq!(data.tile_bytes, 0);
+        assert!(!times.trace().unwrap().steps.iter().any(|step| step.name == "Tile geometry"));
+        assert_eq!(refresh_single_region(&mut data, 9.0).0, RefreshReport::default());
     }
     fn boston() -> Observer { Observer { latitude: 42.3601_f64.to_radians(), longitude: -71.0589_f64.to_radians() } }
     fn view(fov_degrees: f64, azimuth: f64) -> View { View { center: ViewCenter::Facing { azimuth, tilt: 0.5 }, projection: ProjectionKind::Stereographic, fov_degrees } }
