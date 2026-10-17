@@ -7,7 +7,7 @@
 //! region mappings are rebuilt each frame. Pixel positions follow the inverse formulas, with table interpolation and
 //! first-order aberration approximations. Sampling uses box footprints; portions outside a tile are transparent.
 use std::f64::consts::{FRAC_PI_2, PI, SQRT_2, TAU};
-use crate::formulas::{LIGHT_SPEED_AU_DAY, Matrix3, Vector3, apply_refraction, unrefract_direction, Horizontal};
+use crate::formulas::{LIGHT_SPEED_AU_DAY, Matrix3, Vector3, apply_refraction, Horizontal, Unrefraction};
 use crate::constants::{STEREOGRAPHIC_ROW_REBASE_PIXELS, TILE_EDGE_TEXELS};
 use crate::model::{ProjectionKind, Texel};
 #[cfg(test)]
@@ -149,6 +149,7 @@ pub(super) struct RegionMapping<'a> {
     aberration_horizon: Vector3,            // the same in horizon axes, for the length shortcut
     density: f64,                           // texels per radian at the tile centre
     atmosphere: bool,
+    unrefraction: Unrefraction,             // the inverse-refraction table, resolved once per region
     screen: &'a Screen,
     image: Image,
 }
@@ -162,7 +163,8 @@ impl<'a> RegionMapping<'a> {
         let to_tile = tile_axes.compose(observation.to_catalog);
         let aberration_horizon = observation.to_horizon.apply(observation.observer.velocity * (1.0 / LIGHT_SPEED_AU_DAY));
         let aberration = to_tile.apply(aberration_horizon);
-        let mapping = |image| Self { to_tile, aberration, aberration_horizon, density: tile.density(), atmosphere: observation.atmosphere, screen, image };
+        let unrefraction = Unrefraction::resolve();
+        let mapping = |image| Self { to_tile, aberration, aberration_horizon, density: tile.density(), atmosphere: observation.atmosphere, unrefraction, screen, image };
 
         // Bound the light's cached support, keeping the whole tile for refraction or missing metadata.
         let support_radius = select_content_radius(content_radius, observation.atmosphere);
@@ -271,7 +273,7 @@ impl<'a> RegionMapping<'a> {
         // homogeneous, so only the aberration shift has to be scaled to match, and the length follows from
         // the identity |numerator| = spread to first order in the aberration.
         let (w, length) = if self.atmosphere {
-            let w = self.to_tile.apply(unrefract_direction(numerator * (1.0 / spread))) - self.aberration;
+            let w = self.to_tile.apply(self.unrefraction.unrefract(numerator * (1.0 / spread))) - self.aberration;
             (w, w.length())
         } else {
             (self.to_tile.apply(numerator) - self.aberration * spread, spread - numerator.dot(self.aberration_horizon))

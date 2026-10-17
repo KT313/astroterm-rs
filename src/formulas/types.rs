@@ -1,4 +1,5 @@
 //! Physical records and identities. Calculations are implemented in their formula families.
+use crate::formulas::constants::UNREFRACTION_STEPS;
 
 // Coordinates and rotations.
 /// Position on the local sky of an observer.
@@ -37,6 +38,13 @@ pub struct Matrix3(pub [[f64; 3]; 3]);
 /// Rotation from the mean equator and equinox of J2000 to those of a date.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PrecessionMatrix(pub(super) [[f64; 3]; 3]);
+
+/// The inverse-refraction table of `unrefract_direction`, resolved once by a caller that undoes refraction for
+/// many directions; `Unrefraction::unrefract` then reads it without the shared table's initialisation check.
+#[derive(Clone, Copy)]
+pub struct Unrefraction {
+    pub(super) table: &'static [[f64; 2]; UNREFRACTION_STEPS + 1],    // the shared table, built on first use
+}
 
 // Body identity and observer state.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

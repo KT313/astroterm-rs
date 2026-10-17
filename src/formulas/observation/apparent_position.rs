@@ -3,7 +3,7 @@
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 use crate::formulas::constants::UNREFRACTION_STEPS;
-use crate::formulas::{BodyState, Equatorial, Horizontal, Matrix3, Observer, Vector3};
+use crate::formulas::{BodyState, Equatorial, Horizontal, Matrix3, Observer, Unrefraction, Vector3};
 
 /// Apparent horizon direction of a barycentric body position, including observer displacement.
 pub fn compute_apparent_body_direction(position: Vector3, observer: BodyState, to_horizon: Matrix3, atmosphere: bool) -> Vector3 {
@@ -120,38 +120,47 @@ pub fn refract_direction(direction: Vector3) -> Vector3 {
     }
 }
 
-/// Undo `refract_direction`: the geometric direction whose refracted image is `direction`. The inverse of
-/// Saemundsson's formula has no closed form, so it is read from a table over sin(apparent altitude), 8193
-/// entries built once from the forward formula. Linear interpolation keeps it within 0.01″ of the direct solve
-/// from the horizon up to 88.5°, within 0.5″ in the last degrees to the zenith (where the table's altitude steps
-/// widen and the lift itself is under 1″) and within 2″ around the formula's −1° clamp. This is a constant
-/// table of the formula, not a frame cache: it depends on nothing that changes at runtime.
-pub fn unrefract_direction(direction: Vector3) -> Vector3 {
-    // Look up sin(true altitude) and the horizontal scale cos(true) / cos(apparent) for this apparent altitude.
-    let z = direction.z.clamp(-1.0, 1.0);
-    let position = (z + 1.0) * (UNREFRACTION_STEPS as f64 / 2.0);
-    let index = (position as usize).min(UNREFRACTION_STEPS - 1);
-    let fraction = position - index as f64;
-    let [[sine_low, scale_low], [sine_high, scale_high]] = [UNREFRACTION[index], UNREFRACTION[index + 1]];
-    let sine = sine_low + (sine_high - sine_low) * fraction;
-    let scale = scale_low + (scale_high - scale_low) * fraction;
-    Vector3 { x: direction.x * scale, y: direction.y * scale, z: sine }
+/// Undo `refract_direction` (see `Unrefraction::unrefract`). Callers with many directions resolve the table once.
+pub fn unrefract_direction(direction: Vector3) -> Vector3 { Unrefraction::resolve().unrefract(direction) }
+
+impl Unrefraction {
+    /// Resolve the shared table, building it on first use.
+    pub fn resolve() -> Self { Self { table: &UNREFRACTION } }
+
+    /// Undo `refract_direction`: the geometric direction whose refracted image is `direction`. The inverse of
+    /// Saemundsson's formula has no closed form, so it is read from a table over sin(apparent altitude), 8193
+    /// entries built once from the forward formula. Linear interpolation keeps it within 0.01″ of the direct solve
+    /// from the horizon up to 88.5°, within 0.5″ in the last degrees to the zenith (where the table's altitude steps
+    /// widen and the lift itself is under 1″) and within 2″ around the formula's −1° clamp. This is a constant
+    /// table of the formula, not a frame cache: it depends on nothing that changes at runtime.
+    #[inline]
+    pub fn unrefract(self, direction: Vector3) -> Vector3 {
+        // Look up sin(true altitude) and the horizontal scale cos(true) / cos(apparent) for this apparent altitude.
+        let z = direction.z.clamp(-1.0, 1.0);
+        let position = (z + 1.0) * (UNREFRACTION_STEPS as f64 / 2.0);
+        let index = (position as usize).min(UNREFRACTION_STEPS - 1);
+        let fraction = position - index as f64;
+        let [[sine_low, scale_low], [sine_high, scale_high]] = [self.table[index], self.table[index + 1]];
+        let sine = sine_low + (sine_high - sine_low) * fraction;
+        let scale = scale_low + (scale_high - scale_low) * fraction;
+        Vector3 { x: direction.x * scale, y: direction.y * scale, z: sine }
+    }
 }
 
 /// Per table entry at sin(apparent altitude) = −1 + 2i / steps: sin(true altitude), cos(true) / cos(apparent).
-static UNREFRACTION: std::sync::LazyLock<Vec<[f64; 2]>> = std::sync::LazyLock::new(build_unrefraction_table);
+static UNREFRACTION: std::sync::LazyLock<[[f64; 2]; UNREFRACTION_STEPS + 1]> = std::sync::LazyLock::new(build_unrefraction_table);
 
 /// Build the fixed inverse-refraction samples once, in ascending apparent altitude.
-fn build_unrefraction_table() -> Vec<[f64; 2]> {
-    let mut table = Vec::with_capacity(UNREFRACTION_STEPS + 1);
-    for index in 0..=UNREFRACTION_STEPS {
+fn build_unrefraction_table() -> [[f64; 2]; UNREFRACTION_STEPS + 1] {
+    let mut table = [[0.0; 2]; UNREFRACTION_STEPS + 1];
+    for (index, entry) in table.iter_mut().enumerate() {
         let apparent_sine = (-1.0 + 2.0 * index as f64 / UNREFRACTION_STEPS as f64).clamp(-1.0, 1.0);
         let apparent = apparent_sine.asin();
         let altitude = unrefract_altitude(apparent).max(-FRAC_PI_2);
         let (sine, cosine) = altitude.sin_cos();
         let apparent_cosine = apparent.cos();
         let scale = if apparent_cosine < 1e-9 { 1.0 } else { cosine / apparent_cosine }; // at the poles the horizontal part is zero anyway
-        table.push([sine, scale]);
+        *entry = [sine, scale];
     }
     table
 }
@@ -356,6 +365,18 @@ mod tests {
         assert!(unrefract_direction(nadir).z <= -0.9999 && unrefract_direction(nadir).length() <= 1.0 + 1e-9);
         let lifted = unrefract_direction(Horizontal { azimuth: 0.3, altitude: 0.0 }.to_unit_vector());
         assert!(lifted.z < -(28.0 / 60.0 * TO_RAD).sin() && lifted.z > -(36.0 / 60.0 * TO_RAD).sin(), "{lifted:?}"); // about 34′ below the apparent horizon
+    }
+
+    #[test]
+    fn resolved_unrefraction_matches_the_free_function_bits() {
+        // Every height from below the nadir to above the zenith (clamped), and both ends of the table exactly.
+        let unrefraction = Unrefraction::resolve();
+        let heights = (0..=100_000).map(|step| -1.2 + 2.4 * step as f64 / 100_000.0).chain([-1.0, 1.0, 1.0_f64.next_down(), (-1.0_f64).next_up()]);
+        for z in heights {
+            let direction = Vector3 { x: 0.6 * (1.0 - z * z).abs().sqrt(), y: -0.8 * (1.0 - z * z).abs().sqrt(), z };
+            let (resolved, free) = (unrefraction.unrefract(direction), unrefract_direction(direction));
+            assert_eq!([resolved.x, resolved.y, resolved.z].map(f64::to_bits), [free.x, free.y, free.z].map(f64::to_bits), "z = {z}");
+        }
     }
 
     #[test]
