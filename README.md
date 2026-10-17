@@ -214,7 +214,9 @@ hold no light are skipped. Texture footprints are square area averages of the sc
 equidistant view blurs a little more along the rim than across it); the cached tile resolution is unchanged, so
 extreme magnification can still look blurry.
 Minimum-size filter footprints wholly inside a tile use a direct four-texel bilinear calculation, equivalent
-to the existing unit box filter. Larger footprints and tile boundaries retain the general box filter.
+to the existing unit box filter. On x86-64, SSE2 accumulates its RGBA channels in f64 pairs while preserving
+texel order; other architectures use the scalar calculation. Pixel-debug output checks apply to both paths.
+Larger footprints and tile boundaries retain the general box filter.
 Set `PROJECTION_USE_BILINEAR_FAST_PATH` to `false` in `src/constants.rs` and rebuild to disable this shortcut.
 With the azimuthal grid on, its angle labels replace the compass letters.
 
