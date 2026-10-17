@@ -6,15 +6,20 @@ use crate::constants::{MIN_FOV_DEGREES, STAR_BRIGHTNESS_REFERENCE_FOV_DEGREES, S
     STAR_OPACITY_MAGNITUDE_SCALE, STAR_OPACITY_REFERENCE_MAGNITUDE};
 use crate::model::{StarColor, Texel, StarOpacities};
 
-/// Rows to paint, dimmest current magnitude first, then ascending ID so the brighter/higher-ID star covers it.
-/// The input slices borrow one table's simulated prefix; only row indices are allocated and sorted.
+/// The drawing order of a star as one number: ascending keys run from the dimmest current magnitude to the
+/// brightest, then by ascending ID, so the brighter/higher-ID star covers the other. IDs are unique within a
+/// table, so no two of its stars share a key and the order is fully determined.
+pub fn draw_order_key(magnitude_code: u16, id: u32) -> u64 { u64::from(u16::MAX - magnitude_code) << 32 | u64::from(id) }
+
+/// Rows to paint, in drawing order (see `draw_order_key`). The input slices borrow one table's simulated prefix;
+/// rows are sorted by their packed keys, so comparisons never read the slices again.
 pub fn order_star_rows(magnitudes: &[u16], ids: &[u32], threshold: u16) -> Vec<usize> {
     assert_eq!(magnitudes.len(), ids.len(), "draw order needs one magnitude per star ID");
-    let mut rows: Vec<_> = magnitudes.iter().enumerate()
-        .filter(|&(_, &code)| code <= threshold && code != crate::regions::UNPLACED)
-        .map(|(row, _)| row).collect();
-    rows.sort_unstable_by(|&a, &b| magnitudes[b].cmp(&magnitudes[a]).then_with(|| ids[a].cmp(&ids[b])));
-    rows
+    let mut keys: Vec<(u64, usize)> = magnitudes.iter().zip(ids).enumerate()
+        .filter(|&(_, (&code, _))| code <= threshold && code != crate::regions::UNPLACED)
+        .map(|(row, (&code, &id))| (draw_order_key(code, id), row)).collect();
+    keys.sort_unstable();
+    keys.into_iter().map(|(_, row)| row).collect()
 }
 
 /// How far the glyph reaches from the star's rounded position, in texels: the four texels around the rounded
@@ -119,6 +124,31 @@ mod tests {
     use crate::catalog::magnitude_code;
 
     fn close(actual: f32, expected: f32) { assert!((actual - expected).abs() < 1e-5, "{actual} != {expected}"); }
+
+    /// The draw order as it was before the packed keys: rows sorted by a comparator over both slices.
+    fn order_star_rows_reference(magnitudes: &[u16], ids: &[u32], threshold: u16) -> Vec<usize> {
+        let mut rows: Vec<_> = magnitudes.iter().enumerate()
+            .filter(|&(_, &code)| code <= threshold && code != crate::regions::UNPLACED)
+            .map(|(row, _)| row).collect();
+        rows.sort_unstable_by(|&a, &b| magnitudes[b].cmp(&magnitudes[a]).then_with(|| ids[a].cmp(&ids[b])));
+        rows
+    }
+
+    #[test]
+    fn packed_order_matches_comparator_order() {
+        // Few distinct codes (many ties), unique shuffled IDs up to u32::MAX, some unplaced rows, extreme codes.
+        let mut seed = 41_u32;
+        let mut next = || { seed = seed.wrapping_mul(1664525).wrapping_add(1013904223); seed };
+        let codes = [0, 1, 1200, 1201, 6000, u16::MAX - 1, crate::regions::UNPLACED];
+        for length in [0, 1, 2, 350, 5000] {
+            let magnitudes: Vec<u16> = (0..length).map(|_| codes[next() as usize % codes.len()]).collect();
+            let mut ids: Vec<u32> = (0..length as u32).map(|index| index.wrapping_mul(2654435761) ^ u32::MAX).collect();
+            for index in (1..ids.len()).rev() { ids.swap(index, next() as usize % (index + 1)); }
+            for threshold in [0, 1200, 6000, u16::MAX - 1, u16::MAX] {
+                assert_eq!(order_star_rows(&magnitudes, &ids, threshold), order_star_rows_reference(&magnitudes, &ids, threshold), "length {length}, threshold {threshold}");
+            }
+        }
+    }
 
     #[test]
     fn the_curve_is_full_at_the_reference_magnitude_and_falls_by_the_configured_factor() {
