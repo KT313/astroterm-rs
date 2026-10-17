@@ -170,6 +170,8 @@ when supported on x86-64, with a portable fallback and the same input checks in 
 Region images are merged from their group images with an SSE2 test that skips four transparent texels at a
 time and records the lit texels four at a time; the filtering summary then visits only lit texels. The result
 is bit-identical to the scalar merge, which other architectures and `pixel-debug` builds keep.
+Planet series use a polynomial sin/cos summed in four lanes, compiled for AVX2+FMA when detected and for the
+baseline otherwise, with identical results either way; positions differ from libm sin/cos by under 1e-13 AU.
 
 On Linux with glibc, the program restarts itself once at launch with `GLIBC_TUNABLES=glibc.malloc.hugetlb=1`
 when the kernel allows transparent huge pages (mode `always` or `madvise`), so that its hundreds of megabytes of

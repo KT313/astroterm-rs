@@ -4,8 +4,8 @@
 //! light now reaching the Earth left them, plus the Earth's own state at reception, all barycentric J2000
 //! equatorial in AU and AU/day. Runs every frame and evaluates the ephemerides directly (no samples, no cache):
 //! one pass over each body's series gives its position, velocity and acceleration, and the light time moves that
-//! motion back without evaluating the series again (`formulas::compute_emission_state`), about 1.1 ms in all in
-//! release builds (`dev/performance.md`, 2026-10-16). Light time is iterated against the geocentre; `moon_position`
+//! motion back without evaluating the series again (`formulas::compute_emission_state`), about 0.2 ms in all in
+//! release builds (`dev/performance.md`, 2026-10-17). Light time is iterated against the geocentre; `moon_position`
 //! moves a moon by the few milliseconds the observer's site changes its light time, which matters only for the Moon.
 use crate::time::StepTimes;
 use crate::formulas::{BodyId, BodyState, evaluate_planet, evaluate_body_motion, compute_emission_state, correct_moon_light_time};

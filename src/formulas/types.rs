@@ -87,6 +87,14 @@ pub struct BodyMotion {
     pub acceleration: Vector3,
 }
 
+/// The VSOP87E terms of `VSOP87E_TERMS`, decoded once into separate arrays in the embedded order: term `i`
+/// contributes `amplitudes[i]·cos(phases[i] + frequencies[i]·t)`.
+pub struct SeriesTerms {
+    pub amplitudes: Vec<f64>,
+    pub phases: Vec<f64>,
+    pub frequencies: Vec<f64>,
+}
+
 /// Observer's barycentric state and rotations between J2000 and local East/North/Up axes.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ObserverState {

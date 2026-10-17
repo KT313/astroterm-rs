@@ -25,6 +25,27 @@ pub(super) const VSOP87E_TERMS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), 
 /// VSOP87's time unit: days per thousand Julian years.
 pub(super) const VSOP87_MILLENNIUM_DAYS: f64 = 365_250.0;
 
+/// π/2 as three parts for the series' argument reduction; the first two have 30 significant bits, so q·part is
+/// exact for quadrant counts |q| < 2^23 (the series' arguments need |q| < 2^22).
+pub(super) const HALF_PI_SPLIT: [f64; 3] = [1.5707963276654482, -8.705515692000731e-10, -3.50343439808993e-19];
+
+/// Odd polynomial for sin r − r on [−π/4, π/4] in powers of r²: fdlibm `k_sin.c` S1–S6 (also musl `__sin.c`).
+#[allow(clippy::excessive_precision)]                                                  // the published digits, to compare with the source
+pub(super) const SIN_POLYNOMIAL: [f64; 6] = [
+    -1.66666666666666324348e-01, 8.33333333332248946124e-03, -1.98412698298579493134e-04,
+    2.75573137070700676789e-06, -2.50507602534068634195e-08, 1.58969099521155010221e-10,
+];
+
+/// Even polynomial for cos r − (1 − r²/2) on [−π/4, π/4], divided by r⁴: fdlibm `k_cos.c` C1–C6 (musl `__cos.c`).
+#[allow(clippy::excessive_precision)]                                                  // the published digits, to compare with the source
+pub(super) const COS_POLYNOMIAL: [f64; 6] = [
+    4.16666666666666019037e-02, -1.38888888888741095749e-03, 2.48015872894767294178e-05,
+    -2.75573143513906633035e-07, 2.08757232129817482790e-09, -1.13596475577881948265e-11,
+];
+
+/// 1.5·2^52: (y + M) − M rounds |y| < 2^51 to the nearest integer under round-to-nearest-even, without SSE4.1.
+pub(super) const ROUNDING_MAGIC: f64 = 6755399441055744.0;
+
 // Accuracy coverage and budgets.
 /// Catalog proper motions use Julian years, regardless of the input calendar.
 pub const JULIAN_YEAR_DAYS: f64 = 365.25;

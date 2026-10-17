@@ -6,7 +6,7 @@ Bottom-up. Every module exposes its symbols from its root `mod.rs`; callers use 
 |---|---|
 | `constants.rs` | tunable defaults, hold times, resource limits |
 | `pixel_debug.rs` | optional channel checks and accumulated-light report (`pixel-debug` feature only) |
-| `formulas/` | self-contained physical calculations: Sun/planets (the VSOP87E series of `data/vsop87/`, packed by `build.rs`), moons, stars, light time, observer state, orientation, apparent directions, time scales; shared types in `types.rs`, no dependencies on other `src/` modules |
+| `formulas/` | self-contained physical calculations: Sun/planets (the VSOP87E series of `data/vsop87/`, packed by `build.rs`, decoded once into amplitude/phase/frequency arrays and summed with a polynomial sin/cos), moons, stars, light time, observer state, orientation, apparent directions, time scales; shared types in `types.rs`, no dependencies on other `src/` modules |
 | `catalog/` | BSC5, AT-HYG and Gaia parsers, MAST downloads and blob store, names and designations, magnitude coding, the prepared-catalog codec |
 | `rows/` | the column-table macros the catalog and timing records use |
 | `progress/` | the startup progress trait and `Report`, the one value that carries progress and timings through the loaders |

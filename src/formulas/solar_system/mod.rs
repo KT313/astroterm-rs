@@ -2,6 +2,7 @@
 mod planets;
 mod moons;
 mod light_time;
+mod series;
 
 pub use planets::*;
 pub use moons::*;
