@@ -1,4 +1,4 @@
-//! Star, constellation, city and orbit data embedded into the binary at compile time, and star datasets loaded from
+//! Star, constellation and city data embedded into the binary at compile time, and star datasets loaded from
 //! files (AT-HYG or Gaia DR3) instead of the embedded star catalog.
 
 mod athyg;
@@ -13,7 +13,6 @@ pub mod datasets;
 mod designation;
 mod names;
 mod magnitude;
-mod orbits;
 mod space_motion;
 mod tables;
 
@@ -21,17 +20,12 @@ use std::collections::HashMap;
 use std::fmt;
 
 pub use athyg::load_athyg_catalog;
-pub(crate) use athyg::load_athyg_catalog_with_times;
 pub use bsc5::{Bsc5Entry, parse_bsc5};
 pub use cities::{City, find_city, parse_cities, suggest_cities};
 pub use designation::Designation;
 pub use names::{NameId, StarNames};
 pub use magnitude::{decode_magnitude, encode_magnitude, magnitude_code, validate_magnitude, encode_brightness_bound, passes_brightness_bound, MagnitudeClipping, MIN_MAGNITUDE, MAX_MAGNITUDE, MAGNITUDE_CLIPPING_WARNING};
 pub(crate) use names::LabelBuilder;
-pub use orbits::{
-    EARTH_ORBIT, JUPITER_ORBIT, MARS_ORBIT, MERCURY_ORBIT, MOON_ORBIT, NEPTUNE_ORBIT, SATURN_ORBIT, URANUS_ORBIT,
-    VENUS_ORBIT,
-};
 pub use space_motion::SpaceMotion;
 pub use tables::{ConstellationFigure, parse_constellation_figures, parse_star_names};
 
@@ -176,11 +170,8 @@ impl fmt::Display for CatalogError {
 impl std::error::Error for CatalogError {}
 
 /// Parse the catalogs embedded in the binary: the Yale Bright Star Catalog with its star names.
-pub fn load_embedded_catalog() -> Result<Catalog, CatalogError> {
-    load_embedded_catalog_with_progress(&mut crate::progress::NoProgress(std::io::sink()))
-}
-
-pub(crate) fn load_embedded_catalog_with_progress(progress: &mut dyn crate::progress::DatasetProgress) -> Result<Catalog, CatalogError> {
+pub fn load_embedded_catalog(report: &mut crate::progress::Report<'_>) -> Result<Catalog, CatalogError> {
+    let (progress, _) = report.parts();
     let entries = bsc5::parse_bsc5(BSC5_DATA, progress)?;
     let star_names = parse_star_names(STAR_NAMES_TEXT, entries.len())?;
     let mut names = StarNames::default();
@@ -238,7 +229,7 @@ mod tests {
 
     #[test]
     fn embedded_catalog_is_consistent() {
-        let catalog = load_embedded_catalog().expect("embedded catalog loads");
+        let catalog = load_embedded_catalog(&mut crate::progress::Report::quiet()).expect("embedded catalog loads");
         assert_eq!(catalog.stars.len(), 9110);
         assert!(
             catalog

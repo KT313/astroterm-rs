@@ -48,17 +48,10 @@ impl BlobStore {
         Ok(self.root.join("objects").join(hash))
     }
 
-    #[cfg(test)]
-    pub(crate) fn read(&self, key: &str) -> io::Result<Option<Vec<u8>>> {
-        Ok(self.read_verified(key)?.map(|blob| blob.bytes))
+    pub(crate) fn read(&self, key: &str, progress: &mut dyn DatasetProgress) -> io::Result<Option<Vec<u8>>> {
+        Ok(self.read_verified(key, progress)?.map(|blob| blob.bytes))
     }
-    pub(crate) fn read_with_progress(&self, key: &str, progress: &mut dyn DatasetProgress) -> io::Result<Option<Vec<u8>>> {
-        Ok(self.read_verified_with_progress(key, progress)?.map(|blob| blob.bytes))
-    }
-    pub(crate) fn read_verified(&self, key: &str) -> io::Result<Option<VerifiedBlob>> {
-        self.read_verified_with_progress(key, &mut NoProgress(io::sink()))
-    }
-    pub(crate) fn read_verified_with_progress(&self, key: &str, progress: &mut dyn DatasetProgress) -> io::Result<Option<VerifiedBlob>> {
+    pub(crate) fn read_verified(&self, key: &str, progress: &mut dyn DatasetProgress) -> io::Result<Option<VerifiedBlob>> {
         let Some(reference) = self.read_reference(key)? else { return Ok(None); };
         let path = self.reference(key);
         let blob = self.read_verified_object(&reference.hash, progress).map_err(|error| at_path(&path, error))?;
@@ -94,9 +87,7 @@ impl BlobStore {
         Ok(Some(reference))
     }
     /// Read the captured object even if another publisher later replaces its reference.
-    pub(crate) fn read_object(&self, hash: &str) -> io::Result<Vec<u8>> { self.read_object_with_progress(hash, &mut NoProgress(io::sink())) }
-
-    pub(crate) fn read_object_with_progress(&self, hash: &str, progress: &mut dyn DatasetProgress) -> io::Result<Vec<u8>> {
+    pub(crate) fn read_object(&self, hash: &str, progress: &mut dyn DatasetProgress) -> io::Result<Vec<u8>> {
         Ok(self.read_verified_object(hash, progress)?.bytes)
     }
     fn read_verified_object(&self, hash: &str, progress: &mut dyn DatasetProgress) -> io::Result<VerifiedBlob> {
@@ -130,7 +121,7 @@ impl BlobStore {
         fs::create_dir_all(path.parent().unwrap())?;
         let installed = atomic_write(&path, toml::to_string(&reference).map_err(io::Error::other)?.as_bytes(), pin)?;
         if !installed {
-            let winner = self.read_verified(key)?.ok_or_else(|| at_path(&path, invalid("missing pinned MAST reference")))?;
+            let winner = self.read_verified(key, &mut crate::progress::NoProgress(std::io::sink()))?.ok_or_else(|| at_path(&path, invalid("missing pinned MAST reference")))?;
             if winner.bytes != bytes { return Err(at_path(&path, invalid("MAST catalog identity changed; refusing to mix revisions"))); }
             return Ok(winner);
         }

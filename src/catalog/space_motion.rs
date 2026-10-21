@@ -1,6 +1,6 @@
 //! Validated AT-HYG space-motion inputs. The stellar model uses precise RA/Dec, validated distance and Cartesian velocity.
 
-use crate::astro::{Equatorial, Vector3};
+use crate::formulas::{Equatorial, Vector3};
 
 /// J2000 equatorial position in parsecs and velocity in parsecs per Julian year.
 #[derive(Clone, Copy, Debug, PartialEq)]

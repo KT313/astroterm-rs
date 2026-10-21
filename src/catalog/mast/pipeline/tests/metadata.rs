@@ -1,5 +1,5 @@
 use super::*;
-use super::super::super::transport::{Response, TransferControl};
+use crate::catalog::mast::transport::{Response, TransferControl};
 use std::sync::{Condvar, atomic::AtomicUsize};
 
 #[derive(Default)]
@@ -37,10 +37,11 @@ impl Fetch for MetadataServer {
         let mut state = self.gate.0.lock().unwrap();
         state.started += 1;
         self.gate.1.notify_all();
+        let expected = self.source.leaves.min(crate::constants::MAST_METADATA_REQUESTS);
         let (state, _) = self.gate.1.wait_timeout_while(state, Duration::from_secs(5), |state| {
-            state.started < crate::constants::MAST_METADATA_REQUESTS || (file == 0 && state.finished.len() < crate::constants::MAST_METADATA_REQUESTS - 1)
+            state.started < expected || (file == 0 && state.finished.len() < expected - 1)
         }).unwrap();
-        if state.started < crate::constants::MAST_METADATA_REQUESTS { return Err(io::Error::other("metadata requests did not overlap")); }
+        if state.started < expected { return Err(io::Error::other("metadata requests did not overlap")); }
         drop(state);
         if self.panic == Some(file) { panic!("injected metadata panic"); }
         if self.fail == Some(file) { return Err(io::Error::other("injected metadata failure")); }
@@ -52,19 +53,24 @@ impl Fetch for MetadataServer {
 fn metadata_overlaps_with_bounded_lookahead_but_selection_stays_in_file_order() {
     let root = tempfile::tempdir().unwrap();
     let store = BlobStore::new(root.path().into());
-    let server = MetadataServer::new(8);
-    let selection = resolve_selection(21, 2, store.clone(), &server, &mut NoProgress(Vec::new()), &mut StepTimes::default()).unwrap();
+    let limit = crate::constants::MAST_METADATA_REQUESTS;
+    let server = MetadataServer::new(limit + 4);
+    let requested = (limit as u32 + 2) * 3;
+    let mut progress = BlockProgress::default();
+    let selection = resolve_selection(requested, 2, store.clone(), &server, &mut progress, &mut StepTimes::default()).unwrap();
     assert_eq!(server.active.load(Ordering::SeqCst), 0);
     assert_eq!(server.peak.load(Ordering::SeqCst), crate::constants::MAST_METADATA_REQUESTS);
     assert_ne!(server.gate.0.lock().unwrap().finished[0], 0);                                    // later HTTP responses deliberately finish before the first one
-    assert_eq!(selection.blocks.len(), 7);
+    assert_eq!(selection.blocks.len(), limit + 2);
+    assert!(progress.details.iter().any(|detail| detail.starts_with("Waiting for file metadata:")));
+    assert!(progress.details.iter().all(|detail| !detail.contains("requests in parallel")));
     for (index, block) in selection.blocks.iter().enumerate() {
         assert_eq!((block.base, block.selected), (index as u64 * 3, 3));
         assert!(block.source.as_ref().unwrap().path.ends_with(&format!("Npix={index}.parquet")));
     }
     let calls = server.source.calls.lock().unwrap().len();
     server.source.offline.store(true, Ordering::Relaxed);
-    resolve_selection(21, 2, store, &server.source, &mut NoProgress(Vec::new()), &mut StepTimes::default()).unwrap();
+    resolve_selection(requested, 2, store, &server.source, &mut NoProgress(Vec::new()), &mut StepTimes::default()).unwrap();
     assert_eq!(server.source.calls.lock().unwrap().len(), calls);                                // a cached short prefix never requests later metadata
 }
 

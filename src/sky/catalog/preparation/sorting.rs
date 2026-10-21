@@ -1,5 +1,5 @@
 //! Exact catalog ordering and one optional startup-only CPU pool. Rendering never uses this pool.
-use crate::{catalog::{StarId, cache::invalid}, model::StarStorage, timing::StepTimes,
+use crate::{catalog::{StarId, cache::invalid}, model::StarStorage, time::StepTimes,
     constants::{STARTUP_SORT_THREADS, STARTUP_PARALLEL_SORT_ROWS, SIMULATION_REGION_COUNT, CONSTELLATION_REGION},
     progress::{DatasetProgress, Stage, Unit, Outcome}};
 use super::super::grid;
@@ -32,19 +32,23 @@ fn sort_values<T: Send>(values: &mut [T], pool: Option<&ThreadPool>, threshold: 
 pub(in crate::sky::catalog) fn sort_stars_by_region_and_brightness(stars: &mut StarStorage, bounds: &mut Vec<f32>, endpoints: &HashSet<StarId>, progress: &mut dyn DatasetProgress, times: &mut StepTimes, pool: Option<&ThreadPool>) -> io::Result<Vec<usize>> {
     progress.set_work(Unit::Stars, Some(stars.len() as u64));
     progress.set_detail("Calculating star regions and sort keys");
-    let (mut records, counts) = times.measure("Region assignment", || build_records(stars, endpoints, progress))?;
-    times.describe("Region assignment", || format!("sort records={}; record bytes={}; allocated payload bytes={}", records.len(), size_of::<SortRecord>(), records.capacity() * size_of::<SortRecord>()));
+    times.measure("Dataset loading.Catalog preparation.Region assignment");
+    let (mut records, counts) = build_records(stars, endpoints, progress)?;
+    times.describe("Dataset loading.Catalog preparation.Region assignment", || format!("sort records={}; record bytes={}; allocated payload bytes={}", records.len(), size_of::<SortRecord>(), records.capacity() * size_of::<SortRecord>()));
     progress.finish_stage(Outcome::Complete);
 
     progress.begin_stage(Stage::Sort, "", Unit::Work, None);
-    times.measure("Region and brightness sort", || sort_values(&mut records, pool, STARTUP_PARALLEL_SORT_ROWS, |a, b| a.key.cmp(&b.key)));
+    times.measure("Dataset loading.Catalog preparation.Region and brightness sort");
+    sort_values(&mut records, pool, STARTUP_PARALLEL_SORT_ROWS, |a, b| a.key.cmp(&b.key));
     progress.finish_stage(Outcome::Complete);
 
     progress.begin_stage(Stage::Reorder, "Field values copied across nine columns", Unit::Elements, Some(stars.len() as u64 * 9));
     let order = records.iter().map(|record| usize::try_from(record.original_index).expect("u32 index fits supported targets"));
-    times.measure("Star field permutation", || stars.gather_ordered(order, bounds, progress))?;
-    times.describe("Star field permutation", || format!("largest replacement column bytes={}; one column replaced at a time", largest_replacement_bytes(stars, bounds)));
-    times.measure("Sort scratch release", || drop(records));
+    times.measure("Dataset loading.Catalog preparation.Star field permutation");
+    stars.gather_ordered(order, bounds, progress)?;
+    times.describe("Dataset loading.Catalog preparation.Star field permutation", || format!("largest replacement column bytes={}; one column replaced at a time", largest_replacement_bytes(stars, bounds)));
+    times.measure("Dataset loading.Catalog preparation.Sort scratch release");
+    drop(records);
     progress.finish_stage(Outcome::Complete);
     Ok(counts)
 }

@@ -1,48 +1,43 @@
 //! astroterm: a terminal star map.
 //!
-//! The frame loop is visible in the binary's `pipeline.rs`: simulate the solar system, prepare observer/light-time
-//! inputs, select stars, simulate those stars, apply observation corrections, project, then render through
-//! [`terminal::Renderer`]. Simulation and selection have separate owners and exchange read-only borrowed views.
+//! The binary's `pipeline.rs` calls seven frame steps in order: [`solar_system`], [`observation`], [`selection`],
+//! [`regions`], [`projection`], [`points`] and [`present`]. [`sky`] loads and prepares catalogs before that loop.
 //!
-//! Pure foundations ([`astro`], [`canvas`], [`catalog`], [`cache`], [`rows`], [`progress`] and [`timing`]) support the shared records in
-//! [`model`]. Catalog and observed data, view settings, projected geometry and validated configuration live there;
-//! representation accessors and constructors do not depend on higher processing modules. [`sky`], [`projection`]
-//! and [`scene`] contain preparation, correction, geometric and drawing algorithms over restricted borrowed inputs.
-//! [`state::ApplicationState`] owns the catalog, processing caches, rendering buffers and designated scratch from
-//! startup; the prepared catalog is installed through `replace_catalog`. Only the terminal writer/restoration guard
-//! stays scoped outside it. The optional
-//! `memory-diagnostics` feature inventories those owners without changing their calculations or cache policies.
+//! [`model::Data`] owns the solar-system tables, constellation stars and figures, shared names, and ordinary
+//! sky regions. Each region owns its speed groups and merged tile; each group owns its original star columns,
+//! calculated samples and rendered tile. Definitions are collected in `model/data.rs`; processing algorithms
+//! remain in the step modules. Catalog columns stay unchanged during frames, while their caches update in place.
 //!
-//! [`astro::models`] keeps independent star, planet, Moon and orientation formulas. [`controls`] changes views and
-//! the simulation clock; [`cli`] parses/validates input, and [`terminal`] owns scoped I/O and restoration. Shared data uses canonical `model`/`state` paths;
-//! preparation and geometric operations are explicit free functions. Each of these modules exposes its API
-//! through `mod.rs`; optional `pipeline.rs` files show ordered processing while private supporting folders hold
-//! implementation details. Callers import root symbols instead of depending on those folders.
+//! Pure foundations ([`formulas`], [`catalog`], [`rows`], [`progress`], [`time`] and [`text`]) support the model.
+//! [`formulas`] supplies astronomy formulas. [`controls`] changes the view and simulation clock; [`cli`]
+//! validates options; [`terminal`] handles input, transport and terminal restoration. Callers import public
+//! symbols from each module's root, not its implementation folders.
 //!
-//! Earth is the only production anchor. Common f64 states use equatorial J2000 axes, AU and AU/day, with
-//! a barycentric origin. [`sky`] documents the observer site and apparent-place corrections.
+//! Earth is the production observer anchor. Positions use equatorial J2000 axes, AU and AU/day, with a
+//! barycentric origin. The frame buffer and terminal session have their own lifetimes outside Data.
 
 /// Tunable defaults, resource limits and cache durations; independent of all application layers.
 pub mod constants;
-pub mod astro;
-pub mod cache;
-pub mod canvas;
+#[cfg(feature = "pixel-debug")]
+pub mod pixel_debug;
+/// Standalone physical formulas and shared mathematical types; no imports from other application modules.
+pub mod formulas;
 pub mod catalog;
 pub mod cli;
 pub mod controls;
 pub mod metadata;
 pub mod model;
+pub mod observation;
+pub mod points;
+pub mod present;
 pub mod projection;
+pub mod regions;
 pub mod progress;
 pub mod rows;
-pub mod scene;
+pub mod selection;
+pub mod solar_system;
 pub mod sky;
-pub mod state;
 pub mod terminal;
-pub mod timing;
-
-#[cfg(test)]
-extern crate self as astroterm;
-#[cfg(test)]
-#[path = "../tests/support/cached.rs"]
-pub(crate) mod test_pipeline;
+pub mod text;
+/// Self-contained simulation clocks and timing; application settings are supplied by callers.
+pub mod time;

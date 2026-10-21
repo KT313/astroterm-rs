@@ -4,9 +4,10 @@
 
 use std::f64::consts::{FRAC_PI_2, PI};
 
-use crate::astro::Horizontal;
+use crate::formulas::Horizontal;
+use super::types::Polar;
 
-# [doc = " A point on the projection plane: radius and angle measured counterclockwise from the positive x-axis (right)."] # [doc = " Radius 1 is the edge of the rendered circle."] use crate::model::Polar;
+
 
 /// Stereographic projection centered on the North pole of a sphere with radius `sphere_radius`, given spherical
 /// coordinates (θ North of East, Φ from the pole). The equator lands on the circle with radius `sphere_radius`.
@@ -59,7 +60,7 @@ fn compute_azimuthal_terms(position: Horizontal, center: Horizontal) -> (f64, f6
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::astro::{Equatorial, Observer, equatorial_to_horizontal, horizontal_to_spherical};
+    use crate::formulas::{Equatorial, Observer, equatorial_to_horizontal, horizontal_to_spherical};
 
     const TO_RAD: f64 = PI / 180.0;
 

@@ -149,17 +149,17 @@ fn mast_pinned_objects_repair_only_when_the_original_identity_is_available() {
         let initial = resolve_selection(1, 2, store.clone(), &server, &mut progress, &mut times).unwrap();
         let key = if discovery { "selected-discovery-v1".to_owned() }
             else { format!("footer-v1:{}:dataset/Norder=0/Dir=0/Npix=0.parquet", initial.discovery) };
-        let original = store.read(&key).unwrap().unwrap();
+        let original = store.read(&key, &mut crate::progress::NoProgress(std::io::sink())).unwrap().unwrap();
         let path = dir.path().join("objects").join(digest(&original));
         std::fs::write(&path, b"corruption").unwrap();
         let changed = if discovery { &server.changed_discovery } else { &server.changed };
         changed.store(true, Ordering::Relaxed);
         assert!(resolve_selection(1, 2, store.clone(), &server, &mut progress, &mut times).is_err());
-        assert!(store.read(&key).is_err());                                                        // the failed repair did not repin to the changed remote data
+        assert!(store.read(&key, &mut crate::progress::NoProgress(std::io::sink())).is_err());                                                        // the failed repair did not repin to the changed remote data
         changed.store(false, Ordering::Relaxed);
         let repaired = resolve_selection(1, 2, store.clone(), &server, &mut progress, &mut times).unwrap();
         assert_eq!(repaired.discovery, initial.discovery);
-        assert_eq!(store.read(&key).unwrap().unwrap(), original);
+        assert_eq!(store.read(&key, &mut crate::progress::NoProgress(std::io::sink())).unwrap().unwrap(), original);
         assert!(String::from_utf8_lossy(&progress.0).contains(&path.display().to_string()));
         server.offline.store(true, Ordering::Relaxed);
         resolve_selection(1, 2, store, &server, &mut progress, &mut times).unwrap();
@@ -346,7 +346,7 @@ fn mast_slow_first_block_does_not_hold_up_publication_or_new_downloads() {
     impl DatasetProgress for Published {
         fn set_position(&mut self, count: u64) {
             if count == 2 {
-                assert!(self.store.read(&self.first_key).unwrap().is_none());                    // two later blocks were installed while the first still waits
+                assert!(self.store.read(&self.first_key, &mut crate::progress::NoProgress(std::io::sink())).unwrap().is_none());                    // two later blocks were installed while the first still waits
                 *self.gate.0.lock().unwrap() = true;
                 self.gate.1.notify_all();
             }
@@ -517,7 +517,7 @@ fn repair_can_replace_an_older_writers_hash_without_replanning() {
     let mut selected = resolve_selection(2, 2, store.clone(), &server, &mut progress, &mut StepTimes::default()).unwrap();
     let block = &mut selected.blocks[0];
     let normalized_hash = block.hash.clone();
-    let mut older = store.read_object(&block.hash).unwrap();
+    let mut older = store.read_object(&block.hash, &mut crate::progress::NoProgress(std::io::sink())).unwrap();
     let producer = ::parquet::file::properties::DEFAULT_CREATED_BY.as_bytes();
     let offset = older.windows(producer.len()).rposition(|bytes| bytes == producer).unwrap();
     older[offset] = b'x';                                    // change only the harmless writer marker in valid Parquet metadata
@@ -620,7 +620,7 @@ fn repair_cancels_and_joins_workers_when_progress_panics() {
     })).unwrap_err();
     assert_eq!(panic.downcast_ref::<&str>(), Some(&"repair progress panic"));
     assert_eq!(server.active.load(Ordering::Relaxed), 0);
-    assert!(store.read(&block.key).is_err()); // failed repair must not publish a replacement
+    assert!(store.read(&block.key, &mut crate::progress::NoProgress(std::io::sink())).is_err()); // failed repair must not publish a replacement
 }
 
 mod metadata;

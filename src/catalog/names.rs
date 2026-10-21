@@ -21,7 +21,6 @@ impl Default for StarNames {
 }
 impl StarNames {
     pub(crate) fn absent() -> Self { Self { text: Default::default(), boundaries: Default::default(), ascii_alternatives: Default::default() } }
-    pub(crate) fn capacity(&self) -> usize { self.text.capacity() }
     pub(crate) fn bytes(&self) -> &[u8] { &self.text }
     pub(crate) fn boundaries(&self) -> &CatalogArray<u64> { &self.boundaries }
     pub(crate) fn ascii_alternatives(&self) -> &CatalogArray<[u32; 2]> { &self.ascii_alternatives }
@@ -105,9 +104,6 @@ impl LabelBuilder {
         self.names
     }
 }
-
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(StarNames { text, boundaries, ascii_alternatives });
 
 #[cfg(test)]
 mod tests {

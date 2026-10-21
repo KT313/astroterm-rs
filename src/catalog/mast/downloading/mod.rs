@@ -11,7 +11,7 @@ pub(super) use repair::read_or_repair_with_fetch;
 
 use super::{pipeline::{Leaf, Footer, MastBlock, MastSelection, MastSource},
     storage::{BlobStore, BlobStamp, VerifiedBlob, digest, encode, invalid}, transport::Fetch, parquet};
-use crate::{progress::{DatasetProgress, Stage, Unit, Outcome}, timing::StepTimes};
+use crate::{progress::{DatasetProgress, Stage, Unit, Outcome}, time::StepTimes};
 use std::io;
 
 pub(super) struct Job {
@@ -30,7 +30,8 @@ pub(super) struct Plan { pub jobs: Vec<Job>, pub ready: Vec<Option<MastBlock>> }
 
 pub(super) fn plan_blocks(selection: &mut MastSelection, leaves: Vec<Leaf>, fetch: &impl Fetch, progress: &mut dyn DatasetProgress, times: &mut StepTimes) -> io::Result<Plan> {
     progress.begin_stage(Stage::PlanDownloads, "MAST", Unit::Work, None);
-    let result = times.measure_steps("MAST metadata planning", |times| metadata::plan_in_order(selection, leaves, fetch, progress, times));
+    times.measure("Dataset loading.Dataset resolution.MAST metadata planning");
+    let result = metadata::plan_in_order(selection, leaves, fetch, progress, times);
     progress.finish_stage(if result.is_ok() { Outcome::Complete } else { Outcome::Failed });
     result
 }
@@ -49,7 +50,8 @@ fn append_file(selection: &mut MastSelection, plan: &mut Plan, path: &str, foote
             key: format!("raw-v1:{}:{path}:{}:{}:{group}", selection.discovery, footer.identity.etag, footer.identity.size),
             rows, selected: rows.min((u64::from(selection.requested) - selection.available) as usize), base: selection.available, ranges, compressed,
         };
-        let cached = times.measure("MAST cached block lookup", || selection.store.locate(&job.key));
+        times.measure("Dataset loading.Dataset resolution.MAST metadata planning.MAST cached block lookup");
+        let cached = selection.store.locate(&job.key);
         let ready = match cached {
             Ok(Some(blob)) => {
                 progress.set_detail(&format!("Located {} cached bytes; payload not read", blob.bytes));

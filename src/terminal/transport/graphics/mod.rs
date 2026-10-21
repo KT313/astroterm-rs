@@ -1,6 +1,7 @@
 //! Image encoding and complete-frame serialization. Graphics protocols receive the fully composed raster;
 //! half-block output merges native text into its cell buffer before serialization.
-pub(in crate::terminal) mod kitty;
+pub(crate) mod kitty;
+pub(crate) mod detection;
 
 use std::io::{self, Write};
 
@@ -43,37 +44,6 @@ pub fn compose_image(protocol: &Protocol, screen: Rect, area: Rect) -> Buffer {
     }
     Image::new(protocol).render(area, &mut image);
     image
-}
-
-/// Half-blocks are ordinary cells: merge text before generating any terminal commands.
-pub fn compose_halfblocks(protocol: &Protocol, screen: Rect, area: Rect, text: &Buffer) -> Buffer {
-    assert!(matches!(protocol, Protocol::Halfblocks(_)));
-    let mut frame = compose_image(protocol, screen, area);
-    for y in screen.top()..screen.bottom() {
-        for x in screen.left()..screen.right() {
-            let Some(cell) = text.cell((x, y)) else {
-                continue;
-            };
-            if cell.bg == ratatui::style::Color::Reset && cell.symbol() == " " {
-                continue;
-            }
-            let background = frame[(x, y)].bg;
-            frame[(x, y)] = cell.clone();
-            if cell.bg == ratatui::style::Color::Reset {
-                frame[(x, y)].bg = background; // transparent text keeps the underlying half-block background
-            }
-            let width = unicode_width::UnicodeWidthStr::width(cell.symbol()) as u16;
-            for next in x + 1..x.saturating_add(width).min(screen.right()) {
-                let background = frame[(next, y)].bg;
-                frame[(next, y)] = cell.clone();
-                frame[(next, y)].set_symbol(" ");
-                if cell.bg == ratatui::style::Color::Reset {
-                    frame[(next, y)].bg = background;
-                }
-            }
-        }
-    }
-    frame
 }
 
 /// Serialize a single completed cell buffer, containing either the image protocol or merged half-block/text cells.
@@ -148,60 +118,36 @@ mod tests {
     }
 
     #[test]
-    fn graphics_transmits_raster_text_and_halfblocks_merge_native_text_before_serialization() {
+    fn graphics_transmit_raster_text_inside_the_image_for_every_protocol() {
         let area = Rect::new(0, 0, 24, 2);
         let label = "RASTER_TEXT_SENTINEL";
         let mut text = Buffer::empty(area);
         Paragraph::new(label)
             .style(Style::default().fg(Color::White).bg(Color::Black))
             .render(area, &mut text);
-        let mut raster = crate::scene::create_text_rasterizer().unwrap();
+        let mut raster = crate::text::create_text_rasterizer().unwrap();
         for protocol in [ProtocolType::Halfblocks, ProtocolType::Sixel, ProtocolType::Iterm2] {
             let mut image = image::RgbaImage::from_pixel(240, 40, image::Rgba([20, 40, 80, 255]));
             let before = image.clone();
             if protocol != ProtocolType::Halfblocks {
-                crate::scene::paint_text_buffer(&mut raster, &mut image, &text, (10, 20));
+                crate::text::paint_text_buffer(&mut raster, &mut image, &text, (10, 20));
                 assert_ne!(image, before);
             }
             let encoded = encode_image(DynamicImage::ImageRgba8(image), area, protocol, false).unwrap();
-            let buffer = if protocol == ProtocolType::Halfblocks {
-                compose_halfblocks(&encoded, area, area, &text)
-            } else {
-                compose_image(&encoded, area, area)
-            };
+            let buffer = compose_image(&encoded, area, area);
             let output = String::from_utf8(serialize_frame(&buffer).unwrap()).unwrap();
             assert!(output.starts_with("\x1b[?2026h") && output.ends_with("\x1b[?2026l"));
             assert_eq!(output.matches("\x1b[?2026h").count(), 1);
             assert_eq!(output.matches("\x1b[?2026l").count(), 1);
-            assert_eq!(output.contains(label), protocol == ProtocolType::Halfblocks);
+            assert!(!output.contains(label));                                              // text reaches the terminal only inside the image
             let marker = match protocol {
-                ProtocolType::Halfblocks => label,
+                ProtocolType::Halfblocks => ";48;2;",                                             // true-colour cell backgrounds
                 ProtocolType::Sixel => "\x1bP",
                 ProtocolType::Kitty => "\x1b_G",
                 ProtocolType::Iterm2 => "\x1b]1337;",
             };
-            assert!(output.contains(marker), "{protocol:?}");
+            assert!(output.contains(marker), "{protocol:?}: {output:?}");
         }
-    }
-
-    #[test]
-    fn halfblock_composition_replaces_wide_text_continuations() {
-        let area = Rect::new(0, 0, 4, 1);
-        let encoded = encode_image(
-            DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(40, 20, image::Rgba([20, 40, 80, 255]))),
-            area,
-            ProtocolType::Halfblocks,
-            false,
-        )
-        .unwrap();
-        let mut text = Buffer::empty(area);
-        Paragraph::new("界x").render(area, &mut text);
-        let frame = compose_halfblocks(&encoded, area, area, &text);
-        assert_eq!(frame[(0, 0)].symbol(), "界");
-        assert_eq!(frame[(1, 0)].symbol(), " ");
-        assert_eq!(frame[(2, 0)].symbol(), "x");
-        assert_eq!(frame[(0, 0)].bg, Color::Rgb(20, 40, 80));
-        assert_eq!(frame[(1, 0)].bg, Color::Rgb(20, 40, 80));
     }
 
     #[test]

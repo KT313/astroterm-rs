@@ -1,10 +1,11 @@
-//! Validated settings, converted to the units used internally (radians, Julian dates).
+//! Validated settings, converted to the units used internally (radians, integer simulation milliseconds).
 
+use crate::metadata::compass_point_to_azimuth;
 use crate::catalog::datasets::Dataset;
 use std::fmt;
 
-use crate::astro::{
-    Observer, compass_point_to_azimuth, current_julian_date, datetime_to_julian_date, parse_utc_datetime,
+use crate::formulas::{
+    Observer,
 };
 use crate::catalog::{City, find_city, suggest_cities};
 use crate::model::{ProjectionKind, View, ViewCenter, RenderOptions, TerminalSettings};
@@ -27,10 +28,6 @@ impl std::error::Error for ConfigError {}
 
 /// Validate the arguments and convert them to a [`Config`]. `cities` resolves `--city`.
 pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, ConfigError> {
-    #[cfg(not(feature = "memory-diagnostics"))]
-    if arguments.debug_memory {
-        return Err(ConfigError("--debug-memory requires rebuilding with cargo build --features memory-diagnostics".into()));
-    }
     if !arguments.text_scale.is_finite() || !(0.25..=4.0).contains(&arguments.text_scale) {
         return Err(ConfigError("Text scale must be finite and between 0.25 and 4".into()));
     }
@@ -60,17 +57,13 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
         Some(name) => locate_city(cities, name)?,
         None => validate_observer(arguments.latitude, arguments.longitude)?,
     };
-    let start_julian_date = match &arguments.datetime {
-        Some(text) => parse_start_julian_date(text)?,
-        None => current_julian_date(),
+    let start_time_ms = match &arguments.datetime {
+        Some(text) => parse_start_time_ms(text)?,
+        None => crate::time::current_time_ms().map_err(|error| ConfigError(error.to_string()))?,
     };
 
     // frame rate and view
-    let default_fps = match arguments.renderer {
-        crate::model::RendererKind::Chars => crate::constants::DEFAULT_CHARACTER_FPS,
-        crate::model::RendererKind::Pixels => crate::constants::DEFAULT_PIXEL_FPS,
-    };
-    let fps = u32::try_from(arguments.fps.unwrap_or(default_fps))
+    let fps = u32::try_from(arguments.fps.unwrap_or(crate::constants::DEFAULT_FPS))
         .ok()
         .filter(|&fps| fps >= 1);
     let fps = fps.ok_or_else(|| ConfigError("FPS must be greater than or equal to 1".into()))?;
@@ -88,7 +81,7 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
     };
     let simulation = SimulationSettings {
         observer,
-        start_julian_date,
+        start_time_ms,
         speed: arguments.speed,
         refraction: arguments.refraction,
     };
@@ -98,24 +91,46 @@ pub fn build_config(arguments: Arguments, cities: &[City]) -> Result<Config, Con
         quit_on_any_key: arguments.quit_on_any,
         frame_times: arguments.debug_frametimes,
     };
+    let frame_benchmark = arguments.debug_frames.map(|frames| {
+        let step_ms = arguments.debug_frame_step_ms.unwrap_or(0);
+        let last = frames.checked_sub(1).ok_or_else(|| ConfigError("Frame count must be positive".into()))?;
+        let mut clock = crate::time::SimulationClock::start_fixed_step(start_time_ms, step_ms);
+        if clock.set_frame_index(last).is_err() {
+            return Err(ConfigError("Benchmark final date exceeds the i64 millisecond range".into()));
+        }
+        Ok(crate::model::FrameBenchmarkConfig { frames, step_ms,
+            report: arguments.debug_frame_report.clone().ok_or_else(|| ConfigError("--debug-frames requires --debug-frame-report".into()))? })
+    }).transpose()?;
     Ok(Config {
         debug_singleframe: arguments.debug_singleframe,
+        frame_benchmark,
         no_progress: arguments.no_progress,
         debug_log_data: arguments.debug_log_data,
-        debug_memory: arguments.debug_memory,
-        cache: crate::cache::CacheConfig::load(arguments.cache_config.as_deref(), arguments.disable_cache)
-            .map_err(|e| ConfigError(e.to_string()))?,
         text_scale: arguments.text_scale,
-        renderer: arguments.renderer,
         graphics_protocol: arguments.graphics_protocol,
         simulation,
         view,
         render,
         terminal,
         fps,
+        projection_jobs: resolve_projection_jobs(arguments.n_jobs)?,
         dataset,
         dataset_parallel_blocks: arguments.dataset_parallel_blocks.unwrap_or(crate::constants::MAST_PARALLEL_BLOCKS),
     })
+}
+
+/// Resolve the projection setting once; other application pools retain their own settings.
+fn resolve_projection_jobs(requested: i64) -> Result<usize, ConfigError> {
+    // Automatic mode respects the logical CPUs available to this process.
+    if requested == -1 {
+        return std::thread::available_parallelism()
+            .map(usize::from)
+            .map_err(|error| ConfigError(format!("Cannot determine projection worker count: {error}")));
+    }
+
+    // Keep explicit counts unchanged, including zero for direct execution.
+    usize::try_from(requested)
+        .map_err(|_| ConfigError("--n-jobs must be -1, 0, or a positive integer representable on this device".into()))
 }
 
 /// Parse an azimuth in degrees [0, 360] or a 16-point compass direction such as "NNW" (case insensitive), in degrees.
@@ -155,13 +170,8 @@ fn locate_city(cities: &[City], name: &str) -> Result<Observer, ConfigError> {
     })
 }
 
-fn parse_start_julian_date(text: &str) -> Result<f64, ConfigError> {
-    let datetime = parse_utc_datetime(text).ok_or_else(|| {
-        ConfigError(format!(
-            "Unable to parse datetime string '{text}'\nDatetimes must be in form <yyyy-mm-ddThh:mm:ss>"
-        ))
-    })?;
-    Ok(datetime_to_julian_date(&datetime))
+fn parse_start_time_ms(text: &str) -> Result<i64, ConfigError> {
+    crate::time::parse_simulation_time_ms(text).map_err(|error| ConfigError(format!("Unable to parse datetime string '{text}'\n{error}")))
 }
 
 fn validate_aspect_ratio(aspect_ratio: Option<f64>) -> Result<Option<f64>, ConfigError> {
@@ -242,6 +252,25 @@ mod tests {
     }
 
     #[test]
+    fn projection_worker_counts_are_validated_and_do_not_change_other_settings() {
+        let direct = config_from(&[]).unwrap();
+        assert_eq!(direct.projection_jobs, 0);
+        for requested in ["0", "1", "4", "32"] {
+            let mut actual = config_from(&["--n-jobs", requested]).unwrap();
+            assert_eq!(actual.projection_jobs, requested.parse::<usize>().unwrap());
+            actual.projection_jobs = 0;
+            actual.simulation.start_time_ms = direct.simulation.start_time_ms;
+            assert_eq!(actual, direct);
+        }
+        assert_eq!(config_from(&["--n-jobs", "-1"]).unwrap().projection_jobs,
+            std::thread::available_parallelism().unwrap().get());
+        for invalid in ["-2", "1.5", "hello", "9223372036854775808"] {
+            assert!(Arguments::try_parse_from(["astroterm", "--n-jobs", invalid]).is_err());
+        }
+        assert!(resolve_projection_jobs(-2).is_err());
+    }
+
+    #[test]
     fn defaults_match_the_original() {
         let config = config_from(&["-d", "2000-01-01T12:00:00"]).unwrap();
         assert_eq!(
@@ -251,12 +280,12 @@ mod tests {
                 longitude: 0.0
             }
         );
-        assert_eq!(config.simulation.start_julian_date, 2451545.0);
+        assert_eq!(config.simulation.start_time_ms, crate::time::parse_simulation_time_ms("2000-01-01T12:00:00").unwrap());
         assert_eq!(config.view, View::default());
         assert_eq!(config.render.magnitude_threshold, 5.0);
         assert_eq!(
             (config.fps, config.simulation.speed, config.terminal.aspect_ratio),
-            (24, 1.0, None)
+            (12, 1.0, None)                                                             // the pixel renderer's rate; the 24 fps character default went with it
         );
         assert!(!config.terminal.metadata_panel && !config.simulation.refraction && !config.terminal.quit_on_any_key);
         assert!(!config.terminal.frame_times && config.render.dynamic_names);
@@ -395,16 +424,16 @@ mod tests {
     }
 
     #[test]
-    fn renderer_frame_rate_defaults_preserve_explicit_overrides() {
-        assert_eq!(config_from(&[]).unwrap().fps, 24);
-        assert_eq!(config_from(&["--renderer", "pixels"]).unwrap().fps, 12);
-        assert_eq!(config_from(&["--renderer", "pixels", "--fps", "24"]).unwrap().fps, 24);
-        assert!(config_from(&["--renderer", "pixels", "--fps", "0"]).is_err());
+    fn frame_rate_defaults_preserve_explicit_overrides() {
+        assert_eq!(config_from(&[]).unwrap().fps, 12);
+        assert_eq!(config_from(&["--fps", "24"]).unwrap().fps, 24);
+        assert!(config_from(&["--fps", "0"]).is_err());
+        assert!(Arguments::try_parse_from(["astroterm", "--renderer", "pixels"]).is_err());  // the flag is gone with the character renderer
     }
 
     #[test]
     fn raster_text_scale_defaults_and_invalid_values() {
-        assert_eq!(config_from(&["--renderer", "pixels"]).unwrap().text_scale, 0.85);
+        assert_eq!(config_from(&[]).unwrap().text_scale, 0.85);
         for value in ["0.25", "0.7", "1", "1.5", "4"] {
             assert_eq!(
                 config_from(&["--text-scale", value]).unwrap().text_scale,
@@ -427,7 +456,7 @@ mod tests {
         assert!(!config_from(&[]).unwrap().debug_log_data);
         let config = config_from(&["--debug-log-data"]).unwrap();
         assert!(config.debug_log_data);
-        assert!(!config.debug_singleframe && !config.debug_memory);
+        assert!(!config.debug_singleframe);
         assert!(!config.terminal.frame_times && !config.terminal.metadata_panel);
         assert!(config_from(&["--debug-log-data", "--debug-singleframe"]).unwrap().debug_singleframe);
     }
@@ -456,5 +485,38 @@ mod tests {
         for text in ["400", "-5", "foo", "12abc", "NNWW", "nan", ""] {
             assert_eq!(parse_azimuth(text), None, "{text}");
         }
+    }
+}
+
+#[cfg(test)]
+mod benchmark_tests {
+    use super::*;
+    use clap::Parser;
+    #[test]
+    fn bounded_capture_requires_a_new_report_and_rejects_conflicting_modes() {
+        let base = ["astroterm", "--debug-frames", "3", "--debug-frame-report", "report.jsonl"];
+        let config = build_config(Arguments::try_parse_from(base).unwrap(), &[]).unwrap();
+        assert_eq!(config.frame_benchmark.unwrap().step_ms, 0);
+        for extra in [vec!["-s", "1"], vec!["--debug-singleframe"], vec!["--debug-log-data"]] {
+            assert!(Arguments::try_parse_from(base.into_iter().chain(extra)).is_err());
+        }
+        for args in [vec!["astroterm", "--debug-frames", "0", "--debug-frame-report", "x"],
+            vec!["astroterm", "--debug-frames", "1"], vec!["astroterm", "--debug-frame-report", "x"]] {
+            assert!(Arguments::try_parse_from(args).is_err());
+        }
+        for step in ["NaN", "inf", "1e308"] {
+            assert!(Arguments::try_parse_from(base.into_iter().chain(["--debug-frame-step-seconds", step])).is_err());
+        }
+    }
+
+    #[test]
+    fn millisecond_dates_and_benchmark_final_range_are_validated_before_startup() {
+        let arguments = ["astroterm", "-d", "0000-01-01T00:00:00.125", "--debug-frames", "3", "--debug-frame-report", "unused.jsonl"];
+        let config = build_config(Arguments::try_parse_from(arguments.into_iter().chain(["--debug-frame-step-seconds", "-0.001"])).unwrap(), &[]).unwrap();
+        assert_eq!(config.simulation.start_time_ms, 125);
+        assert_eq!(config.frame_benchmark.unwrap().step_ms, -1);
+        let overflow = Arguments::try_parse_from(arguments.into_iter().chain(["--debug-frame-step-seconds", "9223372036854775.807"])).unwrap();
+        assert!(build_config(overflow, &[]).unwrap_err().0.contains("millisecond range"));
+        assert!(Arguments::try_parse_from(arguments.into_iter().chain(["--debug-frame-step-seconds", "0.0001"])).is_err());
     }
 }

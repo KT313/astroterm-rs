@@ -50,7 +50,7 @@ fn packed_order_gathered_columns_and_reused_counts_match_the_cycle_oracle() {
                 let order = old_order(&original, &endpoints);
                 let mut expected = original.clone();
                 let mut expected_bounds = bounds.clone();
-                expected.reorder(&order, &mut expected_bounds);
+                expected.reorder(&order, &mut expected_bounds, &mut crate::progress::NoProgress(std::io::sink()));
                 let (mut actual, mut actual_bounds) = (original, bounds);
                 let capacity = actual.label_capacity();
                 let bounds_capacity = actual_bounds.capacity();
@@ -121,7 +121,7 @@ fn compare_gather_and_cycle_reordering() {
     assert_eq!(order, old);
     let (mut cycle, mut cycle_bounds) = (original.clone(), bounds.clone());
     let started = std::time::Instant::now();
-    cycle.reorder(&order, &mut cycle_bounds);
+    cycle.reorder(&order, &mut cycle_bounds, &mut crate::progress::NoProgress(std::io::sink()));
     let cycle_time = started.elapsed();
     let (mut gathered, mut gathered_bounds) = (original, bounds);
     let started = std::time::Instant::now();

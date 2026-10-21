@@ -1,7 +1,34 @@
-//! Immutable prepared catalog data.
-use crate::model::{Star, StarStorage, Constellation, SkyGrid};
-use crate::catalog::StarNames;
+//! Immutable prepared catalog data and the catalog records it is made of.
+use crate::model::{StarStorage, SkyGrid};
+use crate::formulas::StellarMotion;
+use crate::catalog::{NameId, StarId, StarNames};
+use crate::rows::row_columns;
 use std::sync::Arc;
+
+/// A catalog star.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Star {
+    pub id: StarId,
+    /// Display label: proper name when available, otherwise a catalog identifier.
+    pub name: Option<NameId>,
+    pub motion: StellarMotion,
+    /// Catalog magnitude at J2000; evaluated magnitude belongs to ObservedStar.
+    pub magnitude: f64,
+    pub brightness_key: f64,
+    pub display_color: crate::model::StarColor,
+    /// Whether the catalog has data for this star (a few catalog numbers are empty placeholders).
+    pub has_data: bool,
+}
+
+
+
+/// A constellation figure as segments between indices into the star table.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Constellation {
+    pub abbreviation: &'static str,
+    pub segments: Vec<[usize; 2]>,
+}
+row_columns!(Constellation { abbreviation, segments });
 
 /// Immutable model inputs and display metadata, shared by all observed skies.
 #[derive(Clone, Debug, PartialEq)]
@@ -62,7 +89,7 @@ mod tests {
 
     #[test]
     fn empty_catalog_matches_preparing_no_rows() {
-        let prepared = crate::sky::prepare_owned_catalog(crate::catalog::Catalog::new(Vec::new(), StarNames::default(), Vec::new())).unwrap();
+        let prepared = crate::sky::prepare_owned_catalog(crate::catalog::Catalog::new(Vec::new(), StarNames::default(), Vec::new()), &mut crate::progress::Report::quiet()).unwrap();
         assert_eq!(SkyCatalog::empty(), prepared.catalog);
         assert!(SkyCatalog::empty().stars.is_empty());
     }
@@ -83,10 +110,6 @@ pub struct PreparedCatalog {
     pub catalog: SkyCatalog,
     pub preparation: CatalogPreparation,
 }
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(CatalogPreparation { motion_bounds });
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(PreparedCatalog { catalog, preparation });
 
 /// One immutable definition set, shared by catalog users and retained cache keys.
 #[derive(Debug, Default, PartialEq, Eq)] // Eq lets `Arc<ConstellationSet>` keys compare by pointer first
@@ -98,8 +121,6 @@ impl ConstellationSet {
     pub fn figures(&self) -> &[Constellation] { &self.figures }
     pub fn endpoints(&self) -> &[usize] { &self.endpoints }
 }
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(ConstellationSet { figures, endpoints });
 
 /// Sparse future metadata. Row indices address the final sorted catalog; zero precise_motion_entry means absent.
 /// No entries are accepted yet, including entries that claim neither exception.

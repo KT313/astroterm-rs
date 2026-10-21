@@ -4,7 +4,6 @@
 use std::path::Path;
 
 use astroterm::catalog::{Catalog, CatalogStar, load_athyg_catalog, load_embedded_catalog};
-use astroterm::model::SkyCatalog;
 
 const DATASET: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/datasets/athyg_40.csv.gz");
 
@@ -18,8 +17,8 @@ fn separation_degrees(a: &CatalogStar, b: &CatalogStar) -> f64 {
 #[test]
 #[ignore = "needs datasets/athyg_40.csv.gz"]
 fn athyg_matches_the_embedded_catalog() {
-    let athyg = load_athyg_catalog(Path::new(DATASET)).expect("dataset loads");
-    let embedded = load_embedded_catalog().expect("embedded catalog loads");
+    let athyg = load_athyg_catalog(Path::new(DATASET), &mut astroterm::progress::Report::quiet()).expect("dataset loads");
+    let embedded = load_embedded_catalog(&mut astroterm::progress::Report::quiet()).expect("embedded catalog loads");
     assert!(athyg.stars.len() > 2_500_000, "{} stars", athyg.stars.len());
 
     // bright stars are where the Yale catalog has them
@@ -39,7 +38,7 @@ fn athyg_matches_the_embedded_catalog() {
     }
 
     // nearly all constellation figures find their stars
-    let sky = astroterm::sky::prepare_catalog(&athyg).unwrap();
+    let sky = astroterm::sky::prepare_catalog(&athyg, &mut astroterm::progress::Report::quiet()).unwrap();
     assert_eq!(sky.catalog.constellations().len(), 88);
     assert_eq!(sky.catalog.stars.len(), athyg.stars.iter().filter(|star| star.has_data).count());
     assert_eq!(sky.catalog.grid.offsets[astroterm::constants::SIMULATION_REGION_COUNT], sky.catalog.stars.len());
@@ -64,9 +63,9 @@ fn athyg_matches_the_embedded_catalog() {
 #[test]
 #[ignore = "needs datasets/athyg_40.csv.gz; release quantization audit"]
 fn real_catalog_quantization_stays_within_half_an_arcsecond() {
-    let source = load_athyg_catalog(Path::new(DATASET)).unwrap();
-    let stored = astroterm::sky::prepare_catalog(&source).unwrap();
-    let (start, end) = astroterm::astro::models::stars::computational_years();
+    let source = load_athyg_catalog(Path::new(DATASET), &mut astroterm::progress::Report::quiet()).unwrap();
+    let stored = astroterm::sky::prepare_catalog(&source, &mut astroterm::progress::Report::quiet()).unwrap();
+    let (start, end) = astroterm::formulas::computational_years();
     let mut maximum = 0.0_f64;
     for star in stored.catalog.stars.iter() {
         let i = source.stars.binary_search_by_key(&star.id, |s| s.id).unwrap();
@@ -86,43 +85,32 @@ fn real_catalog_quantization_stays_within_half_an_arcsecond() {
     );
 }
 
+/// The rebuilt pipeline's group tables from the real AT-HYG catalog: built from the source, validated, and equal
+/// to the tables built from the prepared cache written on the way.
 #[test]
-#[ignore = "needs datasets/athyg_40.csv.gz; release cache roundtrip"]
-fn real_catalog_cache_preserves_the_rendered_frame() {
-    use astroterm::astro::{J2000, Observer};
-    use astroterm::canvas::Canvas;
-    use astroterm::model::{Sky, ProjectionViewport as Viewport, View, RenderOptions};
-    use astroterm::projection::project_sky;
-    use astroterm::scene::draw_sky_scene;
-    use astroterm::sky::{update_sky_positions, catalog_fingerprint, load_cached_catalog, write_cached_catalog};
-    use astroterm::timing::StepTimes;
-    fn frame(catalog: SkyCatalog) -> Canvas {
-        let mut sky = Sky::new(std::sync::Arc::new(catalog));
-        update_sky_positions(&mut sky, J2000, &Observer::default(), 5.0, &mut StepTimes::default());
-        let mut canvas = Canvas::new(41, 81);
-        let options = RenderOptions {
-            unicode: true,
-            braille: true,
-            color: true,
-            constellations: true,
-            grid: false,
-            magnitude_threshold: 5.0,
-            dynamic_names: true,
-        };
-        draw_sky_scene(
-            &mut canvas,
-            &options,
-            &project_sky(&sky, &View::default(), Viewport { height: 41, width: 81 }).view(&sky),
-        );
-        canvas
-    }
-    let catalog = astroterm::sky::prepare_owned_catalog(load_athyg_catalog(Path::new(DATASET)).unwrap()).unwrap();
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("cache");
-    let fingerprint = catalog_fingerprint();
-    write_cached_catalog(&path, &catalog, &fingerprint).unwrap();
-    let expected = frame(catalog.catalog);
-    let cached = load_cached_catalog(&path, &fingerprint).unwrap();
-    assert!(cached.catalog.stars.len() > 2_500_000);
-    assert_eq!(frame(cached.catalog), expected);
+#[ignore = "needs datasets/athyg_40.csv.gz"]
+fn athyg_builds_validated_group_tables_from_source_and_cache() {
+    use astroterm::catalog::datasets::{Dataset, DatasetDirectories};
+    use astroterm::progress::NoProgress;
+    use astroterm::time::StepTimes;
+    let cache = tempfile::tempdir().unwrap();
+    let directories = DatasetDirectories { data: None, cache: Some(cache.path().into()) };
+    let dataset = Dataset::Path(DATASET.into());
+    let mut notices = Vec::new();
+    let started = std::time::Instant::now();
+    let prepared = astroterm::sky::load_sky_catalog(Some(&dataset), astroterm::constants::MAST_PARALLEL_BLOCKS, &directories, &mut astroterm::progress::Report::live(&mut astroterm::progress::NoProgress(&mut notices), &mut astroterm::time::StepTimes::default())).unwrap();
+    eprintln!("prepared {} stars in {:?}", prepared.catalog.stars.len(), started.elapsed());
+    let started = std::time::Instant::now();
+    let mut times = StepTimes::with_trace(true);
+    let tables = astroterm::sky::build_sky_tables(&prepared, &mut astroterm::progress::Report::live(&mut NoProgress(std::io::sink()), &mut times)).unwrap();
+    eprintln!("built and validated the group tables in {:?}", started.elapsed());
+    times.measure("END");
+    for step in &times.trace().unwrap().steps { eprintln!("  {} {:.3}s {}", step.name, step.seconds, step.details.join("; ")); }
+    assert_eq!(tables.region_star_count() + tables.constellation_stars.len(), prepared.catalog.stars.len());
+    assert!(tables.region_star_count() > 2_500_000);
+    assert_eq!(tables.constellation_stars.len(), prepared.catalog.endpoint_indices().len());
+    let cached = astroterm::sky::load_sky_catalog(Some(&dataset), astroterm::constants::MAST_PARALLEL_BLOCKS, &directories, &mut astroterm::progress::Report::live(&mut astroterm::progress::NoProgress(&mut notices), &mut astroterm::time::StepTimes::default())).unwrap();
+    assert_eq!(cached, prepared);
+    let from_cache = astroterm::sky::build_sky_tables(&cached, &mut astroterm::progress::Report::quiet()).unwrap();
+    assert_eq!(from_cache, tables);
 }

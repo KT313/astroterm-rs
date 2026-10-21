@@ -1,87 +1,112 @@
-//! One-time frame preparation and the simulation → observation → projection → rendering loop.
+//! The frame loop: the seven steps of `dev/pipeline-restructuring-plan.md` section 6, called by name and in
+//! order every frame, with a separate metadata text-overlay pass between points and presentation.
+//! Keys and resizes are polled first; the simulated time comes from the clock.
 
 use std::io;
-use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
 
-use astroterm::astro::SimulationClock;
-use astroterm::terminal::{Renderer, poll_frame_input};
-use astroterm::timing::StepTimes;
-use astroterm::state::{ApplicationState, StellarSimulationState};
-use astroterm::model::SkyCatalog;
+use astroterm::model::{Config, Data};
+use astroterm::observation::observe;
+use astroterm::points::{draw_points};
+use astroterm::present::{Display, present, transport_notice};
+use astroterm::projection::{Frame, ProjectionExecutor, project_stars_to_screen};
+use astroterm::regions::{RefreshReport, refresh_regions};
+use astroterm::selection::{Selected, select_regions};
+use astroterm::solar_system::simulate_solar_system;
+use astroterm::time::{StepTimes, TimeManager};
 
 use crate::helpers::{
-    apply_frame_controls, begin_frame_diagnostics, render_projected_frame, capture_memory, observe_frame, select_stars_frame, prepare_observer_frame, project_frame, finish_frame_diagnostics,
-    stop_on_quit, resolve_frame_time, simulate_solar_system_frame, simulate_stars_frame, log_pipeline_data_if_requested,
+    BenchmarkSession, Panel, draw_text_overlay, handle_input, begin_frame_diagnostics,
+    complete_benchmark_frame, finish_frame_diagnostics,
 };
 
 /// Draw frames at the configured rate until the user quits. Keys change the view and the simulation clock.
-pub(super) fn run_render_loop(state: &mut ApplicationState, renderer: &mut Renderer) -> io::Result<()> {
+#[allow(clippy::too_many_arguments)]
+pub(super) fn run_frame_loop(
+    config: &Config,
+    data: &mut Data,
+    display: &mut Display,
+    frame: &mut Frame,
+    panel: &mut Panel,
+    time_manager: &mut TimeManager,
+    projection: &mut ProjectionExecutor,
+    benchmark: &mut Option<BenchmarkSession>
+)-> io::Result<()> {
 
-    log_pipeline_data_if_requested(state, "tmp/tables.md", "stage-renderloop-start")?;
-
-    let frame_duration = Duration::from_secs_f64(1.0 / f64::from(state.config.fps));                                // set the target time between frames from the requested FPS
-    state.current_view = state.config.view;                                                                         // restore the configured starting view for this run
-
-    renderer.configure_cache(&mut state.cache.rendering, &state.config.cache);
-
-    prepare_frame_data(&state.cache.sky.catalog, &mut state.cache.simulation.stars, astroterm::model::FrameTime::from_utc(state.config.simulation.start_julian_date).tt, &mut state.timings)?;                // calculate values that stay the same for the whole run
-    log_pipeline_data_if_requested(state, "tmp/after-preparation.md", "after-preparation")?;
-    state.free_preparation_only_data();                                                                             // free startup-only movement bounds before frames begin
-    log_pipeline_data_if_requested(state, "tmp/after-preparation-cleanup.md", "after-preparation-cleanup")?;
-    capture_memory(&state.config, &state.persistent.catalog, &state.cache, state.preparation.as_ref(), renderer, &mut state.timings, "After preparation", None); // inspect loaded/prepared buffers only when requested
-    let mut clock = SimulationClock::start(state.config.simulation.start_julian_date, state.config.simulation.speed); // start simulated time after setup is complete
-    state.timings.reset_frame_timings();                                                                            // keep setup time out of the displayed frame timings
+    let mut current_view = config.view;
+    let mut selected = Selected::default();
+    time_manager.step_times.reset_frame_timings();
 
     loop {
-        let frame_start = begin_frame_diagnostics(&mut state.timings); // start this frame's timing and optional memory records
+        let frame_start = begin_frame_diagnostics(&mut time_manager.step_times);
 
-        // frame preparation
-        let input = poll_frame_input(state.config.terminal.quit_on_any_key)?; // read key presses and terminal size changes
-        if stop_on_quit(&input, &mut state.timings) { return Ok(()); } // stop on quit without processing other keys
-        apply_frame_controls(&input, &state.config.view, &mut state.current_view, &mut clock, renderer, &mut state.cache.rendering, &mut state.cache.selection, &mut state.cache.projection)?; // apply controls and mark affected results for recalculation
-        let time = resolve_frame_time(state.config.debug_singleframe, state.config.simulation.start_julian_date, &clock); // choose the simulated date and time to display
-        state.timings.set_memory_frame_time(time.utc, time.tt); // retain the chosen time even if a later stage fails
+        let should_quit = handle_input(config, &mut current_view, &mut time_manager.clock, display, frame, benchmark)?;
+        if should_quit { return Ok(()); }
 
-        // 1. simulate solar system bodies
-        simulate_solar_system_frame(&mut state.cache.simulation.solar_system, &mut state.cache.observer, state.config.simulation.observer, time, &mut state.timings)?;
+        let time_ms = time_manager.get_current_simulation_time()?;
 
-        // 2. calculate observation-details
-        let observer = prepare_observer_frame(state.config.simulation.observer, &mut state.cache.simulation.solar_system, &mut state.cache.observer, time, &mut state.timings)?;
+        time_manager.measure("Solar system");
+        let solar_system = simulate_solar_system(&data.solar_system_sun, &data.solar_system_planets, &data.solar_system_moons, time_ms, &mut time_manager.step_times);
 
-        // 3. filter stars based on observed regions
-        select_stars_frame(&mut state.cache.selection, &state.persistent.catalog, &observer, &state.current_view, state.config.render.magnitude_threshold, state.config.simulation.refraction, &mut state.star_counts.candidate_regions, &mut state.timings);
+        time_manager.measure("Observation");
+        let observation = observe(&config.simulation.observer, config.simulation.refraction, &current_view, time_ms, solar_system.earth, &mut time_manager.step_times);
 
-        // 4. simulate stars
-        simulate_stars_frame(&mut state.cache.simulation.stars, state.cache.selection.stars(), time, &mut state.timings); // refresh requested regions' motion and brightness
+        time_manager.measure("Selection");
+        select_regions(&mut selected, &data.star_regions, &observation, &current_view, frame.drawing_area_width_and_height, &mut time_manager.step_times);
 
-        // 5. calculate how prepared objects appear to the viewer
-        let observed = observe_frame(&mut state.cache.observation, state.cache.simulation.stars.results(state.cache.selection.stars()), state.cache.observer.bodies(&observer), &observer, state.config.render.magnitude_threshold, state.config.simulation.refraction, &mut state.cache.sky, &mut state.star_counts.filtered, &mut state.timings);
+        time_manager.measure("Regions");
+        let refreshed = refresh_regions(
+            &mut data.star_regions, &data.constellation_stars,
+            &mut data.constellation_simulation, &mut data.constellation_last_update_ms,
+            &mut data.star_opacities, &mut data.tile_bytes,
+            &selected, time_ms, current_view.fov_degrees, config.render.magnitude_threshold,
+            &mut time_manager.step_times,
+        );
 
-        // 6. convert visible sky positions into positions on the screen
-        let viewport = renderer.viewport(&state.cache.rendering); // use the current terminal size after any resize was handled
-        project_frame(observed, &state.current_view, viewport, time, &mut state.cache.projection, &mut state.star_counts.projected, &mut state.timings);
-        log_pipeline_data_if_requested(state, "tmp/after-projection.md", "after-projection")?;
-        let sky_processing_stats = state.cache.sky_processing_stats(); // summarize all sky-processing caches for the metadata
+        time_manager.measure("Projection");
+        let projected_stars = project_stars_to_screen(frame.drawing_area_width_and_height, &data.star_regions, &selected, &observation, &current_view, projection, &mut time_manager.step_times);
+        time_manager.measure("Projection.Frame insertion");
+        frame.insert_projected_stars(projected_stars);
 
-        // 7. render screen positions to RGB frame
-        let observed = state.cache.observation.regional_view(state.cache.simulation.stars.results(state.cache.selection.stars()), &state.cache.sky); // borrow final cached values for rendering
-        let outcome = render_projected_frame(renderer, &mut state.cache.rendering, observed, &state.current_view, viewport, &state.cache.projection, sky_processing_stats, time.utc, &clock, &state.config.simulation.observer, &state.star_counts, &mut state.timings)?; // draw and present the projected sky and text
-        log_pipeline_data_if_requested(state, "tmp/after-rendering.md", "after-rendering")?;
+        time_manager.measure("Points");
+        let drawn = draw_points(
+            frame, &solar_system,
+            &data.solar_system_sun, &data.solar_system_planets, &data.solar_system_moons,
+            &data.constellation_stars, &data.constellation_simulation, &data.constellation_figures,
+            &data.star_regions, &data.names, &data.star_opacities, &data.clipping,
+            &selected.regions, transport_notice(&display.info()),
+            &observation, &current_view, &config.render, &mut time_manager.step_times,
+        );
 
-        finish_frame_diagnostics(&state.config, &state.persistent.catalog, &state.cache, state.preparation.as_ref(), renderer, frame_start, time, outcome, &mut state.timings); // save frame timings and requested memory diagnostics
+        time_manager.measure("Text overlay");
+        draw_text_overlay(
+            frame, display, panel, &solar_system, &selected,
+            &data.star_regions, data.tile_bytes, &drawn.notices, refreshed,
+            time_ms, &current_view, config, &time_manager.clock, &mut time_manager.step_times,
+        );
 
-        if state.config.debug_singleframe { return Ok(()); } // stop once the requested single-frame diagnostics are captured
-        thread::sleep(frame_duration.saturating_sub(frame_start.elapsed())); // wait until the next frame is due, unless already running late
+        time_manager.measure("Present");
+        let presentation_result = present(frame, display.terminal(), &mut time_manager.step_times);
+
+        time_manager.measure("END");
+        let presented = presentation_result?;
+
+        // Record the completed frame's timings and any requested benchmark sample.
+        let elapsed = finish_frame_diagnostics(config, frame_start, time_ms, presented, &mut time_manager.step_times);
+        describe_steps(&mut time_manager.step_times, observation.patch.radius, &selected, refreshed, data.tile_bytes);
+        let benchmark_complete = complete_benchmark_frame(benchmark, time_ms, presented, elapsed, display, &mut time_manager.step_times)?;
+
+        // Stop after the requested benchmark frames or the single diagnostic frame.
+        if benchmark_complete || config.debug_singleframe { return Ok(()); }
+
+        // Wait for the next frame's scheduled start; a late frame needs no extra delay.
+        let frame_duration = &time_manager.min_frame_duration;
+        thread::sleep(frame_duration.saturating_sub(frame_start.elapsed()));
     }
 }
 
-/// Prepare catalog classifications and empty region caches once. Numerical samples are calculated in the loop.
-fn prepare_frame_data(catalog: &Arc<SkyCatalog>, stars: &mut StellarSimulationState, start_tt: f64, times: &mut StepTimes) -> io::Result<()> {
-    catalog.validate_exception_support()?;                                                                          // reject unsupported sparse data before the frame loop
-    times.measure_steps("Frame preparation", |times| {
-        astroterm::sky::prepare_stellar_catalog(stars, catalog.clone(), start_tt, times);                           // record how each star's position and brightness can change
-    });
-    Ok(())
+/// Attach the selection and refresh results to the single-frame trace; nothing happens without tracing.
+fn describe_steps(times: &mut StepTimes, patch_radius: f64, selected: &Selected, refreshed: RefreshReport, tile_bytes: usize) {
+    times.describe("Selection", || format!("regions={}; whole sky={}; patch radius={:.2}°", selected.regions.len(), selected.whole_sky, patch_radius.to_degrees()));
+    times.describe("Regions", || format!("groups simulated={}; images drawn={}; regions merged={}; tile bytes={}", refreshed.simulated, refreshed.rendered, refreshed.merged, tile_bytes));
 }

@@ -121,7 +121,7 @@ objects remain on disk; there is no eviction or whole-selection restart.
 Whole-group conversion also records per-row errors in an unselected suffix. An unsupported star is reported
 when the requested prefix actually reaches it; it is not silently removed. Storage or malformed-format
 errors still fail immediately. Zero performs no network access. If N exceeds the full catalog, the loader
-prints the available raw count and loads what exists. `--disable-cache` still affects runtime caches only.
+prints the available raw count and loads what exists.
 
 ## Brightness, colors and motion
 
@@ -166,7 +166,7 @@ the incomplete file restarts next time. Only verified files are atomically insta
 Parsing streams one file at a time into compact owned catalog columns. A prepared catalog can skip parsing,
 conversion and preparation on subsequent runs. Its identity covers the selected prefix, verified inputs
 and conversion rules. Increasing the count rebuilds that prepared catalog; it does not incrementally merge
-old prepared results. `--disable-cache` affects runtime calculation reuse, not source downloads.
+old prepared results.
 
 All runtime catalog data is loaded into RAM. Selecting all files can require hundreds of gigabytes including
 preparation and runtime buffers; the allowed file count is not a promise that any machine can load it.

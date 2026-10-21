@@ -1,30 +1,19 @@
 //! Camera transforms, field-of-view controls, and clipped sky geometry.
-use crate::constants::{DEFAULT_FOV_DEGREES, MIN_FOV_DEGREES};
+use crate::constants::DEFAULT_FOV_DEGREES;
 mod cartesian;
 mod maps;
 mod sky;
-mod draw_order;
+mod types;
 
 pub use cartesian::{prepare_camera, project_camera, rotate_camera_into};
 pub use maps::{project_equidistant_horizontal, project_stereographic_horizontal, project_stereographic_north};
-pub use sky::{polar_to_cell, project_light_direction, project_sky, project_sky_with_times, project_to_cell};
-pub(super) use draw_order::prepare_draw_order_with_times;
-pub(super) use sky::{project_bodies, project_constellations};
-pub(crate) use sky::{project_horizon_labels, project_horizon_line};
-#[cfg(test)]
-pub(crate) use sky::{compute_visible_horizon_half_range, project_constellation_segment};
+pub use sky::{polar_to_cell, project_light_direction, project_to_cell};
+pub use sky::{project_constellation_segment, project_horizon_labels, project_horizon_line};
+pub use types::{ArcPart, CartesianCamera, Polar, ProjectedArc, ScreenPoint};
 
-use crate::model::{ArcPart, Polar, ProjectionKind, View, ViewCenter};
+use crate::model::{ProjectionKind, View, ViewCenter};
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
-use crate::astro::{Horizontal, horizontal_to_spherical};
-
-/// Describe the viewing cone in horizontal coordinates for conservative observation selection.
-pub fn select_view_region(view: &View) -> crate::model::SkyRegion {
-    crate::model::SkyRegion::Cone {
-        center: view.center_direction().to_unit_vector(),
-        radius: view.fov_degrees.to_radians() / 2.0,
-    }
-}
+use crate::formulas::{Horizontal, horizontal_to_spherical};
 
 /// Find visible intervals along the shorter great-circle arc between two horizontal positions.
 pub fn find_visible_arc_parts(view: &View, from: Horizontal, to: Horizontal) -> Vec<ArcPart> {
@@ -32,7 +21,7 @@ pub fn find_visible_arc_parts(view: &View, from: Horizontal, to: Horizontal) -> 
 }
 
 /// Intersect exact great-circle windows with the arc; a wide view may produce two visible intervals.
-pub fn find_visible_arc_parts_vectors(view: &View, a: crate::astro::Vector3, b: crate::astro::Vector3) -> Vec<ArcPart> {
+pub fn find_visible_arc_parts_vectors(view: &View, a: crate::formulas::Vector3, b: crate::formulas::Vector3) -> Vec<ArcPart> {
     // the arc as p(t) = a·cos(t) + u·sin(t), t in [0, length]
     let length = a.dot(b).clamp(-1.0, 1.0).acos();
     let tangent = b - a * a.dot(b);
@@ -97,10 +86,10 @@ pub fn pan_view(view: &mut View, azimuth_delta: f64, tilt_delta: f64) {
     };
 }
 
-/// Change the field of view within the projection's existing limits.
+/// Change the field of view, at most to the projection's widest; zooming in has no limit.
 pub fn zoom_view(view: &mut View, factor: f64) {
     let max_fov = view.projection.max_fov_degrees();
-    view.fov_degrees = (view.fov_degrees / factor).clamp(MIN_FOV_DEGREES, max_fov);
+    view.fov_degrees = (view.fov_degrees / factor).min(max_fov);
 }
 
 /// Map horizontal coordinates to the view plane, with half the field of view at unit radius.
@@ -280,7 +269,7 @@ mod tests {
     }
 
     #[test]
-    fn zoom_stays_within_the_projection_limits() {
+    fn zoom_stays_within_the_projection_limits_and_zooms_in_without_one() {
         let mut view = View::default();
         zoom_view(&mut view, 2.0);
         assert_eq!(view.fov_degrees, 90.0);
@@ -290,7 +279,7 @@ mod tests {
         zoom_view(&mut view, 1e-6);
         assert_eq!(view.fov_degrees, 360.0);
         zoom_view(&mut view, 1e6);
-        assert_eq!(view.fov_degrees, 1.0);
+        assert_eq!(view.fov_degrees, 360.0 / 1e6);
     }
 
     #[test]

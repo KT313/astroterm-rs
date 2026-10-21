@@ -41,8 +41,6 @@ impl MagnitudeClipping {
     pub fn any(self) -> bool { self.lower != 0 || self.upper != 0 }
 }
 crate::rows::row_columns!(MagnitudeClipping { lower, upper });
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_flat!(MagnitudeClipping);
 
 /// Encode toward brighter values. Zero deliberately bypasses all early brightness pruning.
 /// `brightest_magnitude` applies one next_down for safety: that one ULP below the exact lower endpoint

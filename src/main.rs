@@ -10,37 +10,78 @@ use clap::Parser;
 
 use astroterm::catalog::datasets::DatasetDirectories;
 use astroterm::cli::Arguments;
-use astroterm::state::ApplicationState;
+use astroterm::constants::{SPEED_GROUP_BOUNDS, SPEED_GROUP_TTL_MS};
+use astroterm::model::{Config, Data};
+use astroterm::projection::ProjectionExecutor;
+use astroterm::time::{StartupTiming, StepTimes};
 
 use helpers::{
-    capture_failed_frame_memory, configure_memory_reporting, finish_rendering, load_catalog, load_cities,
-    prepare_terminal, print_bash_completions, start_step_times, validate_arguments,
+    BenchmarkSession, Panel, begin_benchmark_capture, capture_display, finish_benchmark_report, finish_rendering, load_catalog, load_cities, open_display, open_frame_benchmark,
+    print_bash_completions, restart_with_huge_pages_if_allowed, validate_arguments,
 };
-use pipeline::run_render_loop;
+use pipeline::run_frame_loop;
 
-/// Parse options, build the sky, and render it until the user quits.
+/// Parse options, build the sky data, and render until the user quits.
 fn main() -> ExitCode {
+    restart_with_huge_pages_if_allowed();                                                               // once, with huge-page memory where the system allows it
+
+    assert_stuff();
 
     let arguments = Arguments::parse();
-    let mut step_times = start_step_times(&arguments);                                          // capture startup timings when diagnostics are requested
-    let Ok(cities) = load_cities(&mut step_times) else { return ExitCode::FAILURE; };           // load city data
-    if arguments.bash_completions { return print_bash_completions(&cities); }                   // print shell completions and exit
-    let Ok(config) = validate_arguments(arguments, &cities) else { return ExitCode::FAILURE; }; // validate config options
+    let capture_trace = arguments.debug_singleframe || arguments.debug_frames.is_some();
+    let mut startup_timing = StartupTiming::new(capture_trace, arguments.debug_frametimes);             // capture startup timings when diagnostics are requested
+    let Ok(cities) = load_cities(&mut startup_timing.step_times) else { return ExitCode::FAILURE; };     // load city data
+    if arguments.bash_completions { return print_bash_completions(&cities); }                            // print shell completions and exit
+    let Ok(config) = validate_arguments(arguments, &cities) else { return ExitCode::FAILURE; };          // validate config options
+    if config.debug_log_data { eprintln!("--debug-log-data has no effect: the table dumps belonged to the retired frame pipeline."); }
 
-    configure_memory_reporting(&config, &mut step_times);                                       // retain startup and frame diagnostics when requested
+    let Ok(mut benchmark) = open_frame_benchmark(&config) else { return ExitCode::FAILURE; };            // create a separate timing file only when requested
+    let directories = DatasetDirectories::for_user();                                                    // locate dataset and cache on disk
+    let Ok(mut data) = load_catalog(&config, &directories, &mut startup_timing.step_times) else { return ExitCode::FAILURE; }; // load the dataset and split it into the sky data
 
-    let mut state = ApplicationState::new(config, step_times);                                  // create every working-data owner before any data is loaded
-    let directories = DatasetDirectories::for_user();                                           // locate dataset and cache on disk
-    let Ok(()) = load_catalog(&mut state, &directories) else { return ExitCode::FAILURE; };    // load and prepare the dataset into the state
-
-    let result = render_in_terminal(&mut state);                                                // run frames within the terminal's cleanup scope
-    finish_rendering(result, &state)                                                            // report results after the terminal is restored
+    let (result, step_times) = render_in_terminal(&config, &mut data, startup_timing, &mut benchmark);   // run frames within the terminal's cleanup scope
+    let result = finish_benchmark_report(&mut benchmark, result);                                        // mark completion after terminal cleanup
+    finish_rendering(result, &config, &step_times)                                                       // report results after the terminal is restored
 }
 
-/// Keep the renderer alive through the frame loop and restore the terminal before main prints the result.
-fn render_in_terminal(state: &mut ApplicationState) -> io::Result<()> {
-    let mut renderer = prepare_terminal(state)?;                  // open the terminal and prepare its rendering buffers
-    let result = run_render_loop(state, &mut renderer);           // run frames until quit, single-frame completion or an error
-    capture_failed_frame_memory(state, &renderer, &result);       // save partial diagnostics while the renderer is still available
-    result                                                        // the renderer restores the terminal as this scope ends
+/// Keep the display alive through the frame loop and restore the terminal before main prints the result.
+fn render_in_terminal(config: &Config, data: &mut Data, mut startup_timing: StartupTiming, benchmark: &mut Option<BenchmarkSession>) -> (io::Result<()>, StepTimes) {
+    // Create only the requested projection pool, before terminal setup and the frame loop.
+    startup_timing.step_times.measure("Projection worker startup");
+    let mut projection = match ProjectionExecutor::new(config.projection_jobs) {
+        Ok(projection) => projection,
+        Err(error) => return (Err(error), startup_timing.step_times),
+    };
+
+    // Prepare the display and drawing state before simulated time starts advancing.
+    let mut display = match open_display(config, &mut startup_timing.step_times) {
+        Ok(display) => display,
+        Err(error) => return (Err(error), startup_timing.step_times),
+    };
+    data.star_opacities.prepare(1.0);
+    let mut frame = display.new_frame();
+    let mut panel = Panel::new(config, data);
+
+    // Preserve startup measurements for the final report even if benchmark reporting fails.
+    if let Err(error) = begin_benchmark_capture(benchmark, config, || capture_display(display.info()), &mut startup_timing.step_times) {
+        return (Err(error), startup_timing.step_times);
+    }
+
+    // Only the initialized manager can enter the loop; return its measurements after rendering.
+    let frame_step_ms = config.frame_benchmark.as_ref().map(|benchmark| benchmark.step_ms);
+    let mut time_manager = startup_timing.start_simulation(
+        config.simulation.start_time_ms, config.simulation.speed, config.fps, frame_step_ms, config.debug_singleframe,
+    );
+    let result = run_frame_loop(config, data, &mut display, &mut frame, &mut panel, &mut time_manager, &mut projection, benchmark);
+    (result, time_manager.step_times)
+}
+
+fn assert_stuff() {
+    // Each speed group needs a TTL, including the group above the final speed threshold.
+    assert_eq!(
+        SPEED_GROUP_TTL_MS.len(),
+        SPEED_GROUP_BOUNDS.len() + 1,
+        "SPEED_GROUP_TTL_MS must have exactly one more entry than SPEED_GROUP_BOUNDS",
+    );
+    assert!(SPEED_GROUP_TTL_MS.iter().all(|&ttl_ms| ttl_ms >= 0), "speed-group TTLs must be nonnegative");
 }

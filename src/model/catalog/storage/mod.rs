@@ -1,18 +1,18 @@
 //! Immutable structure-of-arrays storage. Arithmetic is f64 after expanding the compact inputs; only a sparse
 //! exception-table skeleton reserves future support; unsupported trajectories fail preparation explicitly.
-//! The per-star columns are declared once in `columns.rs`; `columns()` borrows all of them for one pass.
+//! The per-star columns are declared once in model/data.rs; columns.rs supplies prepared-row conversion.
 use crate::constants::{MAX_DIRECTION_ERROR, QUANTIZATION_MARGIN};
 mod columns;
 mod views;
 mod reordering;
-pub(crate) use views::StellarFields;
-pub use columns::{STAR_SECTIONS, StarRow, StarRowSlice, StarRowVec};
+pub use columns::{STAR_SECTIONS, StarRow};
+use crate::model::{StarRowSlice, StarRowVec};
 #[cfg(test)]
 use columns::section;
 use crate::model::Star;
-use crate::astro::{
+use crate::formulas::{
     Vector3,
-    models::stars::{StellarMotion, computational_years},
+    StellarMotion, computational_years,
 };
 use crate::catalog::cache::{
     CatalogArray,
@@ -32,15 +32,6 @@ pub struct StarStorage {
 #[derive(Clone, Debug, PartialEq)]
 enum StarLabels { Stored(Vec<u32>), Gaia(Vec<u64>) }
 impl Default for StarLabels { fn default() -> Self { Self::Stored(Vec::new()) } }
-#[cfg(feature = "memory-diagnostics")]
-impl crate::cache::ReportBuffers for StarLabels {
-    fn report_buffers(&self, collector: &mut dyn crate::cache::BufferSink) {
-        match self {
-            Self::Stored(entries) => entries.report_buffers(collector),
-            Self::Gaia(ids) => ids.report_buffers(collector),
-        }
-    }
-}
 
 impl PartialEq for StarStorage {
     fn eq(&self, other: &Self) -> bool {
@@ -107,10 +98,6 @@ impl StarStorage {
     /// Inspect original owned columns, including their allocated capacities.
     pub(crate) fn owned_columns(&self) -> &StarRowVec { &self.rows }
     fn rows_mut(&mut self) -> &mut StarRowVec { &mut self.rows }
-    /// Reserved full-precision side table; accepted catalogs always keep it empty.
-    pub(crate) fn precise_motions(&self) -> &CatalogArray<[f64; 7]> {
-        &self.precise_motions
-    }
     pub(crate) fn validate_exception_storage(&self) -> io::Result<()> {
         if !self.precise_motions.is_empty() {
             return Err(crate::model::unsupported_star_data("prepared catalog contains unsupported/orphaned precise-motion records"));
@@ -311,11 +298,7 @@ impl StarStorage {
 
     /// Reorder in place using a permutation, without an expanded or second compact catalog.
     #[cfg(test)]
-    pub(crate) fn reorder(&mut self, order: &[usize], bounds: &mut [f32]) {
-        self.reorder_with_progress(order, bounds, &mut crate::progress::NoProgress(io::sink()));
-    }
-    #[cfg(test)]
-    pub(crate) fn reorder_with_progress(&mut self, order: &[usize], bounds: &mut [f32], progress: &mut dyn crate::progress::DatasetProgress) {
+    pub(crate) fn reorder(&mut self, order: &[usize], bounds: &mut [f32], progress: &mut dyn crate::progress::DatasetProgress) {
         progress.set_detail("Preparing row moves");
         let mut destination = vec![0; self.len()];
         for (new, &old) in order.iter().enumerate() {
@@ -380,15 +363,10 @@ impl StarStorage {
     }
 }
 
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(StarRowVec { u0, w, magnitude, brightness_key, distance, id, display_color });
-#[cfg(feature = "memory-diagnostics")]
-crate::cache::report_fields!(StarStorage { clipping, rows, labels, precise_motions });
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::astro::Equatorial;
+    use crate::formulas::Equatorial;
     use proptest::prelude::*;
     #[test]
     fn exact_reservation_rejects_oversize_before_allocating_columns() {
@@ -460,7 +438,7 @@ mod tests {
             storage.push(star(motion, magnitude as f64)).unwrap();
             assert!(storage.brightness_key(0) <= storage.magnitude(0));
             assert_eq!(
-                storage.motion(0).evaluate(10000.0, storage.magnitude(0)).magnitude_value(),
+                storage.motion(0).evaluate(10000.0, storage.magnitude(0)).magnitude,
                 5.0
             );
         }
@@ -525,14 +503,12 @@ mod tests {
         assert_eq!(sections[section::ID].len(), c.id.len() * 4);
         assert_eq!(sections[section::DISPLAY_COLOR].len(), c.display_color.len());
         assert_eq!(c.id, &[0, 1, 2]);
-        assert_eq!(storage.directions().shape(), &[3, 3]);
         for i in 0..3 {
-            assert_eq!(storage.directions().row(i).to_vec(), c.u0[i]);
             assert_eq!(storage.get(i).id, storage.id(i));
         }
         let mut owned = storage.clone();
         let mut bounds = [0.1, 0.2, 0.3];
-        owned.reorder(&[2, 0, 1], &mut bounds);
+        owned.reorder(&[2, 0, 1], &mut bounds, &mut crate::progress::NoProgress(std::io::sink()));
         assert_eq!(bounds, [0.3, 0.1, 0.2]);
         assert_eq!(owned.columns().id, &[2, 0, 1]);
         assert_eq!(owned.get(0), storage.get(2));
@@ -567,7 +543,7 @@ mod tests {
                 let t = if i==32 { original.closest_approach(start,end).0 } else { start + (end-start)*i as f64/31.0 };
                 let sample = stored.evaluate(t,5.0);
                 prop_assert!(separation(original.evaluate(t,5.0).direction,sample.direction) <= MAX_DIRECTION_ERROR + 1e-12);
-                prop_assert!(storage.brightness_key(0) <= sample.magnitude_value());
+                prop_assert!(storage.brightness_key(0) <= sample.magnitude);
                 prop_assert!(separation(storage.stored_direction(0),sample.direction) <= f64::from(bound));
             }
         }

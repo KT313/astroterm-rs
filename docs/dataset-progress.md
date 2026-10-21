@@ -62,8 +62,7 @@ calling thread. There is no command-line or environment override for the thread 
 
 Gaia source-ID checking and region/brightness sorting share that pool. Record construction and column
 reordering remain serial; downloads and frame rendering keep their existing behavior. Smaller sorts remain
-serial, and prepared-cache hits skip sorting entirely. `--disable-cache` only disables runtime caches and
-does not force catalog preparation.
+serial, and prepared-cache hits skip sorting entirely.
 
 `--debug-singleframe` reports actual worker count, sort timings and record-buffer size.
 

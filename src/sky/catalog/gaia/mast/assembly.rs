@@ -1,8 +1,8 @@
 //! Assemble only the requested physical prefix; cached numerical records are not recomputed here.
 use super::conversion::{self, ConvertedRow};
-use super::super::super::preparation::{create_sort_pool, sort_source_ids};
+use crate::sky::catalog::preparation::{create_sort_pool, sort_source_ids};
 use crate::{catalog::{MastSelection, BlobStore, MastRow, StarNames, StarId}, model::{StarStorage, PreparedCatalog},
-    progress::{DatasetProgress, Stage, Unit, Outcome}, timing::StepTimes};
+    progress::{DatasetProgress, Stage, Unit, Outcome}, time::StepTimes};
 use std::{io, collections::HashMap};
 
 pub(super) fn assemble_selected_catalog(selection: &mut MastSelection, store: &BlobStore, policy: &str, progress: &mut dyn DatasetProgress, times: &mut StepTimes) -> io::Result<PreparedCatalog> {
@@ -14,7 +14,8 @@ pub(super) fn assemble_selected_catalog(selection: &mut MastSelection, store: &B
     let (mut selected, mut duplicates, mut missing) = (0u64, 0u64, 0u64);
     let mut stats = [0u64; 5];
 
-    let planned = times.measure("MAST assembly capacity", || reserve_assembly(selection, &mut stars, &mut bounds, &mut ids))?;
+    times.measure("Dataset loading.Gaia loading.MAST assembly capacity");
+    let planned = reserve_assembly(selection, &mut stars, &mut bounds, &mut ids)?;
     #[cfg(test)]
     let allocations = tests::allocations(&stars, &bounds, &ids);
     progress.begin_stage(Stage::Convert, "Loading MAST blocks", Unit::Blocks, Some(selection.blocks.len() as u64));
@@ -24,7 +25,8 @@ pub(super) fn assemble_selected_catalog(selection: &mut MastSelection, store: &B
         let repeats = compare_boundary(previous.as_ref(), &converted.first)?;                     // a duplicate run can start in the preceding file or group
         progress.set_detail("Assembling selected rows and source IDs");
 
-        times.measure("MAST row and ID assembly", || -> io::Result<()> {
+        times.measure("Dataset loading.Gaia loading.MAST row and ID assembly");
+        {
             for (ordinal, entry) in converted.entries.into_iter().take(block.selected).enumerate() {
                 selected += 1;
                 if (ordinal == 0 && repeats) || matches!(entry.result, ConvertedRow::Duplicate) { duplicates += 1; continue; }
@@ -45,8 +47,7 @@ pub(super) fn assemble_selected_catalog(selection: &mut MastSelection, store: &B
                     ConvertedRow::Duplicate => unreachable!(),
                 }
             }
-            Ok(())
-        })?;
+        };
         previous = Some(converted.last);
         progress.set_position(completed as u64 + 1);                                             // advance only after all selected rows in this block were accepted
     }
@@ -57,32 +58,34 @@ pub(super) fn assemble_selected_catalog(selection: &mut MastSelection, store: &B
     progress.finish_stage(Outcome::Complete);
     progress.begin_stage(Stage::CheckIds, "", Unit::Work, None);
     progress.set_detail("Sorting source IDs");
-    let pool = times.measure("Startup sort workers", || create_sort_pool(ids.len()))?;
-    times.describe("Startup sort workers", || format!("worker threads={}; parallel sort threshold={} rows", pool.as_ref().map_or(0, rayon::ThreadPool::current_num_threads), crate::constants::STARTUP_PARALLEL_SORT_ROWS));
-    times.measure("Gaia source-ID sort", || sort_source_ids(&mut ids, pool.as_ref()));
+    times.measure("Dataset loading.Gaia loading.Startup sort workers");
+    let pool = create_sort_pool(ids.len())?;
+    times.describe("Dataset loading.Gaia loading.Startup sort workers", || format!("worker threads={}; parallel sort threshold={} rows", pool.as_ref().map_or(0, rayon::ThreadPool::current_num_threads), crate::constants::STARTUP_PARALLEL_SORT_ROWS));
+    times.measure("Dataset loading.Gaia loading.Gaia source-ID sort");
+    sort_source_ids(&mut ids, pool.as_ref());
     progress.set_work(Unit::Rows, Some(ids.len() as u64));
     progress.set_detail("Checking for duplicate source IDs");
-    times.measure("Gaia source-ID uniqueness", || -> io::Result<()> {
+    times.measure("Dataset loading.Gaia loading.Gaia source-ID uniqueness");
+    {
         for (index, pair) in ids.windows(2).enumerate() {
             if pair[0] == pair[1] { return Err(io::Error::new(io::ErrorKind::InvalidData, format!("unexpected nonadjacent Gaia duplicate {}", pair[0]))); }
             if (index + 1).is_multiple_of(crate::constants::STARTUP_PROGRESS_ROWS as usize) { progress.set_position((index + 1) as u64); }
         }
         progress.set_position(ids.len() as u64);
-        Ok(())
-    })?;
+    };
     progress.set_detail("Releasing temporary IDs and finishing loaded storage");
-    times.measure("Gaia source-ID scratch release", || drop(ids));
-    times.measure("MAST storage finalization", || -> io::Result<()> {
-        if bounds.len() != stars.len() || stars.source_ids().unwrap().len() != stars.len() {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "MAST assembled column lengths differ"));
-        }
-        Ok(())                                                                                // keep skipped-row capacity instead of copying columns to compact them
-    })?;
-    times.describe("MAST storage finalization", || format!("planned raw rows={planned}; retained stars={}; source-ID capacity={}; bounds capacity={}; unused capacity retained", stars.len(), stars.owned_source_ids().unwrap().capacity(), bounds.capacity()));
+    times.measure("Dataset loading.Gaia loading.Gaia source-ID scratch release");
+    drop(ids);
+    times.measure("Dataset loading.Gaia loading.MAST storage finalization");
+    if bounds.len() != stars.len() || stars.source_ids().unwrap().len() != stars.len() {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "MAST assembled column lengths differ"));
+    } // Keep skipped-row capacity instead of copying columns to compact them.
+    times.describe("Dataset loading.Gaia loading.MAST storage finalization", || format!("planned raw rows={planned}; retained stars={}; source-ID capacity={}; bounds capacity={}; unused capacity retained", stars.len(), stars.owned_source_ids().unwrap().capacity(), bounds.capacity()));
     progress.finish_stage(Outcome::Complete);
     writeln!(progress, "MAST Gaia DR3: selected raw={selected}; identical duplicate copies removed={duplicates}; missing RA/Dec/G={missing}; loaded={}; missing motion={}; angular-only={}; assumed RV0={}; missing color={}; saturated color={}.", stars.len(), stats[0], stats[1], stats[2], stats[3], stats[4])?;
-    times.describe("Gaia loading", || format!("selected raw={selected}; duplicate copies={duplicates}; missing required={missing}; loaded={}", stars.len()));
-    times.measure_steps("Catalog preparation", |times| super::super::super::pipeline::finish_catalog_with_pool(stars, bounds, names, &HashMap::new(), &[], progress, times, pool.as_ref()))
+    times.describe("Dataset loading.Gaia loading", || format!("selected raw={selected}; duplicate copies={duplicates}; missing required={missing}; loaded={}", stars.len()));
+    times.measure("Dataset loading.Catalog preparation");
+    crate::sky::catalog::pipeline::finish_catalog_with_pool(stars, bounds, names, &HashMap::new(), &[], progress, times, pool.as_ref())
 }
 
 fn compare_boundary(previous: Option<&MastRow>, first: &MastRow) -> io::Result<bool> {

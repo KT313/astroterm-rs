@@ -133,6 +133,7 @@ fn mast_measure_compact_preparation_and_labels() {
 
 #[derive(Default)]
 struct LoadingProgress {
+    conversions: usize,
     text: Vec<u8>,
     stages: Vec<crate::progress::Stage>,
     active: Option<crate::progress::Stage>,
@@ -147,6 +148,10 @@ impl std::io::Write for LoadingProgress {
     fn flush(&mut self) -> io::Result<()> { Ok(()) }
 }
 impl DatasetProgress for LoadingProgress {
+    fn set_detail(&mut self, detail: &str) {
+        if detail == "Converting star measurements" { self.conversions += 1; }
+    }
+
     fn begin_stage(&mut self, stage: crate::progress::Stage, _: &str, unit: crate::progress::Unit, total: Option<u64>) {
         self.stages.push(stage);
         self.active = Some(stage);
@@ -216,8 +221,11 @@ fn mast_loading_uses_one_bar_for_cold_cached_and_mixed_blocks() {
         assert_eq!(progress.positions, vec![0, 1, 2]);                                           // a partial final block still counts once, including skipped duplicate rows
         assert_eq!(progress.completed, 1);
         assert_eq!(progress.stages, [crate::progress::Stage::Convert, crate::progress::Stage::CheckIds, crate::progress::Stage::AssignRegions, crate::progress::Stage::Sort, crate::progress::Stage::Reorder, crate::progress::Stage::Index]);
-        let conversions = times.trace().unwrap().steps.iter().filter(|step| step.name == "MAST block conversion").count();
-        assert_eq!(conversions, cached.iter().filter(|&&hit| !hit).count());
+        times.measure("END");
+        assert_eq!(progress.conversions, cached.iter().filter(|&&hit| !hit).count());
+        let conversion_rows = times.trace().unwrap().steps.iter().filter(|step| step.name == "MAST block conversion").count();
+        assert_eq!(conversion_rows, usize::from(progress.conversions > 0)); // repeated blocks share one timing row
+
         if let Some(expected) = &expected { assert_eq!(&catalog, expected); } else { expected = Some(catalog); }
     }
 }
@@ -238,7 +246,7 @@ fn mast_loading_does_not_count_a_block_that_fails_during_assembly() {
 
 #[test]
 fn gaia_source_ids_survive_sort_cache_and_label_consumers_without_name_storage() {
-    use crate::{sky::{write_cached_catalog, load_cached_catalog, catalog_fingerprint}, model::{ObservedStar, ObservedStarView}};
+    use crate::{sky::{write_cached_catalog, load_cached_catalog, catalog_fingerprint}, model::StarLabels};
     let root = tempfile::tempdir().unwrap();
     let mut groups = vec![vec![row((1 << 55) + 7), row((1 << 55) + 99), row((1 << 55) + 31)]];
     groups[0][0].values[0] = Some(270f64.to_bits());
@@ -247,8 +255,8 @@ fn gaia_source_ids_survive_sort_cache_and_label_consumers_without_name_storage()
     let prepared = super::super::assembly::assemble_selected_catalog(&mut selected, &store, &policy, &mut NoProgress(io::sink()), &mut StepTimes::default()).unwrap();
     let path = root.path().join("prepared");
     let fingerprint = catalog_fingerprint();
-    write_cached_catalog(&path, &prepared, &fingerprint).unwrap();
-    let cached = load_cached_catalog(&path, &fingerprint).unwrap();
+    write_cached_catalog(&path, &prepared, &fingerprint, &mut crate::progress::Report::quiet()).unwrap();
+    let cached = load_cached_catalog(&path, &fingerprint, &mut crate::progress::Report::quiet()).unwrap();
     assert_eq!(prepared, cached);
     let catalog = &cached.catalog;
     assert!(catalog.stars.name_entries().is_empty());
@@ -262,14 +270,10 @@ fn gaia_source_ids_survive_sort_cache_and_label_consumers_without_name_storage()
             catalog.stars.write_label(index, &catalog.names, unicode, &mut label);
             assert_eq!(label, format!("Gaia DR3 {id}"));
             assert_eq!(label.as_ptr(), buffer);
-            let state = ObservedStar { source_index: index, drawable: true, magnitude: 1.0, position: Default::default() };
-            let view = ObservedStarView { state: crate::model::ObservedStarState::Owned(state), catalog: &catalog.stars };
-            assert_eq!(crate::scene::format_star_label(&view, &catalog.names, unicode), label);
+            let labels = StarLabels::SourceIds(catalog.stars.source_ids().unwrap().to_vec());
+            assert_eq!(crate::points::star_label(&labels, index, &catalog.names, unicode), label); // the frame loop's label text
         }
     }
-    let table: &dyn crate::state::Table = &catalog.stars;
-    assert_eq!(table.columns()[6].name, "gaia_source_id");
-    assert_eq!(table.preview().len(), 3);
 }
 
 #[test]
@@ -320,7 +324,7 @@ fn repaired_hash_controls_converted_and_prepared_keys_without_reconverting_earli
     let (mut selected, original, policy) = selection(root.path(), &groups, 2);
     let converted = BlobStore::new(root.path().join("new-converted"));
     let first_key = block_key(&selected.blocks[0], &policy);
-    converted.publish(&first_key, &original.read(&first_key).unwrap().unwrap(), false).unwrap();
+    converted.publish(&first_key, &original.read(&first_key, &mut crate::progress::NoProgress(std::io::sink())).unwrap().unwrap(), false).unwrap();
     let old_second_key = block_key(&selected.blocks[1], &policy);
     let old_identity = super::super::selection_cache_identity(&selected, &policy, root.path()).unwrap();
     std::fs::write(old_identity.0.as_ref().unwrap(), b"old invalid prepared file").unwrap();
@@ -344,8 +348,8 @@ fn repaired_hash_controls_converted_and_prepared_keys_without_reconverting_earli
     assert_eq!(progress.positions, [1]);                     // repairing a block does not restart or advance the loading bar
     let new_second_key = block_key(&selected.blocks[1], &policy);
     assert_ne!(old_second_key, new_second_key);
-    assert!(converted.read(&old_second_key).unwrap().is_none());
-    assert!(converted.read(&new_second_key).unwrap().is_some());
+    assert!(converted.read(&old_second_key, &mut crate::progress::NoProgress(std::io::sink())).unwrap().is_none());
+    assert!(converted.read(&new_second_key, &mut crate::progress::NoProgress(std::io::sink())).unwrap().is_some());
     assert_eq!(selected.store.payload_reads(&selected.blocks[0].hash), reads);
     assert_eq!(times.trace().unwrap().steps.iter().filter(|step| step.name == "MAST block conversion").count(), 1);
     let new_identity = super::super::selection_cache_identity(&selected, &policy, root.path()).unwrap();
@@ -353,7 +357,7 @@ fn repaired_hash_controls_converted_and_prepared_keys_without_reconverting_earli
     selected.check_unchanged().unwrap();
     let prepared = super::super::assembly::assemble_selected_catalog(&mut selected, &converted, &policy, &mut NoProgress(io::sink()), &mut StepTimes::default()).unwrap();
     super::super::save_prepared_catalog(new_identity.0.clone(), &prepared, &new_identity.1, &mut NoProgress(io::sink()), &mut StepTimes::default()).unwrap();
-    assert_eq!(crate::sky::load_cached_catalog(new_identity.0.as_ref().unwrap(), &new_identity.1).unwrap(), prepared);
+    assert_eq!(crate::sky::load_cached_catalog(new_identity.0.as_ref().unwrap(), &new_identity.1, &mut crate::progress::Report::quiet()).unwrap(), prepared);
     let located = selected.store.locate(&selected.blocks[1].key).unwrap().unwrap();
     selected.blocks[1].hash = located.hash;
     selected.blocks[1].stamp = located.stamp;

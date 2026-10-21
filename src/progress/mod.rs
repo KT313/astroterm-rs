@@ -1,8 +1,9 @@
 //! Dataset startup reporting without terminal or catalog dependencies. Headless callers retain their writer.
 use std::io::{self, Read, Write};
+use crate::time::StepTimes;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Stage { Resolve, Verify, Connect, Download, Install, Parse, Convert, PlanDownloads, CheckIds, AssignRegions, Reorder, Sort, Index, ReadCache, ValidateCache, WriteCache, FinalizeCache }
+pub enum Stage { Resolve, Verify, Connect, Download, Install, Parse, Convert, PlanDownloads, CheckIds, AssignRegions, Reorder, Sort, Index, Group, ReadCache, ValidateCache, WriteCache, FinalizeCache }
 impl Stage {
     pub fn label(self) -> &'static str {
         match self {
@@ -10,7 +11,7 @@ impl Stage {
             Self::Install => "Installing dataset", Self::Parse => "Loading stars", Self::Convert => "Preparing stars", Self::Sort => "Sorting stars by region",
             Self::PlanDownloads => "Planning dataset downloads", Self::CheckIds => "Checking Gaia source IDs",
             Self::AssignRegions => "Assigning star regions", Self::Reorder => "Reordering star fields",
-            Self::Index => "Building sky index", Self::ReadCache => "Reading prepared catalog", Self::ValidateCache => "Validating prepared catalog",
+            Self::Index => "Building sky index", Self::Group => "Grouping stars by speed", Self::ReadCache => "Reading prepared catalog", Self::ValidateCache => "Validating prepared catalog",
             Self::WriteCache => "Saving prepared catalog", Self::FinalizeCache => "Finalizing prepared catalog",
         }
     }
@@ -73,5 +74,24 @@ impl<R: Read> Read for ActivityReader<'_, R> {
         self.bytes += read as u64;
         self.progress.set_read_progress(self.bytes, self.total);
         Ok(read)
+    }
+}
+
+/// Where startup work reports: the progress display and the step timings, passed down as one value. `quiet`
+/// reports nowhere (tests, probes); `live` borrows the application's display and timings.
+pub enum Report<'a> {
+    Live { progress: &'a mut dyn DatasetProgress, times: &'a mut StepTimes },
+    Quiet { progress: NoProgress<io::Sink>, times: StepTimes },
+}
+
+impl<'a> Report<'a> {
+    pub fn live(progress: &'a mut dyn DatasetProgress, times: &'a mut StepTimes) -> Self { Self::Live { progress, times } }
+    pub fn quiet() -> Report<'static> { Report::Quiet { progress: NoProgress(io::sink()), times: StepTimes::default() } }
+    /// The display and the timings, borrowed together.
+    pub fn parts(&mut self) -> (&mut dyn DatasetProgress, &mut StepTimes) {
+        match self {
+            Self::Live { progress, times } => (&mut **progress, &mut **times),
+            Self::Quiet { progress, times } => (progress, times),
+        }
     }
 }

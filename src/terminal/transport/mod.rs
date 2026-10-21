@@ -1,7 +1,7 @@
-//! Terminal lifetime and completed-frame transport.
+//! Terminal lifetime, the sky layout on the screen and the completed-frame transport.
 mod session;
-mod present;
-pub(in crate::terminal) mod graphics;
+mod layout;
+pub(crate) mod graphics;
 
 pub use session::{TerminalSession, open_terminal_session};
-pub use present::{detect_cell_aspect_ratio, fit_square_viewport};
+pub use layout::{Viewport, detect_cell_aspect_ratio, fit_square_viewport};

@@ -2,7 +2,7 @@
 use super::{Plan, append_file};
 use crate::{catalog::mast::{pipeline::{Leaf, Footer, MastSelection, read_cached_footer, load_footer, fetch_footer},
     storage::BlobStore, transport::{Fetch, Identity, Response, TransferControl}}, constants::MAST_METADATA_REQUESTS,
-    progress::{DatasetProgress, NoProgress}, timing::StepTimes};
+    progress::{DatasetProgress, NoProgress}, time::StepTimes};
 use std::{collections::VecDeque, io, thread, time::Instant, panic::{catch_unwind, AssertUnwindSafe, resume_unwind}};
 
 type Reply = (io::Result<Footer>, Vec<u8>);
@@ -20,7 +20,8 @@ pub(super) fn plan_in_order(selection: &mut MastSelection, leaves: Vec<Leaf>, fe
                 let required_missing = pending.is_empty();
                 if required_missing {
                     let path = leaves[next].path();
-                    if let Some(footer) = times.measure("MAST cached file metadata", || read_cached_footer(&store, &discovery, &path, progress))? {
+                    times.measure("Dataset loading.Dataset resolution.MAST metadata planning.MAST cached file metadata");
+                    if let Some(footer) = read_cached_footer(&store, &discovery, &path, progress)? {
                         progress.set_detail(&format!("Using cached file metadata: {path}"));
                         append_file(selection, &mut plan, &path, footer, progress, times)?;
                         next += 1;
@@ -39,13 +40,14 @@ pub(super) fn plan_in_order(selection: &mut MastSelection, leaves: Vec<Leaf>, fe
                     next += 1;
                 }
                 let path = &pending.front().expect("a missing footer starts at least one worker").0;
-                progress.set_detail(&format!("Waiting for file metadata: {path}; up to {} requests in parallel", MAST_METADATA_REQUESTS.max(1)));
+                progress.set_detail(&format!("Waiting for file metadata: {path}"));
                 let (path, worker) = pending.pop_front().unwrap();                              // retain ownership of every handle until progress callbacks have returned
-                let (footer, notices) = times.measure("MAST metadata wait", || worker.join())
+                times.measure("Dataset loading.Dataset resolution.MAST metadata planning.MAST metadata wait");
+                let (footer, notices) = worker.join()
                     .map_err(|_| io::Error::other(format!("metadata worker panicked for {path}")))?;
                 progress.write_all(&notices)?;
                 let footer = footer.map_err(|error| io::Error::new(error.kind(), format!("MAST metadata {path}: {error}")))?;
-                times.describe("MAST metadata wait", || format!("file={path}; caller wait only; concurrent request durations are not added together"));
+                times.describe("Dataset loading.Dataset resolution.MAST metadata planning.MAST metadata wait", || format!("file={path}; caller wait only; concurrent request durations are not added together"));
                 append_file(selection, &mut plan, &path, footer, progress, times)?;
             }
             if !pending.is_empty() { progress.set_detail("Finishing in-flight metadata requests"); }
