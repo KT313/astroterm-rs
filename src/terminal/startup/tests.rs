@@ -32,7 +32,7 @@ fn plain_writer_announces_stage_changes_and_counts_at_most_once_per_second() {
     reporter.set_position(7);                                                                // work stages have no count line
     reporter.finish(true);
     assert_eq!(String::from_utf8_lossy(&reporter.writer),
-        "Downloading...\nVerifying source...\nLoading stars...\nLoading stars: 4096 rows\nDownloading...\nDownloading: 100 MB of 230 MB\nSorting stars by region...\n");
+        "Downloading (GaiaSource_000000-003111.csv.gz)...\nVerifying source (file)...\nLoading stars...\nLoading stars: 4096 rows\nDownloading...\nDownloading: 100 MB of 230 MB\nSorting stars by region...\n");
     let mut silent = StartupProgress::new(Vec::new(), false, false);
     silent.begin_stage(Stage::Parse, "", Unit::Rows, None);
     silent.set_position(4096);
@@ -92,7 +92,7 @@ fn block_progress_uses_one_bar_and_plain_counts_name_blocks() {
     reporter.begin_stage(Stage::Download, "MAST blocks ready", Unit::Blocks, Some(10));
     reporter.plain.as_mut().unwrap().last_line -= Duration::from_secs(2);
     reporter.set_position(3);
-    assert_eq!(String::from_utf8_lossy(&reporter.writer), "Downloading...\nDownloading: 3 of 10 blocks\n");
+    assert_eq!(String::from_utf8_lossy(&reporter.writer), "Downloading (MAST blocks ready)...\nDownloading: 3 of 10 blocks\n");
     let mut visible = StartupProgress::new(Vec::new(), false, false);
     visible.display = Some(MultiProgress::with_draw_target(ProgressDrawTarget::hidden()));
     visible.begin_stage(Stage::Download, "MAST blocks ready", Unit::Blocks, Some(10));
@@ -109,7 +109,7 @@ fn unified_block_bar_displays_aggregate_speed_without_changing_position() {
     reporter.set_position(3);
     reporter.plain.as_mut().unwrap().last_line -= Duration::from_secs(2);
     reporter.set_download_bytes(8 * 1024 * 1024, Duration::from_secs(2));
-    assert_eq!(String::from_utf8_lossy(&reporter.writer), "Downloading...\nDownloading: 3 of 10 blocks; 4.00 MiB/s avg\n");
+    assert_eq!(String::from_utf8_lossy(&reporter.writer), "Downloading (MAST blocks ready)...\nDownloading: 3 of 10 blocks; 4.00 MiB/s avg\n");
     reporter.begin_stage(Stage::Parse, "", Unit::Rows, Some(100));
     assert!(reporter.download_rate.is_none());
 
@@ -142,16 +142,34 @@ fn block_eta_ignores_cached_work_and_waits_for_a_new_completion() {
     assert_eq!(estimate_block_eta(Some(u64::MAX), 0, 1, Duration::MAX), None);
 }
 
-#[derive(Clone, Debug, Default)]
-struct CapturedTerminal(std::sync::Arc<std::sync::Mutex<String>>);
+#[derive(Clone, Debug)]
+struct CapturedTerminal(std::sync::Arc<std::sync::Mutex<String>>, u16);
+impl Default for CapturedTerminal {
+    fn default() -> Self { Self(Default::default(), 180) }
+}
 impl indicatif::TermLike for CapturedTerminal {
-    fn width(&self) -> u16 { 180 }
+    fn width(&self) -> u16 { self.1 }
     fn move_cursor_up(&self, _: usize) -> io::Result<()> { Ok(()) }
     fn move_cursor_down(&self, _: usize) -> io::Result<()> { Ok(()) }
     fn move_cursor_right(&self, _: usize) -> io::Result<()> { Ok(()) }
     fn move_cursor_left(&self, _: usize) -> io::Result<()> { Ok(()) }
-    fn write_line(&self, text: &str) -> io::Result<()> { self.write_str(text) }
-    fn write_str(&self, text: &str) -> io::Result<()> { self.0.lock().unwrap().push_str(text); Ok(()) }
+    fn write_line(&self, text: &str) -> io::Result<()> {
+        let mut output = self.0.lock().unwrap();
+        output.push_str(text);
+        output.push('\n');
+        Ok(())
+    }
+    fn write_str(&self, text: &str) -> io::Result<()> {
+        let mut output = self.0.lock().unwrap();
+        let mut column = unicode_width::UnicodeWidthStr::width(output.rsplit('\n').next().unwrap_or(""));
+        for ch in text.chars() {
+            let width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+            if column + width > self.1 as usize { output.push('\n'); column = 0; }             // indicatif pads rows to terminal width and relies on automatic wrapping
+            output.push(ch);
+            column += width;
+        }
+        Ok(())
+    }
     fn clear_line(&self) -> io::Result<()> { Ok(()) }
     fn flush(&self) -> io::Result<()> { Ok(()) }
 }
@@ -205,4 +223,90 @@ fn loading_blocks_start_one_fresh_bar_after_download_progress() {
     let updated = draw_progress(&visible, &terminal);
     assert!(updated.contains("2/500 blocks") && !updated.contains("ETA --"), "{updated}");
     assert!(visible.files.is_none());
+}
+
+#[test]
+fn activity_and_work_updates_preserve_parent_progress_and_elapsed_time() {
+    let mut reporter = StartupProgress::new(Vec::new(), true, true);
+    reporter.display.as_ref().unwrap().set_draw_target(ProgressDrawTarget::hidden());
+    reporter.begin_stage(Stage::Convert, "Loading MAST blocks", Unit::Blocks, Some(20));
+    reporter.set_position(7);
+    let elapsed = reporter.task.as_ref().unwrap().elapsed();
+    reporter.set_read_progress(1024, 2048);
+    reporter.set_detail("Decoding cached block");
+    let bar = reporter.task.as_ref().unwrap();
+    assert_eq!(bar.position(), 7);
+    assert_eq!(bar.length(), Some(20));
+    assert!(bar.elapsed() >= elapsed);
+    assert_eq!(bar.message(), "Decoding cached block");
+
+    reporter.begin_stage(Stage::CheckIds, "", Unit::Work, None);
+    let elapsed = reporter.task.as_ref().unwrap().elapsed();
+    reporter.set_work(Unit::Rows, Some(100));
+    reporter.set_position(40);
+    reporter.set_detail("Checking adjacent source IDs");
+    let bar = reporter.task.as_ref().unwrap();
+    assert_eq!(bar.position(), 40);
+    assert_eq!(bar.length(), Some(100));
+    assert!(bar.elapsed() >= elapsed);
+    reporter.finish(true);
+}
+
+#[test]
+fn repair_rate_updates_loading_detail_without_resetting_the_bar() {
+    let mut reporter = StartupProgress::new(Vec::new(), false, true);
+    reporter.display = Some(MultiProgress::with_draw_target(ProgressDrawTarget::hidden()));
+    reporter.begin_stage(Stage::Convert, "Loading MAST blocks", Unit::Blocks, Some(5));
+    reporter.set_position(2);
+    let bar = reporter.task.as_ref().unwrap().clone();
+    let elapsed = bar.elapsed();
+    reporter.set_download_bytes(3 * 1_048_576, Duration::from_secs(2));
+    assert_eq!(reporter.active, Some(Stage::Convert));
+    assert_eq!((bar.position(), bar.length()), (2, Some(5)));
+    assert!(bar.elapsed() >= elapsed);
+    assert_eq!(bar.message(), "Repair download: 3.0 MiB received; 1.50 MiB/s avg");
+    reporter.set_detail("Continuing block preparation");
+    assert_eq!(bar.message(), "Continuing block preparation");
+    assert!(reporter.download_rate.is_none()); // repair traffic must not become the later loading rate
+
+    let mut plain = StartupProgress::new(Vec::new(), false, true);
+    plain.begin_stage(Stage::Convert, "Loading MAST blocks", Unit::Blocks, Some(5));
+    plain.set_position(2);
+    plain.plain.as_mut().unwrap().last_line -= Duration::from_secs(2);
+    plain.set_download_bytes(3 * 1_048_576, Duration::from_secs(2));
+    assert!(String::from_utf8_lossy(&plain.writer).contains("Repair download: 3.0 MiB received; 1.50 MiB/s avg"));
+    assert_eq!(plain.plain.as_ref().unwrap().position, 2);
+}
+
+#[test]
+fn reordering_progress_counts_field_values_instead_of_stars() {
+    let mut reporter = StartupProgress::new(Vec::new(), false, true);
+    reporter.begin_stage(Stage::Reorder, "", Unit::Elements, Some(90));
+    reporter.plain.as_mut().unwrap().last_line -= Duration::from_secs(2);
+    reporter.set_position(45);
+    assert!(String::from_utf8_lossy(&reporter.writer).contains("45 of 90 field values"));
+}
+
+#[test]
+fn changing_block_activity_keeps_the_bar_width_and_line_count_stable() {
+    for width in [80, 120, 180] {
+        let terminal = CapturedTerminal(Default::default(), width);
+        let mut reporter = StartupProgress::new(Vec::new(), false, false);
+        reporter.display = Some(MultiProgress::with_draw_target(ProgressDrawTarget::term_like(Box::new(terminal.clone()))));
+        reporter.begin_stage(Stage::Convert, "Loading MAST blocks", Unit::Blocks, Some(500));
+        reporter.set_position(123);
+        let initial = draw_progress(&reporter, &terminal);
+        let bar_line = initial.lines().next().unwrap();
+        for message in ["Decoding cached block", "Reading cached data: 11.2/15.8 MiB", "", &"Long metadata activity ".repeat(20)] {
+            reporter.set_detail(message);
+            let drawn = draw_progress(&reporter, &terminal);
+            let lines: Vec<_> = drawn.lines().collect();
+            assert_eq!(lines.len(), 2, "width={width}: {drawn:?}");
+            assert_eq!(lines[0], bar_line, "activity text changed the bar at width={width}");
+            assert!(lines[1].contains("123/500 blocks ETA"));
+            assert!(lines.iter().all(|line| unicode_width::UnicodeWidthStr::width(*line) <= width as usize));
+        }
+        assert_eq!(reporter.task.as_ref().unwrap().position(), 123);
+        assert_eq!(reporter.task.as_ref().unwrap().length(), Some(500));
+    }
 }

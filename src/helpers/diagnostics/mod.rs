@@ -1,39 +1,22 @@
-//! Optional trace descriptions, table dumps, memory captures and reporting after terminal cleanup.
+//! Optional trace descriptions and reporting after terminal cleanup.
+mod benchmark;
+pub(crate) use benchmark::{BenchmarkSession, open_frame_benchmark, begin_benchmark_capture, validate_benchmark_input, set_benchmark_frame_time,
+    complete_benchmark_frame, finish_benchmark_report};
 use std::fmt::Display;
 use std::io;
 use std::process::ExitCode;
-use std::sync::Arc;
 use std::time::Instant;
-use astroterm::cli::Arguments;
-use astroterm::model::{Config, FrameTime};
-use astroterm::state::{ApplicationState};
-use astroterm::terminal::Renderer;
-use astroterm::timing::StepTimes;
-
-/// Capture startup timings for either diagnostic mode; memory collection still waits for validated options.
-pub(crate) fn start_step_times(arguments: &Arguments) -> StepTimes {
-    let memory_requested = cfg!(feature = "memory-diagnostics") && arguments.debug_memory;
-    StepTimes::with_trace(arguments.debug_singleframe || memory_requested)
-}
-
-/// Enable bounded memory reports only after the user's options have been validated.
-#[cfg_attr(not(feature = "memory-diagnostics"), allow(unused_variables))]
-pub(crate) fn configure_memory_reporting(config: &Config, times: &mut StepTimes) {
-    #[cfg(feature = "memory-diagnostics")]
-    if config.debug_memory { times.enable_memory_run(config.cache.enabled); }
-}
-
-/// When enabled, append one named table dump and create any missing parent folders.
-pub(crate) fn log_pipeline_data_if_requested(state: &ApplicationState, path: impl AsRef<std::path::Path>, section: &str) -> io::Result<()> {
-    if !state.config.debug_log_data { return Ok(()); }
-    let path = path.as_ref();
-    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) { std::fs::create_dir_all(parent)?; }
-    state.log_data(Some(path), Some(section))
-}
+use astroterm::model::Config;
+use astroterm::present::{CompressionSupport, DisplayInfo, Presented};
+use serde::Serialize;
+use astroterm::time::StepTimes;
+use ratatui_image::picker::ProtocolType;
 
 /// Report diagnostics and the original rendering result after the terminal scope has dropped its guard.
-pub(crate) fn finish_rendering(result: io::Result<()>, state: &ApplicationState) -> ExitCode {
-    finish_requested_report(result, &state.config, &state.timings, &mut io::stdout().lock(), &mut io::stderr().lock())
+pub(crate) fn finish_rendering(result: io::Result<()>, config: &Config, times: &StepTimes) -> ExitCode {
+    #[cfg(feature = "pixel-debug")]
+    if let Err(error) = astroterm::pixel_debug::write_report(&mut io::stderr().lock()) { eprintln!("Pixel diagnostic report failed: {error}"); }
+    finish_requested_report(result, config, times, &mut io::stdout().lock(), &mut io::stderr().lock())
 }
 
 /// Keep an operational error primary even if the separate diagnostic writer also fails.
@@ -42,8 +25,7 @@ pub(super) fn finish_requested_report(result: io::Result<()>, config: &Config, t
     let failed = result.is_err();
     if let Err(error) = result { let _ = writeln!(errors, "ERROR: {error}"); }
 
-    let memory_requested = cfg!(feature = "memory-diagnostics") && config.debug_memory;
-    if (memory_requested || (config.debug_singleframe && !failed))
+    if config.debug_singleframe && !failed
         && let Err(error) = write_run_report(config, times, output)
     {
         let prefix = if failed { "Additional diagnostic report error" } else { "ERROR" };
@@ -53,32 +35,10 @@ pub(super) fn finish_requested_report(result: io::Result<()>, config: &Config, t
     if failed { ExitCode::FAILURE } else { ExitCode::SUCCESS }
 }
 
-/// Serialize owned diagnostic snapshots only, after terminal cleanup or a startup failure.
+/// Serialize the owned trace only, after terminal cleanup or a startup failure.
 fn write_run_report(config: &Config, times: &StepTimes, output: &mut impl io::Write) -> io::Result<()> {
-    #[cfg(feature = "memory-diagnostics")]
-    if config.debug_memory {
-        let report_start = Instant::now();
-        writeln!(output, "Memory report mode: {}", if config.debug_singleframe { "single frame" } else { "continuous run" })?;
-        times.write_memory_run_report(output)?;
-        for snapshot in times.memory_inventories() { astroterm::state::write_inventory(snapshot, output)?; }
-        writeln!(output, "Report formatting/output before this line: {:.3} ms (after cleanup; final flush excluded)", report_start.elapsed().as_secs_f64() * 1000.0)?;
-        return output.flush();
-    }
     if config.debug_singleframe { times.trace().expect("single-frame trace initialized").write_report(output)?; }
     output.flush()
-}
-
-/// Preserve partial-frame evidence before the renderer guard drops; setup failures have no pending frame.
-#[cfg_attr(not(feature = "memory-diagnostics"), allow(unused_variables))]
-pub(crate) fn capture_failed_frame_memory(state: &mut ApplicationState, renderer: &Renderer, result: &io::Result<()>) {
-    #[cfg(feature = "memory-diagnostics")]
-    {
-        if result.is_ok() { return; }
-        let Some(run) = state.timings.memory_run() else { return; };
-        if !run.frame_active { return; }
-        let tt = run.current_time.map(|time| time.1);
-        capture_memory(&state.config, &state.persistent.catalog, &state.cache, state.preparation.as_ref(), renderer, &mut state.timings, "After incomplete frame", tt);
-    }
 }
 
 /// Print an error and return a failing exit code.
@@ -87,52 +47,57 @@ pub(super) fn report_failure(error: impl Display) -> ExitCode {
     ExitCode::FAILURE
 }
 
-/// Start measuring before opening this frame's timing and optional memory records.
+/// Start measuring before opening this frame's timing records.
 pub(crate) fn begin_frame_diagnostics(times: &mut StepTimes) -> Instant {
     let frame_start = Instant::now();
     times.begin_frame();
-    times.begin_memory_frame();
     frame_start
 }
 
-/// Finish diagnostics for a successful frame, including reuse of an already displayed image. Measure first so the final memory inspection stays
-/// outside the reported frame duration; keep the existing per-operation opt-in checks.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn finish_frame_diagnostics(config: &Config, catalog: &Arc<astroterm::model::SkyCatalog>, caches: &astroterm::state::Caches,
-    preparation: Option<&astroterm::model::CatalogPreparation>, renderer: &Renderer, frame_start: Instant, time: FrameTime, outcome: astroterm::model::RenderOutcome, times: &mut StepTimes) {
-    let elapsed = record_frame_duration(config, frame_start, time, outcome, times); // record duration before inspecting memory
-    capture_memory(config, catalog, caches, preparation, renderer, times, if outcome.was_presented() { "After presented frame" } else { "After reused display" }, Some(time.tt));
-    times.complete_memory_frame(elapsed);                                // retain diagnostics for this completed frame
-}
-
-/// Sample duration through presentation before inspecting memory; ordinary single-frame output stays compatible.
-fn record_frame_duration(config: &Config, frame_start: Instant, time: FrameTime, outcome: astroterm::model::RenderOutcome, step_times: &mut StepTimes) -> f64 {
-    if !(config.debug_singleframe || (cfg!(feature = "memory-diagnostics") && config.debug_memory)) { return 0.0; }
+/// Record the duration of a successful frame through presentation, whether or not anything was sent.
+pub(crate) fn finish_frame_diagnostics(config: &Config, frame_start: Instant, time_ms: i64, presented: Presented, times: &mut StepTimes) -> f64 {
+    times.record_frame_presentation(matches!(presented, Presented::Sent(_)));
+    if !(config.debug_singleframe || config.frame_benchmark.is_some()) { return 0.0; }
     let elapsed = frame_start.elapsed().as_secs_f64();
-    step_times.describe(if outcome.was_presented() { "Present" } else { "Presentation decision" }, || format!(
-        "frame elapsed through presentation={:.3} ms; UTC JD={:.9}; includes in-frame diagnostics; final memory capture and sleep excluded",
-        elapsed * 1000.0, time.utc
+    times.describe("Present", || format!(
+        "{}; frame elapsed through presentation={:.3} ms; simulation time={} ms since year 0; includes in-frame diagnostics; sleep excluded",
+        match presented { Presented::Sent(bytes) => format!("sent {bytes} bytes"), Presented::Unchanged => "unchanged frame, nothing sent".into() },
+        elapsed * 1000.0, time_ms
     ));
     elapsed
 }
 
-/// Capture state-owned working buffers and the separately scoped terminal writer while both are alive.
-#[allow(clippy::too_many_arguments)]
-#[cfg_attr(not(feature = "memory-diagnostics"), allow(unused_variables))]
-#[inline]
-pub(crate) fn capture_memory(config: &Config, catalog: &Arc<astroterm::model::SkyCatalog>, caches: &astroterm::state::Caches, preparation: Option<&astroterm::model::CatalogPreparation>, renderer: &Renderer, times: &mut StepTimes, label: &'static str, tt: Option<f64>) {
-    #[cfg(feature = "memory-diagnostics")]
-    if config.debug_memory { times.capture_memory(|times| astroterm::state::capture_run_inventory(config, catalog, caches, preparation, renderer, times, label, tt)); }
+/// The terminal geometry a benchmark record carries.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct CaptureGeometry {
+    pub screen_cells: [u32; 2],
+    pub font_pixels: Option<[u32; 2]>,
+    pub image_pixels: Option<[u32; 2]>,
 }
 
-/// Record the actual read-only frame view, without creating another view or copying its geometry.
-#[inline]
-pub(super) fn record_projected_memory(times: &mut StepTimes, projected: &astroterm::model::ProjectedSky<'_>) {
-    use astroterm::timing::{Access, BufferId, BufferShape, IndexDomain, MemoryEvent};
-    times.record_memory(times.last_memory_step(), || {
-        let shape = BufferShape { len: Some(projected.stars.len()), ..BufferShape::unknown(IndexDomain::Visible) };
-        MemoryEvent::borrow(BufferId::ProjectedView, Access::ReadOnly, shape)
-    });
+/// The display facts a benchmark record carries: small owned values, no image copies.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct CaptureDisplay {
+    pub renderer: &'static str,
+    pub graphics_protocol: &'static str,
+    pub geometry: CaptureGeometry,
+    pub transport: &'static str,
+    pub compression_support: &'static str,
+    pub tmux: bool,
+}
+
+/// The display facts a benchmark record carries, checked against the terminal's current size.
+pub(crate) fn capture_display(info: DisplayInfo) -> io::Result<CaptureDisplay> {
+    let protocol = match info.protocol { ProtocolType::Kitty => "kitty", ProtocolType::Sixel => "sixel", ProtocolType::Iterm2 => "iterm2", ProtocolType::Halfblocks => "halfblocks" };
+    let compression_support = match info.compression { CompressionSupport::Supported => "supported", CompressionSupport::Unsupported => "unsupported", CompressionSupport::Unknown => "unknown" };
+    let display = CaptureDisplay { renderer: "pixels", graphics_protocol: protocol, compression_support, tmux: info.tmux, transport: if info.shared_memory { "shared_memory" } else { "streaming" },
+        geometry: CaptureGeometry { screen_cells: [u32::from(info.screen.width), u32::from(info.screen.height)],
+            font_pixels: Some([u32::from(info.font.0), u32::from(info.font.1)]), image_pixels: Some([info.image.0 as u32, info.image.1 as u32]) } };
+    let (columns, rows) = crossterm::terminal::size()?;
+    if display.geometry.screen_cells != [u32::from(columns), u32::from(rows)] {
+        return Err(io::Error::new(io::ErrorKind::Interrupted, "benchmark terminal resized during frame processing"));
+    }
+    Ok(display)
 }
 
 #[cfg(test)]

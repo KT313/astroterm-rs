@@ -1,26 +1,26 @@
 //! What the metadata panel shows: local date and time, zodiac sign, lunar phase, observer location, elapsed simulation
 //! time and speed, and view settings. How the fields are laid out is up to the renderer.
+mod notation;
+pub use notation::{DegreesMinutesSeconds, ElapsedTime, ZodiacSign, azimuth_to_compass, compass_point_to_azimuth};
 
 mod local_time;
+mod records;
+pub use records::{ObserverTimeZone, MetadataField};
 
 use chrono::{Datelike, Timelike};
 
-use crate::astro::{
-    DegreesMinutesSeconds, ElapsedTime, MoonPhase, Observer, SimulationClock, ZodiacSign, azimuth_to_compass,
-    julian_date_to_utc,
+use crate::formulas::{
+    MoonPhase, Observer,
 };
 use crate::model::{ProjectionKind, View, ViewCenter};
-use crate::timing::StepTime;
+use crate::time::{SimulationClock, StepTime, time_ms_to_utc, format_ms_as_seconds};
 
 use local_time::LocalTime;
-use crate::model::ObserverTimeZone;
 pub use local_time::{convert_observer_time, resolve_observer_timezone};
 
-use crate::model::MetadataField;
-
-/// The metadata fields for the simulation time `julian_date_utc`. `unicode` allows symbols such as the zodiac sign's.
+/// The metadata fields for the simulation time `time_ms`. `unicode` allows symbols such as the zodiac sign's.
 pub fn collect_metadata_fields(
-    julian_date_utc: f64,
+    time_ms: i64,
     clock: &SimulationClock,
     moon_phase: MoonPhase,
     observer: &Observer,
@@ -29,19 +29,19 @@ pub fn collect_metadata_fields(
     time_zone: &ObserverTimeZone,
 ) -> Vec<MetadataField> {
     let mut fields = Vec::with_capacity(10);
-    fill_metadata_fields(&mut fields, julian_date_utc, clock, moon_phase, observer, view, unicode, time_zone);
+    fill_metadata_fields(&mut fields, time_ms, clock, moon_phase, observer, view, unicode, time_zone);
     fields
 }
 
 /// Replace metadata entries while retaining the destination vector's capacity. Field strings are rebuilt.
 #[allow(clippy::too_many_arguments)]
 pub fn fill_metadata_fields(
-    fields: &mut Vec<MetadataField>, julian_date_utc: f64, clock: &SimulationClock, moon_phase: MoonPhase,
+    fields: &mut Vec<MetadataField>, time_ms: i64, clock: &SimulationClock, moon_phase: MoonPhase,
     observer: &Observer, view: &View, unicode: bool, time_zone: &ObserverTimeZone,
 ) {
-    let local_time = julian_date_to_utc(julian_date_utc).map(|utc| convert_observer_time(time_zone, utc));
+    let local_time = time_ms_to_utc(time_ms).map(|utc| convert_observer_time(time_zone, utc));
     fields.clear();
-    append_metadata_fields(fields, local_time, julian_date_utc, clock, moon_phase, observer, view, unicode);
+    append_metadata_fields(fields, local_time, time_ms, clock, moon_phase, observer, view, unicode);
 }
 
 /// Append fields for the local simulation time (`None` if it cannot be represented).
@@ -49,7 +49,7 @@ pub fn fill_metadata_fields(
 fn append_metadata_fields(
     fields: &mut Vec<MetadataField>,
     local_time: Option<LocalTime>,
-    julian_date_utc: f64,
+    time_ms: i64,
     clock: &SimulationClock,
     moon_phase: MoonPhase,
     observer: &Observer,
@@ -91,7 +91,7 @@ fn append_metadata_fields(
     fields.push(create_field("Longitude", longitude.to_string()));
 
     // time elapsed in the simulation, and how fast it runs
-    let elapsed = ElapsedTime::from_days(julian_date_utc - clock.start_julian_date());
+    let elapsed = ElapsedTime::between(clock.start_time_ms(), time_ms);
     let year_label = if elapsed.years == 1 { " year" } else { "years" };
     let day_label = if elapsed.days == 1 { " day" } else { "days" };
     let elapsed_text = format!(
@@ -102,7 +102,11 @@ fn append_metadata_fields(
     let pause_note = if clock.is_paused() { " (paused)" } else { "" };
     fields.push(create_field(
         "Speed",
-        format!("{}x{pause_note}", format_speed(clock.speed())),
+        match clock.frame_step_ms() {
+            Some(0) => "paused".into(),
+            Some(step_ms) => format!("{}{} s/frame", if step_ms > 0 { "+" } else { "" }, format_ms_as_seconds(step_ms)),
+            None => format!("{}x{pause_note}", format_speed(clock.speed())),
+        },
     ));
 
     // view settings that differ from the default
@@ -123,15 +127,8 @@ fn append_metadata_fields(
     }
 }
 
-/// Append the four already-published counters; never inspect catalog or projected rows here.
-pub fn append_star_count_fields(fields: &mut Vec<MetadataField>, counts: &crate::model::StarCounts) {
-    for (label, value) in [("Stars loaded", counts.loaded), ("In candidate regions", counts.candidate_regions),
-        ("Passed filter", counts.filtered), ("Passed projection", counts.projected)] {
-        fields.push(create_field(label, format!("{} stars", format_star_count(value))));
-    }
-}
-
-fn format_star_count(value: usize) -> String {
+/// A star count with digit groups: 1234567 → "1,234,567".
+pub fn format_star_count(value: usize) -> String {
     let digits = value.to_string();
     let mut grouped = String::with_capacity(digits.len() + digits.len() / 3);
     for (index, digit) in digits.chars().enumerate() {
@@ -200,10 +197,22 @@ fn format_speed(speed: f64) -> String {
 mod tests {
     use super::*;
 
-    fn format_metadata_fields(local_time: Option<LocalTime>, date: f64, clock: &SimulationClock, phase: MoonPhase, observer: &Observer, view: &View, unicode: bool) -> Vec<MetadataField> {
+    fn format_metadata_fields(local_time: Option<LocalTime>, date: i64, clock: &SimulationClock, phase: MoonPhase, observer: &Observer, view: &View, unicode: bool) -> Vec<MetadataField> {
         let mut fields = Vec::new();
         append_metadata_fields(&mut fields, local_time, date, clock, phase, observer, view, unicode);
         fields
+    }
+
+    #[test]
+    fn fixed_step_metadata_shows_paused_or_seconds_per_frame() {
+        let observer = Observer::default();
+        let zone = resolve_observer_timezone(&observer);
+        for (step, expected) in [(0, "paused"), (1000, "+1 s/frame"), (-2500, "-2.5 s/frame")] {
+            let mut clock = SimulationClock::start_fixed_step(crate::formulas::utc_jd_to_time_ms(crate::formulas::J2000).unwrap(), step);
+            clock.set_frame_index(2).unwrap();
+            let fields = collect_metadata_fields(clock.get_current_time_ms().unwrap(), &clock, MoonPhase::Full, &observer, &View::default(), true, &zone);
+            assert_eq!(fields.iter().find(|field| field.label == "Speed").unwrap().value, expected);
+        }
     }
 
     #[test]
@@ -213,18 +222,13 @@ mod tests {
             assert_eq!(format_star_count(value), expected);
         }
         assert_eq!(format_star_count(usize::MAX).replace(',', ""), usize::MAX.to_string());
-        let mut fields = Vec::new();
-        append_star_count_fields(&mut fields, &crate::model::StarCounts { loaded: 10221029, candidate_regions: 1000000, filtered: 1000, projected: 0 });
-        assert_eq!(fields.iter().map(|f| (f.label.as_str(), f.value.as_str())).collect::<Vec<_>>(),
-            [("Stars loaded", "10,221,029 stars"), ("In candidate regions", "1,000,000 stars"),
-            ("Passed filter", "1,000 stars"), ("Passed projection", "0 stars")]);
     }
 
     #[test]
     fn refilling_metadata_and_timings_retains_vector_capacity_without_stale_entries() {
         let observer = Observer::default();
         let zone = resolve_observer_timezone(&observer);
-        let clock = SimulationClock::start(crate::astro::J2000, 0.0);
+        let clock = SimulationClock::start(crate::formulas::utc_jd_to_time_ms(crate::formulas::J2000).unwrap(), 0.0);
         let mut fields = Vec::with_capacity(64);
         let mut timing_fields = Vec::with_capacity(32);
         let field_pointer = fields.as_ptr();
@@ -232,8 +236,8 @@ mod tests {
         let capacities = (fields.capacity(), timing_fields.capacity());
         let steps = [StepTime { name: "Draw", depth: 0, average_seconds: 0.001 }];
         for view in [View { fov_degrees: 90.0, ..View::default() }, View::default()] {
-            fill_metadata_fields(&mut fields, crate::astro::J2000, &clock, MoonPhase::Full, &observer, &view, true, &zone);
-            let expected = collect_metadata_fields(crate::astro::J2000, &clock, MoonPhase::Full, &observer, &view, true, &zone);
+            fill_metadata_fields(&mut fields, crate::formulas::utc_jd_to_time_ms(crate::formulas::J2000).unwrap(), &clock, MoonPhase::Full, &observer, &view, true, &zone);
+            let expected = collect_metadata_fields(crate::formulas::utc_jd_to_time_ms(crate::formulas::J2000).unwrap(), &clock, MoonPhase::Full, &observer, &view, true, &zone);
             assert_eq!(fields, expected);
             assert_eq!(fields.as_ptr(), field_pointer);
             timing_fields.clear();
@@ -246,50 +250,6 @@ mod tests {
             assert_eq!(timing_fields.as_ptr(), timing_pointer);
         }
         assert_eq!((fields.capacity(), timing_fields.capacity()), capacities);
-    }
-
-    #[test]
-    fn metadata_panel_snapshot_uses_an_explicit_zone_and_frozen_clock() {
-        let time = chrono::DateTime::parse_from_rfc3339("2025-03-01T20:00:00+09:00").unwrap();
-        let local_time = Some(LocalTime {
-            time,
-            zone: "JST".to_string(),
-        });
-        let observer = Observer {
-            latitude: 35.69_f64.to_radians(),
-            longitude: 139.69_f64.to_radians(),
-        };
-        let mut clock = SimulationClock::start(2460736.9583333335, 0.0);
-        clock.toggle_pause();
-        let fields = format_metadata_fields(
-            local_time,
-            clock.start_julian_date(),
-            &clock,
-            MoonPhase::WaxingCrescent,
-            &observer,
-            &View::default(),
-            true,
-        );
-        let mut panel = crate::canvas::Canvas::new(0, 0);
-        crate::scene::draw_metadata_panel(&mut panel, &fields);
-        let occupancy = (0..panel.height())
-            .map(|row| {
-                panel
-                    .row(row)
-                    .iter()
-                    .map(|cell| if cell.is_continuation() { '>' } else { '.' })
-                    .collect::<String>()
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        let snapshot = format!(
-            "{}\ncontinuations:\n{occupancy}\ncolors: all default",
-            panel.to_lines().join("\n")
-        );
-        insta::with_settings!({snapshot_path => concat!(env!("CARGO_MANIFEST_DIR"), "/tests/snapshots")}, {
-            insta::assert_snapshot!("metadata_panel", snapshot);
-        });
-        assert!((0..panel.height()).all(|row| { panel.row(row).iter().all(|cell| cell.color.is_none()) }));
     }
 
     #[test]
@@ -311,13 +271,13 @@ mod tests {
             projection: ProjectionKind::Equidistant,
             fov_degrees: 120.0,
         };
-        let start = 2460678.25;
+        let start = crate::formulas::utc_jd_to_time_ms(2460678.25).unwrap();
         let elapsed_days = 366.25 + 1.0 + 2.0 / 24.0 + 3.0 / 1440.0 + 4.5 / 86400.0;
         let mut clock = SimulationClock::start(start, -100.0);
-        clock.toggle_pause();
+        clock.toggle_pause().unwrap();
         let fields = format_metadata_fields(
             local_time,
-            start + elapsed_days,
+            start + (elapsed_days * 86_400_000.0) as i64,
             &clock,
             MoonPhase::WaxingCrescent,
             &observer,
@@ -348,10 +308,10 @@ mod tests {
 
     #[test]
     fn default_view_settings_are_left_out() {
-        let clock = SimulationClock::start(2460678.25, 1.0);
+        let clock = SimulationClock::start(crate::formulas::utc_jd_to_time_ms(2460678.25).unwrap(), 1.0);
         let fields = |view: &View| {
             collect_metadata_fields(
-                2460678.25,
+                crate::formulas::utc_jd_to_time_ms(2460678.25).unwrap(),
                 &clock,
                 MoonPhase::Full,
                 &Observer::default(),

@@ -5,6 +5,7 @@
 //! are one unnamed column each, or one per tuple element. Types are named by `std::any::type_name` and shortened
 //! for display by `short_type_name`.
 mod formatting;
+mod formula_types;
 pub use formatting::{Preview, CellWriter, preview, preview_text, preview_chars};
 pub(crate) use formatting::debug_preview;
 use std::fmt::Debug;
@@ -34,7 +35,7 @@ pub fn plain_column<T: ?Sized>() -> Vec<Column> {
     vec![Column { name: "", dtype: std::any::type_name::<T>() }]
 }
 
-/// `alloc::vec::Vec<astroterm::astro::Vector3>` → `Vec<Vector3>`: drop every `path::` prefix, also inside generics.
+/// `alloc::vec::Vec<astroterm::formulas::Vector3>` → `Vec<Vector3>`: drop every `path::` prefix, also inside generics.
 pub fn short_type_name(full: &str) -> String {
     let mut text = full.to_string();
     while let Some(separator) = text.find("::") {
@@ -111,7 +112,6 @@ macro_rules! plain_rows {
         }
     )+ };
 }
-pub(crate) use plain_rows;
 
 plain_rows!(bool, char, u8, u16, u32, u64, usize, i32, i64, f32, f64, &'static str, String);
 
@@ -177,7 +177,7 @@ mod tests {
 
     #[test]
     fn short_names_drop_module_paths_inside_generics() {
-        assert_eq!(short_type_name("alloc::vec::Vec<astroterm::astro::Vector3>"), "Vec<Vector3>");
+        assert_eq!(short_type_name("alloc::vec::Vec<astroterm::formulas::Vector3>"), "Vec<Vector3>");
         assert_eq!(short_type_name("core::option::Option<(usize, f64)>"), "Option<(usize, f64)>");
         assert_eq!(short_type_name("&str"), "&str");
         assert_eq!(short_type_name("[u8; 16]"), "[u8; 16]");

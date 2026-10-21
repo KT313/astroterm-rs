@@ -2,7 +2,7 @@
 //! them is up to the backend (see `terminal::keys`).
 
 use crate::constants::{MAX_INTERACTIVE_SPEED, PAN_STEP_FRACTION, SPEED_FACTOR, ZOOM_FACTOR};
-use crate::astro::SimulationClock;
+use crate::time::SimulationClock;
 use crate::model::View;
 
 
@@ -24,7 +24,7 @@ pub enum Control {
 }
 
 /// Apply a control to the view or the clock. `initial_view` is the view to reset to.
-pub fn apply_control(control: Control, view: &mut View, clock: &mut SimulationClock, initial_view: &View) {
+pub fn apply_control(control: Control, view: &mut View, clock: &mut SimulationClock, initial_view: &View) -> std::io::Result<()> {
     let pan_step = (view.fov_degrees * PAN_STEP_FRACTION).to_radians();
     match control {
         Control::PanLeft => crate::projection::pan_view(view, -pan_step, 0.0),
@@ -33,45 +33,46 @@ pub fn apply_control(control: Control, view: &mut View, clock: &mut SimulationCl
         Control::PanDown => crate::projection::pan_view(view, 0.0, -pan_step),
         Control::ZoomIn => crate::projection::zoom_view(view, ZOOM_FACTOR),
         Control::ZoomOut => crate::projection::zoom_view(view, 1.0 / ZOOM_FACTOR),
-        Control::TogglePause => clock.toggle_pause(),
+        Control::TogglePause => clock.toggle_pause()?,
         Control::SpeedUp => {
-            clock.set_speed((clock.speed() * SPEED_FACTOR).clamp(-MAX_INTERACTIVE_SPEED, MAX_INTERACTIVE_SPEED))
+            clock.set_speed((clock.speed() * SPEED_FACTOR).clamp(-MAX_INTERACTIVE_SPEED, MAX_INTERACTIVE_SPEED))?
         }
         Control::SlowDown => {
-            clock.set_speed((clock.speed() / SPEED_FACTOR).clamp(-MAX_INTERACTIVE_SPEED, MAX_INTERACTIVE_SPEED))
+            clock.set_speed((clock.speed() / SPEED_FACTOR).clamp(-MAX_INTERACTIVE_SPEED, MAX_INTERACTIVE_SPEED))?
         }
-        Control::ReverseTime => clock.set_speed(-clock.speed()),
+        Control::ReverseTime => clock.set_speed(-clock.speed())?,
         Control::ResetView => *view = *initial_view,
         Control::Quit => {} // handled by the frame loop
     }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::astro::J2000;
+    use crate::formulas::J2000;
     use crate::model::ViewCenter;
 
     #[test]
     fn controls_change_view_and_clock() {
         let initial_view = View::default();
-        let (mut view, mut clock) = (initial_view, SimulationClock::start(J2000, 1.0));
+        let (mut view, mut clock) = (initial_view, SimulationClock::start(crate::formulas::utc_jd_to_time_ms(J2000).unwrap(), 1.0));
 
-        apply_control(Control::ZoomIn, &mut view, &mut clock, &initial_view);
+        apply_control(Control::ZoomIn, &mut view, &mut clock, &initial_view).unwrap();
         assert_eq!(view.fov_degrees, 144.0);
-        apply_control(Control::PanRight, &mut view, &mut clock, &initial_view);
+        apply_control(Control::PanRight, &mut view, &mut clock, &initial_view).unwrap();
         let ViewCenter::Facing { azimuth, .. } = view.center else {
             panic!("facing view expected")
         };
         assert!((azimuth.to_degrees() - (180.0 + 144.0 / 20.0)).abs() < 1e-9); // steps scale with the zoom
 
-        apply_control(Control::SpeedUp, &mut view, &mut clock, &initial_view);
-        apply_control(Control::ReverseTime, &mut view, &mut clock, &initial_view);
+        apply_control(Control::SpeedUp, &mut view, &mut clock, &initial_view).unwrap();
+        apply_control(Control::ReverseTime, &mut view, &mut clock, &initial_view).unwrap();
         assert_eq!(clock.speed(), -10.0);
-        apply_control(Control::TogglePause, &mut view, &mut clock, &initial_view);
+        apply_control(Control::TogglePause, &mut view, &mut clock, &initial_view).unwrap();
         assert!(clock.is_paused());
 
-        apply_control(Control::ResetView, &mut view, &mut clock, &initial_view);
+        apply_control(Control::ResetView, &mut view, &mut clock, &initial_view).unwrap();
         assert_eq!(view, initial_view);
     }
 
@@ -80,11 +81,11 @@ mod tests {
         for speed in [1.0, -1.0, f64::MAX, -f64::MAX, 0.0] {
             let initial_view = View::default();
             let mut view = initial_view;
-            let mut clock = SimulationClock::start(J2000, 0.0);
-            clock.toggle_pause();
-            clock.set_speed(speed);
+            let mut clock = SimulationClock::start(crate::formulas::utc_jd_to_time_ms(J2000).unwrap(), 0.0);
+            clock.toggle_pause().unwrap();
+            clock.set_speed(speed).unwrap();
             for _ in 0..400 {
-                apply_control(Control::SpeedUp, &mut view, &mut clock, &initial_view);
+                apply_control(Control::SpeedUp, &mut view, &mut clock, &initial_view).unwrap();
                 assert!(clock.speed().is_finite() && clock.speed().abs() <= MAX_INTERACTIVE_SPEED);
             }
             assert_eq!(
@@ -95,10 +96,10 @@ mod tests {
                     speed.signum() * MAX_INTERACTIVE_SPEED
                 }
             );
-            apply_control(Control::SlowDown, &mut view, &mut clock, &initial_view);
+            apply_control(Control::SlowDown, &mut view, &mut clock, &initial_view).unwrap();
             assert!(clock.speed().abs() <= MAX_INTERACTIVE_SPEED / SPEED_FACTOR);
             assert!(clock.is_paused());
-            assert_eq!(clock.julian_date(), J2000);
+            assert_eq!(clock.get_current_time_ms().unwrap(), crate::formulas::utc_jd_to_time_ms(J2000).unwrap());
         }
     }
 }

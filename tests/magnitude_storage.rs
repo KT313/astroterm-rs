@@ -1,17 +1,28 @@
 //! Quantized catalog magnitudes, conservative pruning and persisted clipping diagnostics.
 use astroterm::{
-    catalog::{Catalog, StarNames, load_athyg_catalog, MagnitudeClipping, decode_magnitude},
+    catalog::{Catalog, StarNames, load_athyg_catalog, MagnitudeClipping, decode_magnitude, magnitude_code},
     catalog::datasets::{Dataset, DatasetDirectories},
-    model::{ObservedSky, SkyRegion},
-    sky::{prepare_owned_catalog, load_sky_catalog, load_cached_catalog, write_cached_catalog, catalog_fingerprint},
+    constants::MAST_PARALLEL_BLOCKS,
+    model::{PreparedCatalog, Data},
+    progress::NoProgress,
+    sky::{build_sky_tables, prepare_owned_catalog, load_cached_catalog, write_cached_catalog, catalog_fingerprint},
+    time::StepTimes,
 };
-use std::sync::Arc;
+
+/// The loader without progress display or timings, with its notices collected.
+fn load_sky_catalog(dataset: Option<&Dataset>, dirs: &DatasetDirectories, notices: &mut Vec<u8>) -> std::io::Result<PreparedCatalog> {
+    astroterm::sky::load_sky_catalog(dataset, MAST_PARALLEL_BLOCKS, dirs, &mut astroterm::progress::Report::live(&mut NoProgress(notices), &mut StepTimes::default()))
+}
+
+fn tables(prepared: &PreparedCatalog) -> Data {
+    build_sky_tables(prepared, &mut astroterm::progress::Report::live(&mut NoProgress(std::io::sink()), &mut StepTimes::default())).unwrap()
+}
 
 fn load_csv(text: &str) -> Result<Catalog, astroterm::catalog::CatalogError> {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("stars.csv");
     std::fs::write(&path, text).unwrap();
-    load_athyg_catalog(&path)
+    load_athyg_catalog(&path, &mut astroterm::progress::Report::quiet())
 }
 
 #[test]
@@ -19,7 +30,7 @@ fn source_endpoints_remain_f64_until_checked_and_sun_stays_excluded() {
     let parsed = load_csv("ra,dec,mag\n0,0,-26\n0,0,-10\n0,0,55.535\n").unwrap();
     assert_eq!(parsed.stars.len(), 2);
     assert_eq!(parsed.stars[1].magnitude, 55.535);
-    let prepared = prepare_owned_catalog(parsed).unwrap();
+    let prepared = prepare_owned_catalog(parsed, &mut astroterm::progress::Report::quiet()).unwrap();
     assert!(!prepared.catalog.stars.magnitude_clipping().any());
     let mut codes = prepared.catalog.stars.columns().magnitude.to_vec();
     codes.sort();
@@ -28,9 +39,9 @@ fn source_endpoints_remain_f64_until_checked_and_sun_stays_excluded() {
         let error = load_csv(&format!("ra,dec,mag\n0,0,{magnitude}\n")).unwrap_err();
         assert!(error.to_string().contains("line 2"), "{error}");
     }
-    let mut source = astroterm::catalog::load_embedded_catalog().unwrap();
+    let mut source = astroterm::catalog::load_embedded_catalog(&mut astroterm::progress::Report::quiet()).unwrap();
     source.stars[0].magnitude = 55.535_f64.next_up();
-    assert!(prepare_owned_catalog(source).unwrap_err().to_string().contains("outside the allowed range"));
+    assert!(prepare_owned_catalog(source, &mut astroterm::progress::Report::quiet()).unwrap_err().to_string().contains("outside the allowed range"));
 }
 
 #[test]
@@ -60,7 +71,7 @@ fn clipped_bounds_survive_cache_and_emit_one_console_warning_per_load() {
 fn quantization_changes_ties_but_keeps_id_order_and_decoded_runtime_values() {
     let mut parsed = load_csv("ra,dec,mag\n0,0,5.0001\n0,0,5.0002\n0,0,4.9998\n").unwrap();
     parsed.names = StarNames::default();
-    let prepared = prepare_owned_catalog(parsed).unwrap();
+    let prepared = prepare_owned_catalog(parsed, &mut astroterm::progress::Report::quiet()).unwrap();
     let stars = &prepared.catalog.stars;
     assert_eq!(stars.columns().id, [2, 1, 0]); // all three now tie, stored brightest-first with descending ID
     assert!(stars.columns().magnitude.iter().all(|&code| decode_magnitude(code) == 5.0));
@@ -69,80 +80,139 @@ fn quantization_changes_ties_but_keeps_id_order_and_decoded_runtime_values() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("cache");
     let fingerprint = catalog_fingerprint();
-    write_cached_catalog(&path, &prepared, &fingerprint).unwrap();
-    assert_eq!(load_cached_catalog(&path, &fingerprint).unwrap(), prepared);
+    write_cached_catalog(&path, &prepared, &fingerprint, &mut astroterm::progress::Report::quiet()).unwrap();
+    assert_eq!(load_cached_catalog(&path, &fingerprint, &mut astroterm::progress::Report::quiet()).unwrap(), prepared);
 }
 
 #[test]
-fn clipped_minimum_passes_grid_and_candidate_checks_before_the_saturating_current_filter() {
-    use astroterm::{astro::{J2000, JULIAN_YEAR_DAYS, Matrix3, Observer, Vector3}, model::FrameTime,
-        sky::{observe_sky, prepare_observation, update_solar_system}, state::SimulationState, timing::StepTimes};
+fn clipped_minimum_passes_the_brightness_prefix_before_the_saturating_current_magnitude() {
+    use astroterm::formulas::{J2000, JULIAN_YEAR_DAYS};
+    use astroterm::regions::{UNPLACED, rows_wanted};
     let parsed = load_csv("ra,dec,mag,dist,rv\n0,0,-9.9,10,-100\n0,0,-10,,\n").unwrap();
-    let catalog = Arc::new(prepare_owned_catalog(parsed).unwrap().catalog);
-    // Both encoded-zero rows pass an arbitrarily bright early threshold; final brightness still decides.
-    assert_eq!(catalog.count_bright_stars(-50.0), 2);
-    let mut sky = ObservedSky::new(catalog);
+    let prepared = prepare_owned_catalog(parsed, &mut astroterm::progress::Report::quiet()).unwrap();
+    // Both encoded-zero rows pass an arbitrarily bright early threshold; the current magnitude still decides.
+    assert_eq!(prepared.catalog.count_bright_stars(-50.0), 2);
+    let tables = tables(&prepared);
     for (years, drawn) in [(0.0, 1), (9000.0, 2)] {                                        // the current magnitude saturates at -10.000, so the threshold -10 draws it
         let tt = J2000 + years * JULIAN_YEAR_DAYS;
-        let time = FrameTime { utc: tt, ut1: tt, tt };
-        let mut simulation = SimulationState::exact();
-        update_solar_system(&mut simulation, time, &[], &mut StepTimes::default()).unwrap();
-        let mut observer = prepare_observation(&mut simulation, time, Observer::default()).unwrap();
-        observer.inertial_to_horizon = Matrix3::IDENTITY;
-        observer.state.velocity = Vector3::default();
-        observe_sky(&simulation, &observer, -10.0, false, SkyRegion::All, &mut sky, &mut StepTimes::default()).unwrap();
-        assert_eq!(sky.stars.iter().filter(|s| s.drawable).count(), drawn);
-        assert_eq!(sky.selection.candidates, 2);
-        if drawn == 2 { assert_eq!(sky.stars[0].magnitude, -10.0); }                       // the approaching star is calculated brighter and saturates
+        let mut simulations = tables.clone();
+        let mut codes = Vec::new();
+        for (region, group, table) in tables.star_tables() {
+            let rows = rows_wanted(table, tt, -10.0);
+            assert_eq!(rows, table.len());                                                   // the stored bounds admit both rows at every date
+            (simulations.star_regions[region].speed_groups[group].update_simulation(astroterm::formulas::utc_jd_to_time_ms(tt).unwrap(), tt, rows_wanted(table, tt, -10.0)));
+            codes.extend(simulations.star_regions[region].speed_groups[group].simulation.magnitudes().iter().take(rows).copied().filter(|&code| code != UNPLACED));
+        }
+        assert_eq!(codes.iter().filter(|&&code| code <= magnitude_code(-10.0)).count(), drawn);
+        if drawn == 2 { assert!(codes.iter().all(|&code| code == 0)); }                      // the approaching star is calculated brighter and saturates at -10.000
     }
 }
 
 #[test]
-fn clipping_notice_coexists_with_date_notice_and_cache_tracks_it() {
-    use astroterm::{canvas::Canvas, model::{View, ProjectionViewport, RenderOptions}, projection::project_sky,
-        scene::draw_characters, state::SceneCache};
-    let parsed = load_csv("ra,dec,mag,dist,rv\n0,0,-9.9,10,-100\n").unwrap();
-    let mut clipped = astroterm::sky::create_sky_from_catalog(&parsed).unwrap();
-    clipped.outside_accuracy_range = true;
-    clipped.stars.clear(); // identical raster inputs apart from the new notice
-    let mut plain = astroterm::sky::create_sky_from_catalog(&Catalog::new(Vec::new(), StarNames::default(), Vec::new())).unwrap();
-    plain.outside_accuracy_range = true;
-    let view = View::default();
-    let viewport = ProjectionViewport { width: 140, height: 8 };
-    let options = RenderOptions { unicode: true, braille: false, color: false, constellations: false, grid: false,
-        magnitude_threshold: -50.0, dynamic_names: false };
-    let mut cache = SceneCache::default();
-    let mut canvas = Canvas::new(8, 140);
-    for sky in [&plain, &clipped, &clipped, &plain] {
-        let data = project_sky(sky, &view, viewport);
-        let projected = data.view(sky);
-        draw_characters(&mut cache, &mut canvas, &projected, &options, 0.0);
-        let text = canvas.to_lines().join("\n");
-        assert_eq!(text.contains("Stored brightness bounds clipped"), projected.magnitude_clipping().any());
-        if projected.magnitude_clipping().any() {
-            let lines = canvas.to_lines();
-            assert!(lines[6].starts_with("Stored brightness bounds clipped"));
-            assert!(lines[7].starts_with(astroterm::astro::accuracy::ACCURACY_WARNING));
-        }
-    }
+fn clipping_notice_coexists_with_date_notice_and_the_tables_carry_it() {
+    use astroterm::formulas::{J2000, Observer, ACCURACY_WARNING};
+    use astroterm::catalog::MAGNITUDE_CLIPPING_WARNING;
+    use astroterm::model::{RenderOptions, View};
+    use astroterm::observation::observe;
+    use astroterm::points::{draw_points};
+    use astroterm::projection::Frame;
+    use astroterm::regions::refresh_regions;
+    use astroterm::selection::select_regions;
+    use astroterm::solar_system::simulate_solar_system;
+    let notices = |tables: &Data, utc: f64| {
+        let time = astroterm::formulas::utc_jd_to_time_ms(utc).unwrap();
+        let view = View::default();
+        let settings = RenderOptions { unicode: true, braille: false, color: false, constellations: false, grid: false, magnitude_threshold: -50.0, dynamic_names: false };
+        let solar_system = simulate_solar_system(&tables.solar_system_sun, &tables.solar_system_planets, &tables.solar_system_moons, time, &mut astroterm::time::StepTimes::default());
+        let observation = observe(&Observer::default(), false, &view, time, astroterm::formulas::evaluate_earth_state(time), &mut astroterm::time::StepTimes::default());
+        let mut selected = astroterm::selection::Selected::default();
+        select_regions(&mut selected, &tables.star_regions, &observation, &view, 60, &mut astroterm::time::StepTimes::default());
+        let mut caches = tables.clone();
+        refresh_regions(
+            &mut caches.star_regions, &caches.constellation_stars,
+            &mut caches.constellation_simulation, &mut caches.constellation_last_update_ms,
+            &mut caches.star_opacities, &mut caches.tile_bytes,
+            &selected, time, view.fov_degrees, settings.magnitude_threshold,
+            &mut astroterm::time::StepTimes::default(),
+        );
+        let mut frame = Frame::new(140, 60, 60, (10, 20));
+        draw_points(
+            &mut frame, &solar_system,
+            &caches.solar_system_sun, &caches.solar_system_planets, &caches.solar_system_moons,
+            &caches.constellation_stars, &caches.constellation_simulation, &caches.constellation_figures,
+            &caches.star_regions, &caches.names, &caches.star_opacities, &caches.clipping,
+            &selected.regions, None,
+            &observation, &view, &settings, &mut astroterm::time::StepTimes::default(),
+        ).notices
+    };
+    let clipped = tables(&prepare_owned_catalog(load_csv("ra,dec,mag,dist,rv\n0,0,-9.9,10,-100\n").unwrap(), &mut astroterm::progress::Report::quiet()).unwrap());
+    let plain = tables(&prepare_owned_catalog(Catalog::new(Vec::new(), StarNames::default(), Vec::new()), &mut astroterm::progress::Report::quiet()).unwrap());
+    assert!(clipped.clipping.any() && !plain.clipping.any());
+    let far = J2000 + 20_000.0 * 365.25;                                                      // outside every validated interval
+    assert_eq!(notices(&clipped, far), [ACCURACY_WARNING, MAGNITUDE_CLIPPING_WARNING]);         // the clipping notice sits above the date notice
+    assert_eq!(notices(&plain, far), [ACCURACY_WARNING]);
+    assert_eq!(notices(&clipped, J2000), [MAGNITUDE_CLIPPING_WARNING]);
+    assert!(notices(&plain, J2000).is_empty());
 }
 
 #[test]
 fn runtime_magnitude_beyond_the_storage_maximum_saturates() {
     let parsed = load_csv("ra,dec,mag,dist,rv\n0,0,55.535,10,100\n").unwrap();
-    let prepared = prepare_owned_catalog(parsed).unwrap();
+    let prepared = prepare_owned_catalog(parsed, &mut astroterm::progress::Report::quiet()).unwrap();
     let star = prepared.catalog.stars.get(0);
     assert_eq!(star.magnitude, 55.535);
-    assert_eq!(star.motion.evaluate(9000.0, star.magnitude).magnitude, u16::MAX); // the calculated value is fainter; the sample code clamps and is not a clipping event
+    assert_eq!(astroterm::catalog::magnitude_code(star.motion.evaluate(9000.0, star.magnitude).magnitude), u16::MAX); // the calculated value is fainter; the sample code clamps and is not a clipping event
     assert!(!prepared.catalog.stars.magnitude_clipping().any());
 }
 
 #[test]
 fn stationary_minimum_magnitude_does_not_warn_for_direction_quantization() {
     let parsed = load_csv("ra,dec,mag,dist,rv\n3,35.26438968,-10,10,0\n").unwrap();
-    let prepared = prepare_owned_catalog(parsed).unwrap();
+    let prepared = prepare_owned_catalog(parsed, &mut astroterm::progress::Report::quiet()).unwrap();
     let star = prepared.catalog.stars.get(0);
     assert!(!prepared.catalog.stars.magnitude_clipping().any());
     assert_eq!(star.brightness_key, -10.0);
-    for years in [-9900.0, 0.0, 10000.0] { assert_eq!(star.motion.evaluate(years, star.magnitude).magnitude_value(), -10.0); }
+    for years in [-9900.0, 0.0, 10000.0] { assert_eq!(astroterm::catalog::decode_magnitude(astroterm::catalog::magnitude_code(star.motion.evaluate(years, star.magnitude).magnitude)), -10.0); }
+}
+
+#[test]
+fn stellar_formulas_leave_quantization_and_saturation_to_storage() {
+    use astroterm::formulas::{StellarMotion, Vector3};
+    let motion = StellarMotion { u0: Vector3 { x: 1.0, y: 0.0, z: 0.0 }, w: Vector3::default(), distance_pc: None };
+
+    // The physical result preserves fractions finer than the catalog's thousandth-magnitude steps.
+    let sample = motion.evaluate(0.0, 5.123456);
+    assert_eq!(sample.magnitude, 5.123456);
+    assert_eq!(astroterm::catalog::magnitude_code(sample.magnitude), 15_123);
+
+    // Storage bounds do not limit the physical formula's output.
+    for magnitude in [-20.0, 80.0] {
+        let sample = motion.evaluate(0.0, magnitude);
+        assert_eq!(sample.magnitude, magnitude);
+        assert_ne!(astroterm::catalog::decode_magnitude(astroterm::catalog::magnitude_code(sample.magnitude)), magnitude);
+    }
+}
+
+proptest::proptest! {
+    #[test]
+    fn encoded_brightness_bounds_cover_formula_samples(
+        wx in -0.001_f64..0.001, wy in -0.001_f64..0.001, wz in -0.001_f64..0.001,
+    ) {
+        use astroterm::formulas::{StellarMotion, Vector3, computational_years};
+        let mut motion = StellarMotion {
+            u0: Vector3 { x: 1.0, y: 0.0, z: 0.0 },
+            w: Vector3 { x: wx, y: wy, z: wz },
+            distance_pc: Some(10.0),
+        };
+        motion.remove_singular_distance();
+        let bound = astroterm::catalog::encode_brightness_bound(motion.brightest_magnitude(5.0)).0;
+        let (start, end) = computational_years();
+
+        // The cache stores rounded magnitude codes; its selection bound must cover those codes too.
+        for index in 0..=100 {
+            let years = start + (end - start) * index as f64 / 100.0;
+            let sample = motion.evaluate(years, 5.0);
+            proptest::prop_assert!(astroterm::catalog::magnitude_code(sample.magnitude) >= bound);
+        }
+    }
 }

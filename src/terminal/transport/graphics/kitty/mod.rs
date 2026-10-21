@@ -1,6 +1,8 @@
 //! Kitty image transport. Upload the back image outside synchronization, then atomically place it and delete
 //! the previous image. Two IDs bound terminal storage; no Unicode placeholder cells are required.
 //! Both transports send RGB: a quarter fewer bytes to copy, compress, write and for the terminal to read.
+//! The shared-memory transport hands the terminal a named POSIX object instead of a base64 stream; the streaming
+//! transport (optionally zlib) is the fallback when the terminal does not support or does not consume it.
 mod compression;
 mod shared_memory;
 pub(crate) use shared_memory::{create_shared_image, encode_shared_upload, wait_for_shared_consumption};

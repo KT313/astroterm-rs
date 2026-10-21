@@ -14,18 +14,7 @@ name = "astroterm"
 path = "src/main.rs"
 
 [features]
-default = []
-memory-diagnostics = []
-
-[[test]]
-name = "memory_inventory"
-path = "tests/memory_inventory.rs"
-required-features = ["memory-diagnostics"]
-
-[[test]]
-name = "memory_trace"
-path = "tests/memory_trace.rs"
-required-features = ["memory-diagnostics"]
+pixel-debug = []
 
 [dependencies]
 base64-simd = "0.8"
@@ -43,10 +32,11 @@ fontdue = "0.9.4"
 indicatif = { version = "0.18", default-features = false }
 image = { version = "0.25", default-features = false }
 md-5 = "0.11"
-ndarray = "0.17"
 parquet = { version = "60", default-features = false, features = ["zstd"] }
 ratatui = { version = "0.30", default-features = false, features = ["crossterm_0_29"] }
+rayon = "1.12"
 ratatui-image = { version = "11.1", default-features = false, features = ["crossterm"] }
+serde_json = "1"
 serde = { version = "1.0.229", features = ["derive"] }
 sha2 = "0.11.0"
 soa_derive = "0.14"
@@ -57,32 +47,26 @@ toml = "0.9"
 tzf-rs = { version = "2.1.2", default-features = false, features = ["bundled"] }
 unicode-width = "0.2.2"
 ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
-vsop87 = "3.0.0"
+zstd = { version = "0.14", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1.1.5", features = ["event", "shm"] }
 tz-rs = "0.7.3"
 
 [dev-dependencies]
-trybuild = "1"
-insta = "1"
 proptest = "1"
-criterion = "0.7"
-serde_json = "1"
-
-[[bench]]
-name = "frame"
-harness = false
-
-[[bench]]
-name = "spatial"
-harness = false
 
 # Debug builds keep file and line information (backtraces, perf) but not variable-level debug info: full debuginfo
 # made every test and example binary over 100 MB (101 MB of 121 MB for one integration test). For stepping through
 # variables in a debugger, build once with CARGO_PROFILE_DEV_DEBUG=full.
 [profile.dev]
 debug = "line-tables-only"
+
+# Optimized rendering with explicit pixel diagnostics and integer overflow checks, including dependencies.
+[profile.pixel-debug]
+inherits = "release"
+debug = "line-tables-only"
+overflow-checks = true
 
 # `make build-aggressive`: the release profile plus whole-program optimization and `-C target-cpu=native`.
 # `make build-aggressive-pgo` additionally trains/applies PGO and BOLT. Panics abort, but the panic hook still

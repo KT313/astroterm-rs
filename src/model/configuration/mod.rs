@@ -1,20 +1,19 @@
 //! Validated application settings, independent of CLI parsing and terminal operations.
 use crate::catalog::datasets::Dataset;
-use crate::astro::Observer;
-use crate::model::{View, RenderOptions};
+use crate::formulas::Observer;
+mod view;
+pub use view::{ViewCenter, ProjectionKind, View, Cell, ProjectionViewport, RenderOptions};
 
 /// Everything the application needs to run.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Config {
     pub debug_singleframe: bool,
+    pub frame_benchmark: Option<FrameBenchmarkConfig>,
     pub no_progress: bool,
-    /// Enable explicitly placed table dumps; independent of timing and memory tracing.
+    /// Enable explicitly placed table dumps; independent of timing tracing.
     pub debug_log_data: bool,
-    pub debug_memory: bool,
-    pub cache: crate::cache::CacheConfig,
     /// Raster text size and spacing relative to terminal cells; ignored by native text renderers.
     pub text_scale: f64,
-    pub renderer: RendererKind,
     pub graphics_protocol: GraphicsProtocol,
     pub simulation: SimulationSettings,
     /// The view to start with, and to reset to.
@@ -23,16 +22,25 @@ pub struct Config {
     pub terminal: TerminalSettings,
     /// Frames per second.
     pub fps: u32,
+    pub projection_jobs: usize,                // resolved projection worker count; zero creates no pool
     /// Star dataset to load instead of the embedded catalog.
     pub dataset: Option<Dataset>,
     pub dataset_parallel_blocks: u8,                                                     // maximum simultaneous MAST block downloads
+}
+
+/// Bounded, deterministic frame capture; the output writer remains outside the state tree.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FrameBenchmarkConfig {
+    pub frames: u32,
+    pub step_ms: i64,
+    pub report: std::path::PathBuf,
 }
 
 /// What is simulated: where, from when, how fast, and with which corrections.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SimulationSettings {
     pub observer: Observer,
-    pub start_julian_date: f64,
+    pub start_time_ms: i64,
     /// Simulated days per real day.
     pub speed: f64,
     /// Lift objects by atmospheric refraction.
@@ -52,6 +60,7 @@ pub struct TerminalSettings {
     pub frame_times: bool,
 }
 
+/// The old renderer switch; only the old `terminal::Renderer` still reads it (gone with chunk 14).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum)]
 pub enum RendererKind {
     #[default]

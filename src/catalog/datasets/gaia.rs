@@ -1,7 +1,7 @@
 //! A fixed Gaia prefix with verified, independently reusable source files. No terminal is active during I/O.
 use super::{DatasetDirectories, GAIA_DR3_FILE_COUNT};
 use crate::constants::GAIA_DOWNLOAD_MAX_BYTES;
-use crate::timing::StepTimes;
+use crate::time::StepTimes;
 use crate::progress::{DatasetProgress, Stage, Unit, Outcome};
 use md5::{Digest, Md5};
 use std::{fs::{self, File}, io::{self, Read, Write}, path::{Path, PathBuf}, time::{Duration, SystemTime}};
@@ -65,15 +65,17 @@ fn resolve_entries(entries: &[GaiaEntry], directory: &Path, notices: &mut dyn Da
     for (index, entry) in entries.iter().enumerate() {
         let path = directory.join(&entry.name);
         let result = (|| {
-            let (size, modified) = if let Some(stamp) = times.measure("Gaia file verification", || verify_file(&path, entry.checksum, notices))? {
+            times.measure("Dataset loading.Dataset resolution.Gaia file verification");
+            let (size, modified) = if let Some(stamp) = verify_file(&path, entry.checksum, notices)? {
                 reused += 1;
                 stamp
             } else {
-                times.measure("Gaia file download", || {
+                times.measure("Dataset loading.Dataset resolution.Gaia file download");
+                {
                     notices.begin_stage(Stage::Connect, &entry.name, Unit::Work, None); // animate while connecting and waiting for response headers
                     let (reader, length) = fetch(entry)?;
                     install_verified(reader, &path, entry.checksum, length, notices)
-                })?
+                }?
             };
             let file = GaiaFile { entry: entry.clone(), path: path.clone(), size, modified };
             if !file.is_unchanged()? { return Err(invalid("source changed after verification")); }
@@ -83,7 +85,7 @@ fn resolve_entries(entries: &[GaiaEntry], directory: &Path, notices: &mut dyn Da
         notices.set_files((index + 1) as u64, entries.len() as u64);
     }
     writeln!(notices, "Gaia DR3: requested={} reused={} downloaded={}", entries.len(), reused, entries.len() - reused)?;
-    times.describe("Dataset resolution", || format!("Gaia files requested={}; reused={reused}; downloaded={}", entries.len(), entries.len() - reused));
+    times.describe("Dataset loading.Dataset resolution", || format!("Gaia files requested={}; reused={reused}; downloaded={}", entries.len(), entries.len() - reused));
     Ok(files)
 }
 

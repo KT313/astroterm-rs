@@ -11,18 +11,6 @@ use crate::terminal::format_key_bindings_help;
 #[command(name = "astroterm", version, override_usage = "astroterm [OPTION]...", after_help = format_key_bindings_help())]
 #[command(disable_help_flag = true, disable_version_flag = true)]
 pub struct Arguments {
-    /// Recompute runtime processing results every frame; keeps downloaded datasets and the on-disk catalog cache.
-    #[arg(long)]
-    pub disable_cache: bool,
-    /// Read processing-cache policies from this TOML file instead of the user configuration directory.
-    #[arg(long, value_name = "path")]
-    pub cache_config: Option<std::path::PathBuf>,
-
-    /// Renderer: characters (default) or true-color pixels. Constellations, grid, thresholds, labels,
-    /// refraction and metadata apply to both; --color, --unicode and --braille affect characters only.
-    #[arg(long, value_enum, default_value_t = crate::model::RendererKind::Chars)]
-    pub renderer: crate::model::RendererKind,
-
     /// Pixel protocol (normally detected). Force one to test terminal support; halfblocks needs no graphics protocol.
     #[arg(long, value_enum, default_value_t = crate::model::GraphicsProtocol::Auto)]
     pub graphics_protocol: crate::model::GraphicsProtocol,
@@ -54,9 +42,9 @@ pub struct Arguments {
     )]
     pub longitude: f64,
 
-    /// Observation datetime in UTC/UT, proleptic Gregorian calendar. Astronomical years: 0 = 1 BC; use a sign
+    /// Observation datetime in UTC/UT with optional .sss milliseconds; no leap seconds. Proleptic Gregorian calendar. Astronomical years: 0 = 1 BC; use a sign
     /// outside 0000–9999, e.g. -7974-01-01T00:00:00 or +12026-01-01T00:00:00
-    #[arg(short = 'd', long, value_name = "yyyy-mm-ddThh:mm:ss", allow_hyphen_values = true)]
+    #[arg(short = 'd', long, value_name = "yyyy-mm-ddThh:mm:ss[.sss]", allow_hyphen_values = true)]
     pub datetime: Option<String>,
 
     /// Only render stars brighter than this magnitude (default: 5.0)
@@ -70,9 +58,14 @@ pub struct Arguments {
     )]
     pub threshold: f32,
 
-    /// Frames per second (default: 24 for characters, 12 for pixels)
+    /// Frames per second (default: 12)
     #[arg(short = 'f', long, value_name = "int", allow_negative_numbers = true)]
     pub fps: Option<i64>,
+
+    /// Projection workers: 0 runs directly, -1 uses available logical CPUs, positive values create that many threads
+    #[arg(long, value_name = "int", default_value_t = 0, allow_negative_numbers = true,
+        value_parser = clap::value_parser!(i64).range(-1..))]
+    pub n_jobs: i64,
 
     /// Animation speed multiplier (default: 1.0)
     #[arg(
@@ -165,14 +158,22 @@ pub struct Arguments {
     #[arg(long)]
     pub debug_singleframe: bool,
 
+    /// Capture N completed frames (including reused displays) to --debug-frame-report; no interactive controls
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(1..), requires = "debug_frame_report",
+        conflicts_with_all = ["debug_singleframe", "debug_log_data", "speed"])]
+    pub debug_frames: Option<u32>,
+
+    /// New JSONL timing file for --debug-frames; existing files are never overwritten
+    #[arg(long, value_name = "FILE", requires = "debug_frames")]
+    pub debug_frame_report: Option<std::path::PathBuf>,
+
+    /// Simulated seconds per captured frame, with up to 3 decimal places (default: 0, paused); negative runs backwards
+    #[arg(long = "debug-frame-step-seconds", value_name = "SECONDS", value_parser = crate::time::parse_seconds_to_ms, allow_negative_numbers = true, requires = "debug_frames")]
+    pub debug_frame_step_ms: Option<i64>,
+
     /// Append Markdown table dumps in tmp/ at startup, after preparation, and after each projection and rendering. Available in every build
     #[arg(long)]
     pub debug_log_data: bool,
-
-    /// Report bounded memory inventories and instrumented operations after quitting; combine with --debug-singleframe for one frame.
-    /// Requires: cargo build --features memory-diagnostics --bin astroterm. Does not enable the on-screen timing panel
-    #[arg(long)]
-    pub debug_memory: bool,
 
     /// Print this help message
     #[arg(short = 'h', long, action = ArgAction::Help)]

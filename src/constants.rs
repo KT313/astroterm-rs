@@ -15,8 +15,15 @@ pub const LUNAR_SAMPLE_TTL_SECONDS: f64 = 12.0;                                 
 pub const ORIENTATION_SAMPLE_TTL_SECONDS: f64 = 60.0;                                     // reuse Earth-axis orientation samples within 60 simulated seconds
 pub const STELLAR_BATCH_SIZE: usize = 1024;                                               // calculate this many stars at a time in temporary working memory
 
+// Speed groups (radians per Julian year; the pipeline rebuild groups the stars of a region by proper motion)
+pub const SPEED_GROUP_BOUNDS: [f64; 2] = [0.03 * ARCSECOND, 0.3 * ARCSECOND];              // slow below 0.03″/yr, medium below 0.3″/yr, fast from 0.3″/yr on
+pub const SPEED_GROUP_TTL_MS: [i64; 3] = [86_400_000, 10 * 86_400_000, 365 * 86_400_000]; // one per group; assigned longest to slowest, shortest to fastest
+pub const SPEED_GROUP_COUNT: usize = SPEED_GROUP_BOUNDS.len() + 1;                        // one group per bound plus the fast group; calculated automatically
+pub const HELD_DIRECTION_ERROR: f64 = 0.285 * ARCSECOND;                                  // target held-direction error for the offline audit; fixed holds are not universally qualified
+const ARCSECOND: f64 = PI / (180.0 * 3600.0);                                             // one arcsecond in radians, for the settings above
+
 // Sky regions and storage accuracy (angles are stored in radians)
-pub const GRID_DEPTH: u8 = 6;                                                             // split each cube face into 64 × 64 sky regions at depth 6
+pub const GRID_DEPTH: u8 = 5;                                                             // split each cube face into 32 × 32 sky regions at depth 5
 pub const GRID_COARSE_DEPTH: u8 = 4;                                                      // use larger sky regions first to quickly reject areas outside the view
 pub const GRID_CHILDREN_PER_COARSE_CELL: usize = 1 << (2 * (GRID_DEPTH - GRID_COARSE_DEPTH)); // number of small regions inside one large region; calculated automatically
 pub const CELL_COUNT: usize = 6 << (2 * GRID_DEPTH);                                      // total ordinary sky regions across six cube faces; calculated automatically
@@ -27,7 +34,6 @@ pub const REFRACTION_MARGIN: f64 = 0.647 * PI / 180.0;                          
 pub const ABERRATION_MARGIN: f64 = 22.0 * PI / (180.0 * 3600.0);                          // allow apparent shifts from observer motion (at least 22 arcseconds)
 pub const QUANTIZATION_MARGIN: f64 = 0.1 * std::f64::consts::PI / (180.0 * 3600.0);       // allow rounding when matching stars to regions (0.1 arcsecond)
 pub const MAX_DIRECTION_ERROR: f64 = 0.5 * std::f64::consts::PI / (180.0 * 3600.0);       // maximum position error from compact star storage (0.5 arcsecond)
-pub const SINGULAR_RATIO: f64 = 1e-3;                                                     // trigger close-pass handling below 0.1% of a star’s starting distance
 
 // Reused-sample error limits (AU = Earth–Sun distance; arcsecond = 1/3600°)
 pub const PLANET_POSITION_ERROR_AU: f64 = 3e-8;                                           // maximum planet-position error compared with a fresh calculation
@@ -38,12 +44,10 @@ pub const ORIENTATION_ERROR_ARCSECONDS: f64 = 0.2;                              
 
 // View defaults and interactive controls
 pub const DEFAULT_FOV_DEGREES: f64 = 180.0;                                               // starting view width; also sets polar-projection scaling
-pub const DEFAULT_CHARACTER_FPS: i64 = 24;                                                // target frames per second for character rendering unless overridden
-pub const DEFAULT_PIXEL_FPS: i64 = 12;                                                    // target frames per second for pixel rendering unless overridden
+pub const DEFAULT_FPS: i64 = 12;                                                          // target frames per second unless overridden
 pub const DEFAULT_PIXEL_TEXT_SCALE: f64 = 0.85;                                           // draw pixel text at 85% of terminal-cell size unless overridden
 pub const DEFAULT_MAGNITUDE_THRESHOLD: f32 = 5.0;                                         // faintest stars shown by default; larger magnitudes are dimmer
 pub const DEFAULT_SIMULATION_SPEED: f64 = 1.0;                                            // simulated seconds per real second; 1 means normal speed
-pub const MIN_FOV_DEGREES: f64 = 1.0;                                                     // smallest view width allowed when zooming in
 pub const PAN_STEP_FRACTION: f64 = 1.0 / 20.0;                                            // move by one twentieth of the current view width per arrow press
 pub const ZOOM_FACTOR: f64 = 1.25;                                                        // divide the view width by this factor for one zoom-in step
 pub const SPEED_FACTOR: f64 = 10.0;                                                       // multiply or divide simulation speed by this factor per speed-key press
@@ -56,30 +60,28 @@ pub const KITTY_SHARED_MEMORY_POLL_MS: u64 = 1;                                 
 pub const KITTY_COMPRESSION_GROWTH_BYTES: usize = 32 * 1024;                              // grow compressed output by at least this much when its buffer fills
 pub const MAX_IMAGE_PIXELS: usize = 16_777_216;                                           // maximum width × height allowed for a pixel image
 pub const PIXEL_BACKGROUND_RGBA: [u8; 4] = [3, 6, 14, 255];                               // dark sky background; the last value must stay 255 for full opacity
-pub const STAR_OPACITY_REFERENCE_MAGNITUDE: f64 = 0.0;                                    // stars this bright or brighter start at full opacity
+pub const STAR_OPACITY_REFERENCE_MAGNITUDE: f64 = 3.0;                                    // stars this bright or brighter start at full opacity
 pub const STAR_OPACITY_MAGNITUDE_SCALE: f64 = 0.12;                                        // larger values make opacity fall faster as stars get dimmer
 pub const STAR_BRIGHTNESS_REFERENCE_FOV_DEGREES: f64 = 180.0;                            // keep the base star brightness at this view width or wider
-pub const STAR_BRIGHTNESS_ZOOM_POWER: f64 = 0.8;                                          // halving the field of view multiplies opacity by 2 raised to this power
+pub const STAR_BRIGHTNESS_NARROWEST_FOV_DEGREES: f64 = 1.0;                              // stop brightening stars when the view narrows past this width
+pub const STAR_BRIGHTNESS_ZOOM_POWER: f64 = 0.0;                                          // temporarily disable zoom brightening; restore 0.8 to enable it
 pub const MIN_STAR_PIXEL_OPACITY: f32 = 0.05;                                             // raise nonempty star pixels to this opacity after all stars are blended
+pub const TILE_EDGE_TEXELS: usize = 64;                                                   // every sky tile (one per speed group and per region or cell) is this many texels wide and high, whatever the zoom
+pub const MIN_TILE_TEXELS_PER_PIXEL: f64 = 0.4;                                           // split a region's tile into four finer ones while it has this many texels per screen pixel or fewer (testing value)
+pub const MAX_TILE_SPLITS: u8 = 8;                                                        // split a region at most this many times over; 1° views need about five on a 1400-pixel square, and each halving of the view one more
+pub const TILE_FILTER_BLOCK_EDGE: usize = 8;                                             // exact channel sums for this many texels per block edge
+pub const TILE_FILTER_MIN_TEXELS: usize = 256;                                            // use block sums only for boxes touching at least this many source texels
+pub const PROJECTION_SCREEN_BLOCK_SIZE: usize = 16;                                     // worker clearing and composition use square screen blocks of this size
+pub const PROJECTION_USE_BILINEAR_FAST_PATH: bool = true;                                 // direct unit-footprint sampling; disable to use the general box filter everywhere
+pub const STEREOGRAPHIC_ROW_REBASE_PIXELS: usize = 512;                                  // restart transformed row coefficients to bound roundoff, tested through 8192-pixel rows
+pub const EQUIDISTANT_CAP_RINGS: usize = 8;                                               // rings outlining an equidistant region's candidate pixels; more follow its cap closer at a per-row cost
+pub const PROJECTION_MAPPING_BATCH_PIXELS: usize = 4;                                     // refraction and equidistant spans map this many pixels together, so the compiler computes them side by side
 pub const DYNAMIC_NAME_COUNT: usize = 5;                                                  // label at most this many visible stars; planets and Moon are separate
 pub const MAX_CACHED_GLYPHS: usize = 512;                                                 // maximum saved character images before clearing the glyph cache
 pub const METADATA_PANEL_WIDTH: usize = 45;                                               // width of the metadata text panel, in character columns
 pub const METADATA_TAB_WIDTH: usize = 8;                                                  // spacing between tab stops in the metadata panel
 pub const METADATA_VALUE_COLUMN: usize = 16;                                              // earliest column where metadata values begin
 pub const KEYS_COLUMN_WIDTH: usize = 18;                                                  // space reserved for key names in the help text
-
-// Timing smoothing and bounded diagnostic history
-pub const TIMING_EMA_FACTOR: f64 = 0.95;                                                  // keep 95% of the old timing average and add 5% of the new value
-pub const MAX_MEMORY_EVENTS_PER_STEP: usize = 128;                                        // maximum memory-operation records retained for one pipeline step
-pub const MAX_TRACE_STEPS: usize = 1024;                                                  // maximum recorded steps in each retained startup or frame trace
-pub const MAX_TRACE_DEPTH: usize = 32;                                                    // maximum nesting of recorded pipeline steps
-pub const MAX_TRACE_EVENTS: usize = 8192;                                                 // maximum memory-operation records in each retained trace
-pub const MAX_TRACE_DETAILS: usize = 4096;                                                // maximum detail messages in each retained trace
-pub const MAX_TRACE_TEXT_BYTES: usize = 256 * 1024;                                       // maximum combined detail-text bytes in each retained trace
-pub const MAX_DETAIL_BYTES: usize = 4096;                                                 // maximum bytes kept from one detail message
-pub const MAX_TRACE_INVENTORIES: usize = 1;                                               // maximum memory snapshots in each retained trace
-pub const MAX_TIMING_PATHS: usize = 512;                                                  // maximum distinct step paths with smoothed timing averages
-pub const MAX_AGGREGATE_PATHS: usize = 1024;                                              // maximum distinct step paths with accumulated diagnostic totals
 
 // Memory inventory and table preview limits
 pub const INVENTORY_MAX_ROWS: usize = 4096;                                               // maximum rows in a memory-usage report
@@ -99,6 +101,8 @@ pub const GAIA_DISTANCE_MIN_SIGNAL: f64 = 10.0;                                 
 pub const GAIA_DOWNLOAD_MAX_BYTES: u64 = 1024 * 1024 * 1024;                             // stop an unexpectedly large individual download
 
 // Dataset startup display
+pub const STARTUP_SORT_THREADS: usize = 4;                                               // cap CPU workers used for catalog sorting
+pub const STARTUP_PARALLEL_SORT_ROWS: usize = 1_000_000;                                  // smaller catalogs sort on the calling thread
 pub const STARTUP_PROGRESS_HZ: u8 = 10;                                                  // redraw loading information at most this often per second
 pub const STARTUP_PROGRESS_ROWS: u64 = 4096;                                             // update row counts in batches, not for each star
 pub const STARTUP_NOTICE_BYTES: usize = 4096;                                            // bound partial notice text while progress bars are visible
@@ -107,6 +111,7 @@ pub const STARTUP_NOTICE_BYTES: usize = 4096;                                   
 pub const MAST_PARALLEL_BLOCKS: u8 = 4;                                                 // download four blocks at once by default
 pub const MAST_MAX_PARALLEL_BLOCKS: u8 = 16;                                             // cap simultaneous block downloads per process
 pub const MAST_PENDING_COMPRESSED_MAX_BYTES: usize = 512 * 1024 * 1024;                  // guard unusually large groups; sixteen 256 MiB groups could otherwise retain 4 GiB
+pub const MAST_METADATA_REQUESTS: usize = 32;                                           // fetch metadata for up to 32 catalog files at once
 pub const MAST_FOOTER_TAIL_BYTES: u64 = 256 * 1024;                                     // usually fetch footer and length in one request
 pub const MAST_FOOTER_MAX_BYTES: usize = 16 * 1024 * 1024;                               // reject unexpectedly large Parquet metadata
 pub const MAST_BLOCK_MAX_BYTES: usize = 256 * 1024 * 1024;                              // total compressed column bytes allowed per group
@@ -115,3 +120,6 @@ pub const MAST_DECODE_BATCH_ROWS: usize = 65_536;                               
 pub const MAST_RESPONSE_HEADER_SECONDS: u64 = 60;                                      // stop waiting for response headers; the body uses the block deadline
 pub const MAST_BLOCK_SECONDS: u64 = 600;                                               // include retries in the total group download deadline
 pub const MAST_REQUEST_RETRIES: usize = 3;                                             // retry transient reads without changing source identity
+
+pub const CACHE_CHUNK_BYTES: usize = 4 * 1024 * 1024;                                    // compress prepared data in bounded four-megabyte pieces
+

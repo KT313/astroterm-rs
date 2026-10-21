@@ -1,7 +1,7 @@
 # Astronomy references
 
 These tools establish independent references and record the current model's errors. They do not certify the
-future accuracy targets in `astro::accuracy`. Ordinary Rust tests use checked-in fixtures and need no Python or
+future accuracy targets in `formulas`. Ordinary Rust tests use checked-in fixtures and need no Python or
 network access.
 
 ```sh
@@ -139,6 +139,11 @@ transformation. These are sampled model checks, not guarantees at every untested
 uncertainties and unknown future ΔT remain separate. Raw summary output lives in ignored development notes.
 
 Original C numerical fixtures/tolerances remain unchanged. `current_positions.rs` retains the phase-0 historical
-baseline; `phase6_positions.rs` is the explicitly regenerated production regression baseline. Four character
-snapshots change by a few cells as corrected star/endpoint positions cross rounding boundaries; the remaining
-scene snapshots are unchanged. A separate lossless snapshot covers the yellow coverage message and boundaries.
+baseline; `phase6_positions.rs` is the explicitly regenerated production regression baseline, checked through the
+frame loop's steps 1 and 2 in `tests/position_references.rs`. The character snapshots went with the character
+renderer (2026-10-12); the accuracy warning text and its boundary dates are checked in `src/points` and `src/formulas`.
+
+The current `reference_probe` emits `position`, `precession`, and `illumination` rows. Illumination rows contain
+UTC Julian date, illuminated fraction, phase angle in radians, and waxing status from the active lunar model.
+The retired `phase` rows compared two old-model Moon ages; historical saved reference files retain those rows
+as evidence, but newly generated probes no longer run the superseded planetary or lunar models.

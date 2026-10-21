@@ -1,7 +1,7 @@
 //! Each unfinished block keeps its slot and byte reservation until publication or shutdown.
 use super::{Plan, finish_block, transfer::{download_ranges, normalize_block}};
 use crate::{catalog::mast::{storage::{BlobStore, invalid}, transport::{Fetch, TransferControl}},
-    constants::{MAST_PENDING_COMPRESSED_MAX_BYTES, MAST_BLOCK_MAX_BYTES}, progress::DatasetProgress, timing::StepTimes};
+    constants::{MAST_PENDING_COMPRESSED_MAX_BYTES, MAST_BLOCK_MAX_BYTES}, progress::DatasetProgress, time::StepTimes};
 use std::{io, collections::HashMap, panic::{catch_unwind, AssertUnwindSafe, resume_unwind}, sync::mpsc, thread, time::{Instant, Duration}};
 
 pub(super) fn run_downloads(store: &BlobStore, plan: &mut Plan, parallel: u8, fetch: &impl Fetch, progress: &mut dyn DatasetProgress, times: &mut StepTimes) -> io::Result<()> {
@@ -25,6 +25,7 @@ pub(in crate::catalog::mast) fn run_with_budget(store: &BlobStore, plan: &mut Pl
             let (mut next, mut reserved) = (0, 0);
             let mut ready = plan.ready.iter().filter(|block| block.is_some()).count();
             while next < jobs.len() || !handles.is_empty() {
+                times.measure("Dataset loading.Dataset resolution.MAST block downloads.Transfer wait");
                 while next < jobs.len() && handles.len() < parallel && fits_budget(reserved, jobs[next].compressed, budget) {
                     let number = next;
                     let job = &jobs[number];
@@ -52,8 +53,10 @@ pub(in crate::catalog::mast) fn run_with_budget(store: &BlobStore, plan: &mut Pl
                 let job = &jobs[number];
                 let finish = || {
                     let input = outcome?;
-                    let raw = times.measure("MAST block normalization", || normalize_block(input, job))?;
-                    times.measure("MAST block publication", || store.publish(&job.key, &raw, false))
+                    times.measure("Dataset loading.Dataset resolution.MAST block downloads.MAST block normalization");
+                    let raw = normalize_block(input, job)?;
+                    times.measure("Dataset loading.Dataset resolution.MAST block downloads.MAST block publication");
+                    store.publish(&job.key, &raw, false)
                 };
                 let blob = finish().map_err(|error: io::Error| io::Error::new(error.kind(), format!("{} group {}: {error}", job.path, job.group)))?;
                 plan.ready[job.index] = Some(finish_block(job, blob));                           // completion order never determines catalog order

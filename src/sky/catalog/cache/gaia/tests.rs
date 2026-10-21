@@ -36,7 +36,11 @@ fn multiple_files_prepare_owned_rows_and_hit_cache_without_reparsing() {
     assert!(prepared.catalog.constellations().is_empty());
     let mut ids: Vec<_> = prepared.catalog.stars.iter().map(|star| star.id.0).collect();
     ids.sort_unstable(); assert_eq!(ids, [0, 1]);
-    assert!(prepared.catalog.stars.iter().all(|star| prepared.catalog.star_name(&star).unwrap().starts_with("Gaia DR3 ")));
+    let mut label = String::new();
+    for (row, id) in prepared.catalog.stars.source_ids().unwrap().iter().enumerate() {
+        prepared.catalog.stars.write_label(row, &prepared.catalog.names, true, &mut label);
+        assert_eq!(label, format!("Gaia DR3 {id}"));
+    }
     assert!(String::from_utf8_lossy(&notices).contains("output sources=2"));
     notices.clear();
     let cached = load_prepared_gaia(&files, path.clone(), &fingerprint, &mut crate::progress::NoProgress(&mut notices), &mut StepTimes::default()).unwrap();
@@ -72,6 +76,6 @@ fn previous_label_boundary_format_is_rejected() {
     let mut bytes = fs::read(&path).unwrap();
     bytes[8..12].copy_from_slice(&7_u32.to_le_bytes());
     fs::write(&path, bytes).unwrap();
-    let error = super::super::format::load_cached_catalog(&path, &fingerprint).unwrap_err();
+    let error = super::super::format::load_cached_catalog(&path, &fingerprint, &mut crate::progress::Report::quiet()).unwrap_err();
     assert!(error.to_string().contains("version"));
 }

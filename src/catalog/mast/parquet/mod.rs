@@ -2,7 +2,7 @@
 use super::{COLUMNS, storage::invalid};
 use crate::constants::{MAST_DECODED_MAX_BYTES, MAST_DECODE_BATCH_ROWS, MAST_BLOCK_MAX_BYTES};
 use bytes::Bytes;
-use parquet::{basic::{Type as Physical, Compression, ConvertedType, LogicalType}, data_type::{Int64Type, ByteArrayType, ByteArray, DataType},
+use parquet::{basic::{Type as Physical, Compression, ConvertedType, LogicalType}, data_type::{Int64Type, DataType},
     file::{reader::{ChunkReader, Length, FileReader}, serialized_reader::SerializedFileReader, metadata::{ParquetMetaData, ParquetMetaDataReader}, writer::SerializedFileWriter, properties::WriterProperties},
     schema::types::Type, column::reader::{ColumnReader, ColumnReaderImpl}};
 use serde::{Serialize, Deserialize};
@@ -10,7 +10,7 @@ use std::{io::{self, Cursor}, sync::Arc};
 
 /// Bit-preserving numeric inputs make duplicate comparison independent of NaN and signed-zero equality.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub(crate) struct MastRow { pub source_id: u64, pub designation: Option<String>, pub values: [Option<u64>; 11] }
+pub(crate) struct MastRow { pub source_id: u64, pub values: [Option<u64>; 11] }
 impl MastRow {
     pub fn numbers(&self) -> [Option<f64>; 11] { self.values.map(|v| v.map(f64::from_bits)) }
 }
@@ -49,7 +49,6 @@ pub(super) fn projected_schema(metadata: &ParquetMetaData) -> io::Result<Type> {
             0 => kind == Physical::INT64
                 && matches!(field.get_basic_info().converted_type(), ConvertedType::NONE | ConvertedType::INT_64)
                 && field.get_basic_info().logical_type_ref().is_none_or(|logical| matches!(logical, LogicalType::Integer(value) if value.bit_width == 64 && value.is_signed)),
-            1 => kind == Physical::BYTE_ARRAY && (field.get_basic_info().converted_type() == ConvertedType::UTF8 || field.get_basic_info().logical_type_ref() == Some(&LogicalType::String)),
             _ => matches!(kind, Physical::FLOAT | Physical::DOUBLE),
         };
         if !valid { return Err(invalid(format!("incompatible Gaia datatype for {name}"))); }
@@ -86,8 +85,7 @@ pub(super) fn read_group<R: ChunkReader + 'static>(input: R, group: usize) -> io
     let expected = usize::try_from(group.metadata().num_rows()).map_err(io::Error::other)?;
     let mut output = Vec::new();
     output.try_reserve(expected).map_err(io::Error::other)?;
-    output.resize_with(expected, || MastRow { source_id: 0, designation: None, values: [None; 11] });
-    let mut bytes = expected * std::mem::size_of::<MastRow>();
+    output.resize_with(expected, || MastRow { source_id: 0, values: [None; 11] });
 
     for (field, name) in COLUMNS.iter().enumerate() {
         let column = group.metadata().columns().iter().position(|column| column.column_path().string() == *name)
@@ -98,21 +96,12 @@ pub(super) fn read_group<R: ChunkReader + 'static>(input: R, group: usize) -> io
                 row.source_id = value.copied().filter(|id| *id >= 0).ok_or_else(|| invalid("missing/invalid Gaia source_id"))? as u64;
                 Ok(())
             })?,
-            ColumnReader::ByteArrayColumnReader(reader) if field == 1 => read_column(reader, &mut output, optional, |row, value| {
-                if let Some(value) = value {
-                    let text = std::str::from_utf8(value.data()).map_err(|_| invalid("designation must be UTF-8"))?;
-                    bytes = bytes.checked_add(text.len()).ok_or_else(|| invalid("label size overflow"))?;
-                    if bytes > MAST_DECODED_MAX_BYTES { return Err(invalid("decoded Gaia block exceeds bounds")); }
-                    row.designation = Some(text.to_owned());
-                }
+            ColumnReader::DoubleColumnReader(reader) if field >= 1 => read_column(reader, &mut output, optional, |row, value| {
+                row.values[field - 1] = value.map(|value| value.to_bits());
                 Ok(())
             })?,
-            ColumnReader::DoubleColumnReader(reader) if field >= 2 => read_column(reader, &mut output, optional, |row, value| {
-                row.values[field - 2] = value.map(|value| value.to_bits());
-                Ok(())
-            })?,
-            ColumnReader::FloatColumnReader(reader) if field >= 2 => read_column(reader, &mut output, optional, |row, value| {
-                row.values[field - 2] = value.map(|value| f64::from(*value).to_bits());
+            ColumnReader::FloatColumnReader(reader) if field >= 1 => read_column(reader, &mut output, optional, |row, value| {
+                row.values[field - 1] = value.map(|value| f64::from(*value).to_bits());
                 Ok(())
             })?,
             _ => return Err(invalid("unexpected Gaia scalar type")),
@@ -174,20 +163,15 @@ fn write_columns<W: io::Write + Send>(rows: &[MastRow], group: &mut parquet::fil
         let mut column = group.next_column().map_err(io::Error::other)?.ok_or_else(|| invalid("missing output column"))?;
         let definitions: Vec<i16> = rows.iter().map(|row| i16::from(match i {
             0 => true,
-            1 => row.designation.is_some(),
-            _ => row.values[i - 2].is_some(),
+            _ => row.values[i - 1].is_some(),
         })).collect();
         match i {
             0 => {
                 let values: Vec<i64> = rows.iter().map(|row| row.source_id as i64).collect();
                 column.typed::<Int64Type>().write_batch(&values, Some(&definitions), None).map_err(io::Error::other)?;
             },
-            1 => {
-                let values: Vec<ByteArray> = rows.iter().filter_map(|row| row.designation.as_ref().map(|text| ByteArray::from(text.as_str()))).collect();
-                column.typed::<ByteArrayType>().write_batch(&values, Some(&definitions), None).map_err(io::Error::other)?;
-            },
             _ => {
-                let values: Vec<f64> = rows.iter().filter_map(|r| r.values[i - 2].map(f64::from_bits)).collect();
+                let values: Vec<f64> = rows.iter().filter_map(|r| r.values[i - 1].map(f64::from_bits)).collect();
                 match column.untyped() {
                     parquet::column::writer::ColumnWriter::FloatColumnWriter(writer) => {
                         writer.write_batch(&values.iter().map(|value| *value as f32).collect::<Vec<_>>(), Some(&definitions), None).map_err(io::Error::other)?;

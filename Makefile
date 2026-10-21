@@ -1,12 +1,13 @@
 # Shortcuts for building and running astroterm.
 #
 #   make build                          build the release binary
+#   make build-debug                    build pixel diagnostics into target/pixel-debug/astroterm
 #   make build-aggressive                     build for this CPU with fat LTO, into target/aggressive
 #   make build-aggressive-pgo                 additionally train/apply PGO and BOLT, into target/aggressive-pgo
 #   make run -- -i Tokyo -cCu           run the last built binary with arguments
 #   make build-run -- -i Tokyo -m       rebuild if needed, then run with arguments
-#   make test                           run correctness tests and compile benchmark targets
-#   make test-benchmarks                execute benchmark smoke checks (includes 2.5M stars)
+#   make test                           run correctness tests
+#   make test-benchmarks                measure the stereographic warp with sparse and dense tiles
 #   make clean-stale                    delete build artefacts no build has touched for three days
 #
 # The `--` stops make from reading the arguments as its own options. For values with spaces or `=`, use ARGS:
@@ -34,10 +35,14 @@ RUN_ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
 	@:
 endif
 
-.PHONY: build build-aggressive build-aggressive-pgo check-aggressive-pgo-tools run build-run test test-benchmarks clean-stale check-sweep
+.PHONY: build build-debug build-aggressive build-aggressive-pgo check-aggressive-pgo-tools run build-run test test-benchmarks clean-stale check-sweep
 
 build:
 	cargo build --release
+
+build-debug:
+	cargo build --profile pixel-debug --features pixel-debug
+	@echo "Run: make run BINARY=target/pixel-debug/astroterm ARGS='-i Tokyo -m'"
 
 build-aggressive:
 	$(AGGRESSIVE_ENV) cargo build --profile aggressive
@@ -68,14 +73,12 @@ run:
 build-run: build run
 
 # libtest schedules independent tests in parallel; each test's calculations stay sequential.
-# Criterion smoke checks include large workloads, so compile them here and run them separately.
 test:
 	cargo test --lib --bins --tests --examples
 	cargo test --doc
-	cargo test --benches --no-run
 
 test-benchmarks:
-	cargo test --bench frame --bench spatial
+	cargo test --release --lib time_pixel_mapping -- --ignored --nocapture
 
 # cargo never deletes artefacts whose hash changed (feature sets, dependency updates, superseded test binaries), so
 # target/ grows without bound. This removes what no build has used for three days. The compile-fail tests build a

@@ -21,9 +21,3 @@ impl<T: Pod> CatalogArray<T> {
     pub(crate) fn bytes(&self) -> &[u8] { bytemuck::cast_slice(&self.0) }
     pub(crate) fn push(&mut self, value: T) { self.0.push(value); }
 }
-#[cfg(feature = "memory-diagnostics")]
-impl<T: Pod + crate::cache::ReportBuffers> crate::cache::ReportBuffers for CatalogArray<T> {
-    fn report_buffers(&self, sink: &mut dyn crate::cache::BufferSink) {
-        crate::cache::report_field(sink, "owned", &self.0);
-    }
-}

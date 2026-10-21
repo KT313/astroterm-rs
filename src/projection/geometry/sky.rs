@@ -1,15 +1,11 @@
-//! Camera geometry only: maps an immutable observed sky to screen points and clipped segments. No simulation
-//! evaluation or astronomical corrections occur here. Character rendering consumes these prepared primitives.
-use crate::model::{CartesianCamera, Polar, ScreenPoint, View, ViewCenter};
-use super::draw_order::prepare_draw_order;
-use crate::astro::{Horizontal, Vector3, offset_vector_towards};
+//! Camera geometry only: maps directions to viewport cells and clipped segments, and places the horizon. No
+//! simulation evaluation or astronomical corrections occur here; step 6 consumes these primitives.
+use super::types::{CartesianCamera, Polar, ProjectedArc, ScreenPoint};
+use crate::model::{Cell, ProjectionViewport as Viewport, ProjectionViewport, View, ViewCenter};
+use crate::formulas::{Horizontal, Vector3, offset_vector_towards};
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 const EDGE_TOLERANCE: f64 = 1e-6;
-use crate::model::{
-    Cell, ProjectedArc, ProjectedConstellation, ProjectedMoon, ProjectedPlanet, ProjectionViewport as Viewport,
-    ProjectionViewport,
-};
 
 /// Map Cartesian projection coordinates to signed row/column cells.
 /// Inlined into the per-star loops; `round_half_away` replaces `f64::round`, a library call on baseline x86-64.
@@ -41,135 +37,6 @@ pub fn polar_to_cell(viewport: ProjectionViewport, polar: Polar) -> Cell {
     )
 }
 
-/// Project without retaining timing diagnostics (reference fixtures and library callers).
-pub fn project_sky<'a>(sky: impl Into<crate::model::ObservedSkyView<'a>>, view: &View, viewport: Viewport) -> crate::model::ProjectionData {
-    project_sky_with_times(sky, view, viewport, &mut crate::timing::StepTimes::default())
-}
-
-/// Camera-stage coordinator. Exact visibility and draw order stay separate from observation's conservative filters.
-pub fn project_sky_with_times<'a>(
-    sky: impl Into<crate::model::ObservedSkyView<'a>>,
-    view: &View,
-    viewport: Viewport,
-    times: &mut crate::timing::StepTimes,
-) -> crate::model::ProjectionData {
-    let sky = sky.into();
-    let camera = crate::projection::prepare_camera(view);
-    let stars = times.measure("Star projection", || project_visible_stars(sky, &camera, viewport));
-    let order = times.measure("Star draw order", || {
-        let mut records = Vec::new();
-        prepare_draw_order(&mut records, stars.iter().map(|&(index, _)| {
-            let star = sky.star_view(index);
-            (star.magnitude, star.id())
-        }));
-        records.into_iter().map(|record| record.projected_index).collect()
-    });
-    let (planets, moon) = times.measure("Body projection", || project_bodies(sky, view, &camera, viewport));
-    let constellations = times.measure("Constellation projection", || {
-        project_constellations(sky.constellations(), sky.stars, sky.magnitude_threshold, view, viewport)
-    });
-    let (horizon, horizon_labels) = times.measure("Horizon projection", || {
-        (
-            project_horizon_line(view, viewport),
-            project_horizon_labels(view, viewport),
-        )
-    });
-    crate::model::ProjectionData {
-        outside_accuracy_range: sky.outside_accuracy_range,
-        selection: sky.selection,
-        evaluated_stars: sky.corrections.evaluated,
-        correction_stats: sky.corrections,
-        catalog_singular_count: sky.catalog.singular_count,
-        runtime_singular_count: sky.runtime_singular_count,
-        stars,
-        order,
-        planets,
-        moon,
-        constellations,
-        facing: view.is_facing(),
-        fov_degrees: view.fov_degrees,
-        viewport,
-        horizon,
-        horizon_labels,
-    }
-}
-
-pub(super) fn project_visible_cell(camera: &CartesianCamera, viewport: Viewport, position: Vector3) -> Option<Cell> {
-    crate::projection::project_camera(*camera, position)
-        .filter(|p| p.is_visible())
-        .map(|p| crate::projection::project_to_cell(viewport, p))
-}
-
-fn project_visible_stars(sky: crate::model::ObservedSkyView<'_>, camera: &CartesianCamera, viewport: Viewport) -> Vec<(usize, Cell)> {
-    let mut cells = Vec::with_capacity(sky.stars.len()); // reserve the maximum before filtering to avoid growth copies
-    cells.extend(sky.stars.iter().enumerate().filter(|(_, star)| star.drawable).filter_map(|(index, star)| {
-        project_visible_cell(camera, viewport, star.position).map(|cell| (index, cell))
-    }));
-    cells
-}
-
-pub(in crate::projection) fn project_bodies(
-    sky: crate::model::ObservedSkyView<'_>,
-    view: &View,
-    camera: &CartesianCamera,
-    viewport: Viewport,
-) -> (Vec<ProjectedPlanet>, ProjectedMoon) {
-    let cell = |position| project_visible_cell(camera, viewport, position);
-    let planets = sky
-        .planets
-        .iter()
-        .map(|planet| ProjectedPlanet {
-            kind: planet.kind,
-            cell: cell(planet.position),
-        })
-        .collect();
-    let moon = ProjectedMoon {
-        illumination: sky.moon.illumination,
-        phase: sky.moon.phase,
-        cell: cell(sky.moon.position),
-        light_direction: project_light_direction(view, sky.moon.position, sky.sun().position),
-    };
-    (planets, moon)
-}
-
-pub(in crate::projection) fn project_constellations(
-    figures: &[crate::model::Constellation],
-    stars: crate::model::ObservedStars<'_>,
-    magnitude_threshold: f64,
-    view: &View,
-    viewport: Viewport,
-) -> Vec<ProjectedConstellation> {
-    let camera = crate::projection::prepare_camera(view); // all segments share the same viewing direction and scale
-    let columns = stars.constellation_columns();          // every endpoint lives in one region; resolve it once, not per star
-    let find_star = |index| { let columns = columns?; columns.find_row(index).map(|row| columns.star(row)) };
-    figures
-        .iter()
-        .filter_map(|figure| {
-            let endpoints = figure
-                .segments
-                .iter()
-                .flatten()
-                .map(|&index| find_star(index))
-                .collect::<Option<Vec<_>>>()?;
-            let maximum_magnitude = endpoints
-                .iter()
-                .map(|star| star.magnitude)
-                .fold(f64::NEG_INFINITY, f64::max);
-            if maximum_magnitude > magnitude_threshold {
-                return None;
-            }
-            let arcs = endpoints
-                .chunks_exact(2)
-                .flat_map(|pair| project_constellation_segment_with_camera(view, viewport, camera, pair[0].position, pair[1].position))
-                .collect();
-            Some(ProjectedConstellation {
-                maximum_magnitude,
-                arcs,
-            })
-        })
-        .collect()
-}
-
 /// Screen direction towards the Sun, shared by lunar raster lighting and character glyph orientation.
 pub fn project_light_direction(view: &View, moon: Vector3, sun: Vector3) -> Option<ScreenPoint> {
     let camera = crate::projection::prepare_camera(view);
@@ -185,7 +52,6 @@ pub fn project_light_direction(view: &View, moon: Vector3, sun: Vector3) -> Opti
 
 /// Sample clipped great-circle arcs with at most a quarter-viewport-unit midpoint deviation. Both renderers
 /// consume this geometry; endpoints keep their star markers, while inserted vertices never create markers.
-#[cfg(test)]
 pub fn project_constellation_segment(view: &View, viewport: Viewport, from: Vector3, to: Vector3) -> Vec<ProjectedArc> {
     project_constellation_segment_with_camera(view, viewport, crate::projection::prepare_camera(view), from, to)
 }

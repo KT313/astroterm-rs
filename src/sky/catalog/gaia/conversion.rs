@@ -1,5 +1,5 @@
 //! Gaia J2016 ICRS inputs rebased to our J2000 straight-line model; G is deliberately not converted to V.
-use crate::astro::{Equatorial, Vector3, models::stars::StellarMotion};
+use crate::formulas::{Equatorial, Vector3, StellarMotion};
 use crate::catalog::{GaiaSource, validate_magnitude};
 use crate::constants::GAIA_DISTANCE_MIN_SIGNAL;
 use crate::model::{Star, StarColor};

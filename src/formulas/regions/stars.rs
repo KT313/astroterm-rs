@@ -1,0 +1,309 @@
+//! Straight-line J2000 stellar motion, f64. Directions and scaled velocities are dimensionless and per Julian year;
+//! distances are parsecs. Bounds and brightness keys cover the shared TT computational interval, not physical
+//! catalog accuracy. Missing/singular distances use tangential motion and constant brightness.
+use crate::formulas::constants::SINGULAR_RATIO;
+use crate::formulas::types::StellarClass;
+use crate::formulas::{StellarMotion, StellarSample};
+use crate::formulas::{COMPUTATIONAL_INTERVAL, Equatorial, J2000, JULIAN_YEAR_DAYS, Vector3};
+
+impl StellarClass {
+    pub fn is_stationary(self) -> bool {
+        self.0 & 1 != 0
+    }
+    pub fn has_distance(self) -> bool {
+        self.0 & 2 != 0
+    }
+}
+
+pub fn years_since_j2000(julian_date_tt: f64) -> f64 {
+    (julian_date_tt - J2000) / JULIAN_YEAR_DAYS
+}
+
+pub fn computational_years() -> (f64, f64) {
+    (
+        years_since_j2000(COMPUTATIONAL_INTERVAL.start_tt),
+        years_since_j2000(COMPUTATIONAL_INTERVAL.end_tt),
+    )
+}
+
+/// Tangential vector from dRA/dyear and dDec/dyear (the RA rate itself, not multiplied by cos declination).
+pub fn compute_tangential_motion(direction: Equatorial, motion: Equatorial) -> Vector3 {
+    let (sa, ca) = direction.right_ascension.sin_cos();
+    let (sd, cd) = direction.declination.sin_cos();
+    Vector3 {
+        x: -sa * cd * motion.right_ascension - ca * sd * motion.declination,
+        y: ca * cd * motion.right_ascension - sa * sd * motion.declination,
+        z: cd * motion.declination,
+    }
+}
+
+impl StellarMotion {
+    /// Preserve a catalog's precise spherical direction while scaling its Cartesian velocity by validated distance.
+    pub fn from_direction_velocity(direction: Equatorial, distance_pc: f64, velocity_pc_year: Vector3) -> Self {
+        Self {
+            u0: direction.to_unit_vector(),
+            w: Vector3 {
+                x: velocity_pc_year.x / distance_pc,
+                y: velocity_pc_year.y / distance_pc,
+                z: velocity_pc_year.z / distance_pc,
+            },
+            distance_pc: Some(distance_pc),
+        }
+    }
+
+    /// Tangential proper motion as catalog µα* (dRA/dt · cos declination) and dDec/dt, including at the poles.
+    pub fn from_sky_motion(direction: Equatorial, ra_cos_dec: f64, dec_motion: f64) -> Self {
+        let (sa, ca) = direction.right_ascension.sin_cos();
+        let (sd, cd) = direction.declination.sin_cos();
+        let w = Vector3 {
+            x: -sa * ra_cos_dec - ca * sd * dec_motion,
+            y: ca * ra_cos_dec - sa * sd * dec_motion,
+            z: cd * dec_motion,
+        };
+        Self {
+            u0: direction.to_unit_vector(),
+            w,
+            distance_pc: None,
+        }
+    }
+
+    pub fn from_angles(direction: Equatorial, proper_motion: Equatorial) -> Self {
+        Self {
+            u0: direction.to_unit_vector(),
+            w: compute_tangential_motion(direction, proper_motion),
+            distance_pc: None,
+        }
+    }
+
+    /// Minimize the distance quadratic over a closed interval (including the computational interval's limiting
+    /// upper endpoint gives a conservative key for its half-open runtime domain).
+    pub fn closest_approach(self, start: f64, end: f64) -> (f64, f64) {
+        let speed = length(self.w);
+        let time = if speed == 0.0 {
+            start
+        } else {
+            (-self.u0.dot(self.w * (1.0 / speed)) / speed).clamp(start, end)
+        };
+        (time, length(self.u0 + self.w * time))
+    }
+
+    fn tangential_velocity(self) -> Vector3 {
+        self.w - self.u0 * (self.u0.dot(self.w) / self.u0.dot(self.u0))
+    }
+
+    /// Apply the single load-time singular policy to both direction and brightness. Returns whether it fired.
+    pub fn remove_singular_distance(&mut self) -> bool {
+        let (start, end) = computational_years();
+        if self.distance_pc.is_some() && self.closest_approach(start, end).1 < SINGULAR_RATIO {
+            self.w = self.tangential_velocity();
+            self.distance_pc = None;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(crate) fn classify(self) -> StellarClass {
+        StellarClass(u8::from(self.w == Vector3::default()) | (u8::from(self.distance_pc.is_some()) << 1))
+    }
+
+    #[inline(always)]                                                                   // runs for every simulated star; as a call it took longer than its arithmetic
+    pub fn evaluate(self, years: f64, magnitude: f64) -> StellarSample {
+        self.evaluate_classified(years, magnitude, self.classify())
+    }
+
+    #[inline(always)]
+    pub(crate) fn evaluate_classified(self, years: f64, magnitude: f64, class: StellarClass) -> StellarSample {
+        let mut q = self.u0 + self.w * years;
+        let mut ratio = q.length();                                                     // sqrt of the dot product: |q| stays near 1, no overflow risk
+        let singular = class.has_distance() && ratio < SINGULAR_RATIO;
+        if singular {
+            q = self.u0 + self.tangential_velocity() * years;
+            ratio = q.length();
+        }
+        let norm = ratio;
+        if years == 0.0 || class.is_stationary() {
+            ratio = 1.0;
+        }
+        let current = if class.has_distance() && !singular {
+            magnitude + 5.0 * ratio.log10()
+        } else {
+            magnitude
+        };
+        StellarSample {
+            direction: q * (1.0 / norm),
+            magnitude: current,
+            used_singular_fallback: singular,
+        }
+    }
+
+    pub fn brightest_magnitude(self, magnitude: f64) -> f64 {
+        // Stationary stars keep their initial brightness, even when the compact direction has a rounded norm.
+        if self.distance_pc.is_none() || self.w == Vector3::default() {
+            return magnitude;
+        }
+        let (start, end) = computational_years();
+        (magnitude + 5.0 * self.closest_approach(start, end).1.log10())
+            .min(magnitude)
+            .next_down()
+    }
+
+    /// Exact endpoint angular bound for a non-singular straight line; atan2 is stable at poles and small angles.
+    pub fn motion_bound(self) -> f64 {
+        let (start, end) = computational_years();
+        let mut bound = 0.0_f64;
+        for time in [start, end] {
+            let direction = self.u0 + self.w * time;
+            let angle = length(self.u0.cross(direction)).atan2(self.u0.dot(direction));
+            bound = bound.max(angle);
+        }
+        bound.next_up()
+    }
+}
+
+/// The overflow-safe length, for the load-time bounds and keys stored in the prepared catalog cache; changing it
+/// would change cached group membership. The per-frame evaluation uses `Vector3::length`.
+fn length(v: Vector3) -> f64 {
+    v.x.hypot(v.y).hypot(v.z)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+    fn motion(w: Vector3, distance: Option<f64>) -> StellarMotion {
+        StellarMotion {
+            u0: Vector3 { x: 1.0, y: 0.0, z: 0.0 },
+            w,
+            distance_pc: distance,
+        }
+    }
+    #[test]
+    fn closest_approach_inside_before_and_after_interval() {
+        let star = motion(
+            Vector3 {
+                x: -0.1,
+                y: 0.01,
+                z: 0.0,
+            },
+            Some(1.0),
+        );
+        let time = 0.1 / 0.0101;
+        assert!((star.closest_approach(0.0, 20.0).0 - time).abs() < 1e-12);
+        assert_eq!(star.closest_approach(11.0, 20.0).0, 11.0);
+        assert_eq!(star.closest_approach(0.0, 5.0).0, 5.0);
+    }
+    #[test]
+    fn singular_policy_applies_to_motion_and_brightness_once() {
+        let mut star = motion(
+            Vector3 {
+                x: -0.01,
+                y: 0.0,
+                z: 0.0,
+            },
+            Some(10.0),
+        );
+        assert!(star.remove_singular_distance());
+        assert!(!star.remove_singular_distance());
+        assert_eq!(star.distance_pc, None);
+        let sample = star.evaluate(100.0, 5.0);
+        assert_eq!(sample.direction, star.u0);
+        assert_eq!(sample.magnitude, 5.0);
+        let mut outside = motion(
+            Vector3 {
+                x: -1.0 / 20000.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            Some(10.0),
+        );
+        assert!(!outside.remove_singular_distance());
+        let sample = outside.evaluate(20000.0, 5.0);
+        assert!(sample.used_singular_fallback);
+        assert_eq!(sample.magnitude, 5.0);
+        assert_eq!(sample.direction, outside.u0);
+    }
+    #[test]
+    fn normalized_motion_crosses_a_pole_without_ra_singularity() {
+        let star = StellarMotion::from_angles(
+            Equatorial {
+                right_ascension: 0.0,
+                declination: 89_f64.to_radians(),
+            },
+            Equatorial {
+                right_ascension: 0.0,
+                declination: 1_f64.to_radians(),
+            },
+        );
+        let after = star.evaluate(2.0, 1.0).direction;
+        assert!(after.x < 0.0 && after.z > 0.99);
+        assert!((length(after) - 1.0).abs() < 1e-14);
+    }
+    #[test]
+    fn fixed_distance_and_approaching_star_magnitudes() {
+        let fixed = motion(Vector3::default(), Some(10000.0));
+        assert_eq!(fixed.evaluate(10000.0, 5.0).magnitude, 5.0);
+        let star = motion(
+            Vector3 {
+                x: -0.0001,
+                y: 0.00001,
+                z: 0.0,
+            },
+            Some(2.0),
+        );
+        assert!(star.evaluate(1000.0, 9.5).magnitude < 9.5);
+        assert!(star.motion_bound() > 0.25_f64.to_radians());
+    }
+    proptest! {
+        #[test]
+        fn sqrt_length_evaluates_brightness_within_the_key_tolerance(
+            ra in 0.0_f64..std::f64::consts::TAU, dec in -1.5_f64..1.5,
+            wx in -1e-4_f64..1e-4, wy in -1e-4_f64..1e-4, wz in -1e-4_f64..1e-4,
+            distance in proptest::option::of(1.0_f64..1e4), magnitude in -1.5_f64..20.0, fraction in 0.0_f64..=1.0,
+        ) {
+            // The key is computed with the overflow-safe length and the evaluation with sqrt, so a sample can be a
+            // few ulps brighter than the key itself (about 1e-15 magnitudes); the stored codes keep their order (see
+            // the simulation tests). Velocities up to 1e-4 distances per year reach the singular policy for the
+            // nearest stars.
+            let direction = Equatorial { right_ascension: ra, declination: dec }.to_unit_vector();
+            let mut star = StellarMotion { u0: direction, w: Vector3 { x: wx, y: wy, z: wz }, distance_pc: distance };
+            star.remove_singular_distance();
+            let key = star.brightest_magnitude(magnitude);
+            let (start, end) = computational_years();
+            for years in [start, start + (end - start) * fraction, end, 0.0] {
+                let sample = star.evaluate(years, magnitude);
+                prop_assert!(sample.magnitude >= key - 1e-12, "{} brighter than the key {key} at {years}", sample.magnitude);
+            }
+        }
+
+        #[test]
+        fn sqrt_and_hypot_lengths_differ_by_at_most_two_ulps(
+            x in -1.0_f64..1.0, y in -1.0_f64..1.0, z in -1.0_f64..1.0, scale in 1e-3_f64..2.0,
+        ) {
+            // Directions moved along a straight line keep lengths between the singular ratio and about two.
+            let v = Vector3 { x, y, z };
+            let Some(unit) = (v.length() > 1e-6).then(|| v * (scale / v.length())) else { return Ok(()) };
+            let (root, safe) = (unit.length(), length(unit));
+            prop_assert!(root >= safe.next_down().next_down() && root <= safe.next_up().next_up(), "{root} against {safe}");
+        }
+
+        #[test]
+        fn endpoint_bound_and_brightness_key_cover_sampled_trajectories(
+            wx in -0.001_f64..0.001, wy in -0.001_f64..0.001,wz in -0.001_f64..0.001
+        ) {
+            let mut star=motion(Vector3{x:wx,y:wy,z:wz},Some(10.0));
+            star.remove_singular_distance();
+            let bound=star.motion_bound(); let key=star.brightest_magnitude(5.0);
+            let (start,end)=computational_years();
+            let mut sampled=0.0_f64;
+            for i in 0..=100 {
+                let sample=star.evaluate(start+(end-start)*i as f64/100.0,5.0);
+                let angle=length(star.u0.cross(sample.direction)).atan2(star.u0.dot(sample.direction));
+                sampled=sampled.max(angle);
+                prop_assert!(angle<=bound+1e-12);
+                prop_assert!(sample.magnitude >= key - 1e-12);                       // the physical brightness bound covers the unencoded sample
+            }
+            prop_assert!((bound-sampled).abs()<1e-12);
+        }
+    }
+}

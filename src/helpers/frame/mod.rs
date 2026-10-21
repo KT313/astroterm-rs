@@ -1,126 +1,169 @@
-//! Frame-stage operations over explicit inputs; the overall loop remains in pipeline.rs.
+//! Frame-loop helpers: controls and the clock, plus preparation and drawing of the metadata text overlay.
+use astroterm::time::SimulationClock;
+use astroterm::points::draw_panel_and_notices;
+use astroterm::formulas::{Observer, name_moon_phase};
+use astroterm::controls::{Control, apply_control};
+use astroterm::metadata::{MetadataField, ObserverTimeZone, append_step_time_fields, fill_metadata_fields, format_star_count, resolve_observer_timezone};
+use astroterm::model::{Config, Data, Region, View};
+use astroterm::present::{Display, DisplayInfo, describe_compression};
+use astroterm::projection::Frame;
+use astroterm::regions::RefreshReport;
+use astroterm::selection::Selected;
+use astroterm::solar_system::SolarSystem;
+use astroterm::terminal::{FrameInput, poll_frame_input};
+use astroterm::time::StepTimes;
+use ratatui_image::picker::ProtocolType;
 use std::io;
-use astroterm::astro::{Observer, SimulationClock};
-use astroterm::cache::CacheStats;
-use astroterm::controls::apply_control;
-use astroterm::model::{View, Sky, FrameTime, ProjectionViewport};
-use astroterm::state::{ObserverPreparationCache, ObservationCache, ProjectionCache, SimulationState, RenderingState};
-use astroterm::terminal::{FrameInput, Renderer};
-use astroterm::timing::StepTimes;
-use super::record_projected_memory;
 
-#[allow(clippy::too_many_arguments)]
-/// Apply a frame's controls and invalidate dependent caches after any view change or resize.
-/// The caller checks for quit first and retains ownership of the input until the frame ends.
-pub(crate) fn apply_frame_controls(
-    input: &FrameInput, initial_view: &View, view: &mut View, clock: &mut SimulationClock,
-    renderer: &mut Renderer, rendering: &mut RenderingState, selection: &mut astroterm::state::StarSelectionCache, projection_cache: &mut ProjectionCache,
-) -> io::Result<()> {
-    let previous_view = *view;
-    if input.resized { renderer.fit_to_terminal(rendering)?; }
-    for &control in &input.controls {
-        apply_control(control, view, clock, initial_view);
+use super::{BenchmarkSession, set_benchmark_frame_time, validate_benchmark_input};
+
+/// Handle this frame's input and benchmark clock. Return true when the frame loop should quit.
+pub(crate) fn handle_input(
+    config: &Config,
+    current_view: &mut View,
+    clock: &mut SimulationClock,
+    display: &mut Display,
+    frame: &mut Frame,
+    benchmark: &Option<BenchmarkSession>,
+) -> io::Result<bool> {
+    // Read pending key presses and terminal resize events.
+    let input = poll_frame_input(config.terminal.quit_on_any_key)?;
+
+    // Benchmarks reject input changes before setting the scheduled date for this frame.
+    validate_benchmark_input(benchmark, &input)?;
+    set_benchmark_frame_time(benchmark, clock)?;
+
+    // Stop on quit before applying other controls to the current view or simulation clock.
+    if stop_on_quit(&input) {
+        return Ok(true);
     }
+    apply_frame_controls(&input, &config.view, current_view, clock)?;
 
-    if *view != previous_view {
-        selection.invalidate_view();
-        projection_cache.invalidate_view();
-    } else if input.resized {
-        projection_cache.invalidate_view();
+    // Resize the drawing buffers when the terminal dimensions have changed.
+    if input.resized {
+        display.fit(frame)?;
+    }
+    Ok(false)
+}
+
+/// Apply a frame's controls to the view and the clock. The caller checks for quit first.
+pub(crate) fn apply_frame_controls(input: &FrameInput, initial_view: &View, view: &mut View, clock: &mut SimulationClock) -> io::Result<()> {
+    for &control in &input.controls {
+        apply_control(control, view, clock, initial_view)?;
     }
     Ok(())
 }
 
-/// Use the exact requested epoch for single-frame diagnostics, otherwise read the running clock.
-pub(crate) fn resolve_frame_time(single_frame: bool, start_julian_date: f64, clock: &SimulationClock) -> FrameTime {
-    FrameTime::from_utc(if single_frame {
-        start_julian_date
-    } else {
-        clock.julian_date()
-    })
+/// Stop on a quit key without processing any other control.
+pub(crate) fn stop_on_quit(input: &FrameInput) -> bool {
+    input.controls.contains(&Control::Quit)
 }
 
-/// Prepare reception-time solar-system samples; catalog stars have a separate stage.
-pub(crate) fn simulate_solar_system_frame(simulation_state: &mut SimulationState, observer_cache: &mut ObserverPreparationCache, site: Observer, time: FrameTime, step_times: &mut StepTimes) -> io::Result<()> {
-    step_times
-        .measure_steps("Solar-system simulation", |steps| {
-            astroterm::sky::begin_solar_system_frame(simulation_state, observer_cache, time, site, steps)
-        })
-        .map_err(io::Error::other)
-}
-
-/// Finish observer geometry and solar-system emission samples before selecting stars.
+/// Build and paint the metadata panel after sky graphics, keeping notices on top.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn prepare_observer_frame(
-    site: Observer, simulation_state: &mut SimulationState, observer_cache: &mut ObserverPreparationCache,
-    time: FrameTime, step_times: &mut StepTimes,
-) -> io::Result<astroterm::model::ObserverState> {
-    step_times.measure_steps("Observer preparation", |steps| {
-        astroterm::sky::prepare_observer_inputs(observer_cache, simulation_state, time, site, steps)
-    }).map_err(io::Error::other)
-}
-
-/// Select only conservative candidates and the endpoints needed by constellation lines.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn select_stars_frame(storage: &mut astroterm::state::StarSelectionCache, catalog: &std::sync::Arc<astroterm::model::SkyCatalog>,
-    observer: &astroterm::model::ObserverState, view: &View, threshold: f64, refraction: bool, count: &mut usize, times: &mut StepTimes) {
-    times.measure_steps("Star selection", |times| astroterm::sky::select_cached_stars(storage, catalog, observer, threshold, refraction, astroterm::projection::select_view_region(view), times));
-    *count = storage.region_star_count();
-}
-
-/// Update intrinsic directions and brightness without access to observer or camera data.
-pub(crate) fn simulate_stars_frame(stars: &mut astroterm::state::StellarSimulationState, selection: astroterm::state::SelectedStars<'_>, time: FrameTime, times: &mut StepTimes) {
-    times.measure_steps("Stellar simulation", |times| astroterm::sky::simulate_stars(stars, selection, time.tt, times));
-}
-
-/// Apply viewer-dependent corrections to the completed model results.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn observe_frame<'a>(
-    observation: &'a mut ObservationCache, stars: astroterm::state::StellarResults<'a>, bodies: astroterm::state::PreparedBodies<'_>,
-    observer: &astroterm::model::ObserverState, threshold: f64, refraction: bool, sky: &'a mut Sky, count: &mut usize, times: &mut StepTimes,
-) -> astroterm::state::RegionalObservation<'a> {
-    let observed = times.measure_steps("Observation", |times| astroterm::sky::observe_cached_regions(observation, stars, bodies, observer, threshold, refraction, sky, times));
-    let stats = observed.sky().corrections;
-    *count = stats.evaluated - stats.skipped - stats.endpoint_only;
-    observed
-}
-
-/// Project the observed sky for the current viewport within the existing Projection timer.
-pub(crate) fn project_frame(
-    sky: astroterm::state::RegionalObservation<'_>, view: &View, viewport: astroterm::model::ProjectionViewport, time: FrameTime,
-    projection_cache: &mut ProjectionCache, count: &mut usize, step_times: &mut StepTimes,
+pub(crate) fn draw_text_overlay(
+    frame: &mut Frame,
+    display: &Display,
+    panel: &mut Panel,
+    solar_system: &SolarSystem,
+    selected: &Selected,
+    star_regions: &[Region],
+    tile_bytes: usize,
+    notices: &[&str],
+    refreshed: RefreshReport,
+    time_ms: i64,
+    view: &View,
+    config: &Config,
+    clock: &SimulationClock,
+    times: &mut StepTimes,
 ) {
-    step_times.measure_steps("Projection", |steps| {
-        astroterm::projection::project_cached_regions(projection_cache, sky, view, viewport, time.tt, steps);
-    });
-    *count = projection_cache.visible_star_count();
+    // Build the panel's text from the simulation results and current terminal information.
+    times.measure("Text overlay.Panel preparation");
+    let display_info = display.info();
+    let panel_lines = panel.lines(
+        &PanelFrame {
+            time_ms,
+            clock,
+            solar_system,
+            selected,
+            refreshed,
+            display: display_info,
+        },
+        &config.simulation.observer,
+        view,
+        star_regions,
+        tile_bytes,
+        times,
+    );
+
+    // Paint the panel and notices without clearing the graphics already in the frame.
+    times.measure("Text overlay.Text rasterization");
+    draw_panel_and_notices(frame, panel_lines, notices);
 }
 
-/// Publish cache statistics, borrow the completed geometry and render it without copying the projected data.
-/// Existing assembly/raster/presentation timers stay inside their original operations.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn render_projected_frame(renderer: &mut Renderer, rendering: &mut RenderingState, sky: astroterm::state::RegionalObservation<'_>, view: &View,
-    viewport: ProjectionViewport, projection: &ProjectionCache, observation_stats: CacheStats, utc: f64,
-    clock: &SimulationClock, observer: &Observer, counts: &astroterm::model::StarCounts, times: &mut StepTimes) -> io::Result<astroterm::model::RenderOutcome> {
-    renderer.set_cache_diagnostics(rendering, observation_stats, projection.stats()); // update the debug display's reuse counts
-    let projected = borrow_frame_projection(sky, view, viewport, projection, times); // read completed geometry without copying it
-    renderer.render_prepared_frame(rendering, &projected, view, utc, clock, observer, counts, times)   // assemble the image and text, then present them
+/// The metadata panel: its lines are rebuilt every frame into the same vector, empty when the panel is off.
+pub(crate) struct Panel {
+    frame_times: bool,
+    unicode: bool,
+    time_zone: Option<ObserverTimeZone>,          // resolved once, only when the panel is shown
+    stars_loaded: usize,
+    lines: Vec<MetadataField>,
 }
 
-/// Borrow the completed projection once, then describe that same view outside the assembly timer.
-fn borrow_frame_projection<'a>(sky: astroterm::state::RegionalObservation<'a>, view: &View, viewport: astroterm::model::ProjectionViewport,
-    projection_cache: &'a ProjectionCache, times: &mut StepTimes) -> astroterm::model::RenderProjection<'a> {
-    let projected = times.measure("Projected view assembly", || astroterm::projection::borrow_render_projection(projection_cache, sky, view, viewport));
-    record_projected_memory(times, projected.sky());
-    times.describe("Projected view assembly", || format!("ordered stars={}; projected-reference records allocated=0; geometry borrowed", projected.sky().stars.len()));
-    projected
+/// What one frame contributes to the panel besides the time and the view.
+pub(crate) struct PanelFrame<'a> {
+    pub time_ms: i64,
+    pub clock: &'a SimulationClock,
+    pub solar_system: &'a SolarSystem,
+    pub selected: &'a Selected,
+    pub refreshed: RefreshReport,
+    pub display: DisplayInfo,
 }
 
-/// Cancel the empty diagnostic frame on a quit key without losing the last successfully presented frame.
-pub(crate) fn stop_on_quit(input: &FrameInput, times: &mut StepTimes) -> bool {
-    if !input.controls.contains(&astroterm::controls::Control::Quit) { return false; }
-    times.cancel_memory_frame();
-    true
+impl Panel {
+    pub(crate) fn new(config: &Config, data: &Data) -> Self {
+        let enabled = config.terminal.metadata_panel;
+        Self {
+            frame_times: config.terminal.frame_times,
+            unicode: config.render.unicode,
+            time_zone: enabled.then(|| resolve_observer_timezone(&config.simulation.observer)),
+            stars_loaded: data.region_star_count() + data.constellation_stars.len(),
+            lines: Vec::new(),
+        }
+    }
+
+    /// Rebuild the lines for this frame: local time and view (as before), the catalog and region counts, the
+    /// display, and the step timings when requested.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn lines(&mut self, frame: &PanelFrame<'_>, observer: &Observer, view: &View, star_regions: &[Region], tile_bytes: usize, times: &StepTimes) -> &[MetadataField] {
+        self.lines.clear();
+        let Some(time_zone) = &self.time_zone else { return &self.lines; };
+        let phase = name_moon_phase(frame.solar_system.moon_illumination(0));
+        fill_metadata_fields(&mut self.lines, frame.time_ms, frame.clock, phase, observer, view, self.unicode, time_zone);
+
+        // stars and regions
+        let in_regions: usize = frame.selected.regions.iter().map(|&region| star_regions[region].speed_groups.iter().map(|group| &group.stars).map(|table| table.len()).sum::<usize>()).sum();
+        let field = |label: &str, value: String| MetadataField { label: label.into(), value };
+        self.lines.push(field("Stars loaded", format!("{} stars", format_star_count(self.stars_loaded))));
+        self.lines.push(field("In selected regions", format!("{} stars", format_star_count(in_regions))));
+        self.lines.push(field("Regions selected", format!("{}{}", frame.selected.regions.len(), if frame.selected.whole_sky { " (whole sky)" } else { "" })));
+        self.lines.push(field("Tile memory", format!("{:.1} MiB", tile_bytes as f64 / (1024.0 * 1024.0))));
+
+        // the display
+        let display = frame.display;
+        self.lines.push(field("Graphics", format!("{:?} · {}×{}", display.protocol, display.image.0, display.image.1)));
+        if display.protocol == ProtocolType::Kitty {
+            self.lines.push(field("Transport", if display.shared_memory { "Shared memory" } else { "Streaming" }.into()));
+            self.lines.push(field("Compression", if display.shared_memory { "Not used (shared memory)".into() } else { describe_compression(display.compression).into() }));
+        }
+
+        // timings
+        if self.frame_times {
+            self.lines.push(field("Groups refreshed", format!("{} simulated, {} drawn, {} merged", frame.refreshed.simulated, frame.refreshed.rendered, frame.refreshed.merged)));
+            append_step_time_fields(&mut self.lines, times.steps());
+        }
+        &self.lines
+    }
 }
 
 #[cfg(test)]

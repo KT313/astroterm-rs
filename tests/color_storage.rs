@@ -5,7 +5,7 @@ use astroterm::sky::{prepare_catalog, write_cached_catalog, load_cached_catalog,
 
 #[test]
 fn every_palette_entry_survives_preparation_and_cache_loading() {
-    let mut source = load_embedded_catalog().unwrap();
+    let mut source = load_embedded_catalog(&mut astroterm::progress::Report::quiet()).unwrap();
     source.stars.truncate(8);
     let cases = [(*b"  ", None, StarColor::Default), (*b"W9", Some(2.0), StarColor::HotBlue),
         (*b"B0", None, StarColor::BlueWhite), (*b"A0", None, StarColor::White),
@@ -15,12 +15,12 @@ fn every_palette_entry_survives_preparation_and_cache_loading() {
         star.spectral_type = spectral;
         star.color_index = bv;
     }
-    let prepared = prepare_catalog(&source).unwrap();
+    let prepared = prepare_catalog(&source, &mut astroterm::progress::Report::quiet()).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("colors.catalog");
     let fingerprint = catalog_fingerprint();
-    write_cached_catalog(&path, &prepared, &fingerprint).unwrap();
-    let cached = load_cached_catalog(&path, &fingerprint).unwrap();
+    write_cached_catalog(&path, &prepared, &fingerprint, &mut astroterm::progress::Report::quiet()).unwrap();
+    let cached = load_cached_catalog(&path, &fingerprint, &mut astroterm::progress::Report::quiet()).unwrap();
     assert_eq!(cached, prepared);
     for data in [&prepared, &cached] {
         let columns = data.catalog.stars.columns();

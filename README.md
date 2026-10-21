@@ -12,9 +12,9 @@ A terminal star map showing stars, planets, the Moon, and constellations.
 
 *Pixel rendering with the AT-HYG catalog in Kitty.*
 
-| Half-block graphics | Unicode characters | Unicode, zoomed in |
-|---|---|---|
-| ![A dense star field rendered with colored half-blocks](docs/images/halfblock_renderer.png) | ![Stars, planets and constellation lines rendered with Unicode characters](docs/images/unicode_renderer.png) | ![A zoomed Unicode view of the Moon, planets and constellation lines](docs/images/unicode_renderer_zoom.png) |
+![A dense star field rendered with colored half-blocks](docs/images/halfblock_renderer.png)
+
+*The same sky as colored half-blocks, for terminals without a graphics protocol.*
 
 ## Usage
 
@@ -22,7 +22,7 @@ With Rust and Cargo installed, run these commands from the project folder:
 
 ```sh
 cargo build --release
-./target/release/astroterm -i Tokyo -cCu -m
+./target/release/astroterm -i Tokyo -C -m
 ```
 
 **Arrow keys look around, `+` / `-` zoom, Space pauses, and `q` quits.**
@@ -32,57 +32,59 @@ cargo build --release
 The built-in Bright Star Catalog works offline without downloads. For about 2.5 million stars, use AT-HYG:
 
 ```sh
-./target/release/astroterm -i Tokyo --dataset athyg -t 8 -cCu
+./target/release/astroterm -i Tokyo --dataset athyg -t 8 -C
 ```
 
 For a larger, partial-sky Gaia subset:
 
 ```sh
-./target/release/astroterm -i Tokyo --dataset gaia-gdr3 --dataset-stars 1000000 -t 10 -c
+./target/release/astroterm -i Tokyo --dataset gaia-gdr3 --dataset-stars 1000000 -t 10
 ```
 
 MAST downloads only needed columns and reuses converted blocks when you increase the count.
 Use `--dataset-files 1` instead for ESA bulk files. See [Gaia loading and limitations](docs/gaia-dataset.md).
 
 Dataset loading shows progress before the sky opens. Use `--no-progress` to hide progress updates.
-With `-m`, the panel shows stars loaded, in candidate regions, passed filtering and passed projection.
+With `-m`, the panel shows the stars loaded, the stars and regions selected for the view and the tile memory held.
 
 ## Views
 
 ```sh
-# Pixel graphics instead of characters
-./target/release/astroterm -i Tokyo --renderer pixels -C -m
+# Constellations and the metadata panel
+./target/release/astroterm -i Tokyo -C -m
 
 # Look north-northwest, 20° above the horizon
-./target/release/astroterm -i Tokyo --facing NNW --tilt 20 --fov 120 -cCu
+./target/release/astroterm -i Tokyo --facing NNW --tilt 20 --fov 120 -C
 
 # Freeze the sky at a specific date and time (UTC)
-./target/release/astroterm -i Tokyo -d 2025-03-01T11:00:00 -s 0 -cCu -m
+./target/release/astroterm -i Tokyo -d 2025-03-01T11:00:00 -s 0 -C -m
 
 # Use coordinates instead of a city: latitude, then longitude
-./target/release/astroterm -a 1.29 -o 103.85 -cCu
+./target/release/astroterm -a 1.29 -o 103.85 -C
 ```
 
 Without `--facing`, the view is centered overhead. Looking around with the arrow keys switches to a facing view.
 
-Pixel mode detects Kitty, Sixel or iTerm2 support and falls back to colored half-blocks when needed.
-If graphics look wrong, try `--graphics-protocol halfblocks`. To choose a supported protocol yourself,
-use `--graphics-protocol kitty`, `sixel` or `iterm2`.
+The sky is drawn as pixels: Kitty, Sixel or iTerm2 graphics are detected, with colored half-blocks as the fallback.
+A local Kitty terminal receives each frame through shared memory; other Kitty terminals (and tmux) get a
+compressed stream. If graphics look wrong, try `--graphics-protocol halfblocks`. To choose a supported protocol
+yourself, use `--graphics-protocol kitty`, `sixel` or `iterm2`.
 
 Use `--text-scale 0.7` for smaller pixel text or `--text-scale 1.2` for larger text
-(default: `0.85`). This affects Kitty/Sixel/iTerm2 only; characters and half-blocks use your terminal's font size.
+(default: `0.85`). This affects Kitty/Sixel/iTerm2 only; half-blocks use your terminal's font size.
 
 ## Useful options
 
 | Option | What it does |
 |---|---|
-| `-c`, `-u`, `-C` | Character colors, Unicode glyphs, constellation lines; combine as `-cCu` |
+| `-C` | Draw constellation lines |
+| `-u` | Unicode in labels and the panel (Greek letters in Bayer designations, zodiac symbols) |
 | `-m` | Show the date, location and simulation speed |
 | `-s 100` | Run time 100× faster; `-s 0` starts paused |
 | `-t 8` | Show fainter stars; default is `5`. Higher values show more stars and can be slower |
-| `-l 2` | Label more stars; default is `0.25` |
 | `--fov 60` | Zoom into a smaller patch of sky |
-| `--fps 24` | Set the frame-rate target; defaults are 24 for characters and 12 for pixels |
+| `--fps 24` | Set the frame-rate target; the default is 12 |
+| `--n-jobs 4` | Use four projection worker threads; `0` (default) runs directly, `-1` uses available logical CPUs |
 | `-R` | Include atmospheric refraction near the horizon |
 
 For all options: `./target/release/astroterm --help`.
@@ -127,11 +129,10 @@ Enable Bash completions for the current shell:
 source <(./target/release/astroterm --bash-completions)
 ```
 
-- `--debug-frametimes`: show the time spent calculating and drawing each frame.
+- `make build-debug`: build `target/pixel-debug/astroterm` with [pixel arithmetic checks](docs/pixel-debug.md).
+- `--debug-frametimes`: show each frame stage with indented sub-step timings, including cache work, region mapping, rasterization, and terminal output. Values use completed-frame averages.
 - `--debug-singleframe`: display one frame, then exit and print a detailed timing report.
-- Memory inspection: see [memory diagnostics](docs/memory-diagnostics.md) for the optional build feature and reports.
-- `--disable-cache`: recalculate runtime results every frame; keeps downloaded files and the catalog cache.
-- `--cache-config <path>`: use custom reuse settings; see [examples/cache.toml](examples/cache.toml).
+- Multi-frame timing: see [bounded frame captures](docs/frame-benchmarks.md) for reproducible per-frame reports.
 
 </details>
 
@@ -140,26 +141,102 @@ source <(./target/release/astroterm --bash-completions)
 Gaia DR3 subsets are supported through ESA bulk files or selective MAST Parquet downloads, using G brightness
 in the existing magnitude field. The MAST path removes identical adjacent copies from a known provider duplication.
 
-Solar-system results refresh when simulated time or observer location changes; paused frames reuse completed results.
-A cache TTL of `0` permits same-time reuse; `--disable-cache` disables it.
+The Sun, Moon and planets are evaluated every frame; an unchanged frame sends nothing to the terminal.
+
+Simulation timestamps are signed integer milliseconds since Gregorian year 0, with uniform days and no leap-second handling.
+Dates accept an optional `.sss` fraction. Fractional playback speeds retain sub-millisecond progress internally;
+astronomical formulas convert dates to their required time scales on demand without rounding light-time calculations.
+The integer storage range does not extend the models' scientific accuracy range. Existing raw downloads are preserved;
+prepared catalogs may be rebuilt after this time-representation change.
+
+Optional [frame timing captures](docs/frame-benchmarks.md) run a fixed number of frames at reproducible simulated dates.
 
 Catalog brightness is stored in steps of 0.001 magnitude; values very close to a display threshold may round across it.
-Stars are filtered by their catalog-epoch sky regions with a fixed motion allowance. At distant dates, fast-moving
-stars may be missing from a view; special handling for them is currently deferred.
-Stellar direction and brightness are cached by region for up to 10 simulated days by default. Use
-`--disable-cache` for fresh calculations every frame, or shorten `stellar_state` in the [cache configuration](examples/cache.toml).
+Stars are filed by their catalog-epoch sky regions with a fixed motion allowance of 0.25°. At distant dates,
+fast-moving stars may be missing from a view; special handling for them is currently deferred.
+Each region's stars are sorted into three speed groups with TTLs assigned from `SPEED_GROUP_TTL_MS` at
+startup: longest for the slowest group, shortest for the fastest (currently 365, 10 and 1 simulated days).
+Constellation stars use the fastest group's TTL. The drawn stars of a region are kept as a 64 × 64 sky-fixed tile that is
+re-rendered only when its simulation or the brightness threshold changes, and the screen is produced by mapping
+every pixel of a region's screen image back to its tile and filtering the texels under it. Tiles of regions that leave the view stay in memory for their return.
+The fixed holds have known direction-error exceptions; the opt-in [offline hold audit](docs/stellar-hold-audit.md)
+reports them without changing the runtime policy.
 
-This port adds pixel graphics, interactive pan/zoom/time controls and optional AT-HYG downloads. It also improves
-astronomical calculations, curved constellation lines, date handling and observer-local time display.
+Final image composition uses four-pixel SSE2 batches on x86-64, preserving the scalar brightness,
+blending and byte-rounding formulas. Other architectures and `pixel-debug` builds use the portable scalar
+compositor; checked builds retain their per-pixel validation and accumulated-light reporting. Composition
+uses one thread independently of `--n-jobs`. Kitty RGB conversion uses sixteen-pixel SSSE3 byte shuffles
+when supported on x86-64, with a portable fallback and the same input checks in `pixel-debug` builds.
+Region images are merged from their group images with an SSE2 test that skips four transparent texels at a
+time and records the lit texels four at a time; the filtering summary then visits only lit texels. The result
+is bit-identical to the scalar merge, which other architectures and `pixel-debug` builds keep.
+Planet series use a polynomial sin/cos summed in four lanes, compiled for AVX2+FMA when detected and for the
+baseline otherwise, with identical results either way; positions differ from libm sin/cos by under 1e-13 AU.
+
+On Linux with glibc, the program restarts itself once at launch with `GLIBC_TUNABLES=glibc.malloc.hugetlb=1`
+when the kernel allows transparent huge pages (mode `always` or `madvise`), so that its hundreds of megabytes of
+star tiles are backed by huge pages instead of being zero-filled 4 KB page by page; on the dense AT-HYG catalog
+this nearly halves the first frame's region step. Setting `GLIBC_TUNABLES=glibc.malloc.hugetlb=0` (or any
+`glibc.malloc.hugetlb` value) skips the restart.
+
+Projection can use a dedicated thread pool with `--n-jobs`: `0` creates no projection pool, `1` creates one
+worker, and positive values request that many workers. `-1` uses the logical CPUs available to the process.
+This setting does not change catalog loading, downloading, sorting or other frame steps. Both direct and
+worker execution use the same independent region loop; workers borrow only their assigned tiles. The executor
+creates one reusable image vector and touched-screen-block list per worker. Each job clears only previously
+written blocks, then records its new written ranges while drawing. Screen blocks are 16 × 16 pixels by default
+(`PROJECTION_SCREEN_BLOCK_SIZE` in `constants.rs`), independent of the sky regions. Completed images and their
+block lists return together through a completion channel. The main thread keeps the first image, copies blocks
+not yet touched, and screen-blends overlapping blocks while other jobs continue drawing. Resizing resets block
+tracking; the accumulator retains the union of merged blocks for its next clear. Image allocations are retained;
+the completed square is borrowed for
+frame insertion. Each active image costs about 19 MiB at 1116 × 1116 pixels; capacity can retain a larger prior size.
+
+Stereographic views with multiple workers balance chunks using a cheap projected-area estimate. Direct execution,
+one worker and equidistant views do not calculate estimates; equidistant keeps roughly equal region counts.
+Selection indices, scheduling weights/chunk ranges and worker timers retain their storage across frames.
+The equidistant radial lookup is rebuilt only when its camera scale changes; panning and resizing reuse it.
+Screen blending between regions and worker images is mathematically independent of order and grouping, though
+completion order can cause tiny floating-point differences. A single large region can still limit speedup.
+Screen corrections are calculated independently for each region, including equidistant and refraction views.
+
+This port draws pixel graphics instead of characters (the character renderer of the original was removed), adds
+interactive pan/zoom/time controls and optional AT-HYG downloads, and improves astronomical calculations, curved
+constellation lines, date handling and observer-local time display.
 The five brightest visible stars get labels, using a proper name or catalog identifier. Sun, planet and Moon
 labels are independent. Use `--disable-dynamic-names` to hide star labels; the former `--label-thresh` option has
 been removed. Independent accuracy checks are documented in
 [scripts/reference/README.md](scripts/reference/README.md).
 
-In pixel mode, stars use equal-size four-pixel dots; overlapping stars blend and zooming in boosts their brightness.
+Stars use four-texel dots in their sky tiles. When zoomed in far enough that a region's tile would have 0.2 texels
+per screen pixel or fewer, the region is drawn as finer tiles of the in-view parts of its cell instead, so dots
+stay a few pixels wide; there is no narrowest field of view. Within each group, overlapping stars
+are screen-blended, so neither covers the other and the drawing order does not matter; group images merge from slowest to fastest, weighting stored RGB by opacity while opacity accumulates source-over. Zoom brightening is currently disabled (`STAR_BRIGHTNESS_ZOOM_POWER = 0`), so zoom alone does not redraw existing tiles.
 Stars whose complete dot would cross the image boundary are omitted. The Sun, planets and Moon retain their sizes.
-The interactive renderer draws stars dimmest-first within each sky region, with constellation stars last;
-cross-region overlaps follow that region order. The five brightest star labels are still chosen across the whole view.
+Tiles are stereographic images of their region, and the screen is a stereographic or equidistant (`-e`) image
+of the sky, so every pixel's place in a tile follows from a closed formula. The warp uses it backwards: for every
+pixel inside a region's screen image it undoes the screen projection (a division for the stereographic view, a
+small scale-keyed lookup table for the equidistant one), refraction (through a fixed table) and aberration, rotates into
+the tile and applies the tile projection, then averages the texels under the pixel's footprint and blends the
+result with screen blending (`a + b * (1 - a)` for each stored RGB channel and opacity). This keeps stored
+channels bounded and never darkens them during merging. The existing final faint-pixel brightness floor still
+rescales RGB by opacity, so this is not a guarantee that every displayed colour channel is monotonic.
+Filter footprints may overlap the tile even when their centres are outside it; the uncovered
+part stays transparent instead of being renormalized to full brightness. Candidate bounds include this filter
+support. At the 360° rim, the point behind the observer spreads along the whole edge. Rows are stepped by forward differences, and in the stereographic view rows whose tile rows
+hold no light are skipped. In the equidistant view, rings that follow each region's cap narrow its candidate
+rows; the stepping still starts where the looser annulus bound starts, so the image is unchanged. With refraction or
+in the equidistant view, where every pixel needs the whole chain of steps, pixels are mapped in batches of
+`PROJECTION_MAPPING_BATCH_PIXELS` without a branch per pixel, so the compiler computes them side by side; each
+pixel's result is the same bit for bit. Texture footprints are square area averages of the screen's radial scale (the
+equidistant view blurs a little more along the rim than across it); the cached tile resolution is unchanged, so
+extreme magnification can still look blurry.
+Minimum-size filter footprints wholly inside a tile use a direct four-texel bilinear calculation, equivalent
+to the existing unit box filter. On x86-64, SSE2 accumulates its RGBA channels in f64 pairs while preserving
+texel order; other architectures use the scalar calculation. Pixel-debug output checks apply to both paths.
+Larger footprints and tile boundaries retain the general box filter.
+Set `PROJECTION_USE_BILINEAR_FAST_PATH` to `false` in `src/constants.rs` and rebuild to disable this shortcut.
+With the azimuthal grid on, its angle labels replace the compass letters.
 
 <details>
 <summary>Credits, citations and data sources</summary>
@@ -184,8 +261,9 @@ Resources used by the original astroterm and this port:
 
 Additional accuracy-model sources:
 
-- [Bretagnon & Francou (1988), VSOP87](https://ui.adsabs.harvard.edu/abs/1988A%26A...202..309B/abstract),
-  through the [VSOP87E Rust implementation](https://docs.rs/vsop87/3.0.0/vsop87/vsop87e/).
+- [Bretagnon & Francou (1988), VSOP87](https://ui.adsabs.harvard.edu/abs/1988A%26A...202..309B/abstract): the
+  complete VSOP87E series from [IMCCE](https://ftp.imcce.fr/pub/ephem/planets/vsop87/) in `data/vsop87/`, packed
+  at build time and summed with their time derivatives (`data/vsop87/provenance.md`).
 - [Vondrák, Capitaine & Wallace (2011/2012), long-term precession](https://www.aanda.org/articles/aa/abs/2011/10/aa17274-11/aa17274-11.html).
 - [ERFA](https://github.com/liberfa/erfa): long-term pole and IAU 2000B nutation coefficients; translated code is
   covered by [LICENSE-ERFA](LICENSE-ERFA), with its SOFA heritage acknowledged there.
@@ -213,6 +291,12 @@ The files in `data/` are taken from the original astroterm repository:
   derived from © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright), distributed through
   [tzf-dist](https://github.com/ringsaturn/tzf-dist) under the [ODbL 1.0](https://opendatacommons.org/licenses/odbl/1-0/).
 - Planet orbital elements: [NASA Jet Propulsion Laboratory](https://ssd.jpl.nasa.gov/planets/approx_pos.html)
+
+Added by this port:
+
+- Planetary ephemeris: the complete [VSOP87E](https://ftp.imcce.fr/pub/ephem/planets/vsop87/) series of
+  Bretagnon & Francou (IMCCE), the unmodified published text files in `data/vsop87/`, packed by `build.rs` at
+  compile time; checksums in `data/vsop87/provenance.md`.
 
 Optional, not distributed with this repository:
 
